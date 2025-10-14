@@ -58,7 +58,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
 
         message_public_id = validated.message_public_id
         if not message_public_id:
-            logger.info(
+            logger.debug(
                 "Fetching message public ID for message %s", validated.message_id
             )
             async with tracked_db(operation_name="summary_fallback") as db:

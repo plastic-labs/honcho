@@ -166,7 +166,7 @@ async def update_peer(
         honcho_peer.configuration = peer.configuration
 
     await db.commit()
-    logger.info(f"Peer {peer_name} updated successfully")
+    logger.debug(f"Peer {peer_name} updated successfully")
     return honcho_peer
 
 

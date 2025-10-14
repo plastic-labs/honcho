@@ -7,7 +7,7 @@ from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import config, crud, models, schemas
+from src import config, crud, schemas
 from src.dependencies import db, tracked_db
 from src.exceptions import (
     AuthenticationException,
@@ -87,7 +87,7 @@ async def _get_session_context_task(
     session_id: str,
     token_limit: int,
     include_summary: bool,
-) -> tuple[schemas.Summary | None, list[models.Message]]:
+) -> tuple[schemas.Summary | None, list[schemas.Message]]:
     """
     Atomic task to get session context using tracked_db.
 
@@ -101,13 +101,16 @@ async def _get_session_context_task(
         Tuple of (summary, messages)
     """
     async with tracked_db("get_session_context") as db:
-        return await summarizer.get_session_context(
+        summary, messages = await summarizer.get_session_context(
             db,
             workspace_name=workspace_id,
             session_name=session_id,
             token_limit=token_limit,
             include_summary=include_summary,
         )
+        # Convert SQLAlchemy models to Pydantic schemas while session is active
+        message_schemas = [schemas.Message.model_validate(msg) for msg in messages]
+        return summary, message_schemas
 
 
 @router.post(
@@ -202,7 +205,7 @@ async def update_session(
         updated_session = await crud.update_session(
             db, workspace_name=workspace_id, session_name=session_id, session=session
         )
-        logger.info(f"Session {session_id} updated successfully")
+        logger.debug("Session %s updated successfully", session_id)
         return updated_session
     except ValueError as e:
         logger.warning(f"Failed to update session {session_id}: {str(e)}")
@@ -225,7 +228,7 @@ async def delete_session(
         await crud.delete_session(
             db, workspace_name=workspace_id, session_name=session_id
         )
-        logger.info(f"Session {session_id} deleted successfully")
+        logger.debug("Session %s deleted successfully", session_id)
         return {"message": "Session deleted successfully"}
     except ValueError as e:
         logger.warning(f"Failed to delete session {session_id}: {str(e)}")
@@ -256,7 +259,7 @@ async def clone_session(
             original_session_name=session_id,
             cutoff_message_id=message_id,
         )
-        logger.info(f"Session {session_id} cloned successfully")
+        logger.debug("Session %s cloned successfully", session_id)
         return cloned_session
     except ValueError as e:
         logger.warning(f"Failed to clone session {session_id}: {str(e)}")
@@ -288,7 +291,7 @@ async def add_peers_to_session(
             ),
             workspace_name=workspace_id,
         )
-        logger.info(f"Added peers to session {session_id} successfully")
+        logger.debug("Added peers to session %s successfully", session_id)
         return session
     except ValueError as e:
         logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
@@ -324,7 +327,7 @@ async def set_session_peers(
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
-        logger.info(f"Set peers for session {session_id} successfully")
+        logger.debug("Set peers for session %s successfully", session_id)
         return session
     except ValueError as e:
         logger.warning(f"Failed to set peers for session {session_id}: {str(e)}")
@@ -360,7 +363,7 @@ async def remove_peers_from_session(
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
-        logger.info(f"Removed peers from session {session_id} successfully")
+        logger.debug("Removed peers from session %s successfully", session_id)
         return session
     except ValueError as e:
         logger.warning(f"Failed to remove peers from session {session_id}: {str(e)}")
@@ -411,8 +414,8 @@ async def set_peer_config(
             peer_name=peer_id,
             config=config,
         )
-        logger.info(
-            f"Set peer config for {peer_id} in session {session_id} successfully"
+        logger.debug(
+            "Set peer config for %s in session %s successfully", peer_id, session_id
         )
         return Response(status_code=200)
     except ValueError as e:
@@ -501,7 +504,7 @@ async def get_session_context(
         )
         return schemas.SessionContext(
             name=session_id,
-            messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
+            messages=messages,
             summary=summary,
         )
 
@@ -540,7 +543,7 @@ async def get_session_context(
 
     return schemas.SessionContext(
         name=session_id,
-        messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
+        messages=messages,
         summary=summary,
         peer_representation=representation,
         peer_card=card,

@@ -88,6 +88,7 @@
                   "v2/api-reference/endpoint/workspaces/get-or-create-workspace",
                   "v2/api-reference/endpoint/workspaces/get-all-workspaces",
                   "v2/api-reference/endpoint/workspaces/update-workspace",
+                  "v2/api-reference/endpoint/workspaces/delete-workspace",
                   "v2/api-reference/endpoint/workspaces/search-workspace",
                   "v2/api-reference/endpoint/workspaces/get-deriver-status"
                 ]

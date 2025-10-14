@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [2.4.0] - 2025-10-08
+## [2.4.0] - 2025-10-09
 
 ### Added
 
@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Prometheus Client for better Metrics
 - Performance metrics instrumentation
 - Error reporting to deriver
+- Workspace Delete Method
+- Multi-db option in test harness
 
 ### Changed
 
@@ -26,6 +28,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Semantic across codebase to reference resources based on `observer` and `observed`
 - Prompts for Deriver & Dialectic to reference peer_id and add examples
 - `Get Context` route returns peer card and representation in addition to messages and summaries
+- Refactoring logger.info calls to logger.debug where applicable
+
+### Fixed
+
+- Gemini client to use async methods
 
 ## [2.3.3] — 2025-10-01
 

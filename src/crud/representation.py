@@ -300,9 +300,7 @@ class RepresentationManager:
                 db,
                 query=include_semantic_query,
                 top_k=semantic_observations,
-                max_distance=semantic_search_max_distance
-                if semantic_search_max_distance is not None
-                else 0.3,
+                max_distance=semantic_search_max_distance,
             )
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
@@ -322,11 +320,6 @@ class RepresentationManager:
             db, top_k=recent_observations, session_name=session_name
         )
 
-        if not recent_docs:
-            logger.warning(
-                f"No observations for {self.observed} (observer: {self.observer}) found. Normal if brand-new peer."
-            )
-
         representation.merge_representation(Representation.from_documents(recent_docs))
 
         return representation
@@ -336,7 +329,7 @@ class RepresentationManager:
         db: AsyncSession,
         query: str,
         top_k: int,
-        max_distance: float,
+        max_distance: float | None = None,
         level: str | None = None,
         conversation_context: str = "",
     ) -> list[models.Document]:
@@ -348,8 +341,8 @@ class RepresentationManager:
                     query,
                     level,
                     conversation_context,
-                    max_distance,
                     top_k,
+                    max_distance,
                 )
             else:
                 documents = await crud.query_documents(
@@ -433,8 +426,8 @@ class RepresentationManager:
         query: str,
         level: str,
         conversation_context: str,
-        max_distance: float,
         count: int,
+        max_distance: float | None = None,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
         documents = await crud.query_documents(

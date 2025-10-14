@@ -58,7 +58,7 @@ async def get_or_create_webhook_endpoint(
     await db.commit()
     await db.refresh(webhook_endpoint)
 
-    logger.info(f"Webhook endpoint created: {webhook.url}")
+    logger.debug("Webhook endpoint created: %s", webhook.url)
     return schemas.WebhookEndpoint.model_validate(webhook_endpoint)
 
 
@@ -112,4 +112,4 @@ async def delete_webhook_endpoint(
     await db.delete(endpoint)
     await db.commit()
 
-    logger.info(f"Webhook endpoint {endpoint_id} deleted")
+    logger.debug("Webhook endpoint %s deleted", endpoint_id)

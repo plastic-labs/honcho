@@ -5,13 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [1.5.0] - 2025-10-08
+## [1.5.0] - 2025-10-09
+
+### Added
+
+- Delete workspace method
 
 ### Changed
 
 - message_id of `Summary` model is a string nanoid
+- Get Context can return Peer Card & Peer Representation
 
-## [1.4.1] — 2025-10-09
+## [1.4.1] — 2025-10-01
 
 ### Added
 

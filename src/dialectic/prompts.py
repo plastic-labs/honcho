@@ -48,6 +48,16 @@ The user's known biographical information:
 If the user's name or nickname is known, exclusively refer to them by that name.
 """
 
+    recent_conversation_history_section = (
+        f"""
+<recent_conversation_history>
+{recent_conversation_history}
+</recent_conversation_history>
+"""
+        if recent_conversation_history
+        else ""
+    )
+
     return c(
         f"""
 You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.
@@ -122,11 +132,10 @@ Provide a natural language response that:
 
 {query_target}
 
-<recent_conversation_history>
-{recent_conversation_history}
-</recent_conversation_history>
-
 <query>{query}</query>
+
+{recent_conversation_history_section}
+
 <working_representation>{working_representation}</working_representation>
 """
     )

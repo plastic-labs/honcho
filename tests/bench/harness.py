@@ -28,26 +28,27 @@ class HonchoHarness:
     Orchestrates running Honcho with a Docker database for development.
     """
 
-    def __init__(self, db_port: int, project_root: Path) -> None:
+    def __init__(
+        self, db_port: int, api_port: int, project_root: Path, instance_id: int = 0
+    ) -> None:
         """
-        Initialize the harness with database port and project root.
+        Initialize the harness with database port, API port, and project root.
 
         Args:
             db_port: Port for the PostgreSQL database
+            api_port: Port for the FastAPI server
             project_root: Path to the Honcho project root
+            instance_id: Instance identifier for pool management
         """
         self.db_port: int = db_port
+        self.api_port: int = api_port
         self.project_root: Path = project_root
+        self.instance_id: int = instance_id
         self.temp_dir: Path | None = None
         self.docker_compose_file: Path | None = None
         self.processes: list[tuple[str, subprocess.Popen[str]]] = []
         self.env_file_backup: Path | None = None
         self.output_threads: list[threading.Thread] = []
-
-        # Set environment variables in the current process
-        # This ensures they're inherited by all subprocesses
-        for key, value in self.get_database_env_vars().items():
-            os.environ[key] = value
 
     def create_temp_docker_compose(self) -> Path:
         """
@@ -66,6 +67,14 @@ class HonchoHarness:
 
         # Add a unique project name to avoid conflicts
         compose_data["name"] = f"honcho_harness_{self.db_port}"
+
+        # remove init.sql mount since we use provision_db.py for setup
+        if "volumes" in compose_data["services"]["database"]:
+            compose_data["services"]["database"]["volumes"] = [
+                vol
+                for vol in compose_data["services"]["database"]["volumes"]
+                if "init.sql" not in vol
+            ]
 
         # Create temporary file
         self.temp_dir = Path(tempfile.mkdtemp(prefix="honcho_harness_"))
@@ -200,32 +209,35 @@ class HonchoHarness:
         """
         Provision the database using the provision_db.py script.
         """
-        print("Provisioning database...")
+        print(f"[Instance {self.instance_id}] Provisioning database...")
 
-        # Run the provision script
+        # Run the provision script with explicit environment variables
         provision_script = self.project_root / "scripts" / "provision_db.py"
+        env = os.environ.copy()
+        env.update(self.get_database_env_vars())
+
         result = subprocess.run(
             [sys.executable, str(provision_script)],
             cwd=self.project_root,
             capture_output=True,
             text=True,
+            env=env,
         )
 
         if result.returncode != 0:
             print(f"Failed to provision database: {result.stderr}")
             sys.exit(1)
 
-        print("Database provisioned successfully")
+        print(f"[Instance {self.instance_id}] Database provisioned successfully")
 
     def verify_empty_database(self) -> None:
         """
         Verify that the database is empty with no workspaces and an empty queue.
         """
-
         try:
             import psycopg
 
-            # Connect to the database
+            # Connect to the database using instance-specific connection string
             conn_string = (
                 f"postgresql://testuser:testpwd@localhost:{self.db_port}/honcho"
             )
@@ -245,14 +257,20 @@ class HonchoHarness:
 
             # Report results
             if workspace_count != 0 or queue_count != 0:
-                print("❌ Database verification failed: Database is not empty")
+                print(
+                    f"[Instance {self.instance_id}] ❌ Database verification failed: Database is not empty"
+                )
                 print(
                     "This may indicate an issue with the database provisioning or cleanup."
                 )
                 sys.exit(1)
 
+            print(
+                f"[Instance {self.instance_id}] ✅ Database verification passed: Database is empty"
+            )
+
         except Exception as e:
-            print(f"❌ Error verifying database: {e}")
+            print(f"[Instance {self.instance_id}] ❌ Error verifying database: {e}")
             print("Unable to verify database state. Continuing anyway...")
 
     def start_fastapi_server(self) -> subprocess.Popen[str]:
@@ -262,7 +280,13 @@ class HonchoHarness:
         Returns:
             Process object for the FastAPI server
         """
-        print("Starting FastAPI server...")
+        print(
+            f"[Instance {self.instance_id}] Starting FastAPI server on port {self.api_port}..."
+        )
+
+        # Create environment with instance-specific database connection
+        env = os.environ.copy()
+        env.update(self.get_database_env_vars())
 
         process = subprocess.Popen(
             [
@@ -273,7 +297,7 @@ class HonchoHarness:
                 "--host",
                 "0.0.0.0",
                 "--port",
-                "8000",
+                str(self.api_port),
                 "--no-access-log",
                 "--workers",
                 "1",
@@ -284,9 +308,10 @@ class HonchoHarness:
             text=True,
             bufsize=0,
             universal_newlines=True,
+            env=env,
         )
 
-        self.processes.append(("FastAPI Server", process))
+        self.processes.append((f"FastAPI [{self.instance_id}]", process))
         return process
 
     def start_deriver(self) -> subprocess.Popen[str]:
@@ -296,7 +321,11 @@ class HonchoHarness:
         Returns:
             Process object for the deriver
         """
-        print("Starting deriver...")
+        print(f"[Instance {self.instance_id}] Starting deriver...")
+
+        # Create environment with instance-specific database connection
+        env = os.environ.copy()
+        env.update(self.get_database_env_vars())
 
         process = subprocess.Popen(
             [sys.executable, "-m", "src.deriver"],
@@ -306,9 +335,10 @@ class HonchoHarness:
             text=True,
             bufsize=0,
             universal_newlines=True,
+            env=env,
         )
 
-        self.processes.append(("Deriver", process))
+        self.processes.append((f"[{self.instance_id}]", process))
         return process
 
     def stream_process_output(self, name: str, process: subprocess.Popen[str]) -> None:
@@ -357,16 +387,20 @@ class HonchoHarness:
         Returns:
             True if server is ready, False otherwise
         """
-        print("Waiting for FastAPI server to be ready...")
+        print(
+            f"[Instance {self.instance_id}] Waiting for FastAPI server to be ready..."
+        )
         start_time = time.time()
 
         while time.time() - start_time < timeout:
             try:
                 import requests
 
-                response = requests.get("http://localhost:8000/docs", timeout=5)
+                response = requests.get(
+                    f"http://localhost:{self.api_port}/docs", timeout=5
+                )
                 if response.status_code == 200:
-                    print("FastAPI server is ready!")
+                    print(f"[Instance {self.instance_id}] FastAPI server is ready!")
                     return True
             except Exception:
                 pass
@@ -436,11 +470,8 @@ try:
                         print_settings(value, full_key, max_depth, current_depth + 1)
                     else:
                         # Mask sensitive information
-                        if isinstance(value, str) and any(sensitive in value.lower() for sensitive in ['password', 'secret', 'key', 'token']):
-                            if 'testpwd' in value:
-                                masked_value = value.replace('testpwd', '***')
-                            else:
-                                masked_value = '***'
+                        if isinstance(full_key, str) and any(sensitive in full_key.lower() for sensitive in ['password', 'secret', 'key', 'uri']):
+                            masked_value = '*' * len(value) if value else 'None'
                         else:
                             masked_value = value
                         print(f"  {{key}}: {{masked_value}}")
@@ -462,12 +493,16 @@ except Exception as e:
         with open(script_file, "w") as f:
             f.write(config_script)
 
-        # Run the script
+        # Run the script with instance-specific environment
+        env = os.environ.copy()
+        env.update(self.get_database_env_vars())
+
         result = subprocess.run(
             [sys.executable, str(script_file)],
             cwd=self.project_root,
             capture_output=True,
             text=True,
+            env=env,
         )
 
         if result.returncode == 0:
@@ -597,10 +632,10 @@ except Exception as e:
             _deriver_process = self.start_deriver()
 
             print("\n" + "=" * 60)
-            print("🎉 Honcho is running!")
+            print(f"🎉 Honcho Instance {self.instance_id} is running!")
             print(f"📊 Database: localhost:{self.db_port}")
-            print("🌐 API Server: http://localhost:8000")
-            print("📚 API Docs: http://localhost:8000/docs")
+            print(f"🌐 API Server: http://localhost:{self.api_port}")
+            print(f"📚 API Docs: http://localhost:{self.api_port}/docs")
             print("🔄 Deriver: Running")
             print("=" * 60)
             print("Press Ctrl+C to stop all services")
@@ -632,6 +667,164 @@ except Exception as e:
             self.cleanup()
 
 
+class HonchoHarnessPool:
+    """
+    Manages a pool of HonchoHarness instances for parallel testing.
+    """
+
+    def __init__(
+        self, pool_size: int, base_db_port: int, base_api_port: int, project_root: Path
+    ) -> None:
+        """
+        Initialize a pool of Honcho harnesses.
+
+        Args:
+            pool_size: Number of Honcho instances to create
+            base_db_port: Base port for PostgreSQL databases (each instance gets base + instance_id)
+            base_api_port: Base port for FastAPI servers (each instance gets base + instance_id)
+            project_root: Path to the Honcho project root
+        """
+        self.pool_size: int = pool_size
+        self.base_db_port: int = base_db_port
+        self.base_api_port: int = base_api_port
+        self.project_root: Path = project_root
+        self.harnesses: list[HonchoHarness] = []
+
+        # Create all harness instances
+        for i in range(pool_size):
+            harness = HonchoHarness(
+                db_port=base_db_port + i,
+                api_port=base_api_port + i,
+                project_root=project_root,
+                instance_id=i,
+            )
+            self.harnesses.append(harness)
+
+    def run(self) -> None:
+        """
+        Run all Honcho harnesses in the pool.
+        """
+        try:
+            print(f"\n{'=' * 80}")
+            print(f"Starting Honcho Pool with {self.pool_size} instances")
+            print(f"{'=' * 80}\n")
+
+            # Backup existing .env and copy test .env file
+            # This provides API keys while we override DB settings via environment variables
+            if self.harnesses:
+                self.harnesses[0].backup_env_file()
+                # Copy .env file from tests/bench to get API keys
+                shutil.copy(
+                    self.project_root / "tests" / "bench" / ".env",
+                    self.project_root / ".env",
+                )
+
+                # Remove DB_CONNECTION_URI from .env to ensure env vars take precedence
+                env_file = self.project_root / ".env"
+                if env_file.exists():
+                    with open(env_file) as f:
+                        lines = f.readlines()
+                    with open(env_file, "w") as f:
+                        for line in lines:
+                            # Skip DB_CONNECTION_URI lines
+                            if not line.strip().startswith("DB_CONNECTION_URI"):
+                                f.write(line)
+
+            # Start all harnesses
+            for harness in self.harnesses:
+                print(f"\n--- Starting Instance {harness.instance_id} ---")
+
+                # Create temporary docker-compose.yml
+                harness.create_temp_docker_compose()
+
+                # Create an empty .env file in temp directory
+                if harness.temp_dir and harness.temp_dir.exists():
+                    (harness.temp_dir / ".env").touch()
+                else:
+                    raise Exception(
+                        f"Temporary directory does not exist for instance {harness.instance_id}"
+                    )
+
+                # Start database
+                harness.start_database()
+
+                # Wait for database to be ready
+                if not harness.wait_for_database():
+                    print(
+                        f"Database failed to start for instance {harness.instance_id}. Exiting."
+                    )
+                    sys.exit(1)
+
+                # Provision database
+                harness.provision_database()
+
+                # Verify database is empty
+                harness.verify_empty_database()
+
+                # Start FastAPI server
+                harness.start_fastapi_server()
+
+                # Wait for FastAPI to be ready
+                if not harness.wait_for_fastapi():
+                    print(
+                        f"FastAPI server failed to start for instance {harness.instance_id}. Exiting."
+                    )
+                    sys.exit(1)
+
+                # Start deriver
+                harness.start_deriver()
+
+                # Start output streaming threads
+                for name, process in harness.processes:
+                    thread = threading.Thread(
+                        target=harness.stream_process_output,
+                        args=(name, process),
+                        daemon=True,
+                    )
+                    thread.start()
+                    harness.output_threads.append(thread)
+
+                print(f"✅ Instance {harness.instance_id} is ready!")
+
+            # Print summary
+            print(f"\n{'=' * 80}")
+            print(f"🎉 All {self.pool_size} Honcho instances are running!")
+            print(f"{'=' * 80}")
+            for harness in self.harnesses:
+                print(f"\nInstance {harness.instance_id}:")
+                print(f"  📊 Database: localhost:{harness.db_port}")
+                print(f"  🌐 API Server: http://localhost:{harness.api_port}")
+                print(f"  📚 API Docs: http://localhost:{harness.api_port}/docs")
+            print(f"\n{'=' * 80}")
+            print("Press Ctrl+C to stop all services")
+            print(f"{'=' * 80}\n")
+
+            # Monitor all processes for unexpected termination
+            while True:
+                for harness in self.harnesses:
+                    for name, process in harness.processes:
+                        if process.poll() is not None:
+                            print(f"❌ {name} has stopped unexpectedly")
+                            return
+                time.sleep(1)
+
+        except KeyboardInterrupt:
+            print("\n🛑 Received interrupt signal")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+        finally:
+            self.cleanup()
+
+    def cleanup(self) -> None:
+        """
+        Clean up all harnesses in the pool.
+        """
+        print("\nCleaning up pool...")
+        for harness in self.harnesses:
+            print(f"\n--- Cleaning up Instance {harness.instance_id} ---")
+            harness.cleanup()
+
+
 def main():
     """
     Main entry point for the Honcho harness.
@@ -642,6 +835,7 @@ def main():
         epilog="""
 Examples:
   %(prog)s --port 5433                    # Run with database on port 5433
+  %(prog)s --pool-size 4                  # Run pool of 4 instances (ports 5433-5436, APIs 8000-8003)
   %(prog)s --port 5434 --project-root /path/to/honcho  # Custom project root
         """,
     )
@@ -650,7 +844,21 @@ Examples:
         "--port",
         type=int,
         default=5433,
-        help="Port for the PostgreSQL database (default: 5433)",
+        help="Base port for the PostgreSQL database (default: 5433)",
+    )
+
+    parser.add_argument(
+        "--api-port",
+        type=int,
+        default=8000,
+        help="Base port for the FastAPI server (default: 8000)",
+    )
+
+    parser.add_argument(
+        "--pool-size",
+        type=int,
+        default=1,
+        help="Number of Honcho instances to run in parallel (default: 1)",
     )
 
     parser.add_argument(
@@ -661,6 +869,11 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Validate pool size
+    if args.pool_size <= 0:
+        print(f"Error: Pool size must be positive, got {args.pool_size}")
+        sys.exit(1)
 
     # Validate project root
     if not (args.project_root / "src" / "main.py").exists():
@@ -682,9 +895,23 @@ Examples:
             print(f"Error: Required file {file_path} not found in {args.project_root}")
             sys.exit(1)
 
-    # Create and run the harness
-    harness = HonchoHarness(args.port, args.project_root)
-    harness.run()
+    # Create and run the harness or pool
+    if args.pool_size > 1:
+        pool = HonchoHarnessPool(
+            pool_size=args.pool_size,
+            base_db_port=args.port,
+            base_api_port=args.api_port,
+            project_root=args.project_root,
+        )
+        pool.run()
+    else:
+        harness = HonchoHarness(
+            db_port=args.port,
+            api_port=args.api_port,
+            project_root=args.project_root,
+            instance_id=0,
+        )
+        harness.run()
 
 
 if __name__ == "__main__":

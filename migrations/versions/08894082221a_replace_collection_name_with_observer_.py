@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from nanoid import generate as generate_nanoid
 from sqlalchemy import text
 
 from migrations.utils import column_exists, constraint_exists, fk_exists, index_exists
@@ -25,25 +26,47 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Replace collections.name and documents.collection_name with observer and observed fields."""
     schema = settings.DB.SCHEMA
-    inspector = sa.inspect(op.get_bind())
     connection = op.get_bind()
 
     # SESSION_NAME MIGRATION
-    # Replace NULL session_name values with empty strings and make column non-nullable
+    # Replace NULL session_name values with __global_observations__ and make column non-nullable
     # This only applies to documents table
 
-    # Update documents table
-    connection.execute(
+    inspector = sa.inspect(connection)
+
+    # query documents table to get ALL workspace_names that have documents without a session_name
+    workspace_names = connection.execute(
         text(
-            """
-            UPDATE documents
-            SET session_name = ''
-            WHERE session_name IS NULL
+            f"""
+            SELECT DISTINCT workspace_name FROM {schema}.documents WHERE session_name IS NULL
         """
         )
-    )
-    if column_exists("documents", "session_name", inspector):
-        op.alter_column("documents", "session_name", nullable=False, schema=schema)
+    ).fetchall()
+
+    if workspace_names and column_exists("sessions", "name", inspector):
+        # Create __global_observations__ session for EACH workspace that needs it
+        for (workspace_name,) in workspace_names:
+            session_id = generate_nanoid()
+            connection.execute(
+                text(
+                    f"""
+                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active) VALUES (:session_id, '__global_observations__', :workspace_name, true) ON CONFLICT DO NOTHING
+                    """
+                ),
+                {"session_id": session_id, "workspace_name": workspace_name},
+            )
+        # Update all documents with NULL session_name
+        connection.execute(
+            text(
+                f"""
+                UPDATE {schema}.documents
+                SET session_name = '__global_observations__'
+                WHERE session_name IS NULL
+            """
+            ),
+        )
+
+    op.alter_column("documents", "session_name", nullable=False, schema=schema)
 
     # COLLECTIONS TABLE
     # Step 1: Add new observer and observed columns to collections
@@ -64,17 +87,21 @@ def upgrade() -> None:
     # Step 2: Populate collections observer and observed from existing name field
     # The logic is:
     # - observer = peer_name (the exact peer ID)
-    # - If name is "global_representation", observed = peer_name
-    # - Otherwise, observed = name with the "observer_" prefix stripped
+    # - If name is "global_representation", observed = peer_name (self-observation)
+    # - If name starts with peer_name + "_", extract the observed part (pattern: observer_observed)
+    # - If name ends with "_" + peer_name, extract the first part (pattern: observed_observer)
+    # - Otherwise (legacy edge cases), observed = name itself
     connection.execute(
         text(
-            """
-            UPDATE collections
+            f"""
+            UPDATE {schema}.collections
             SET
                 observer = peer_name,
                 observed = CASE
                     WHEN name = 'global_representation' THEN peer_name
-                    ELSE substring(name from length(peer_name) + 2)
+                    WHEN name LIKE peer_name || '_%' THEN substring(name from length(peer_name) + 2)
+                    WHEN name LIKE '%_' || peer_name THEN substring(name from 1 for length(name) - length(peer_name) - 1)
+                    ELSE name
                 END
             WHERE observer IS NULL OR observed IS NULL
         """
@@ -108,18 +135,18 @@ def upgrade() -> None:
     while True:
         result = connection.execute(
             text(
-                """
+                f"""
                 WITH batch AS (
                     SELECT d.ctid
-                    FROM documents d
+                    FROM {schema}.documents d
                     WHERE d.observer IS NULL OR d.observed IS NULL
                     LIMIT :batch_size
                 )
-                UPDATE documents d
+                UPDATE {schema}.documents d
                 SET
                     observer = c.observer,
                     observed = c.observed
-                FROM collections c, batch
+                FROM {schema}.collections c, batch
                 WHERE d.ctid = batch.ctid
                     AND d.collection_name = c.name
                     AND d.peer_name = c.peer_name
@@ -329,8 +356,8 @@ def downgrade() -> None:
     # Step 2: Populate collections name from observer and observed
     connection.execute(
         text(
-            """
-            UPDATE collections
+            f"""
+            UPDATE {schema}.collections
             SET name = CASE
                 WHEN observer = observed THEN 'global_representation'
                 ELSE observer || '_' || observed
@@ -354,8 +381,8 @@ def downgrade() -> None:
     # Populate peer_name with observer value
     connection.execute(
         text(
-            """
-            UPDATE collections
+            f"""
+            UPDATE {schema}.collections
             SET peer_name = observer
             WHERE peer_name IS NULL
         """
@@ -391,8 +418,8 @@ def downgrade() -> None:
     # Step 5: Populate documents collection_name from observer and observed
     connection.execute(
         text(
-            """
-            UPDATE documents
+            f"""
+            UPDATE {schema}.documents
             SET collection_name = CASE
                 WHEN observer = observed THEN 'global_representation'
                 ELSE observer || '_' || observed
@@ -416,8 +443,8 @@ def downgrade() -> None:
     # Populate peer_name with observed value
     connection.execute(
         text(
-            """
-            UPDATE documents
+            f"""
+            UPDATE {schema}.documents
             SET peer_name = observed
             WHERE peer_name IS NULL
         """

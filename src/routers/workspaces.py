@@ -92,6 +92,19 @@ async def update_workspace(
     return honcho_workspace
 
 
+@router.delete(
+    "/{workspace_id}",
+    response_model=schemas.Workspace,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def delete_workspace(
+    workspace_id: str = Path(..., description="ID of the workspace to delete"),
+    db: AsyncSession = db,
+):
+    """Delete a Workspace"""
+    return await crud.delete_workspace(db, workspace_name=workspace_id)
+
+
 @router.post(
     "/{workspace_id}/search",
     response_model=list[schemas.Message],
