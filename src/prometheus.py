@@ -28,7 +28,7 @@ class NamespacedCounter(Counter):
 
     def labels(self, **kwargs: str) -> "NamespacedCounter":
         """Override labels to automatically appends namespace label"""
-        kwargs["namespace"] = settings.METRICS.NAMESPACE
+        kwargs["namespace"] = settings.METRICS.NAMESPACE or settings.NAMESPACE
         return super().labels(**kwargs)
 
 

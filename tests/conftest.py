@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis.aioredis as fakeredis
 import jwt
 import pytest
 import pytest_asyncio
@@ -26,6 +27,7 @@ from sqlalchemy_utils import (
 )
 
 from src import models
+from src.cache import client as cache_client
 from src.config import settings
 from src.db import Base
 from src.dependencies import get_db
@@ -162,6 +164,40 @@ async def db_session(db_engine: AsyncEngine):
     async with Session() as session:
         yield session
         await session.rollback()
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def fake_redis(monkeypatch: pytest.MonkeyPatch):
+    """Provide an isolated fakeredis client for each test."""
+
+    original_client = cache_client._client  # pyright: ignore[reportPrivateUsage]
+    original_enabled = settings.CACHE.ENABLED
+    original_url = settings.CACHE.URL
+
+    fake_client = fakeredis.FakeRedis(decode_responses=False)
+
+    def _fake_from_url(*_: Any, **__: Any):  # pyright: ignore[reportUnusedParameter]
+        return fake_client
+
+    monkeypatch.setattr(cache_client.redis, "from_url", _fake_from_url)  # pyright: ignore[reportPrivateLocalImportUsage]
+    monkeypatch.setattr("redis.asyncio.from_url", _fake_from_url)
+
+    settings.CACHE.ENABLED = original_enabled
+    cache_client._client = None  # pyright: ignore[reportPrivateUsage]
+
+    await fake_client.flushall()  # pyright: ignore[reportUnknownMemberType]
+    if original_enabled:
+        await cache_client.init_cache()
+
+    try:
+        yield fake_client
+    finally:
+        await cache_client.close_cache()
+        await fake_client.flushall()  # pyright: ignore[reportUnknownMemberType]
+        await fake_client.aclose()
+        cache_client._client = original_client  # pyright: ignore[reportPrivateUsage]
+        settings.CACHE.ENABLED = original_enabled
+        settings.CACHE.URL = original_url
 
 
 @pytest.fixture(scope="function")
@@ -491,6 +527,7 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
+        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
     ):
         yield

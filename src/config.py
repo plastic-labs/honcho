@@ -299,6 +299,7 @@ class CacheSettings(HonchoSettings):
 
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0"
+    NAMESPACE: str = "honcho"
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = 300
 
 
@@ -342,6 +343,8 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
+
+    NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overriden by service-level settings
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)

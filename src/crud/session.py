@@ -26,11 +26,15 @@ from .workspace import get_or_create_workspace
 logger = getLogger(__name__)
 
 
-_session_cache = ModelCache(ttl=settings.CACHE.DEFAULT_TTL_SECONDS)
+_session_cache = ModelCache(
+    ttl=settings.CACHE.DEFAULT_TTL_SECONDS, resource_type="session"
+)
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
-    return f"session:{workspace_name}:{session_name}"
+    return _session_cache.construct_cache_key(
+        workspace_name=workspace_name, session_name=session_name
+    )
 
 
 async def _attach_session(

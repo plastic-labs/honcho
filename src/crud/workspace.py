@@ -14,11 +14,13 @@ from src.utils.filter import apply_filter
 logger = getLogger(__name__)
 
 
-_workspace_cache = ModelCache(ttl=settings.CACHE.DEFAULT_TTL_SECONDS)
+_workspace_cache = ModelCache(
+    ttl=settings.CACHE.DEFAULT_TTL_SECONDS, resource_type="workspace"
+)
 
 
-def workspace_cache_key(name: str) -> str:
-    return f"workspace:name:{name}"
+def workspace_cache_key(workspace_name: str) -> str:
+    return _workspace_cache.construct_cache_key(workspace_name=workspace_name)
 
 
 async def _attach_workspace(
@@ -46,6 +48,7 @@ async def get_or_create_workspace(
     Raises:
         ConflictException: If we fail to get or create the workspace
     """
+
     if not workspace.name:
         raise ValueError("Workspace name must be provided")
 
@@ -75,6 +78,7 @@ async def get_or_create_workspace(
         db.add(honcho_workspace)
         await db.commit()
         await db.refresh(honcho_workspace)
+
         await _workspace_cache.set(cache_key, honcho_workspace)
         logger.debug("Workspace created successfully: %s", workspace.name)
         return honcho_workspace

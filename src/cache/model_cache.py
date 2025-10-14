@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
 
 from src.cache import client
+from src.config import settings
 
 T = TypeVar("T")
 
@@ -15,8 +16,14 @@ T = TypeVar("T")
 class ModelCache:
     """Wrapper for SQLAlchemy queries with Redis caching"""
 
-    def __init__(self, ttl: int = 300):
+    def __init__(
+        self,
+        resource_type: str,
+        ttl: int = 300,
+    ):
         self.ttl: int = ttl
+        self.namespace: str = settings.CACHE.NAMESPACE or settings.NAMESPACE
+        self.resource_type: str = resource_type
 
     async def get_or_fetch(
         self,
@@ -186,3 +193,46 @@ class ModelCache:
         if isinstance(value, bytes | bytearray):
             return value.decode("utf-8")
         return str(value)
+
+    def construct_cache_key(
+        self,
+        *,
+        workspace_name: str | None = None,
+        session_name: str | None = None,
+        peer_name: str | None = None,
+    ) -> str:
+        """
+        Construct a cache key for workspaces, sessions, or peers.
+
+        Args:
+            workspace_name (str, optional): The workspace name
+            session_name (str, optional): The session name
+            peer_name (str, optional): The peer name (for peers)
+
+        Returns:
+            str: The formatted cache key.
+
+        Raises:
+            ValueError: If required parameters are missing or invalid.
+        """
+
+        if self.resource_type == "workspace":
+            if not workspace_name:
+                raise ValueError("Must specify 'workspace_name' for workspace key")
+            return f"{self.namespace}:workspace:name:{workspace_name}"
+        elif self.resource_type == "session":
+            if not (workspace_name and session_name):
+                raise ValueError(
+                    "Must specify both 'workspace_name' and 'session_name' for session key"
+                )
+            return f"{self.namespace}:session:{workspace_name}:{session_name}"
+        elif self.resource_type == "peer":
+            if not (workspace_name and peer_name):
+                raise ValueError(
+                    "Must specify both 'workspace_name' and 'peer_name' for peer key"
+                )
+            return f"{self.namespace}:peer:{workspace_name}:{peer_name}"
+        else:
+            raise ValueError(
+                f"Unknown resource type '{self.resource_type}', must be one of: workspace, session, peer"
+            )
