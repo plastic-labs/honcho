@@ -46,11 +46,11 @@ services:
       timeout: 5s
       retries: 5
   redis:
-    image: redis:latest
+    image: redis:8.2
     ports:
       - 6379:6379
     volumes:
-      - ./data:/data
+      - ./redis-data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping"]
       interval: 5s
