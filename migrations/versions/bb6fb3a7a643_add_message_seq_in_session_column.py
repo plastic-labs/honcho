@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.utils import column_exists, constraint_exists, get_schema, index_exists
+from migrations.utils import column_exists, constraint_exists, get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "bb6fb3a7a643"
@@ -111,14 +111,6 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    if not index_exists("messages", "ix_messages_seq_in_session"):
-        op.create_index(
-            "ix_messages_seq_in_session",
-            "messages",
-            ["seq_in_session"],
-            schema=schema,
-        )
-
     if not constraint_exists("messages", "uq_messages_session_seq", "unique"):
         op.create_unique_constraint(
             "uq_messages_session_seq",
@@ -136,13 +128,6 @@ def downgrade() -> None:
             "uq_messages_session_seq",
             "messages",
             type_="unique",
-            schema=schema,
-        )
-
-    if index_exists("messages", "ix_messages_seq_in_session"):
-        op.drop_index(
-            "ix_messages_seq_in_session",
-            table_name="messages",
             schema=schema,
         )
 

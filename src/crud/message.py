@@ -78,7 +78,7 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
-    await db.execute(text(text="SET LOCAL lock_timeout = '5s'"))
+    await db.execute(text("SET LOCAL lock_timeout = '5s'"))
     await db.execute(
         text(
             "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
@@ -155,13 +155,12 @@ async def create_messages(
             if embedding_objects:
                 db.add_all(embedding_objects)
                 await db.commit()
-    except Exception as e:
+    except Exception:
         logger.exception(
-            "Failed to generate message embeddings for %s messages in workspace %s and session %s: %s",
+            "Failed to generate message embeddings for %s messages in workspace %s and session %s.",
             len(message_objects),
             workspace_name,
             session_name,
-            str(e),
         )
 
     return message_objects
@@ -306,8 +305,7 @@ async def get_message_seq_in_session(
         .where(models.Message.session_name == session_name)
         .where(models.Message.id == message_id)
     )
-    result = await db.execute(stmt)
-    seq = result.scalar()
+    seq: int | None = await db.scalar(stmt)
     return int(seq) if seq is not None else 0
 
 
