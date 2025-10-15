@@ -28,6 +28,7 @@ from src.dreamer.dream_scheduler import (
     set_dream_scheduler,
 )
 from src.models import QueueItem
+from src.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -68,15 +69,7 @@ class QueueManager:
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
-            sentry_sdk.init(
-                dsn=settings.SENTRY.DSN,
-                enable_tracing=True,
-                release=settings.SENTRY.RELEASE,
-                environment=settings.SENTRY.ENVIRONMENT,
-                traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
-                profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
-                integrations=[AsyncioIntegration()],
-            )
+            initialize_sentry(integrations=[AsyncioIntegration()])
 
     def add_task(self, task: asyncio.Task[None]) -> None:
         """Track a new task"""
