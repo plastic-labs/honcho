@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import sentry_sdk
+from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
 from src.config import settings
@@ -27,7 +28,7 @@ def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
 
     _, exc_value, _ = exc_info
     if isinstance(
-        exc_value, HonchoException | ValidationError
+        exc_value, HonchoException | ValidationError | RequestValidationError
     ):  # Filters out HonchoExceptions and ValidationErrors (typically coming from Pydantic)
         return None
 
@@ -44,6 +45,11 @@ def initialize_sentry(
     *,
     integrations: Sequence[Integration],
 ) -> None:
+    """Initialize Sentry SDK with project settings.
+
+    Args:
+        integrations: Sentry SDK integrations to enable (e.g., Starlette, FastAPI).
+    """
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
         enable_tracing=True,
