@@ -32,6 +32,7 @@ def initialize_sentry(
 
     Args:
         integrations: Sentry SDK integrations to enable (e.g., Starlette, FastAPI).
+        before_send: Optional event filter callback to suppress specific exceptions.
     """
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
