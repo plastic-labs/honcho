@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import sentry_sdk
 from pydantic import ValidationError
@@ -13,9 +13,7 @@ from src.exceptions import HonchoException
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
-
-
-_UNSET = object()
+    from sentry_sdk.integrations import Integration
 
 
 def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
@@ -44,7 +42,7 @@ def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
 # sentry_sdk.init(..., integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)])
 def initialize_sentry(
     *,
-    integrations: Sequence[Any],
+    integrations: Sequence[Integration],
 ) -> None:
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
