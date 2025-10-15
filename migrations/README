@@ -1,14 +1,1 @@
-Migration verification
-----------------------
-
-- Every migration ends by calling `verify_upgrade` / `verify_downgrade`. Add schema or data assertions there; lean on `MigrationVerifier` from `migrations.verification` to avoid repeating inspection logic.
-- Typical usage:
-
-  ```python
-  def verify_upgrade(verifier: MigrationVerifier) -> None:
-      verifier.assert_column_exists("messages", "seq_in_session", nullable=False)
-      verifier.assert_no_nulls("messages", "seq_in_session")
-  ```
-- Checks run automatically after each upgrade/downgrade when migrations execute online. Skip them by exporting `ALEMBIC_SKIP_VERIFICATION=1` or passing `alembic upgrade head -x skip_verification=true`.
-- Keep queries fast and targeted. Prefer indexed lookups or aggregate tests that operate on small result sets so verifications add minimal latency.
-- Offline runs always skip verification; tests that require a database connection must live in the normal Alembic execution path.
+Generic single-database configuration.

@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -7,7 +6,6 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool, text
 
-from migrations.verification import set_skip_verification
 from src.config import settings
 
 # Import your models
@@ -49,20 +47,6 @@ def get_url() -> str:
     return url
 
 
-def _as_bool(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.lower() in {"1", "true", "yes", "on"}
-
-
-def _compute_skip_verification() -> bool:
-    overrides = context.get_x_argument(as_dictionary=True)
-    skip_arg = overrides.get("skip_verification")
-    env_skip = os.getenv("ALEMBIC_SKIP_VERIFICATION")
-
-    return _as_bool(skip_arg) or _as_bool(env_skip)
-
-
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -76,7 +60,6 @@ def run_migrations_offline() -> None:
 
     """
     url = get_url()
-    set_skip_verification(True)
 
     context.configure(
         url=url,
@@ -105,8 +88,6 @@ def run_migrations_online() -> None:
 
     url = get_url()
     configuration["sqlalchemy.url"] = url
-
-    skip_verification = _compute_skip_verification()
 
     connectable = engine_from_config(
         configuration,
@@ -137,8 +118,6 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             version_table_schema=target_metadata.schema,
         )
-
-        set_skip_verification(skip_verification)
 
         with context.begin_transaction():
             context.run_migrations()
