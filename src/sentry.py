@@ -7,38 +7,14 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import sentry_sdk
-from fastapi.exceptions import RequestValidationError
-from pydantic import ValidationError
 
 from src.config import settings
-from src.exceptions import HonchoException
 
 if TYPE_CHECKING:
-    from sentry_sdk._types import Event, Hint
+    from sentry_sdk._types import EventProcessor
     from sentry_sdk.integrations import Integration
 
 logger = logging.getLogger(__name__)
-
-
-def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
-    """Filter out events raised from known non-actionable exceptions before Sentry sees them."""
-    if not hint:
-        return event
-
-    exc_info = hint.get("exc_info")
-    if not exc_info:
-        return event
-
-    _, exc_value, _ = exc_info
-    if isinstance(exc_value, HonchoException):
-        return None
-
-    # Filters out ValidationErrors and RequestValidationErrors (typically coming from Pydantic)
-    if isinstance(exc_value, ValidationError | RequestValidationError):
-        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
-        return None
-
-    return event
 
 
 # Sentry SDK's default behavior:
@@ -50,6 +26,7 @@ def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
 def initialize_sentry(
     *,
     integrations: Sequence[Integration],
+    before_send: EventProcessor | None = None,
 ) -> None:
     """Initialize Sentry SDK with project settings.
 
@@ -63,6 +40,6 @@ def initialize_sentry(
         environment=settings.SENTRY.ENVIRONMENT,
         traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
         profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
-        before_send=_filter_sentry_event,
+        before_send=before_send,
         integrations=integrations,
     )
