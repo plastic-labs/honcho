@@ -101,7 +101,7 @@ def upgrade() -> None:
                     WHEN name = 'global_representation' THEN peer_name
                     WHEN name LIKE peer_name || '_%' THEN substring(name from length(peer_name) + 2)
                     WHEN name LIKE '%_' || peer_name THEN substring(name from 1 for length(name) - length(peer_name) - 1)
-                    ELSE name
+                    ELSE peer_name
                 END
             WHERE observer IS NULL OR observed IS NULL
         """

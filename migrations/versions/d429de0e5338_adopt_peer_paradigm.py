@@ -266,6 +266,7 @@ def update_peers_table(schema: str, inspector) -> None:
     )
 
     op.drop_column("peers", "app_id", schema=schema)
+    op.alter_column("peers", "workspace_name", nullable=False, schema=schema)
 
 
 def update_sessions_table(schema: str, inspector) -> None:
@@ -304,6 +305,7 @@ def update_sessions_table(schema: str, inspector) -> None:
             f"UPDATE {schema}.sessions SET workspace_name = workspaces.name FROM {schema}.workspaces WHERE sessions.app_id = workspaces.id"
         )
     )
+    op.alter_column("sessions", "workspace_name", nullable=False, schema=schema)
 
     op.add_column(
         "sessions",
