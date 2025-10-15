@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
     from sentry_sdk.integrations import Integration
 
+logger = logging.getLogger(__name__)
+
 
 def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
     """Filter out events raised from known non-actionable exceptions before Sentry sees them."""
@@ -27,9 +30,12 @@ def _filter_sentry_event(event: Event, hint: Hint | None) -> Event | None:
         return event
 
     _, exc_value, _ = exc_info
-    if isinstance(
-        exc_value, HonchoException | ValidationError | RequestValidationError
-    ):  # Filters out HonchoExceptions and ValidationErrors (typically coming from Pydantic)
+    if isinstance(exc_value, HonchoException):
+        return None
+
+    # Filters out ValidationErrors and RequestValidationErrors (typically coming from Pydantic)
+    if isinstance(exc_value, ValidationError | RequestValidationError):
+        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
         return None
 
     return event
