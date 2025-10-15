@@ -5,9 +5,14 @@ icon: "brain"
 sidebarTitle: "Overview"
 ---
 
-Honcho is an AI-native memory library for building agents with [state-of-the-art](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR) memory.
+Honcho is an AI-native memory library for building agents with
+[state-of-the-art](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR)
+long-term memory.
 
-It then goes beyond basic memory by reasoning about the stored data
+Agents using Honcho have perfect recall with a wide variety of tools to traverse
+the history of an agent and get the exact context they need when they need it.
+
+It then goes beyond basic memory by reasoning about the stored messages
 to expand the latent information available to your agent. Agents using Honcho
 will understand who they are, who they are interacting with, what happened, and
 when it happened — all without you having to think about it.
@@ -24,12 +29,13 @@ Use it to build
 # Start simple - just add messages
 session.add_messages([alice.message("I learn best with examples")])
 
-# Get powerful - query user psychology
+# Honcho will automatically reason about the message to generate insights about
+# Alice
+
+# Get insights by chatting with the agent
 insight = peer.chat("How should I explain this concept?")
 # > "This user learns best through concrete examples..."
 ```
-
-Your agents evolve from goldfish to counselor, on the same infrastructure. That's Honcho.
 
 Designed for developers and agents alike:
 - **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/architecture#dialectic-api) and let agents backchannel
@@ -40,27 +46,56 @@ Designed for developers and agents alike:
 
 ## How It Works
 
-### Storage
+<Accordion title="High Level Diagram">
+<Frame>
+<img src="/images/overview/honcho-overview.svg" alt="High Level Honcho Diagram" />
+    </Frame>
 
-Developers use Honcho to store information about their users and application via
-two integrated layers:
+</Accordion>
 
-**Memory Layer**: Captures all user interactions - messages, preferences, and
-behavioral patterns - in a peer-centric data model that scales from individual
-conversations to complex multi-agent scenarios. This also queues up messages for
-the reasoning layer to process.
 
-**Reasoning Layer**: Continuously analyzes stored interactions to improve the
-memories and representation of each `Peer` in the system.
+At a high level Honcho works very simply:
 
-### Retrieval
+1. Store messages sent by users and agents in Honcho
+2. Honcho reasons about the messages to generate insights about each entity in
+the system
+3. At runtime your agents can leverage insights from Honcho to get the exact
+context they need
 
-Once data is stored and generated within Honcho, the API exposes several
-different ways to retrieve and use those insights.
+There are several API endpoints to leverage the memory & insights in Honcho.
 
-**[Dialectic API](/v2/guides/dialectic-endpoint)**: This is the flagship
-endpoint that allows developers chat with Honcho about any aspect of each user
-in your system to get dynamic, in-context actionable insights.
+### Get Context
+
+This is the easiest way to leverage Honcho. simply call get context and get the
+most relevant information for your conversation. This endpoint is highly
+customizable so you can specify
+
+- A number of tokens you want
+- An option to include summaries of the conversation
+- An option to get a profile of a specific user (Peer Card & Representation)
+
+### Search
+
+This endpoint lets you search across Honcho for relevant messages either using a
+hybrid search strategy that combines text search and cosine similarity.
+
+You can optionally scope the endpoint to a specific workspace, peer, or session.
+
+### Working Representation
+
+This endpoint gives you a snapshot of a user or what we call a
+**Representation**. Essentially, a list of explicit and deductive facts about
+the user that are relevant to the current conversation.
+
+Plug this into your prompt to get a quick overview of the user.
+
+### Dialectic API
+
+This endpoint lets you chat with Honcho about any entity in your system. Honcho
+will leverage what it has remembered and learned about the entity to provide in-context actionable insights.
+
+This comes in handy when you want your agent to back-channel with Honcho to
+change it's behavior at runtime.
 
 Example Queries
 - "What's the best way to explain technical concepts to this user?"
@@ -69,32 +104,6 @@ Example Queries
 - "How does this user prefer to receive feedback?"
 - "What are this user's core values based on our conversations?"
 
-**[Get Context](/v2/guides/get-context)**: This endpoint abstracts context window
-constraints and continuously retrieves the most relevant and recent data from a
-conversation. Provide a token budget and Honcho will return a combination of
-summaries and messages that provide session context. Use this for creating
-long-running conversations. We crafted our summaries to provide the most
-[coverage of a session possible](../core-concepts/summarizer).
-
-**[Search](/v2/guides/search)**: This endpoint allows you to search across Honcho
-for relevant messages either at the workspace, peer, or session level. This
-endpoint uses a hybrid search strategy that combines text search and cosine
-similarity.
-
-**[Working Representations](/v2/guides/working-rep)**: Get a cached, snapshot
-of a user in the context of a session. Instead of waiting for an LLM to
-synthesize an in-context response via the Dialectic endpoint, use this to get
-recent insights you can plug into your context window.
-
-## Ideal For
-
-**Personalized AI assistants** that need to understand individual psychology, not just remember conversations.
-
-**Customer-facing agents** that must adapt their approach based on user communication preferences and emotional context.
-
-**Multi-agent systems** where AI needs to understand human collaborators' working styles and decision-making patterns.
-
-**NPCs** where you want autonomous agents with a rich and deep personality that isn't the average sycophantic llm
 
 ## Getting Started
 
