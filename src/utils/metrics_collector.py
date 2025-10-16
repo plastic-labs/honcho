@@ -6,13 +6,114 @@ metrics from deriver and dialectic operations during benchmarking.
 """
 
 import json
+import logging
 import statistics
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from typing_extensions import TypedDict
 
 from src.config import settings
+from src.utils.representation import Representation
+
+logger = logging.getLogger(__name__)
+
+
+def save_trace_to_file(
+    provider: str,
+    model: str,
+    max_tokens: int,
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime,
+    working_representation: Representation,
+    history: str,
+    new_turns: list[str],
+    prompt: str,
+    response: str,
+    thinking: str | None,
+) -> None:
+    """
+    Save the critical analysis call inputs and prompt to trace.jsonl file.
+    Uses JSONL format (one JSON object per line) for efficient appending.
+    Use convert_trace_to_json() to convert to a proper JSON array format.
+    """
+    trace_file = Path("trace.jsonl")
+
+    trace_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "provider": provider,
+        "model": model,
+        "max_tokens": max_tokens,
+        "peer_id": peer_id,
+        "peer_card": peer_card,
+        "message_created_at": message_created_at.isoformat(),
+        "working_representation": {
+            "explicit": [
+                {
+                    "content": obs.content,
+                    "created_at": obs.created_at.isoformat(),
+                    "session_name": obs.session_name,
+                }
+                for obs in working_representation.explicit
+            ],
+            "deductive": [
+                {
+                    "conclusion": obs.conclusion,
+                    "premises": obs.premises,
+                    "created_at": obs.created_at.isoformat(),
+                    "session_name": obs.session_name,
+                }
+                for obs in working_representation.deductive
+            ],
+        },
+        "history": history,
+        "new_turns": new_turns,
+        "prompt": prompt,
+        "response": response,
+        "thinking": thinking,
+    }
+
+    try:
+        with open(trace_file, "a") as f:
+            f.write(json.dumps(trace_data) + "\n")
+        logger.debug("Saved trace to %s", trace_file)
+    except Exception as e:
+        logger.warning("Failed to save trace to file: %s", e)
+
+
+def convert_trace_to_json(
+    input_file: str = "trace.jsonl", output_file: str = "trace.json"
+) -> None:
+    """
+    Convert trace.jsonl to a proper JSON array format in trace.json.
+    This should be run after data collection is complete.
+    """
+    input_path = Path(input_file)
+    output_path = Path(output_file)
+
+    if not input_path.exists():
+        logger.warning("Trace file %s does not exist", input_file)
+        return
+
+    try:
+        traces: list[dict[str, Any]] = []
+        with open(input_path) as f:
+            for line in f:
+                if line.strip():
+                    traces.append(json.loads(line))
+
+        with open(output_path, "w") as f:
+            json.dump(traces, f, indent=2)
+
+        logger.info(
+            "Converted %d traces from %s to %s", len(traces), input_file, output_file
+        )
+        # delete the input file
+        input_path.unlink()
+    except Exception as e:
+        logger.error("Failed to convert trace file: %s", e)
 
 
 class MetricStats(TypedDict):

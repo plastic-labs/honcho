@@ -1,4 +1,5 @@
 import datetime
+import json
 import logging
 import time
 
@@ -19,6 +20,7 @@ from src.utils.logging import (
     log_performance_metrics,
     # log_representation,
 )
+from src.utils.metrics_collector import save_trace_to_file
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import estimate_tokens
@@ -34,6 +36,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
+
+MAKE_LOCAL_TRACE = settings.COLLECT_METRICS_LOCAL
 
 
 async def critical_analysis_call(
@@ -70,6 +74,23 @@ async def critical_analysis_call(
         enable_retry=True,
         retry_attempts=3,
     )
+
+    if MAKE_LOCAL_TRACE:
+        save_trace_to_file(
+            provider=settings.DERIVER.PROVIDER,
+            model=settings.DERIVER.MODEL,
+            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+            or settings.LLM.DEFAULT_MAX_TOKENS,
+            peer_id=peer_id,
+            peer_card=peer_card,
+            message_created_at=message_created_at,
+            working_representation=working_representation,
+            history=history,
+            new_turns=new_turns,
+            prompt=prompt,
+            response=json.dumps(response.content.model_dump()),
+            thinking=response.think_trace,
+        )
 
     prometheus.DERIVER_TOKENS_PROCESSED.labels(
         task_type="representation",
