@@ -10,9 +10,9 @@ Honcho is an AI-native memory library for building agents with
 long-term memory.
 
 Agents using Honcho have perfect recall with a wide variety of tools to traverse
-the history of an agent and get the exact context they need when they need it.
+their history and get the exact context they need when they need it.
 
-It then goes beyond basic memory by reasoning about the stored messages
+It then goes beyond basic memory by reasoning about the stored history
 to expand the latent information available to your agent. Agents using Honcho
 will understand who they are, who they are interacting with, what happened, and
 when it happened — all without you having to think about it.
@@ -26,11 +26,10 @@ Use it to build
 
 
 ```python
-# Start simple - just add messages
+# Start simple by just adding messages
 session.add_messages([alice.message("I learn best with examples")])
 
-# Honcho will automatically reason about the message to generate insights about
-# Alice
+# Honcho will automatically reason about the message to generate insights about Alice
 
 # Get insights by chatting with the agent
 insight = peer.chat("How should I explain this concept?")
@@ -38,21 +37,19 @@ insight = peer.chat("How should I explain this concept?")
 ```
 
 Designed for developers and agents alike:
-- **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/architecture#dialectic-api) and let agents backchannel
-- **Automatic Context Management**: Smart summarization that respects token limits
-- **Native multi-agent support**: Break out of User/Assistant Paradigms and build complex multi-agent systems
+- **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/architecture#dialectic-api) to get insights about your users and agents
+- **Automatic Context Management**: Smart conversation summaries to have infinite chates
+- **Native multi-agent support**: Sessions can natively have as many participants as you need
 - **Agent-first interfaces**: MCP connections and APIs designed for agents to consume and use as tools
 - **Provider Agnostic**: Works with any LLM or Agent Framework
 
 ## How It Works
 
 <Accordion title="High Level Diagram">
-<Frame>
-<img src="/images/overview/honcho-overview.svg" alt="High Level Honcho Diagram" />
-    </Frame>
-
+  <Frame>
+    <img src="/images/overview/honcho-overview.svg" alt="High Level Honcho Diagram" />
+  </Frame>
 </Accordion>
-
 
 At a high level Honcho works very simply:
 
@@ -68,7 +65,7 @@ There are several API endpoints to leverage the memory & insights in Honcho.
 
 This is the easiest way to leverage Honcho. simply call get context and get the
 most relevant information for your conversation. This endpoint is highly
-customizable so you can specify
+customizable so you can specify parameters such as:
 
 - A number of tokens you want
 - An option to include summaries of the conversation
@@ -76,8 +73,8 @@ customizable so you can specify
 
 ### Search
 
-This endpoint lets you search across Honcho for relevant messages either using a
-hybrid search strategy that combines text search and cosine similarity.
+This endpoint lets you search across Honcho for relevant messages using a
+hybrid search strategy that combines full-text and semantic search.
 
 You can optionally scope the endpoint to a specific workspace, peer, or session.
 
@@ -97,7 +94,7 @@ will leverage what it has remembered and learned about the entity to provide in-
 This comes in handy when you want your agent to back-channel with Honcho to
 change it's behavior at runtime.
 
-Example Queries
+Example Queries:
 - "What's the best way to explain technical concepts to this user?"
 - "Is this user more task-oriented or relationship-oriented?"
 - "What time of day is this user most engaged?"
@@ -112,7 +109,7 @@ Ready to integrate Honcho into your application?
 <CardGroup cols={2}> <Card title="Quickstart Guide" icon="rocket"
 href="/v2/documentation/introduction/quickstart"> Get up and running with
 Honcho in minutes </Card> <Card title="Core Concepts" icon="brain"
-href="/v2/documentation/core-concepts/glossary"> Understand Honcho's
+href="/v2/documentation/core-concepts/architecture"> Understand Honcho's
 fundamental concepts </Card> </CardGroup>
 
 ## Community & Support
