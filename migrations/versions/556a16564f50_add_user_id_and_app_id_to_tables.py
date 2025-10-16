@@ -435,18 +435,18 @@ def downgrade():
     op.alter_column("documents", "user_id", nullable=True, schema=schema)
     print("Made app_id and user_id nullable again for documents table")
 
-    # Drop foreign key constraints
-    try:
+    # Drop foreign key constraints (guarded)
+    if fk_exists("documents", "documents_user_id_fkey", inspector):
         op.drop_constraint("documents_user_id_fkey", "documents", schema=schema)
         print("Dropped user_id foreign key for documents table")
-    except Exception as e:
-        print(f"Error dropping user_id foreign key for documents table: {e}")
+    else:
+        print("user_id foreign key for documents table does not exist; skipping drop")
 
-    try:
+    if fk_exists("documents", "documents_app_id_fkey", inspector):
         op.drop_constraint("documents_app_id_fkey", "documents", schema=schema)
         print("Dropped app_id foreign key for documents table")
-    except Exception as e:
-        print(f"Error dropping app_id foreign key for documents table: {e}")
+    else:
+        print("app_id foreign key for documents table does not exist; skipping drop")
 
     # Drop the columns
     op.drop_column("documents", "user_id", schema=schema)
@@ -464,12 +464,12 @@ def downgrade():
     op.alter_column("collections", "app_id", nullable=True, schema=schema)
     print("Made app_id nullable again for collections table")
 
-    # Drop foreign key constraint
-    try:
+    # Drop foreign key constraint (guarded)
+    if fk_exists("collections", "collections_app_id_fkey", inspector):
         op.drop_constraint("collections_app_id_fkey", "collections", schema=schema)
         print("Dropped app_id foreign key for collections table")
-    except Exception as e:
-        print(f"Error dropping app_id foreign key for collections table: {e}")
+    else:
+        print("app_id foreign key for collections table does not exist; skipping drop")
 
     # Drop the column
     op.drop_column("collections", "app_id", schema=schema)
@@ -484,20 +484,26 @@ def downgrade():
         )
         print("Dropped index ix_metamessages_app_id")
 
-    # Make app_id nullable again
-    op.alter_column("metamessages", "app_id", nullable=True, schema=schema)
-    print("Made app_id nullable again for metamessages table")
+    # Make app_id nullable again (only if column exists)
+    if column_exists("metamessages", "app_id", inspector):
+        op.alter_column("metamessages", "app_id", nullable=True, schema=schema)
+        print("Made app_id nullable again for metamessages table")
+    else:
+        print("metamessages.app_id column does not exist; skipping alter nullable")
 
-    # Drop foreign key constraint
-    try:
+    # Drop foreign key constraint (guarded)
+    if fk_exists("metamessages", "metamessages_app_id_fkey", inspector):
         op.drop_constraint("metamessages_app_id_fkey", "metamessages", schema=schema)
         print("Dropped app_id foreign key for metamessages table")
-    except Exception as e:
-        print(f"Error dropping app_id foreign key for metamessages table: {e}")
+    else:
+        print("app_id foreign key for metamessages table does not exist; skipping drop")
 
-    # Drop the column
-    op.drop_column("metamessages", "app_id", schema=schema)
-    print("Dropped app_id column from metamessages table")
+    # Drop the column (only if present)
+    if column_exists("metamessages", "app_id", inspector):
+        op.drop_column("metamessages", "app_id", schema=schema)
+        print("Dropped app_id column from metamessages table")
+    else:
+        print("metamessages.app_id column does not exist; skipping drop column")
 
     # 2. Messages table
 
@@ -514,18 +520,18 @@ def downgrade():
     op.alter_column("messages", "user_id", nullable=True, schema=schema)
     print("Made app_id and user_id nullable again for messages table")
 
-    # Drop foreign key constraints
-    try:
+    # Drop foreign key constraints (guarded)
+    if fk_exists("messages", "messages_user_id_fkey", inspector):
         op.drop_constraint("messages_user_id_fkey", "messages", schema=schema)
         print("Dropped user_id foreign key for messages table")
-    except Exception as e:
-        print(f"Error dropping user_id foreign key for messages table: {e}")
+    else:
+        print("user_id foreign key for messages table does not exist; skipping drop")
 
-    try:
+    if fk_exists("messages", "messages_app_id_fkey", inspector):
         op.drop_constraint("messages_app_id_fkey", "messages", schema=schema)
         print("Dropped app_id foreign key for messages table")
-    except Exception as e:
-        print(f"Error dropping app_id foreign key for messages table: {e}")
+    else:
+        print("app_id foreign key for messages table does not exist; skipping drop")
 
     # Drop the columns
     op.drop_column("messages", "user_id", schema=schema)
@@ -543,12 +549,12 @@ def downgrade():
     op.alter_column("sessions", "app_id", nullable=True, schema=schema)
     print("Made app_id nullable again for sessions table")
 
-    # Drop foreign key constraint
-    try:
+    # Drop foreign key constraint (guarded)
+    if fk_exists("sessions", "sessions_app_id_fkey", inspector):
         op.drop_constraint("sessions_app_id_fkey", "sessions", schema=schema)
         print("Dropped app_id foreign key for sessions table")
-    except Exception as e:
-        print(f"Error dropping app_id foreign key for sessions table: {e}")
+    else:
+        print("app_id foreign key for sessions table does not exist; skipping drop")
 
     # Drop the column
     op.drop_column("sessions", "app_id", schema=schema)

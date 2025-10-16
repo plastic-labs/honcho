@@ -183,3 +183,46 @@ def downgrade() -> None:
 
     if column_exists("active_queue_sessions", "work_unit_data", inspector):
         op.drop_column("active_queue_sessions", "work_unit_data", schema=schema)
+
+    # Re-add columns to active_queue_sessions
+    if not column_exists("active_queue_sessions", "session_id", inspector):
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("session_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+
+    if not column_exists("active_queue_sessions", "sender_name", inspector):
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("sender_name", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+
+    if not column_exists("active_queue_sessions", "target_name", inspector):
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("target_name", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+
+    if not column_exists("active_queue_sessions", "task_type", inspector):
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("task_type", sa.TEXT(), nullable=False),
+            schema=schema,
+        )
+
+    # Re-add unique constraint
+    if not constraint_exists(
+        "active_queue_sessions",
+        "unique_active_queue_session",
+        "unique",
+        inspector,
+    ):
+        op.create_unique_constraint(
+            "unique_active_queue_session",
+            "active_queue_sessions",
+            ["session_id", "sender_name", "target_name", "task_type"],
+            schema=schema,
+        )
