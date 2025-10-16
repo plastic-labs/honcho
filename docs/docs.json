@@ -34,7 +34,7 @@
                 "group": "Core Concepts",
                 "pages": [
                   "v2/documentation/core-concepts/architecture",
-                  "v2/documentation/core-concepts/features/messages-and-memories",
+                  "v2/documentation/core-concepts/features/storing-data",
                   "v2/documentation/core-concepts/features/dialectic-endpoint",
                   "v2/documentation/core-concepts/features/get-context",
                   "v2/documentation/core-concepts/features/search",
@@ -43,7 +43,7 @@
                   "v2/documentation/core-concepts/features/using-filters",
                   "v2/documentation/core-concepts/features/file-uploads",
                   "v2/documentation/core-concepts/features/queue-status",
-                  "v2/documentation/core-concepts/features/local-vs-global-representations",
+                  "v2/documentation/core-concepts/features/local-vs-global",
                   "v2/documentation/core-concepts/configuration",
                   "v2/documentation/core-concepts/summarizer",
                   "v2/documentation/core-concepts/glossary"
