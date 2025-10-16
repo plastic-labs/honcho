@@ -7,6 +7,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from pytest_alembic.runner import MigrationContext
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import URL
@@ -25,7 +26,7 @@ ALEMBIC_TEST_DB_URL: URL = CONNECTION_URI.set(database="alembic_migration_tests"
 
 @pytest.fixture(scope="session")
 def alembic_database() -> Generator[str, None, None]:
-    """Provision a dedicated database for Alembic verification tests."""
+    """Provision a dedicated DB for Alembic verification tests."""
 
     if database_exists(ALEMBIC_TEST_DB_URL):
         drop_database(ALEMBIC_TEST_DB_URL)  # start fresh
@@ -80,3 +81,15 @@ def alembic_engine(alembic_database: str) -> Generator[Engine, None, None]:
         yield engine
     finally:
         engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def reset_database_between_tests(
+    alembic_runner: MigrationContext,
+    alembic_engine: Engine,  # pyright: ignore[reportUnusedParameter]
+) -> Generator[None, None, None]:
+    """Ensure each test starts and ends from a clean base migration state."""
+
+    alembic_runner.migrate_down_to("base")  # pyright: ignore[reportUnknownMemberType]
+    yield
+    alembic_runner.migrate_down_to("base")  # pyright: ignore[reportUnknownMemberType]

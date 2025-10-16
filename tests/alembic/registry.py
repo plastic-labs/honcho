@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-from sqlalchemy.engine import Connection
 
 if TYPE_CHECKING:
     from tests.alembic.verifier import MigrationVerifier
 
 
-BeforeUpgradeHook = Callable[[Connection], None]
+BeforeUpgradeHook = Callable[["MigrationVerifier"], None]
 AfterUpgradeHook = Callable[["MigrationVerifier"], None]
 
 
@@ -20,8 +18,8 @@ AfterUpgradeHook = Callable[["MigrationVerifier"], None]
 class RevisionHooks:
     """Container for lifecycle hooks tied to a revision."""
 
-    before_upgrade: list[BeforeUpgradeHook] = field(default_factory=list)
-    after_upgrade: list[AfterUpgradeHook] = field(default_factory=list)
+    before_upgrade: BeforeUpgradeHook | None = None
+    after_upgrade: AfterUpgradeHook | None = None
 
 
 _REGISTRY: dict[str, RevisionHooks] = {}
@@ -34,7 +32,11 @@ def register_before_upgrade(
 
     def decorator(func: BeforeUpgradeHook) -> BeforeUpgradeHook:
         hooks = _REGISTRY.setdefault(revision, RevisionHooks())
-        hooks.before_upgrade.append(func)
+        if hooks.before_upgrade is not None:
+            raise ValueError(
+                f"before_upgrade hook already registered for revision {revision}"
+            )
+        hooks.before_upgrade = func
         return func
 
     return decorator
@@ -47,7 +49,11 @@ def register_after_upgrade(
 
     def decorator(func: AfterUpgradeHook) -> AfterUpgradeHook:
         hooks = _REGISTRY.setdefault(revision, RevisionHooks())
-        hooks.after_upgrade.append(func)
+        if hooks.after_upgrade is not None:
+            raise ValueError(
+                f"after_upgrade hook already registered for revision {revision}"
+            )
+        hooks.after_upgrade = func
         return func
 
     return decorator

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.alembic.registry import register_after_upgrade
+from tests.alembic.registry import register_after_upgrade, register_before_upgrade
 from tests.alembic.verifier import MigrationVerifier
 
 _INDEXES = (
@@ -13,8 +13,11 @@ _INDEXES = (
 )
 
 
+@register_before_upgrade("c3828084f472")
+def prepare_read_indexes(verifier: MigrationVerifier) -> None:
+    verifier.assert_indexes_not_exist(_INDEXES)
+
+
 @register_after_upgrade("c3828084f472")
 def verify_read_indexes(verifier: MigrationVerifier) -> None:
-    """Ensure the read-optimised indexes exist post-migration."""
-
     verifier.assert_indexes_exist(_INDEXES)
