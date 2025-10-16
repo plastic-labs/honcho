@@ -50,10 +50,9 @@ def _test_single_revision(
     revision_order = list(REVISION_SEQUENCE)
 
     # Find the previous revision in the chain
+    revision_index = revision_order.index(revision)
     previous_revision = (
-        revision_order[revision_order.index(revision) - 1]
-        if revision_order.index(revision) > 0
-        else "base"
+        revision_order[revision_index - 1] if revision_index > 0 else "base"
     )
 
     # Migrate up to the previous revision

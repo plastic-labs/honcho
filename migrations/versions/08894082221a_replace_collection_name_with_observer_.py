@@ -452,6 +452,18 @@ def downgrade() -> None:
     # Make peer_name NOT NULL
     op.alter_column("documents", "peer_name", nullable=False, schema=schema)
 
+    # Recreate the foreign key constraint for peer_name on documents
+    if not fk_exists("documents", "documents_peer_name_workspace_name_fkey", inspector):
+        op.create_foreign_key(
+            "documents_peer_name_workspace_name_fkey",
+            "documents",
+            "peers",
+            ["peer_name", "workspace_name"],
+            ["name", "workspace_name"],
+            source_schema=schema,
+            referent_schema=schema,
+        )
+
     # Step 7: Add check constraint for name length on collections
     if not constraint_exists("collections", "name_length", "check", inspector):
         op.create_check_constraint(

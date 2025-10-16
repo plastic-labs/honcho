@@ -29,5 +29,11 @@ def prepare_initial(_verifier: MigrationVerifier) -> None:
 
 
 @register_after_upgrade("a1b2c3d4e5f6")
-def verify_initial_schema(_verifier: MigrationVerifier) -> None:
-    pass
+def verify_initial_schema(verifier: MigrationVerifier) -> None:
+    verifier.assert_table_exists("apps", exists=True)
+    verifier.assert_table_exists("users", exists=True)
+    verifier.assert_table_exists("sessions", exists=True)
+    verifier.assert_table_exists("messages", exists=True)
+    verifier.assert_table_exists("collections", exists=True)
+    verifier.assert_table_exists("documents", exists=True)
+    verifier.assert_table_exists("metamessages", exists=True)
