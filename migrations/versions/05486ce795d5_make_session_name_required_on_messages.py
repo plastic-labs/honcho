@@ -106,27 +106,49 @@ def upgrade() -> None:
                 f"Created session peer association for peer '{peer_name}' in default session '{default_session_name}'"
             )
 
-            # Step 4: Assign orphaned messages for this peer to the default session
-            op.execute(
-                sa.text(f"""
-                    UPDATE {schema}.messages
-                    SET session_name = '{default_session_name}'
-                    WHERE workspace_name = '{workspace_name}'
-                    AND peer_name = '{peer_name}'
-                    AND session_name IS NULL
-                """)
-            )
+            # Step 4: Assign orphaned messages for this peer to the default session in batches
+            batch_size = 5000
+            while True:
+                result = conn.execute(
+                    sa.text(f"""
+                        WITH batch AS (
+                            SELECT id
+                            FROM {schema}.messages
+                            WHERE workspace_name = '{workspace_name}'
+                            AND peer_name = '{peer_name}'
+                            AND session_name IS NULL
+                            LIMIT {batch_size}
+                        )
+                        UPDATE {schema}.messages
+                        SET session_name = '{default_session_name}'
+                        FROM batch
+                        WHERE messages.id = batch.id
+                    """)
+                )
+                if result.rowcount == 0:
+                    break
 
-            # Step 4.5: Handle orphaned message embeddings for this peer
-            op.execute(
-                sa.text(f"""
-                    UPDATE {schema}.message_embeddings
-                    SET session_name = '{default_session_name}'
-                    WHERE workspace_name = '{workspace_name}'
-                    AND peer_name = '{peer_name}'
-                    AND session_name IS NULL
-                """)
-            )
+            # Step 4.5: Handle orphaned message embeddings for this peer in batches
+            batch_size = 5000
+            while True:
+                result = conn.execute(
+                    sa.text(f"""
+                        WITH batch AS (
+                            SELECT id
+                            FROM {schema}.message_embeddings
+                            WHERE workspace_name = '{workspace_name}'
+                            AND peer_name = '{peer_name}'
+                            AND session_name IS NULL
+                            LIMIT {batch_size}
+                        )
+                        UPDATE {schema}.message_embeddings
+                        SET session_name = '{default_session_name}'
+                        FROM batch
+                        WHERE message_embeddings.id = batch.id
+                    """)
+                )
+                if result.rowcount == 0:
+                    break
 
     # Step 5: Sanity check that no orphaned messages remain
     remaining_orphaned = conn.execute(

@@ -55,16 +55,28 @@ def upgrade() -> None:
                 ),
                 {"session_id": session_id, "workspace_name": workspace_name},
             )
-        # Update all documents with NULL session_name
-        connection.execute(
-            text(
-                f"""
-                UPDATE {schema}.documents
-                SET session_name = '__global_observations__'
-                WHERE session_name IS NULL
-            """
-            ),
-        )
+        # Update all documents with NULL session_name in batches
+        batch_size = 5000
+        while True:
+            result = connection.execute(
+                text(
+                    f"""
+                    WITH batch AS (
+                        SELECT id
+                        FROM {schema}.documents
+                        WHERE session_name IS NULL
+                        LIMIT :batch_size
+                    )
+                    UPDATE {schema}.documents
+                    SET session_name = '__global_observations__'
+                    FROM batch
+                    WHERE documents.id = batch.id
+                    """
+                ),
+                {"batch_size": batch_size},
+            )
+            if result.rowcount == 0:
+                break
 
     op.alter_column("documents", "session_name", nullable=False, schema=schema)
 
@@ -84,29 +96,41 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 2: Populate collections observer and observed from existing name field
+    # Step 2: Populate collections observer and observed from existing name field in batches
     # The logic is:
     # - observer = peer_name (the exact peer ID)
     # - If name is "global_representation", observed = peer_name (self-observation)
     # - If name starts with peer_name + "_", extract the observed part (pattern: observer_observed)
     # - If name ends with "_" + peer_name, extract the first part (pattern: observed_observer)
     # - Otherwise (legacy edge cases), observed = name itself
-    connection.execute(
-        text(
-            f"""
-            UPDATE {schema}.collections
-            SET
-                observer = peer_name,
-                observed = CASE
-                    WHEN name = 'global_representation' THEN peer_name
-                    WHEN name LIKE peer_name || '_%' THEN substring(name from length(peer_name) + 2)
-                    WHEN name LIKE '%_' || peer_name THEN substring(name from 1 for length(name) - length(peer_name) - 1)
-                    ELSE name
-                END
-            WHERE observer IS NULL OR observed IS NULL
-        """
+    batch_size = 5000
+    while True:
+        result = connection.execute(
+            text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.collections
+                    WHERE observer IS NULL OR observed IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.collections c
+                SET
+                    observer = c.peer_name,
+                    observed = CASE
+                        WHEN c.name = 'global_representation' THEN c.peer_name
+                        WHEN c.name LIKE c.peer_name || '_%' THEN substring(c.name from length(c.peer_name) + 2)
+                        WHEN c.name LIKE '%_' || c.peer_name THEN substring(c.name from 1 for length(c.name) - length(c.peer_name) - 1)
+                        ELSE c.peer_name
+                    END
+                FROM batch
+                WHERE c.id = batch.id
+            """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 3: Make collections observer and observed NOT NULL
     op.alter_column("collections", "observer", nullable=False, schema=schema)

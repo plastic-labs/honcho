@@ -34,16 +34,33 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 2: Migrate data from internal_metadata to session_name column
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE {schema}.documents
-            SET session_name = internal_metadata->>'session_name'
-            WHERE internal_metadata ? 'session_name'
-            """
+    # Step 2: Migrate data from internal_metadata to session_name column in batches
+    # Process in batches to avoid timeout with large datasets
+    bind = op.get_bind()
+    batch_size = 5000
+
+    while True:
+        result = bind.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.documents
+                    WHERE internal_metadata ? 'session_name'
+                    AND session_name IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.documents
+                SET session_name = internal_metadata->>'session_name'
+                FROM batch
+                WHERE documents.id = batch.id
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+
+        if result.rowcount == 0:
+            break
 
     # Step 3: Create index on session_name for efficient querying
     if not index_exists("documents", "idx_documents_session_name", inspector):
