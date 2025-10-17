@@ -65,12 +65,13 @@ def upgrade() -> None:
                         SELECT id
                         FROM {schema}.documents
                         WHERE session_name IS NULL
+                        ORDER BY id
                         LIMIT :batch_size
                     )
-                    UPDATE {schema}.documents
+                    UPDATE {schema}.documents d
                     SET session_name = '__global_observations__'
                     FROM batch
-                    WHERE documents.id = batch.id
+                    WHERE d.id = batch.id
                     """
                 ),
                 {"batch_size": batch_size},
@@ -112,6 +113,7 @@ def upgrade() -> None:
                     SELECT id
                     FROM {schema}.collections
                     WHERE observer IS NULL OR observed IS NULL
+                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.collections c
@@ -449,20 +451,20 @@ def downgrade() -> None:
                     SELECT id
                     FROM {schema}.documents
                     WHERE collection_name IS NULL
+                    ORDER BY id
                     LIMIT :batch_size
                 )
-                UPDATE {schema}.documents
+                UPDATE {schema}.documents d
                 SET collection_name = CASE
-                    WHEN observer = observed THEN 'global_representation'
-                    ELSE observer || '_' || observed
+                    WHEN d.observer = d.observed THEN 'global_representation'
+                    ELSE d.observer || '_' || d.observed
                 END
                 FROM batch
-                WHERE documents.id = batch.id
+                WHERE d.id = batch.id
             """
             ),
             {"batch_size": batch_size},
         )
-
         if result.rowcount == 0:
             break
 
@@ -487,12 +489,13 @@ def downgrade() -> None:
                     SELECT id
                     FROM {schema}.documents
                     WHERE peer_name IS NULL
+                    ORDER BY id
                     LIMIT :batch_size
                 )
-                UPDATE {schema}.documents
-                SET peer_name = observed
+                UPDATE {schema}.documents d
+                SET peer_name = d.observed
                 FROM batch
-                WHERE documents.id = batch.id
+                WHERE d.id = batch.id
             """
             ),
             {"batch_size": batch_size},

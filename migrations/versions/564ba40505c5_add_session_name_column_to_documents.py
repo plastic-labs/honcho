@@ -48,12 +48,13 @@ def upgrade() -> None:
                     FROM {schema}.documents
                     WHERE internal_metadata ? 'session_name'
                     AND session_name IS NULL
+                    ORDER BY id
                     LIMIT :batch_size
                 )
-                UPDATE {schema}.documents
-                SET session_name = internal_metadata->>'session_name'
-                FROM batch
-                WHERE documents.id = batch.id
+                UPDATE {schema}.documents d
+                SET session_name = d.internal_metadata->>'session_name'
+                FROM batch b
+                WHERE d.id = b.id
                 """
             ),
             {"batch_size": batch_size},

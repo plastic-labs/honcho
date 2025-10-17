@@ -114,16 +114,23 @@ def upgrade() -> None:
                         WITH batch AS (
                             SELECT id
                             FROM {schema}.messages
-                            WHERE workspace_name = '{workspace_name}'
-                            AND peer_name = '{peer_name}'
+                            WHERE workspace_name = :workspace_name
+                            AND peer_name = :peer_name
                             AND session_name IS NULL
-                            LIMIT {batch_size}
+                            ORDER BY id
+                            LIMIT :batch_size
                         )
-                        UPDATE {schema}.messages
-                        SET session_name = '{default_session_name}'
+                        UPDATE {schema}.messages m
+                        SET session_name = :default_session_name
                         FROM batch
-                        WHERE messages.id = batch.id
-                    """)
+                        WHERE m.id = batch.id
+                    """),
+                    {
+                        "workspace_name": workspace_name,
+                        "peer_name": peer_name,
+                        "default_session_name": default_session_name,
+                        "batch_size": batch_size,
+                    },
                 )
                 if result.rowcount == 0:
                     break
@@ -136,16 +143,23 @@ def upgrade() -> None:
                         WITH batch AS (
                             SELECT id
                             FROM {schema}.message_embeddings
-                            WHERE workspace_name = '{workspace_name}'
-                            AND peer_name = '{peer_name}'
+                            WHERE workspace_name = :workspace_name
+                            AND peer_name = :peer_name
                             AND session_name IS NULL
-                            LIMIT {batch_size}
+                            ORDER BY id
+                            LIMIT :batch_size
                         )
-                        UPDATE {schema}.message_embeddings
-                        SET session_name = '{default_session_name}'
+                        UPDATE {schema}.message_embeddings me
+                        SET session_name = :default_session_name
                         FROM batch
-                        WHERE message_embeddings.id = batch.id
-                    """)
+                        WHERE me.id = batch.id
+                    """),
+                    {
+                        "workspace_name": workspace_name,
+                        "peer_name": peer_name,
+                        "default_session_name": default_session_name,
+                        "batch_size": batch_size,
+                    },
                 )
                 if result.rowcount == 0:
                     break
