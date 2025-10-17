@@ -36,6 +36,7 @@ def upgrade() -> None:
 
     # Step 2: Migrate data from internal_metadata to session_name column in batches
     # Process in batches to avoid timeout with large datasets
+    # Only migrate documents that have 'session_name' key with a non-null, non-empty value
     bind = op.get_bind()
     batch_size = 5000
 
@@ -46,8 +47,10 @@ def upgrade() -> None:
                 WITH batch AS (
                     SELECT id
                     FROM {schema}.documents
-                    WHERE internal_metadata ? 'session_name'
-                    AND session_name IS NULL
+                    WHERE session_name IS NULL
+                    AND internal_metadata ? 'session_name'
+                    AND internal_metadata->>'session_name' IS NOT NULL
+                    AND internal_metadata->>'session_name' != ''
                     ORDER BY id
                     LIMIT :batch_size
                 )
