@@ -49,7 +49,7 @@ def to_schema_summary(s: Summary) -> schemas.Summary:
         summary_type=s["summary_type"],
         created_at=s["created_at"],
         token_count=s["token_count"],
-        message_public_id=s["message_public_id"],
+        message_public_id=s.get("message_public_id", ""),
     )
 
 
@@ -195,9 +195,6 @@ async def summarize_if_needed(
         session_name: The session name
         message_id: The message ID
     """
-
-    logger.debug("Checking if summaries should be created for session %s", session_name)
-
     should_create_long: bool = message_seq_in_session % MESSAGES_PER_LONG_SUMMARY == 0
     should_create_short: bool = message_seq_in_session % MESSAGES_PER_SHORT_SUMMARY == 0
 
@@ -214,11 +211,11 @@ async def summarize_if_needed(
                     SummaryType.LONG,
                     message_public_id,
                 )
-                logger.info(
-                    "Saved long summary for session %s covering up to message %s (%s in session)",
-                    session_name,
-                    message_id,
+                accumulate_metric(
+                    f"summary_{workspace_name}_{message_id}",
+                    "long_summary_up_to_message",
                     message_seq_in_session,
+                    "count",
                 )
 
         async def create_short_summary():
@@ -231,11 +228,11 @@ async def summarize_if_needed(
                     SummaryType.SHORT,
                     message_public_id,
                 )
-                logger.info(
-                    "Saved short summary for session %s covering up to message %s (%s in session)",
-                    session_name,
-                    message_id,
+                accumulate_metric(
+                    f"summary_{workspace_name}_{message_id}",
+                    "short_summary_up_to_message",
                     message_seq_in_session,
+                    "count",
                 )
 
         await asyncio.gather(
@@ -255,11 +252,11 @@ async def summarize_if_needed(
                     SummaryType.LONG,
                     message_public_id,
                 )
-                logger.info(
-                    "Saved long summary for session %s covering up to message %s (%s in session)",
-                    session_name,
-                    message_id,
+                accumulate_metric(
+                    f"summary_{workspace_name}_{message_id}",
+                    "long_summary_up_to_message",
                     message_seq_in_session,
+                    "count",
                 )
             elif should_create_short:
                 await _create_and_save_summary(
@@ -270,11 +267,11 @@ async def summarize_if_needed(
                     SummaryType.SHORT,
                     message_public_id,
                 )
-                logger.info(
-                    "Saved short summary for session %s covering up to message %s (%s in session)",
-                    session_name,
-                    message_id,
+                accumulate_metric(
+                    f"summary_{workspace_name}_{message_id}",
+                    "short_summary_up_to_message",
                     message_seq_in_session,
+                    "count",
                 )
 
 
@@ -294,7 +291,7 @@ async def _create_and_save_summary(
     4. Save the new summary to the database
     """
 
-    logger.info("Creating new %s summary", summary_type.name)
+    logger.debug("Creating new %s summary", summary_type.name)
     # Time summarization step
     summary_start = time.perf_counter()
 
@@ -327,6 +324,19 @@ async def _create_and_save_summary(
         new_summary,
         workspace_name,
         session_name,
+    )
+
+    accumulate_metric(
+        f"summary_{workspace_name}_{message_id}",
+        f"{summary_type.name}_summary_text",
+        new_summary["content"],
+        "blob",
+    )
+    accumulate_metric(
+        f"summary_{workspace_name}_{message_id}",
+        f"{summary_type.name}_summary_size",
+        new_summary["token_count"],
+        "tokens",
     )
 
     summary_duration = (time.perf_counter() - summary_start) * 1000
@@ -374,9 +384,6 @@ async def _create_summary(
             logger.error(
                 "Generated summary is empty! This may indicate a token limit issue."
             )
-
-        logger.info("Summary text: %s", summary_text)
-        logger.info("Summary size: %s tokens", summary_tokens)
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
@@ -386,13 +393,6 @@ async def _create_summary(
             else ""
         )
         summary_tokens = 50
-
-    accumulate_metric(
-        f"summary_{messages[-1].workspace_name}_{messages[-1].id}",
-        f"{summary_type.name}_summary_size",
-        response.output_tokens if response else f"{summary_tokens} (est.)",
-        "tokens",
-    )
 
     return Summary(
         content=summary_text,
@@ -621,7 +621,7 @@ async def get_session_context(
                 summary_type=latest_long_summary["summary_type"],
                 created_at=latest_long_summary["created_at"],
                 token_count=latest_long_summary["token_count"],
-                message_public_id=latest_long_summary["message_public_id"],
+                message_public_id=latest_long_summary.get("message_public_id", ""),
             )
             messages_tokens = token_limit - latest_long_summary["token_count"]
             messages_start_id = latest_long_summary["message_id"]
@@ -634,7 +634,7 @@ async def get_session_context(
                 summary_type=latest_short_summary["summary_type"],
                 created_at=latest_short_summary["created_at"],
                 token_count=latest_short_summary["token_count"],
-                message_public_id=latest_short_summary["message_public_id"],
+                message_public_id=latest_short_summary.get("message_public_id", ""),
             )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]

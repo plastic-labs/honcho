@@ -98,12 +98,6 @@ async def handle_session(
         db_session, workspace_name, session_name
     )
 
-    # Get all message IDs to fetch sequences in batch
-    message_ids = [msg["message_id"] for msg in payload]
-    message_seq_map = await crud.get_message_seqs_in_session_batch(
-        db_session, workspace_name, session_name, message_ids
-    )
-
     queue_records: list[dict[str, Any]] = []
 
     for message in payload:
@@ -114,7 +108,6 @@ async def handle_session(
                 peers_with_configuration,
                 session.id,
                 deriver_disabled=deriver_disabled,
-                message_seq_map=message_seq_map,
             )
         )
     return queue_records
@@ -253,7 +246,6 @@ async def generate_queue_records(
     session_id: str,
     *,
     deriver_disabled: bool,
-    message_seq_map: dict[int, int] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Process a single message and generate queue records based on configurations.
@@ -272,10 +264,9 @@ async def generate_queue_records(
     observed = message["peer_name"]
     message_id: int = message["message_id"]
 
-    # Use pre-fetched sequence if available, otherwise fall back to individual query
-    if message_seq_map and message_id in message_seq_map:
-        message_seq_in_session = message_seq_map[message_id]
-    else:
+    # Prefer the sequence captured during message creation; fallback only if missing
+    message_seq_in_session = int(message.get("seq_in_session") or 0)
+    if message_seq_in_session <= 0:
         message_seq_in_session = await crud.get_message_seq_in_session(
             db_session,
             workspace_name=message["workspace_name"],

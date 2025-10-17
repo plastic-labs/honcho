@@ -542,9 +542,11 @@ class TestGoogleClient:
         mock_response.text = "Hello from Gemini"
         mock_finish_reason = Mock()
         mock_finish_reason.name = "STOP"
-        mock_response.candidates = [
-            Mock(token_count=5, finish_reason=mock_finish_reason)
-        ]
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        # Mock the usage_metadata with candidates_token_count
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.candidates_token_count = 5
+        mock_response.usage_metadata = mock_usage_metadata
         # Mock the async aio interface
         mock_aio = Mock()
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
@@ -572,9 +574,11 @@ class TestGoogleClient:
         mock_response.text = '{"result": "success"}'
         mock_finish_reason = Mock()
         mock_finish_reason.name = "STOP"
-        mock_response.candidates = [
-            Mock(token_count=10, finish_reason=mock_finish_reason)
-        ]
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        # Mock the usage_metadata with candidates_token_count
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.candidates_token_count = 10
+        mock_response.usage_metadata = mock_usage_metadata
         # Mock the async aio interface
         mock_aio = Mock()
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
@@ -606,9 +610,11 @@ class TestGoogleClient:
         mock_response.parsed = mock_parsed
         mock_finish_reason = Mock()
         mock_finish_reason.name = "STOP"
-        mock_response.candidates = [
-            Mock(token_count=15, finish_reason=mock_finish_reason)
-        ]
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        # Mock the usage_metadata with candidates_token_count
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.candidates_token_count = 15
+        mock_response.usage_metadata = mock_usage_metadata
         # Mock the async aio interface
         mock_aio = Mock()
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
@@ -691,6 +697,8 @@ class TestGoogleClient:
         mock_response = Mock()
         mock_response.text = "Response text"
         mock_response.candidates = []  # Empty candidates
+        # Mock usage_metadata as None to test fallback
+        mock_response.usage_metadata = None
         # Mock the async aio interface
         mock_aio = Mock()
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
