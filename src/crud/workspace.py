@@ -6,10 +6,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.cache import client
+from src.cache.constants import get_workspace_cache_prefixes
+from src.cache.model_cache import ModelCache
+from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
+
+
+_workspace_cache = ModelCache(
+    ttl=settings.CACHE.DEFAULT_TTL_SECONDS, resource_type="workspace"
+)
+
+
+def workspace_cache_key(workspace_name: str) -> str:
+    return _workspace_cache.construct_cache_key(workspace_name=workspace_name)
+
+
+async def _attach_workspace(
+    db: AsyncSession, workspace: models.Workspace
+) -> models.Workspace:
+    return await db.merge(workspace, load=False)
 
 
 async def get_or_create_workspace(
@@ -31,15 +50,25 @@ async def get_or_create_workspace(
     Raises:
         ConflictException: If we fail to get or create the workspace
     """
-    # Try to get the existing workspace
-    stmt = select(models.Workspace).where(models.Workspace.name == workspace.name)
-    result = await db.execute(stmt)
-    existing_workspace = result.scalar_one_or_none()
+
+    if not workspace.name:
+        raise ValueError("Workspace name must be provided")
+
+    cache_key = workspace_cache_key(workspace.name)
+
+    existing_workspace = await _workspace_cache.get_or_fetch(
+        db,
+        models.Workspace,
+        cache_key,
+        query_func=lambda session: session.scalar(
+            select(models.Workspace).where(models.Workspace.name == workspace.name)
+        ),
+    )
 
     if existing_workspace is not None:
         # Workspace already exists
         logger.debug("Found existing workspace: %s", workspace.name)
-        return existing_workspace
+        return await _attach_workspace(db, existing_workspace)
 
     # Workspace doesn't exist, create a new one
     honcho_workspace = models.Workspace(
@@ -50,6 +79,9 @@ async def get_or_create_workspace(
     try:
         db.add(honcho_workspace)
         await db.commit()
+        await db.refresh(honcho_workspace)
+
+        await _workspace_cache.set(cache_key, honcho_workspace)
         logger.debug("Workspace created successfully: %s", workspace.name)
         return honcho_workspace
     except IntegrityError:
@@ -94,13 +126,19 @@ async def get_workspace(
     Raises:
         ResourceNotFoundException: If the workspace does not exist
     """
-    # Try to get the existing peer
-    stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
-    result = await db.execute(stmt)
-    existing_workspace = result.scalar_one_or_none()
+    cache_key = workspace_cache_key(workspace_name)
+
+    existing_workspace = await _workspace_cache.get_or_fetch(
+        db,
+        models.Workspace,
+        cache_key,
+        query_func=lambda session: session.scalar(
+            select(models.Workspace).where(models.Workspace.name == workspace_name)
+        ),
+    )
 
     if existing_workspace is not None:
-        return existing_workspace
+        return await _attach_workspace(db, existing_workspace)
 
     raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
@@ -134,6 +172,9 @@ async def update_workspace(
         honcho_workspace.configuration = workspace.configuration
 
     await db.commit()
+    await db.refresh(honcho_workspace)
+
+    await _workspace_cache.set(workspace_cache_key(workspace_name), honcho_workspace)
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace
 
@@ -247,4 +288,28 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         await db.rollback()
         raise e
 
+    cache_key = workspace_cache_key(workspace_name)
+    await _workspace_cache.invalidate(cache_key)
+
+    cache_prefixes = get_workspace_cache_prefixes(workspace_name)
+
+    for resource_type, prefix in cache_prefixes.items():
+        try:
+            search_prefix = f"{prefix}:"
+            deleted = await client.delete_prefix(search_prefix)
+            if deleted:
+                logger.debug(
+                    "Deleted %s %s cache keys for workspace %s",
+                    deleted,
+                    resource_type,
+                    workspace_name,
+                )
+        except Exception as cache_error:
+            logger.error(
+                "Failed to delete %s cache keys for workspace %s: %s",
+                resource_type,
+                workspace_name,
+                cache_error,
+            )
+            continue
     return workspace_snapshot

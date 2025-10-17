@@ -16,6 +16,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src import prometheus
+from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
@@ -109,8 +110,18 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await engine.dispose()
+    try:
+        await init_cache()
+    except Exception as e:
+        logger.warning(
+            "Error initializing cache in api process; proceeding without cache: %s", e
+        )
+
+    try:
+        yield
+    finally:
+        await close_cache()
+        await engine.dispose()
 
 
 app = FastAPI(

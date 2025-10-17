@@ -7,7 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
-from src.crud.peer import get_peer
+from src.crud.peer import get_peer, peer_cache, peer_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +81,21 @@ async def set_peer_card(
                 }
             )
         )
+        .returning(models.Peer)
     )
     result = await db.execute(stmt)
-    if result.rowcount == 0:
+    updated_peer = result.scalar_one_or_none()
+    if updated_peer is None:
         raise exceptions.ResourceNotFoundException(
             f"Peer {observer} not found in workspace {workspace_name}"
         )
     await db.commit()
+
+    # Cache the updated peer object
+    await peer_cache.set(
+        peer_cache_key(workspace_name, observer),
+        updated_peer,
+    )
 
 
 def construct_peer_card_label(*, observer: str, observed: str) -> str:

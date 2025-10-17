@@ -33,6 +33,8 @@ dependencies = [
     "typing-extensions>=4.11.0",
     "prometheus-client>=0.20.0",
     "json-repair>=0.49.0",
+    "redis>=6.0.0",
+    "types-redis>=4.6.0.20241004",
 ]
 [tool.uv]
 dev-dependencies = [
@@ -46,6 +48,7 @@ dev-dependencies = [
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
+    "fakeredis>=2.20.0",
     "honcho-ai",
 ]
 
