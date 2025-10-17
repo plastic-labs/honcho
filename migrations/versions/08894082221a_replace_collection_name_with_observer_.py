@@ -439,19 +439,32 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Step 5: Populate documents collection_name from observer and observed
-    connection.execute(
-        text(
-            f"""
-            UPDATE {schema}.documents
-            SET collection_name = CASE
-                WHEN observer = observed THEN 'global_representation'
-                ELSE observer || '_' || observed
-            END
-            WHERE collection_name IS NULL
-        """
+    # Step 5: Populate documents collection_name from observer and observed in batches
+    batch_size = 5000
+    while True:
+        result = connection.execute(
+            text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.documents
+                    WHERE collection_name IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.documents
+                SET collection_name = CASE
+                    WHEN observer = observed THEN 'global_representation'
+                    ELSE observer || '_' || observed
+                END
+                FROM batch
+                WHERE documents.id = batch.id
+            """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+
+        if result.rowcount == 0:
+            break
 
     # Step 6: Make documents collection_name NOT NULL
     op.alter_column("documents", "collection_name", nullable=False, schema=schema)
@@ -464,16 +477,28 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Populate peer_name with observed value
-    connection.execute(
-        text(
-            f"""
-            UPDATE {schema}.documents
-            SET peer_name = observed
-            WHERE peer_name IS NULL
-        """
+    # Populate peer_name with observed value in batches
+    batch_size = 5000
+    while True:
+        result = connection.execute(
+            text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.documents
+                    WHERE peer_name IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.documents
+                SET peer_name = observed
+                FROM batch
+                WHERE documents.id = batch.id
+            """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Make peer_name NOT NULL
     op.alter_column("documents", "peer_name", nullable=False, schema=schema)
