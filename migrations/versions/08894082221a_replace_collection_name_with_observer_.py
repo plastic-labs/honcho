@@ -97,13 +97,69 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 2: Populate collections observer and observed from existing name field in batches
+    # Step 2a: Identify collections that should be deleted (in memory)
+    # These are user-created collections that are not used in the system:
+    # - name = 'global_representation'
+    # - name starts with peer_name + "_" (pattern: observer_observed)
+    # - name ends with "_" + peer_name (pattern: observed_observer)
+    collections_to_delete = connection.execute(
+        text(
+            f"""
+            SELECT id, name, peer_name, workspace_name
+            FROM {schema}.collections
+            WHERE name != 'global_representation'
+                AND name NOT LIKE peer_name || '_%'
+                AND name NOT LIKE '%_' || peer_name
+        """
+        )
+    ).fetchall()
+
+    # Step 2b: Delete documents that reference collections marked for deletion (in batches)
+    if collections_to_delete:
+        # Delete documents in batches
+        batch_size = 5000
+        for i in range(0, len(collections_to_delete), batch_size):
+            batch = collections_to_delete[i : i + batch_size]
+            collection_ids = [row.id for row in batch]
+
+            connection.execute(
+                text(
+                    f"""
+                    DELETE FROM {schema}.documents d
+                    USING {schema}.collections c
+                    WHERE d.collection_name = c.name
+                        AND d.peer_name = c.peer_name
+                        AND d.workspace_name = c.workspace_name
+                        AND c.id = ANY(:collection_ids)
+                """
+                ),
+                {"collection_ids": collection_ids},
+            )
+
+    # Step 2c: Delete the collections identified in step 2a (in batches)
+    if collections_to_delete:
+        batch_size = 5000
+        for i in range(0, len(collections_to_delete), batch_size):
+            batch = collections_to_delete[i : i + batch_size]
+            collection_ids = [row.id for row in batch]
+
+            connection.execute(
+                text(
+                    f"""
+                    DELETE FROM {schema}.collections
+                    WHERE id = ANY(:collection_ids)
+                """
+                ),
+                {"collection_ids": collection_ids},
+            )
+
+    # Step 2d: Populate collections observer and observed from existing name field in batches
     # The logic is:
     # - observer = peer_name (the exact peer ID)
     # - If name is "global_representation", observed = peer_name (self-observation)
     # - If name starts with peer_name + "_", extract the observed part (pattern: observer_observed)
     # - If name ends with "_" + peer_name, extract the first part (pattern: observed_observer)
-    # - Otherwise (legacy edge cases), observed = name itself
+    # - Any legacy edge cases will have been deleted in step 2a.
     batch_size = 5000
     while True:
         result = connection.execute(
@@ -123,7 +179,6 @@ def upgrade() -> None:
                         WHEN c.name = 'global_representation' THEN c.peer_name
                         WHEN c.name LIKE c.peer_name || '_%' THEN substring(c.name from length(c.peer_name) + 2)
                         WHEN c.name LIKE '%_' || c.peer_name THEN substring(c.name from 1 for length(c.name) - length(c.peer_name) - 1)
-                        ELSE c.peer_name
                     END
                 FROM batch
                 WHERE c.id = batch.id
