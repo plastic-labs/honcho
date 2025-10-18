@@ -74,7 +74,7 @@ from honcho_core.types.workspaces.sessions.message_create_param import (
 from typing_extensions import TypedDict
 
 from src.config import settings
-from src.utils.metrics_collector import MetricsCollector, convert_trace_to_json
+from src.utils.metrics_collector import MetricsCollector
 
 load_dotenv()
 
@@ -677,9 +677,6 @@ Evaluate whether the actual response correctly answers the question based on the
                         role = msg["role"]
                         content = msg["content"]
 
-                        if len(content) == 0:
-                            content = "(empty message)"
-
                         # Split message if it exceeds 25000 characters
                         if len(content) > 25000:
                             chunks = [
@@ -931,9 +928,6 @@ Evaluate whether the actual response correctly answers the question based on the
 
         # Finalize metrics collection
         self.metrics_collector.finalize_collection()
-
-        # convert the trace file to json
-        convert_trace_to_json()
 
         return all_results, overall_duration
 
