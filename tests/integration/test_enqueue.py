@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -26,6 +26,15 @@ class TestEnqueueFunction:
         count: int = 1,
     ) -> list[dict[str, Any]]:
         """Create real messages in database and return payload with actual IDs"""
+        # Get the current max sequence number for this session
+        result = await db_session.execute(
+            select(func.max(models.Message.seq_in_session)).where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == session_name,
+            )
+        )
+        current_max_seq = result.scalar() or 0
+
         messages: list[models.Message] = []
         for i in range(count):
             message = models.Message(
@@ -34,6 +43,7 @@ class TestEnqueueFunction:
                 peer_name=peer_name,
                 content=f"Test message {i}",
                 public_id=generate_nanoid(),
+                seq_in_session=current_max_seq + i + 1,
                 token_count=10,
                 h_metadata={"test": f"value_{i}"},
             )
@@ -1085,6 +1095,15 @@ class TestAdvancedEnqueueEdgeCases:
         count: int = 1,
     ) -> list[dict[str, Any]]:
         """Create real messages in database and return payload with actual IDs"""
+        # Get the current max sequence number for this session
+        result = await db_session.execute(
+            select(func.max(models.Message.seq_in_session)).where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == session_name,
+            )
+        )
+        current_max_seq = result.scalar() or 0
+
         messages: list[models.Message] = []
         for i in range(count):
             message = models.Message(
@@ -1093,6 +1112,7 @@ class TestAdvancedEnqueueEdgeCases:
                 peer_name=peer_name,
                 content=f"Test message {i}",
                 public_id=generate_nanoid(),
+                seq_in_session=current_max_seq + i + 1,
                 token_count=10,
                 h_metadata={"test": f"value_{i}"},
             )

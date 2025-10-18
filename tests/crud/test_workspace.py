@@ -105,12 +105,14 @@ class TestWorkspaceCRUD:
             workspace_name=test_workspace.name,
             session_name=session.name,
             peer_name=test_peer.name,
+            seq_in_session=1,
         )
         message2 = models.Message(
             content="Test message 2",
             workspace_name=test_workspace.name,
             session_name=session.name,
             peer_name=test_peer.name,
+            seq_in_session=2,
         )
         db_session.add_all([message1, message2])
         await db_session.flush()
@@ -422,12 +424,14 @@ class TestWorkspaceCRUD:
             workspace_name=test_workspace.name,
             session_name=session1.name,
             peer_name=test_peer.name,
+            seq_in_session=1,
         )
         message2 = models.Message(
             content="Test message 2",
             workspace_name=test_workspace.name,
             session_name=session2.name,
             peer_name=peer2.name,
+            seq_in_session=1,
         )
         db_session.add_all([message1, message2])
 

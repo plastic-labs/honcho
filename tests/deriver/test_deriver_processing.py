@@ -169,6 +169,7 @@ class TestDeriverProcessing:
                     session_name="test_session",
                     peer_name="alice",
                     content=f"message {message_id}",
+                    seq_in_session=i + 1,
                     token_count=0,
                     created_at=now - timedelta(minutes=7 - i),
                 )

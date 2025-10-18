@@ -173,6 +173,7 @@ async def test_get_messages(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -211,12 +212,14 @@ async def test_get_messages_with_reverse(
         content="First message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     test_message2 = models.Message(
         session_name=test_session.name,
         content="Second message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=2,
     )
     db_session.add(test_message1)
     db_session.add(test_message2)
@@ -266,6 +269,7 @@ async def test_get_messages_with_empty_filter(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -299,6 +303,7 @@ async def test_get_messages_with_null_filter(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -332,6 +337,7 @@ async def test_get_messages_no_body(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -364,6 +370,7 @@ async def test_get_filtered_messages(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"key": "value"},
+        seq_in_session=1,
     )
     test_message2 = models.Message(
         session_name=test_session.name,
@@ -371,6 +378,7 @@ async def test_get_filtered_messages(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"key": "value2"},
+        seq_in_session=2,
     )
     db_session.add(test_message)
     db_session.add(test_message2)
@@ -410,6 +418,7 @@ async def test_get_filtered_messages_with_complex_filter(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"type": "question", "priority": "high", "category": "technical"},
+        seq_in_session=1,
     )
     test_message2 = models.Message(
         session_name=test_session.name,
@@ -417,6 +426,7 @@ async def test_get_filtered_messages_with_complex_filter(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"type": "answer", "priority": "high", "category": "technical"},
+        seq_in_session=2,
     )
     test_message3 = models.Message(
         session_name=test_session.name,
@@ -424,6 +434,7 @@ async def test_get_filtered_messages_with_complex_filter(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"type": "question", "priority": "low", "category": "general"},
+        seq_in_session=3,
     )
     db_session.add(test_message1)
     db_session.add(test_message2)
@@ -494,6 +505,7 @@ async def test_update_message(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -526,6 +538,7 @@ async def test_update_message_with_complex_metadata(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -568,6 +581,7 @@ async def test_update_message_empty_metadata(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"test_key": "test_value"},
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -607,6 +621,7 @@ async def test_update_message_with_empty_dict_metadata(
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
         h_metadata={"old_key": "old_value"},
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -638,6 +653,7 @@ async def test_get_single_message(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -870,6 +886,7 @@ async def test_update_message_handles_crud_value_error(
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        seq_in_session=1,
     )
     db_session.add(test_message)
     await db_session.commit()
