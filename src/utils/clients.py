@@ -5,7 +5,7 @@ from functools import wraps
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
-from anthropic.types import TextBlock
+from anthropic.types import TextBlock, ThinkingBlock
 from anthropic.types.message import Message as AnthropicMessage
 from google import genai
 from google.genai.types import GenerateContentResponse
@@ -90,6 +90,7 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     content: T
     output_tokens: int
     finish_reasons: list[str]
+    think_trace: str | None = None
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -326,6 +327,8 @@ async def honcho_llm_call_inner(
     # Remove stream parameter for non-streaming calls as some providers don't accept it
     params.pop("stream", None)
 
+    thinking_trace: str | None = None
+
     match client:
         case AsyncAnthropic():
             if response_model:
@@ -359,10 +362,17 @@ async def honcho_llm_call_inner(
             usage = anthropic_response.usage  # pyright: ignore
             stop_reason = anthropic_response.stop_reason  # pyright: ignore
 
+            if thinking_budget_tokens:
+                for block in anthropic_response.content:  # pyright: ignore
+                    if isinstance(block, ThinkingBlock):
+                        thinking_trace = block.thinking
+                        break
+
             return HonchoLLMCallResponse(
                 content="\n".join(text_blocks),
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
+                think_trace=thinking_trace,
             )
 
         case AsyncOpenAI():
@@ -512,6 +522,10 @@ async def honcho_llm_call_inner(
                             "response_mime_type": "application/json"
                             if json_mode
                             else None,
+                            "thinking_config": {
+                                "thinking_budget": -1,
+                                "include_thoughts": True,
+                            },
                         },
                     )
                 )
@@ -530,12 +544,22 @@ async def honcho_llm_call_inner(
                     else "stop"
                 )
 
+                for part in (
+                    gemini_response.candidates[0].content.parts
+                    if gemini_response.candidates
+                    and gemini_response.candidates[0].content
+                    and gemini_response.candidates[0].content.parts
+                    else []
+                ):
+                    if part.thought and part.text:
+                        thinking_trace = part.text
+
                 return HonchoLLMCallResponse(
                     content=text_content,
                     output_tokens=token_count,
                     finish_reasons=[finish_reason],
+                    think_trace=thinking_trace,
                 )
-
             else:
                 gemini_response = await client.aio.models.generate_content(
                     model=model,
@@ -543,6 +567,10 @@ async def honcho_llm_call_inner(
                     config={
                         "response_mime_type": "application/json",
                         "response_schema": response_model,
+                        "thinking_config": {
+                            "thinking_budget": -1,
+                            "include_thoughts": True,
+                        },
                     },
                 )
 
@@ -564,10 +592,21 @@ async def honcho_llm_call_inner(
                         f"Parsed content does not match the response model: {gemini_response.parsed} != {response_model}"
                     )
 
+                for part in (
+                    gemini_response.candidates[0].content.parts
+                    if gemini_response.candidates
+                    and gemini_response.candidates[0].content
+                    and gemini_response.candidates[0].content.parts
+                    else []
+                ):
+                    if part.thought:
+                        thinking_trace = part.text or None
+
                 return HonchoLLMCallResponse(
                     content=gemini_response.parsed,
                     output_tokens=token_count,
                     finish_reasons=[finish_reason],
+                    think_trace=thinking_trace,
                 )
 
         case AsyncGroq():
