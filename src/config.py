@@ -302,6 +302,9 @@ class CacheSettings(HonchoSettings):
     NAMESPACE: str = "honcho"
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = 300
 
+    # Max number of workspaces in redis cache
+    MAX_WORKSPACE_LIMIT: Annotated[int, Field(default=50, ge=1, le=1000)] = 50
+
 
 class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
