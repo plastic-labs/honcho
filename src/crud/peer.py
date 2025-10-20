@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.cache.model_cache import ModelCache
+from src.cache.utils import CacheKey, get_cache_namespace
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
@@ -19,9 +20,12 @@ peer_cache = ModelCache(ttl=settings.CACHE.DEFAULT_TTL_SECONDS, resource_type="p
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
-    return peer_cache.construct_cache_key(
-        workspace_name=workspace_name, peer_name=peer_name
-    )
+    return CacheKey(
+        namespace=get_cache_namespace(),
+        workspace_name=workspace_name,
+        session_name=None,
+        peer_name=peer_name,
+    ).toString()
 
 
 async def _attach_peer(db: AsyncSession, peer: models.Peer) -> models.Peer:

@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.cache import client
-from src.cache.constants import get_workspace_cache_prefixes
 from src.cache.model_cache import ModelCache
+from src.cache.utils import CacheKey, get_cache_namespace
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
@@ -22,7 +22,12 @@ _workspace_cache = ModelCache(
 
 
 def workspace_cache_key(workspace_name: str) -> str:
-    return _workspace_cache.construct_cache_key(workspace_name=workspace_name)
+    return CacheKey(
+        namespace=get_cache_namespace(),
+        workspace_name=workspace_name,
+        session_name=None,
+        peer_name=None,
+    ).toString()
 
 
 async def _attach_workspace(
@@ -190,6 +195,11 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
     Returns:
         A snapshot of the deleted workspace as a Pydantic schema
     """
+    print(f"Evicting workspace {workspace_name} from cache")
+    await _workspace_cache.evict_resource(
+        workspace_cache_key(workspace_name),
+    )
+
     logger.warning("Deleting workspace %s", workspace_name)
     stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
     result = await db.execute(stmt)
@@ -282,6 +292,10 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         )
         await db.delete(honcho_workspace)
         await db.commit()
+        print(f"Evicting workspace {workspace_name} from cache")
+        await _workspace_cache.evict_resource(
+            workspace_cache_key(workspace_name),
+        )
         logger.debug("Workspace %s deleted", workspace_name)
     except Exception as e:
         logger.error("Failed to delete workspace %s: %s", workspace_name, e)
@@ -289,27 +303,6 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         raise e
 
     cache_key = workspace_cache_key(workspace_name)
-    await _workspace_cache.invalidate(cache_key)
+    await client.delete_prefix(prefix=cache_key)
 
-    cache_prefixes = get_workspace_cache_prefixes(workspace_name)
-
-    for resource_type, prefix in cache_prefixes.items():
-        try:
-            search_prefix = f"{prefix}:"
-            deleted = await client.delete_prefix(search_prefix)
-            if deleted:
-                logger.debug(
-                    "Deleted %s %s cache keys for workspace %s",
-                    deleted,
-                    resource_type,
-                    workspace_name,
-                )
-        except Exception as cache_error:
-            logger.error(
-                "Failed to delete %s cache keys for workspace %s: %s",
-                resource_type,
-                workspace_name,
-                cache_error,
-            )
-            continue
     return workspace_snapshot

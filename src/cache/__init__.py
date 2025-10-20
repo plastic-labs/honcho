@@ -8,12 +8,8 @@ from .client import (
     is_enabled,
     set,
 )
-from .constants import (
+from .utils import (
     get_cache_namespace,
-    get_peer_prefix,
-    get_session_prefix,
-    get_workspace_cache_prefixes,
-    get_workspace_prefix,
 )
 
 __all__ = [
@@ -21,10 +17,6 @@ __all__ = [
     "delete",
     "get",
     "get_cache_namespace",
-    "get_peer_prefix",
-    "get_session_prefix",
-    "get_workspace_cache_prefixes",
-    "get_workspace_prefix",
     "init_cache",
     "is_enabled",
     "set",

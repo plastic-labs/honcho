@@ -10,6 +10,7 @@ from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
 from src.cache.model_cache import ModelCache
+from src.cache.utils import CacheKey, get_cache_namespace
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -32,9 +33,12 @@ _session_cache = ModelCache(
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
-    return _session_cache.construct_cache_key(
-        workspace_name=workspace_name, session_name=session_name
-    )
+    return CacheKey(
+        namespace=get_cache_namespace(),
+        workspace_name=workspace_name,
+        session_name=session_name,
+        peer_name=None,
+    ).toString()
 
 
 async def _attach_session(

@@ -7,6 +7,7 @@ import fakeredis.aioredis as fakeredis
 import jwt
 import pytest
 import pytest_asyncio
+import redis.asyncio as redis
 from fakeredis.aioredis import FakeRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -169,33 +170,68 @@ async def db_session(db_engine: AsyncEngine):
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def fake_redis(monkeypatch: pytest.MonkeyPatch):
-    """Provide an isolated fakeredis client for each test."""
+    """Provide an isolated fakeredis client for each test without touching real Redis."""
 
     original_client = cache_client._client  # pyright: ignore[reportPrivateUsage]
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    fake_client = fakeredis.FakeRedis(decode_responses=False)
+    fake_client: FakeRedis | None = None
 
-    def _fake_from_url(*_: Any, **__: Any) -> FakeRedis:  # pyright: ignore[reportUnusedParameter]
+    def _ensure_fake_client() -> FakeRedis:
+        nonlocal fake_client
+        if fake_client is None:
+            fake_client = fakeredis.FakeRedis(decode_responses=False)
         return fake_client
 
+    async def _fake_init_cache() -> None:
+        if not settings.CACHE.ENABLED:
+            cache_client._client = None  # pyright: ignore[reportPrivateUsage]
+            return
+
+        client = _ensure_fake_client()
+        await client.flushall()
+        cache_client._client = client  # pyright: ignore[reportPrivateUsage]
+
+    async def _fake_close_cache() -> None:
+        nonlocal fake_client
+
+        cache_client._client = None  # pyright: ignore[reportPrivateUsage]
+
+        if fake_client is None:
+            return
+
+        await fake_client.flushall()
+        close_method = getattr(fake_client, "aclose", None)
+        if callable(close_method):
+            close_method()
+        else:
+            await fake_client.close()
+        fake_client = None
+
+    def _fake_from_url(*_: Any, **__: Any) -> FakeRedis:  # pyright: ignore[reportUnusedParameter]
+        return _ensure_fake_client()
+
+    def _fake_class_from_url(_: Any, *args: Any, **kwargs: Any) -> FakeRedis:
+        return _fake_from_url(*args, **kwargs)
+
+    monkeypatch.setattr(cache_client, "init_cache", _fake_init_cache)
+    monkeypatch.setattr(cache_client, "close_cache", _fake_close_cache)
     monkeypatch.setattr(cache_client.redis, "from_url", _fake_from_url)  # pyright: ignore[reportPrivateLocalImportUsage]
+    monkeypatch.setattr(
+        redis.Redis,
+        "from_url",
+        classmethod(_fake_class_from_url),
+    )
     monkeypatch.setattr("redis.asyncio.from_url", _fake_from_url)
 
-    settings.CACHE.ENABLED = original_enabled
     cache_client._client = None  # pyright: ignore[reportPrivateUsage]
-
-    await fake_client.flushall()
-    if original_enabled:
-        await cache_client.init_cache()
+    settings.CACHE.URL = "redis://fakeredis"
 
     try:
-        yield fake_client
+        yield
     finally:
         await cache_client.close_cache()
-        await fake_client.flushall()
-        await fake_client.close()
         cache_client._client = original_client  # pyright: ignore[reportPrivateUsage]
         settings.CACHE.ENABLED = original_enabled
         settings.CACHE.URL = original_url
