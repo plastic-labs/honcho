@@ -65,9 +65,27 @@ repos:
       # Run main application tests
       - id: pytest-main
         name: pytest (main app)
-        entry: uv run pytest tests/
+        entry: uv run pytest tests/ --ignore=tests/alembic/
         language: system
         files: ^(src/|tests/).*\.py$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # Run Alembic tests only when migrations change
+      - id: pytest-alembic
+        name: pytest (alembic migrations)
+        entry: uv run pytest tests/alembic/
+        language: system
+        files: ^migrations/.*\.py$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # Ensure each alembic migration revision has a corresponding test file
+      - id: ensure-alembic-coverage
+        name: ensure alembic migration test coverage
+        entry: uv run python scripts/ensure_alembic_tests.py
+        language: system
+        files: ^migrations/versions/.*\.py$
         stages: [pre-push]
         pass_filenames: false
 
