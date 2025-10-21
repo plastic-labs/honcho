@@ -34,6 +34,7 @@ from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 from src.config import settings
@@ -107,7 +108,8 @@ class ImplexConvRunner:
         self,
         base_api_port: int = 8000,
         pool_size: int = 1,
-        anthropic_api_key: str | None = None,
+        llm_api_key: str | None = None,
+        llm_provider: Literal["anthropic", "openai"] = "openai",
         timeout_seconds: int | None = None,
         reasoning_type: Literal["opposed", "supportive"] = "opposed",
         cleanup_workspace: bool = False,
@@ -127,7 +129,8 @@ class ImplexConvRunner:
         """
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
-        self.anthropic_api_key: str | None = anthropic_api_key
+        self.llm_api_key: str | None = llm_api_key
+        self.llm_provider: Literal["anthropic", "openai"] = llm_provider
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 10000
         )
@@ -151,15 +154,29 @@ class ImplexConvRunner:
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("httpcore").setLevel(logging.ERROR)
 
-        if self.anthropic_api_key:
-            self.anthropic_client: AsyncAnthropic = AsyncAnthropic(
-                api_key=self.anthropic_api_key
-            )
-        else:
-            api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
+        # Initialize LLM client attributes
+        self.anthropic_client: AsyncAnthropic | None
+        self.openai_client: AsyncOpenAI | None
+
+        # Initialize LLM client based on provider
+        if self.llm_provider == "anthropic":
+            api_key = self.llm_api_key or os.getenv("LLM_ANTHROPIC_API_KEY")
             if not api_key:
-                raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
+                raise ValueError(
+                    "Anthropic API key must be provided via llm_api_key or LLM_ANTHROPIC_API_KEY"
+                )
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
+            self.openai_client = None
+        elif self.llm_provider == "openai":
+            api_key = self.llm_api_key or os.getenv("LLM_OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "OpenAI API key must be provided via llm_api_key or LLM_OPENAI_API_KEY"
+                )
+            self.openai_client = AsyncOpenAI(api_key=api_key)
+            self.anthropic_client = None
+        else:
+            raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")
 
     def get_honcho_url_for_index(self, example_index: int) -> str:
         """Get the Honcho URL for a given example index using round-robin."""
@@ -331,6 +348,72 @@ class ImplexConvRunner:
                 return False
             await asyncio.sleep(1)
 
+    async def _call_llm(
+        self, system_prompt: str, user_prompt: str, max_tokens: int = 500
+    ) -> str:
+        """Helper method to call LLM based on configured provider."""
+        try:
+            if self.llm_provider == "openai":
+                assert self.openai_client is not None
+                response = await self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=max_tokens,
+                    temperature=0.0,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
+                return response.choices[0].message.content or ""
+            else:  # anthropic
+                assert self.anthropic_client is not None
+                response = await self.anthropic_client.messages.create(
+                    model="claude-sonnet-4-5",
+                    max_tokens=max_tokens,
+                    temperature=0.0,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+                if not response.content:
+                    return ""
+                content_block = response.content[0]
+                return getattr(content_block, "text", "")
+        except Exception as e:
+            self.logger.error(f"Error calling LLM: {e}")
+            return f"ERROR: {e}"
+
+    async def call_assistant_with_context(
+        self, question: str, honcho_context: str
+    ) -> str:
+        """
+        Call an assistant LLM with the question and Honcho's context.
+
+        This simulates an AI assistant that has access to Honcho's theory-of-mind
+        representation and must answer the user's question appropriately.
+
+        The assistant prompt is agnostic to reasoning type - we're evaluating whether
+        the model can appropriately use whatever context Honcho provides.
+        """
+        system_prompt = """You are a helpful AI assistant with access to information about the user from past conversations.
+
+Your task is to answer the user's question based on the context provided. Use all relevant information from the context to give an appropriate, helpful response.
+
+Be concise but thorough."""
+
+        user_prompt = f"""Based on the following context about the user, please answer their question.
+
+<context>
+{honcho_context}
+</context>
+
+<question>
+{question}
+</question>
+
+Please provide a helpful, direct answer that takes into account all relevant information from the context."""
+
+        return await self._call_llm(system_prompt, user_prompt, max_tokens=500)
+
     async def judge_implicit_reasoning(
         self,
         question: str,
@@ -349,25 +432,45 @@ class ImplexConvRunner:
                 system_prompt = f"""
 You are evaluating implicit reasoning in long-term conversations for OPPOSED reasoning.
 
-OPPOSED REASONING means: There is a scenario that PREVENTS or BLOCKS a persona trait.
+OPPOSED REASONING means: There is a constraint or limitation that should influence recommendations.
 
-IMPLICIT REASONING: "{implicit_reasoning}"
+IMPLICIT CONSTRAINT: "{implicit_reasoning}"
 
-This implicit reasoning should PREVENT certain activities or suggestions in the response.
+This constraint should be ACKNOWLEDGED and the response should be ADAPTED accordingly.
 
-CRITICAL EVALUATION CRITERIA:
-1. Did the AI find and use the implicit blocking scenario?
-2. Does the response appropriately avoid suggestions that would be blocked by this scenario?
-3. Is the response logically consistent with the implicit constraint?
+EVALUATION CRITERIA (both must be true to pass):
+1. **Found Implicit** (found_implicit = true): Does the response show awareness of the constraint?
+   - Explicitly mentions the constraint, OR
+   - Clearly adapts suggestions to work around it, OR
+   - Warns about the limitation
 
-Example:
-- Implicit: "broke my leg"
+2. **Passed** (passed = true): Are the suggestions reasonable given the constraint?
+   - Suggestions are adapted (shorter sessions, breaks, modifications)
+   - Suggests alternatives that work within the constraint
+   - Doesn't enthusiastically recommend things that directly contradict the constraint
+
+WHAT SHOULD FAIL:
+- Completely ignores the constraint (no mention, no adaptation)
+- Enthusiastically suggests things that would exacerbate the problem
+- Makes recommendations that are clearly impractical given the constraint
+
+WHAT SHOULD PASS:
+- Acknowledges the constraint and adapts recommendations
+- Suggests workarounds or modifications
+- Recommends alternatives that account for the limitation
+- Provides practical advice that works within constraints
+
+Example 1 (PASS):
+- Constraint: "broke my leg"
 - Question: "What sports should I do?"
-- CORRECT: Suggests low-impact activities, acknowledges injury
-- INCORRECT: Suggests basketball, running (ignores the injury)
+- Good Response: "Given your leg injury, focus on upper body exercises and swimming once cleared by your doctor. Avoid high-impact activities."
 
-SEMANTIC FLEXIBILITY: The response doesn't need to quote the implicit reasoning verbatim,
-but must demonstrate awareness of the constraint through its suggestions and tone.
+Example 2 (FAIL):
+- Constraint: "broke my leg"
+- Question: "What sports should I do?"
+- Bad Response: "You should try running, basketball, and soccer to stay active!"
+
+Be reasonable: if the response shows awareness and adapts suggestions, it should pass.
 
 Respond with JSON: {{"passed": bool, "found_implicit": bool, "reasoning": "1-3 sentence explanation"}}
 """
@@ -401,21 +504,12 @@ Actual response: "{actual_response}"
 
 Evaluate whether the actual response correctly demonstrates implicit reasoning based on the expected answer."""
 
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=300,
-                temperature=0.0,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+            judgment_text = await self._call_llm(
+                system_prompt, user_prompt, max_tokens=300
             )
 
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
-
-            content_block = response.content[0]
-            judgment_text = getattr(content_block, "text", None)
-            if judgment_text is None:
-                raise ValueError("No text content in response")
+            if not judgment_text or judgment_text.startswith("ERROR:"):
+                raise ValueError(f"LLM call failed: {judgment_text}")
 
             # Extract JSON from markdown if present
             if "```json" in judgment_text:
@@ -567,8 +661,19 @@ Evaluate whether the actual response correctly demonstrates implicit reasoning b
                         + "Sessions are separate and would need merging logic."
                     )
                 else:
-                    # Use dialectic chat
-                    actual_response = await user_peer.chat(question)
+                    # Use dialectic chat to get Honcho's context
+                    honcho_context_response = await user_peer.chat(question)
+                    honcho_context = (
+                        honcho_context_response
+                        if isinstance(honcho_context_response, str)
+                        else ""
+                    )
+
+                    # Now use an assistant prompt with Honcho's context
+                    actual_response = await self.call_assistant_with_context(
+                        question=question,
+                        honcho_context=honcho_context,
+                    )
 
                 # Clean up workspace if requested
                 if self.cleanup_workspace:
@@ -577,10 +682,6 @@ Evaluate whether the actual response correctly demonstrates implicit reasoning b
                         print(f"[{workspace_id}] cleaned up workspace")
                     except Exception as e:
                         print(f"Failed to delete workspace: {e}")
-
-                actual_response = (
-                    actual_response if isinstance(actual_response, str) else ""
-                )
 
                 tokens_used = self._get_latest_tokens_used()
 
@@ -877,9 +978,17 @@ async def main() -> int:
     )
 
     parser.add_argument(
-        "--anthropic-api-key",
+        "--llm-api-key",
         type=str,
-        help="Anthropic API key for response judging (optional)",
+        help="LLM API key for assistant and judging (optional, defaults to env var)",
+    )
+
+    parser.add_argument(
+        "--llm-provider",
+        type=str,
+        choices=["anthropic", "openai"],
+        default="openai",
+        help="LLM provider to use for assistant and judging (default: openai)",
     )
 
     parser.add_argument(
@@ -923,7 +1032,8 @@ async def main() -> int:
     runner = ImplexConvRunner(
         base_api_port=args.base_api_port,
         pool_size=args.pool_size,
-        anthropic_api_key=args.anthropic_api_key,
+        llm_api_key=args.llm_api_key,
+        llm_provider=args.llm_provider,
         timeout_seconds=args.timeout,
         reasoning_type=args.reasoning_type,
         cleanup_workspace=args.cleanup_workspace,
