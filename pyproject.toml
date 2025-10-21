@@ -37,7 +37,6 @@ dependencies = [
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.2.2",
-    "pytest-alembic>=0.12.0",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
     "coverage>=7.6.0",

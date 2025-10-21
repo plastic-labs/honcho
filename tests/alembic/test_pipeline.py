@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from pytest_alembic.runner import MigrationContext
 from sqlalchemy import Engine
 
 from tests.alembic.registry import get_registered_hooks
@@ -33,7 +33,7 @@ REVISION_PARAMS = [
 
 def _test_single_revision(
     revision: str,
-    alembic_runner: MigrationContext,
+    alembic_cfg: Config,
     alembic_engine: Engine,
 ) -> None:
     """
@@ -55,8 +55,10 @@ def _test_single_revision(
         revision_order[revision_index - 1] if revision_index > 0 else "base"
     )
 
-    # Migrate up to the previous revision
-    alembic_runner.migrate_up_to(previous_revision)  # pyright: ignore[reportUnknownMemberType]
+    # Migrate up to the previous revision using a shared connection
+    with alembic_engine.begin() as conn:
+        alembic_cfg.attributes["connection"] = conn
+        command.upgrade(alembic_cfg, previous_revision)
 
     # Run before_upgrade hook if it exists
     hooks = hooks_map.get(revision)
@@ -65,8 +67,10 @@ def _test_single_revision(
             verifier = MigrationVerifier(conn, revision)
             hooks.before_upgrade(verifier)
 
-    # Migrate to the current revision
-    alembic_runner.migrate_up_to(revision)  # pyright: ignore[reportUnknownMemberType]
+    # Migrate to the current revision using the same pattern
+    with alembic_engine.begin() as conn:
+        alembic_cfg.attributes["connection"] = conn
+        command.upgrade(alembic_cfg, revision)
 
     # Run after_upgrade hook if it exists
     if hooks and hooks.after_upgrade:
@@ -78,7 +82,7 @@ def _test_single_revision(
 @pytest.mark.parametrize("revision", REVISION_PARAMS)
 def test_migration_revision(
     revision: str,
-    alembic_runner: MigrationContext,
+    alembic_cfg: Config,
     alembic_engine: Engine,
 ) -> None:
-    _test_single_revision(revision, alembic_runner, alembic_engine)
+    _test_single_revision(revision, alembic_cfg, alembic_engine)
