@@ -16,17 +16,21 @@ def prepare_queue_created_at(verifier: MigrationVerifier) -> None:
 
     conn = verifier.conn
     schema = verifier.schema
+
+    # Bulk insert 500k additional queue items efficiently to exercise batched backfill
+    conn.execute(text("SET LOCAL synchronous_commit = OFF"))
     conn.execute(
         text(
             f'INSERT INTO "{schema}"."queue" '
             + '("session_id", "work_unit_key", "task_type", "payload", "processed") '
-            + "VALUES (NULL, :work_unit_key, :task_type, :payload, false)"
+            + "SELECT NULL, "
+            + "       'seed-batch-queue-item-' || gs::text, "
+            + "       'representation', "
+            + "       jsonb_build_object('marker','bulk'), "
+            + "       false "
+            + "FROM generate_series(1, :n) AS gs"
         ),
-        {
-            "work_unit_key": "seed-random-queue-item",
-            "task_type": "representation",
-            "payload": '{"marker":"seed"}',
-        },
+        {"n": 500_000},
     )
 
 
@@ -36,11 +40,5 @@ def verify_queue_created_at(verifier: MigrationVerifier) -> None:
     verifier.assert_column_exists("queue", "error")
     verifier.assert_indexes_exist([("queue", "ix_queue_created_at")])
 
-    row = verifier.conn.execute(
-        text(
-            f'SELECT "created_at" FROM "{verifier.schema}"."queue" '
-            + "WHERE payload->>'marker' = :marker"
-        ),
-        {"marker": "seed"},
-    ).one()
-    assert row.created_at is not None
+    # Ensure all rows have non-null created_at after backfill
+    verifier.assert_no_nulls("queue", "created_at")

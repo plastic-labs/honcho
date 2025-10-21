@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import text
@@ -103,6 +104,28 @@ def seed_document_session_metadata(verifier: MigrationVerifier) -> None:
         },
     )
 
+    # Bulk insert 500k documents with session_name in internal_metadata to test batched backfill
+    print("[564ba40505c5] Starting bulk insert of 500k documents...", flush=True)
+    t0 = time.perf_counter()
+    connection.execute(text("SET LOCAL synchronous_commit = OFF"))
+    connection.execute(
+        text(
+            f'INSERT INTO "{schema}"."documents" '
+            + '("id", "collection_name", "peer_name", "workspace_name", "content", "internal_metadata") '
+            + "SELECT "
+            + "  'bulk-' || substr(md5(random()::text), 1, 16), "
+            + f"  '{COLLECTION_NAME}', "
+            + f"  '{PEER_NAME}', "
+            + f"  '{WORKSPACE_NAME}', "
+            + "  'seed content', "
+            + f"  jsonb_build_object('session_name', '{SESSION_NAME}') "
+            + "FROM generate_series(1, :n)"
+        ),
+        {"n": 500_000},
+    )
+    t1 = time.perf_counter()
+    print(f"[564ba40505c5] Bulk insert completed in {t1 - t0:.2f}s", flush=True)
+
     # Add document with session_name in internal_metadata
     internal_metadata = json.dumps(
         {
@@ -153,6 +176,31 @@ def verify_document_session_column(verifier: MigrationVerifier) -> None:
         "documents", "fk_documents_session_workspace", "foreign_key"
     )
 
+    # Quick diagnostics: counts before assertions
+    total_docs = (
+        verifier.conn.execute(
+            text(f'SELECT COUNT(*) FROM "{verifier.schema}"."documents"')
+        ).scalar()
+        or 0
+    )
+    null_sessions = (
+        verifier.conn.execute(
+            text(
+                f'SELECT COUNT(*) FROM "{verifier.schema}"."documents" '
+                + 'WHERE "session_name" IS NULL'
+            )
+        ).scalar()
+        or 0
+    )
+    print(
+        f"[564ba40505c5] Documents total={total_docs}, session_name NULLs={null_sessions}",
+        flush=True,
+    )
+
+    # All documents that contained session_name in internal_metadata should now have session_name populated
+    verifier.assert_no_nulls("documents", "session_name")
+
+    # Sanity-check seeded document preserved expected session_name
     row = verifier.conn.execute(
         text(
             f'SELECT "session_name" FROM "{verifier.schema}"."documents" '

@@ -40,6 +40,23 @@ def prepare_webhooks(verifier: MigrationVerifier) -> None:
         "active_queue_sessions", "unique_active_queue_session", "unique"
     )
 
+    # Bulk insert 500k queue items to test batched backfill
+    verifier.conn.execute(text("SET LOCAL synchronous_commit = OFF"))
+    verifier.conn.execute(
+        text(
+            f'INSERT INTO "{verifier.schema}"."queue" ("payload") '
+            + "SELECT jsonb_build_object("
+            + "  'marker', 'bulk-' || substr(md5(random()::text), 1, 21),"
+            + "  'task_type', 'representation',"
+            + f"  'workspace_name', '{WORKSPACE_NAME}',"
+            + f"  'session_name', '{SESSION_NAME}',"
+            + f"  'sender_name', '{SENDER_NAME}',"
+            + f"  'target_name', '{TARGET_NAME}'"
+            + ") FROM generate_series(1, :n)"
+        ),
+        {"n": 500_000},
+    )
+
     payload = json.dumps(
         {
             "marker": PAYLOAD_MARKER,
@@ -51,6 +68,7 @@ def prepare_webhooks(verifier: MigrationVerifier) -> None:
         }
     )
 
+    # Add single queue item to test expected data transformation
     verifier.conn.execute(
         text(f'INSERT INTO "{verifier.schema}"."queue" ("payload") VALUES (:payload)'),
         {"payload": payload},
@@ -77,6 +95,10 @@ def verify_webhooks_and_queue(verifier: MigrationVerifier) -> None:
     verifier.assert_constraint_exists(
         "active_queue_sessions", "unique_active_queue_session", "unique", exists=False
     )
+
+    # Ensure no NULLs remain after backfill across all rows
+    verifier.assert_no_nulls("queue", "task_type")
+    verifier.assert_no_nulls("queue", "work_unit_key")
 
     row = verifier.conn.execute(
         text(

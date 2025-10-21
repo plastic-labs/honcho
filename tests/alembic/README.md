@@ -26,4 +26,4 @@ The key components are the verifier, the test pipeline, the registry, and the re
 
 ### Running the Tests
 
-- Tests can be run all together `pytest tests/alembic` or individually `pytest tests/alembic -k "revision_number"`. For example, to run the test against a1b2c3d4e5f6_initial_schema.py, you would run the command `pytest tests/alembic -k "a1b2c3d4e5f6"
+- Tests can be run all together `pytest tests/alembic` or individually `pytest tests/alembic -k "revision_number"`. For example, to run the test against a1b2c3d4e5f6_initial_schema.py, you would run the command `pytest tests/alembic -k "a1b2c3d4e5f6"`

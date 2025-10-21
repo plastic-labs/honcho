@@ -8,8 +8,8 @@ from sqlalchemy import inspect, text
 from tests.alembic.registry import register_after_upgrade, register_before_upgrade
 from tests.alembic.verifier import MigrationVerifier
 
-COLLECTION_ID = generate_nanoid()
-COLLECTION_NAME = "global_representation"
+COLLECTION_ID: str = generate_nanoid()
+GLOBAL_REP_COLLECTION_NAME = "global_representation"
 DOCUMENT_ID = generate_nanoid()
 DOCUMENT_NAME = "document-name"
 LEGACY_PEER_ID = generate_nanoid()
@@ -49,34 +49,6 @@ def prepare_observer_observed(verifier: MigrationVerifier) -> None:
         },
     )
 
-    # Create session with session_peers relationship
-    session_id = generate_nanoid()
-    session_name = "test-session"
-    conn.execute(
-        text(
-            f'INSERT INTO "{schema}"."sessions" ("id", "name", "workspace_name", "is_active") '
-            + "VALUES (:session_id, :session_name, :workspace_name, true)"
-        ),
-        {
-            "session_id": session_id,
-            "session_name": session_name,
-            "workspace_name": WORKSPACE_NAME,
-        },
-    )
-
-    # Create session_peers entry so downgrade can find user_id
-    conn.execute(
-        text(
-            f'INSERT INTO "{schema}"."session_peers" ("workspace_name", "session_name", "peer_name") '
-            + "VALUES (:workspace_name, :session_name, :peer_name)"
-        ),
-        {
-            "workspace_name": WORKSPACE_NAME,
-            "session_name": session_name,
-            "peer_name": LEGACY_PEER_NAME,
-        },
-    )
-
     # Create collection with the old schema (has 'name' field)
     conn.execute(
         text(
@@ -86,28 +58,174 @@ def prepare_observer_observed(verifier: MigrationVerifier) -> None:
         ),
         {
             "collection_id": COLLECTION_ID,
-            "collection_name": COLLECTION_NAME,
+            "collection_name": GLOBAL_REP_COLLECTION_NAME,
             "peer_name": LEGACY_PEER_NAME,
             "workspace_name": WORKSPACE_NAME,
         },
     )
 
-    # Create document with the old schema (has 'collection_name' field)
+    # Create document with the old schema (has 'collection_name' field) without session_name
     conn.execute(
         text(
             f'INSERT INTO "{schema}"."documents" '
-            + '("id", "collection_name", "peer_name", "workspace_name", "content", "session_name") '
-            + "VALUES (:document_id, :collection_name, :peer_name, :workspace_name, :content, :session_name)"
+            + '("id", "collection_name", "peer_name", "workspace_name", "content") '
+            + "VALUES (:document_id, :collection_name, :peer_name, :workspace_name, :content)"
         ),
         {
             "document_id": DOCUMENT_ID,
-            "collection_name": COLLECTION_NAME,
+            "collection_name": GLOBAL_REP_COLLECTION_NAME,
             "peer_name": LEGACY_PEER_NAME,
             "workspace_name": WORKSPACE_NAME,
             "content": "test content",
-            "session_name": session_name,
         },
     )
+
+    # Bulk create many documents with the old schema (no session_name)
+    bulk_stmt = text(
+        f'INSERT INTO "{schema}"."documents" '
+        + '("id", "collection_name", "peer_name", "workspace_name", "content") '
+        + "VALUES (:document_id, :collection_name, :peer_name, :workspace_name, :content)"
+    )
+
+    params_template = {
+        "collection_name": GLOBAL_REP_COLLECTION_NAME,
+        "peer_name": LEGACY_PEER_NAME,
+        "workspace_name": WORKSPACE_NAME,
+        "content": "test content",
+    }
+
+    total_docs = 120_000
+    batch_size = 10_000
+    for start in range(0, total_docs, batch_size):
+        end = min(start + batch_size, total_docs)
+        batch_params = [
+            {"document_id": generate_nanoid(), **params_template}
+            for _ in range(start, end)
+        ]
+
+        conn.execute(bulk_stmt, batch_params)
+
+    # Speed up bulk seeding
+    conn.execute(text("SET LOCAL synchronous_commit = OFF"))
+
+    # -----------------------------
+    # Group 1: self-observation collections (global_representation)
+    # observer = peer_name, observed = peer_name
+    # -----------------------------
+    peer_insert_stmt = text(
+        f'INSERT INTO "{schema}"."peers" ("id", "name", "workspace_name") '
+        + "VALUES (:peer_id, :peer_name, :workspace_name)"
+    )
+    collection_insert_stmt = text(
+        f'INSERT INTO "{schema}"."collections" ("id", "name", "peer_name", "workspace_name") '
+        + "VALUES (:collection_id, :name, :peer_name, :workspace_name)"
+    )
+
+    total = 100_000
+    batch_size = 10_000
+
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        # Insert peers for group 1
+        peers_params = [
+            {
+                "peer_id": generate_nanoid(),
+                "peer_name": f"selfpeer_{i}",
+                "workspace_name": WORKSPACE_NAME,
+            }
+            for i in range(start, end)
+        ]
+        conn.execute(peer_insert_stmt, peers_params)
+
+        # Insert collections for group 1
+        collections_params = [
+            {
+                "collection_id": generate_nanoid(),
+                "name": GLOBAL_REP_COLLECTION_NAME,
+                "peer_name": f"selfpeer_{i}",
+                "workspace_name": WORKSPACE_NAME,
+            }
+            for i in range(start, end)
+        ]
+        conn.execute(collection_insert_stmt, collections_params)
+
+    # -----------------------------
+    # Group 2: prefix pattern (observer_observed)
+    # observer = 'prefix_observer', observed extracted from name suffix
+    # -----------------------------
+    # Create the fixed observer peer
+    conn.execute(
+        peer_insert_stmt,
+        {
+            "peer_id": generate_nanoid(),
+            "peer_name": "prefix_observer",
+            "workspace_name": WORKSPACE_NAME,
+        },
+    )
+
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        # Observed peers for group 2
+        peers_params = [
+            {
+                "peer_id": generate_nanoid(),
+                "peer_name": f"obs_prefix_{i}",
+                "workspace_name": WORKSPACE_NAME,
+            }
+            for i in range(start, end)
+        ]
+        conn.execute(peer_insert_stmt, peers_params)
+
+        # Collections for group 2 (name = 'prefix_observer_obs_prefix_<i>')
+        collections_params = [
+            {
+                "collection_id": generate_nanoid(),
+                "name": f"prefix_observer_obs_prefix_{i}",
+                "peer_name": "prefix_observer",
+                "workspace_name": WORKSPACE_NAME,
+            }
+            for i in range(start, end)
+        ]
+        conn.execute(collection_insert_stmt, collections_params)
+
+    # -----------------------------
+    # Group 3: suffix pattern (observed_observer)
+    # observer = 'suffix_observer', observed extracted from name prefix
+    # -----------------------------
+    # Create the fixed observer peer
+    conn.execute(
+        peer_insert_stmt,
+        {
+            "peer_id": generate_nanoid(),
+            "peer_name": "suffix_observer",
+            "workspace_name": WORKSPACE_NAME,
+        },
+    )
+
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        # Observed peers for group 3
+        peers_params = [
+            {
+                "peer_id": generate_nanoid(),
+                "peer_name": f"obs_suffix_{i}",
+                "workspace_name": WORKSPACE_NAME,
+            }
+            for i in range(start, end)
+        ]
+        conn.execute(peer_insert_stmt, peers_params)
+
+        # Collections for group 3 (name = 'obs_suffix_<i>_suffix_observer')
+        collections_params = [
+            {
+                "collection_id": generate_nanoid(),
+                "name": f"obs_suffix_{i}_suffix_observer",
+                "peer_name": "suffix_observer",
+                "workspace_name": WORKSPACE_NAME,
+            }
+            for i in range(start, end)
+        ]
+        conn.execute(collection_insert_stmt, collections_params)
 
 
 @register_after_upgrade("08894082221a")
@@ -161,7 +279,7 @@ def verify_observer_observed_migration(verifier: MigrationVerifier) -> None:
 
     document = verifier.conn.execute(
         text(
-            'SELECT "observer", "observed", "workspace_name" '
+            'SELECT "observer", "observed", "workspace_name", "session_name" '
             + f'FROM "{verifier.schema}"."documents" '
             + 'WHERE "id" = :document_id'
         ),
@@ -170,3 +288,74 @@ def verify_observer_observed_migration(verifier: MigrationVerifier) -> None:
     assert document.observer == LEGACY_PEER_NAME
     assert document.observed == EXPECTED_OBSERVED
     assert document.workspace_name == WORKSPACE_NAME
+    assert document.session_name == "__global_observations__"
+
+    # Verify no NULLs remain in documents.session_name
+    verifier.assert_no_nulls("documents", "session_name")
+
+    # Verify collections mapping for Group 1 (self-observation)
+    count_self = verifier.conn.execute(
+        text(
+            "SELECT COUNT(1) FROM "
+            + f'"{verifier.schema}"."collections" '
+            + 'WHERE "workspace_name" = :ws '
+            + 'AND "observer" LIKE :prefix '
+            + 'AND "observed" = "observer"'
+        ),
+        {"ws": WORKSPACE_NAME, "prefix": "selfpeer_%"},
+    ).scalar()
+    assert count_self == 100_000
+
+    # Verify collections mapping for Group 2 (prefix pattern observer_observed)
+    count_prefix = verifier.conn.execute(
+        text(
+            "SELECT COUNT(1) FROM "
+            + f'"{verifier.schema}"."collections" '
+            + 'WHERE "workspace_name" = :ws '
+            + 'AND "observer" = :observer '
+            + 'AND "observed" LIKE :obs_prefix'
+        ),
+        {
+            "ws": WORKSPACE_NAME,
+            "observer": "prefix_observer",
+            "obs_prefix": "obs_prefix_%",
+        },
+    ).scalar()
+    assert count_prefix == 100_000
+
+    distinct_prefix_observed = verifier.conn.execute(
+        text(
+            'SELECT COUNT(DISTINCT "observed") FROM '
+            + f'"{verifier.schema}"."collections" '
+            + 'WHERE "workspace_name" = :ws AND "observer" = :observer'
+        ),
+        {"ws": WORKSPACE_NAME, "observer": "prefix_observer"},
+    ).scalar()
+    assert distinct_prefix_observed == 100_000
+
+    # Verify collections mapping for Group 3 (suffix pattern observed_observer)
+    count_suffix = verifier.conn.execute(
+        text(
+            "SELECT COUNT(1) FROM "
+            + f'"{verifier.schema}"."collections" '
+            + 'WHERE "workspace_name" = :ws '
+            + 'AND "observer" = :observer '
+            + 'AND "observed" LIKE :obs_prefix'
+        ),
+        {
+            "ws": WORKSPACE_NAME,
+            "observer": "suffix_observer",
+            "obs_prefix": "obs_suffix_%",
+        },
+    ).scalar()
+    assert count_suffix == 100_000
+
+    distinct_suffix_observed = verifier.conn.execute(
+        text(
+            'SELECT COUNT(DISTINCT "observed") FROM '
+            + f'"{verifier.schema}"."collections" '
+            + 'WHERE "workspace_name" = :ws AND "observer" = :observer'
+        ),
+        {"ws": WORKSPACE_NAME, "observer": "suffix_observer"},
+    ).scalar()
+    assert distinct_suffix_observed == 100_000
