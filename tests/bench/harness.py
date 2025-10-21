@@ -129,7 +129,8 @@ class HonchoHarness:
         # Change to the temp directory and start the database service
         result = subprocess.run(
             [
-                "docker-compose",
+                "docker",
+                "compose",
                 "-f",
                 str(self.docker_compose_file),
                 "-p",
@@ -542,7 +543,8 @@ except Exception as e:
                 # More aggressive cleanup - remove containers, volumes, and orphaned containers
                 subprocess.run(
                     [
-                        "docker-compose",
+                        "docker",
+                        "compose",
                         "-f",
                         str(self.docker_compose_file),
                         "-p",
