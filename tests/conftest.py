@@ -492,6 +492,7 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
+        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
     ):
         yield
 

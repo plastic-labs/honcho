@@ -7,18 +7,15 @@ from typing import TYPE_CHECKING
 
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
-
-from src import prometheus
-from src.utils.logging import get_route_template
-
-if TYPE_CHECKING:
-    from sentry_sdk._types import Event, Hint
+from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src import prometheus
 from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
@@ -31,6 +28,11 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
+from src.sentry import initialize_sentry
+from src.utils.logging import get_route_template
+
+if TYPE_CHECKING:
+    from sentry_sdk._types import Event, Hint
 
 
 def get_log_level() -> int:
@@ -68,30 +70,31 @@ async def setup_admin_jwt():
     print(f"\n    ADMIN JWT: {token}\n")
 
 
+def before_send(event: "Event", hint: "Hint | None") -> "Event | None":
+    """Filter out events raised from known non-actionable exceptions before Sentry sees them."""
+    if not hint:
+        return event
+
+    exc_info = hint.get("exc_info")
+    if not exc_info:
+        return event
+
+    _, exc_value, _ = exc_info
+    if isinstance(exc_value, HonchoException):
+        return None
+
+    # Filters out ValidationErrors and RequestValidationErrors (typically coming from Pydantic)
+    if isinstance(exc_value, ValidationError | RequestValidationError):
+        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
+        return None
+
+    return event
+
+
 # Sentry Setup
 SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
-
-    def before_send(event: "Event", hint: "Hint") -> "Event | None":
-        if "exc_info" in hint:
-            _, exc_value, _ = hint["exc_info"]
-            # Filter out HonchoExceptions from being sent to Sentry
-            if isinstance(exc_value, HonchoException):
-                return None
-
-        return event
-
-    # Sentry SDK's default behavior:
-    # - Captures INFO+ level logs as breadcrumbs
-    # - Captures ERROR+ level logs as Sentry events
-    #
-    # For custom log levels, use the LoggingIntegration class:
-    # sentry_sdk.init(..., integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)])
-    sentry_sdk.init(
-        dsn=settings.SENTRY.DSN,
-        traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
-        profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
-        before_send=before_send,
+    initialize_sentry(
         integrations=[
             StarletteIntegration(
                 transaction_style="endpoint",
@@ -100,6 +103,7 @@ if SENTRY_ENABLED:
                 transaction_style="endpoint",
             ),
         ],
+        before_send=before_send,
     )
 
 
