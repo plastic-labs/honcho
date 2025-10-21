@@ -53,7 +53,7 @@ class ModelCache:
             db: Database session
             model_class: SQLAlchemy model class
             cache_key: Redis key
-            query_func: Async function that returns a SQLAlchemy result
+            query_func: Async function that executes a query and returns the extracted value
         """
         cached = await client.get(cache_key) if client.is_enabled() else None
         if cached:
@@ -72,20 +72,12 @@ class ModelCache:
         # Fall back to database
         result = await query_func(db)
 
-        # Handle both query objects and executed results
-        if hasattr(result, "scalar_one_or_none"):
-            obj = await result.scalar_one_or_none()
-        elif hasattr(result, "one_or_none"):
-            obj = await result.one_or_none()
-        else:
-            obj = result
-
-        if obj and client.is_enabled():
+        if result and client.is_enabled():
             # Cache the result
-            data = self._serialize_model(obj)
+            data = self._serialize_model(result)
             await client.set(cache_key, json.dumps(data), ttl_seconds=self.ttl)
 
-        return obj
+        return result
 
     async def get_list_or_fetch(
         self,
@@ -103,7 +95,7 @@ class ModelCache:
             db: Database session
             model_class: SQLAlchemy model class
             cache_key: Redis key
-            query_func: Async callable that returns multiple results
+            query_func: Async function that executes a query and returns the extracted values
         """
         cached = await client.get(cache_key) if client.is_enabled() else None
         if cached:
@@ -120,18 +112,11 @@ class ModelCache:
 
         result = await query_func(db)
 
-        if hasattr(result, "scalars"):
-            objs = (await result.scalars()).all()
-        elif hasattr(result, "all"):
-            objs = await result.all()
-        else:
-            objs = result
-
-        if objs and client.is_enabled():
-            data_list = [self._serialize_model(obj) for obj in objs]
+        if result and client.is_enabled():
+            data_list = [self._serialize_model(item) for item in result]
             await client.set(cache_key, json.dumps(data_list), ttl_seconds=self.ttl)
 
-        return objs
+        return result
 
     async def set(
         self,

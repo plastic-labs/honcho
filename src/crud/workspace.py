@@ -27,7 +27,7 @@ def workspace_cache_key(workspace_name: str) -> str:
         workspace_name=workspace_name,
         session_name=None,
         peer_name=None,
-    ).toString()
+    ).to_string()
 
 
 async def _attach_workspace(
@@ -65,7 +65,7 @@ async def get_or_create_workspace(
         db,
         models.Workspace,
         cache_key,
-        query_func=lambda session: session.scalar(
+        query_func=lambda session_db: session_db.scalar(
             select(models.Workspace).where(models.Workspace.name == workspace.name)
         ),
     )
@@ -137,7 +137,7 @@ async def get_workspace(
         db,
         models.Workspace,
         cache_key,
-        query_func=lambda session: session.scalar(
+        query_func=lambda session_db: session_db.scalar(
             select(models.Workspace).where(models.Workspace.name == workspace_name)
         ),
     )
@@ -297,10 +297,13 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
             workspace_cache_key(workspace_name),
         )
         logger.debug("Workspace %s deleted", workspace_name)
-    except Exception as e:
-        logger.error("Failed to delete workspace %s: %s", workspace_name, e)
+    except Exception:
+        logger.exception(
+            "Failed to delete workspace %s",
+            workspace_name,
+        )
         await db.rollback()
-        raise e
+        raise
 
     cache_key = workspace_cache_key(workspace_name)
     await client.delete_prefix(prefix=cache_key)

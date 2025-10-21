@@ -11,7 +11,7 @@ class CacheKey(BaseModel):
     session_name: str | None
     peer_name: str | None
 
-    def toString(self) -> str:
+    def to_string(self) -> str:
         """Generate the appropriate cache key based on the resource type."""
         if self.peer_name is not None:
             return self.get_peer_cache_key()
@@ -64,9 +64,3 @@ class CacheKey(BaseModel):
 def get_cache_namespace() -> str:
     """Get the cache namespace from settings."""
     return settings.CACHE.NAMESPACE
-
-
-def get_workspace_from_cache_key(cache_key: str) -> str:
-    """Get the workspace name from a cache key."""
-    namespace = get_cache_namespace()
-    return cache_key.split(f"{namespace}:workspace:")[1].split(":")[0]

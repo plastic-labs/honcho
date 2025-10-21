@@ -25,7 +25,7 @@ def peer_cache_key(workspace_name: str, peer_name: str) -> str:
         workspace_name=workspace_name,
         session_name=None,
         peer_name=peer_name,
-    ).toString()
+    ).to_string()
 
 
 async def _attach_peer(db: AsyncSession, peer: models.Peer) -> models.Peer:
@@ -137,7 +137,7 @@ async def get_peer(
         db,
         models.Peer,
         cache_key,
-        query_func=lambda session: session.scalar(
+        query_func=lambda session_db: session_db.scalar(
             select(models.Peer)
             .where(models.Peer.workspace_name == workspace_name)
             .where(models.Peer.name == peer.name)

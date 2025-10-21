@@ -202,9 +202,8 @@ async def fake_redis(monkeypatch: pytest.MonkeyPatch):
             return
 
         await fake_client.flushall()
-        close_method = getattr(fake_client, "aclose", None)
-        if callable(close_method):
-            close_method()
+        if hasattr(fake_client, "aclose"):
+            await fake_client.aclose()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
         else:
             await fake_client.close()
         fake_client = None

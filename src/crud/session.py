@@ -38,7 +38,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
         workspace_name=workspace_name,
         session_name=session_name,
         peer_name=None,
-    ).toString()
+    ).to_string()
 
 
 async def _attach_session(
@@ -179,6 +179,7 @@ async def get_or_create_session(
         )
 
     await db.commit()
+    await db.refresh(honcho_session)
     await _session_cache.set(cache_key, honcho_session)
     return honcho_session
 
@@ -254,6 +255,7 @@ async def update_session(
         honcho_session.configuration = session.configuration
 
     await db.commit()
+    await db.refresh(honcho_session)
     await _session_cache.set(
         session_cache_key(workspace_name, session_name), honcho_session
     )
@@ -282,6 +284,7 @@ async def delete_session(
 
     honcho_session.is_active = False
     await db.commit()
+    await db.refresh(honcho_session)
     await _session_cache.set(
         session_cache_key(workspace_name, session_name), honcho_session
     )
@@ -387,6 +390,7 @@ async def clone_session(
         db.add(new_session_peer)
 
     await db.commit()
+    await db.refresh(new_session)
     logger.debug("Session %s cloned successfully", original_session_name)
     await _session_cache.set(
         session_cache_key(workspace_name, new_session.name), new_session
