@@ -72,6 +72,7 @@ def upgrade() -> None:
                     SET session_name = '__global_observations__'
                     FROM batch
                     WHERE d.id = batch.id
+                    AND d.session_name IS NULL
                     """
                 ),
                 {"batch_size": batch_size},
@@ -179,6 +180,7 @@ def upgrade() -> None:
                         WHEN c.name = 'global_representation' THEN c.peer_name
                         WHEN c.name LIKE c.peer_name || '_%' THEN substring(c.name from length(c.peer_name) + 2)
                         WHEN c.name LIKE '%_' || c.peer_name THEN substring(c.name from 1 for length(c.name) - length(c.peer_name) - 1)
+                        ELSE c.peer_name
                     END
                 FROM batch
                 WHERE c.id = batch.id
@@ -232,6 +234,7 @@ def upgrade() -> None:
                     AND d.collection_name = c.name
                     AND d.peer_name = c.peer_name
                     AND d.workspace_name = c.workspace_name
+                    AND (d.observer IS NULL OR d.observed IS NULL)
             """
             ),
             {"batch_size": batch_size},
@@ -516,6 +519,7 @@ def downgrade() -> None:
                 END
                 FROM batch
                 WHERE d.id = batch.id
+                AND d.collection_name IS NULL
             """
             ),
             {"batch_size": batch_size},
@@ -551,6 +555,7 @@ def downgrade() -> None:
                 SET peer_name = d.observed
                 FROM batch
                 WHERE d.id = batch.id
+                AND d.peer_name IS NULL
             """
             ),
             {"batch_size": batch_size},

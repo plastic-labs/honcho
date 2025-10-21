@@ -58,6 +58,7 @@ def upgrade() -> None:
                 SET session_name = d.internal_metadata->>'session_name'
                 FROM batch b
                 WHERE d.id = b.id
+                AND d.session_name IS NULL
                 """
             ),
             {"batch_size": batch_size},
