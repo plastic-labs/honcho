@@ -43,6 +43,12 @@ def main() -> int:
         )
         for name in missing:
             print(f" - tests/alembic/revisions/test_{name}.py", file=sys.stderr)
+        print("\nScaffold helper commands:", file=sys.stderr)
+        for name in missing:
+            print(
+                f" - python -m tests.alembic.scaffold {name.split('_', 1)[0]}",
+                file=sys.stderr,
+            )
         return 1
 
     # Optional: warn if there are tests without corresponding migrations (stale tests)
