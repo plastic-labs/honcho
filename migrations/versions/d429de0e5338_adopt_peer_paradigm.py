@@ -208,17 +208,17 @@ def downgrade() -> None:
             ),
             sa.ForeignKeyConstraint(
                 ["session_id"],
-                ["sessions.public_id"],
+                [f"{schema}.sessions.public_id"],
                 "fk_metamessages_session_id_sessions",
             ),
             sa.ForeignKeyConstraint(
                 ["user_id"],
-                ["users.public_id"],
+                [f"{schema}.users.public_id"],
                 "fk_metamessages_user_id_users",
             ),
             sa.ForeignKeyConstraint(
                 ["app_id"],
-                ["apps.public_id"],
+                [f"{schema}.apps.public_id"],
                 "fk_metamessages_app_id_apps",
             ),
         )
@@ -511,11 +511,11 @@ def create_and_populate_session_peers_table(schema: str, inspector: Inspector) -
             ),
             sa.ForeignKeyConstraint(
                 ["peer_name", "workspace_name"],
-                ["peers.name", "peers.workspace_name"],
+                [f"{schema}.peers.name", f"{schema}.peers.workspace_name"],
             ),
             sa.ForeignKeyConstraint(
                 ["session_name", "workspace_name"],
-                ["sessions.name", "sessions.workspace_name"],
+                [f"{schema}.sessions.name", f"{schema}.sessions.workspace_name"],
             ),
             sa.PrimaryKeyConstraint("workspace_name", "session_name", "peer_name"),
         )
