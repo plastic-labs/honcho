@@ -77,7 +77,7 @@ def alembic_database() -> Generator[str, None, None]:
 def alembic_engine(alembic_database: str) -> Generator[Engine, None, None]:
     """Yield an engine bound to the Alembic test database."""
 
-    engine = create_engine(alembic_database)
+    engine = create_engine(alembic_database, pool_pre_ping=True)
     try:
         yield engine
     finally:

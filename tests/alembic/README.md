@@ -1,4 +1,4 @@
-These tests validate Alembic migrations end to end for structure, order, and correctness.
+These tests validate Alembic migrations end-to-end for structure, order, and correctness.
 They ensure reversibility, expected schema and data, and integration with the registry and pipeline.
 The key components are the verifier, the test pipeline, the registry, and the revisions under test.
 
@@ -6,7 +6,7 @@ The key components are the verifier, the test pipeline, the registry, and the re
 
 - The verifier runs checks when specific revisions are applied and reverted.
 - It validates the schema after upgrade, verifies data migrations such as defaults, backfills, and transforms, and confirms reversibility after downgrade.
-- Assertions are grouped per revision or feature, and helpers use the SQLAlchemy inspector to introspect the database.
+- Assertions are grouped per-revision or feature, and helpers use the SQLAlchemy inspector to introspect the database.
 
 ### Test Pipeline
 
@@ -21,7 +21,7 @@ The key components are the verifier, the test pipeline, the registry, and the re
 
 ### Revisions
 
-- Eevisions are the migration scripts under `alembic/revisions`
+- Revisions are the migration scripts under `alembic/revisions`.
 - Each revision should provide functions decorated with `register_before_upgrade()` and `register_after_upgrade()`. These are used to validate schemas and data before and after a migration is run
 
 ### Running the Tests

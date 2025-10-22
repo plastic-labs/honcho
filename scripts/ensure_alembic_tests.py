@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env uv run python
 """
-Script that validates that all alembic migration revision have a corresponding test file.
+Script that validates that all alembic migration revisions have a corresponding test file.
 Note that this script is actively used within our precommit hooks and should not be removed.
 If this script is moved, the corresponding precommit hook will need to be updated.
 """
