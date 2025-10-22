@@ -9,8 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
-from src.cache.model_cache import ModelCache
-from src.cache.utils import CacheKey, get_cache_namespace
+from src.cache.client import cache
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -27,24 +26,27 @@ from .workspace import get_or_create_workspace
 logger = getLogger(__name__)
 
 
-_session_cache = ModelCache(
-    ttl=settings.CACHE.DEFAULT_TTL_SECONDS, resource_type="session"
-)
-
-
 def session_cache_key(workspace_name: str, session_name: str) -> str:
-    return CacheKey(
-        namespace=get_cache_namespace(),
-        workspace_name=workspace_name,
-        session_name=session_name,
-        peer_name=None,
-    ).to_string()
+    """Generate cache key for session."""
+    return (
+        f"{settings.CACHE.NAMESPACE}:workspace:{workspace_name}:session:{session_name}"
+    )
 
 
-async def _attach_session(
-    db: AsyncSession, session_obj: models.Session
-) -> models.Session:
-    return await db.merge(session_obj, load=False)
+@cache(
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}",
+)
+async def _fetch_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+) -> models.Session | None:
+    return await db.scalar(
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+    )
 
 
 def count_observers_in_config(
@@ -104,21 +106,11 @@ async def get_or_create_session(
     if not session.name:
         raise ValueError("Session name must be provided")
 
-    cache_key = session_cache_key(workspace_name, session.name)
+    honcho_session = await _fetch_session(db, workspace_name, session.name)
 
-    honcho_session = await _session_cache.get_or_fetch(
-        db,
-        models.Session,
-        cache_key,
-        query_func=lambda session_db: session_db.scalar(
-            select(models.Session)
-            .where(models.Session.workspace_name == workspace_name)
-            .where(models.Session.name == session.name)
-        ),
-    )
-
+    # Merge cached object into session if it exists (cached objects are detached)
     if honcho_session is not None:
-        honcho_session = await _attach_session(db, honcho_session)
+        honcho_session = await db.merge(honcho_session, load=False)
 
     # Check if session already exists
     if honcho_session is None:
@@ -180,7 +172,16 @@ async def get_or_create_session(
 
     await db.commit()
     await db.refresh(honcho_session)
-    await _session_cache.set(cache_key, honcho_session)
+
+    # Invalidate cache if session was modified - read-through pattern
+    if (
+        session.peer_names
+        or session.metadata is not None
+        or session.configuration is not None
+    ):
+        cache_key = session_cache_key(workspace_name, session.name)
+        await cache.delete(cache_key)
+
     return honcho_session
 
 
@@ -203,24 +204,17 @@ async def get_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    cache_key = session_cache_key(workspace_name, session_name)
-    honcho_session = await _session_cache.get_or_fetch(
-        db,
-        models.Session,
-        cache_key,
-        query_func=lambda session_db: session_db.scalar(
-            select(models.Session)
-            .where(models.Session.workspace_name == workspace_name)
-            .where(models.Session.name == session_name)
-        ),
-    )
+    session = await _fetch_session(db, workspace_name, session_name)
 
-    if honcho_session is None:
+    if session is None:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    return await _attach_session(db, honcho_session)
+    # Merge cached object into session (cached objects are detached)
+    session = await db.merge(session, load=False)
+
+    return session
 
 
 async def update_session(
@@ -256,9 +250,11 @@ async def update_session(
 
     await db.commit()
     await db.refresh(honcho_session)
-    await _session_cache.set(
-        session_cache_key(workspace_name, session_name), honcho_session
-    )
+
+    # Invalidate cache - read-through pattern
+    cache_key = session_cache_key(workspace_name, session_name)
+    await cache.delete(cache_key)
+
     logger.debug("Session %s updated successfully", session_name)
     return honcho_session
 
@@ -285,9 +281,11 @@ async def delete_session(
     honcho_session.is_active = False
     await db.commit()
     await db.refresh(honcho_session)
-    await _session_cache.set(
-        session_cache_key(workspace_name, session_name), honcho_session
-    )
+
+    # Invalidate cache - read-through pattern
+    cache_key = session_cache_key(workspace_name, session_name)
+    await cache.delete(cache_key)
+
     logger.debug("Session %s marked as inactive", session_name)
     return True
 
@@ -392,9 +390,8 @@ async def clone_session(
     await db.commit()
     await db.refresh(new_session)
     logger.debug("Session %s cloned successfully", original_session_name)
-    await _session_cache.set(
-        session_cache_key(workspace_name, new_session.name), new_session
-    )
+
+    # Cache will be populated on next read - read-through pattern
     return new_session
 
 

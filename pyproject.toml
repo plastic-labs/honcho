@@ -35,6 +35,7 @@ dependencies = [
     "json-repair>=0.49.0",
     "redis>=6.0.0",
     "types-redis>=4.6.0.20241004",
+    "cashews[redis]>=7.4.3",
 ]
 [tool.uv]
 dev-dependencies = [

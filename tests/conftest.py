@@ -3,12 +3,10 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import fakeredis.aioredis as fakeredis
 import jwt
 import pytest
 import pytest_asyncio
-import redis.asyncio as redis
-from fakeredis.aioredis import FakeRedis
+from cashews.picklers import PicklerType
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -29,7 +27,7 @@ from sqlalchemy_utils import (
 )
 
 from src import models
-from src.cache import client as cache_client
+from src.cache.client import cache
 from src.config import settings
 from src.db import Base
 from src.dependencies import get_db
@@ -169,71 +167,29 @@ async def db_session(db_engine: AsyncEngine):
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
-async def fake_redis(monkeypatch: pytest.MonkeyPatch):
-    """Provide an isolated fakeredis client for each test without touching real Redis."""
+async def fake_cache(monkeypatch: pytest.MonkeyPatch):
+    """Disable caching in tests to avoid stale data issues with SQLAlchemy sessions."""
 
-    original_client = cache_client._client  # pyright: ignore[reportPrivateUsage]
+    # Store original settings
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    fake_client: FakeRedis | None = None
-
-    def _ensure_fake_client() -> FakeRedis:
-        nonlocal fake_client
-        if fake_client is None:
-            fake_client = fakeredis.FakeRedis(decode_responses=False)
-        return fake_client
-
-    async def _fake_init_cache() -> None:
-        if not settings.CACHE.ENABLED:
-            cache_client._client = None  # pyright: ignore[reportPrivateUsage]
-            return
-
-        client = _ensure_fake_client()
-        await client.flushall()
-        cache_client._client = client  # pyright: ignore[reportPrivateUsage]
-
-    async def _fake_close_cache() -> None:
-        nonlocal fake_client
-
-        cache_client._client = None  # pyright: ignore[reportPrivateUsage]
-
-        if fake_client is None:
-            return
-
-        await fake_client.flushall()
-        if hasattr(fake_client, "aclose"):
-            await fake_client.aclose()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
-        else:
-            await fake_client.close()
-        fake_client = None
-
-    def _fake_from_url(*_: Any, **__: Any) -> FakeRedis:  # pyright: ignore[reportUnusedParameter]
-        return _ensure_fake_client()
-
-    def _fake_class_from_url(_: Any, *args: Any, **kwargs: Any) -> FakeRedis:
-        return _fake_from_url(*args, **kwargs)
-
-    monkeypatch.setattr(cache_client, "init_cache", _fake_init_cache)
-    monkeypatch.setattr(cache_client, "close_cache", _fake_close_cache)
-    monkeypatch.setattr(cache_client.redis, "from_url", _fake_from_url)  # pyright: ignore[reportPrivateLocalImportUsage]
-    monkeypatch.setattr(
-        redis.Redis,
-        "from_url",
-        classmethod(_fake_class_from_url),
-    )
-    monkeypatch.setattr("redis.asyncio.from_url", _fake_from_url)
-
-    cache_client._client = None  # pyright: ignore[reportPrivateUsage]
-    settings.CACHE.URL = "redis://fakeredis"
+    # Disable caching entirely for tests
+    monkeypatch.setattr(settings.CACHE, "ENABLED", False)
+    cache.disable()
 
     try:
-        yield
+        yield cache
     finally:
-        await cache_client.close_cache()
-        cache_client._client = original_client  # pyright: ignore[reportPrivateUsage]
+        # Restore original settings
         settings.CACHE.ENABLED = original_enabled
         settings.CACHE.URL = original_url
+
+        # Reconfigure with original settings if enabled
+        if original_enabled:
+            cache.setup(original_url, pickle_type=PicklerType.SQLALCHEMY, enable=True)  # pyright: ignore[reportUnknownMemberType]
+        else:
+            cache.disable()
 
 
 @pytest.fixture(scope="function")
