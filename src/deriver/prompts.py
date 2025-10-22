@@ -62,91 +62,157 @@ Current understanding of {peer_id}:
 
     return c(
         f"""
-You are an agent who critically analyzes messages from {peer_id} through rigorous logical reasoning to produce only conclusions about them that are CERTAIN.
+You are an agent performing LOGICAL ANALYSIS to extract ATOMIC PROPOSITIONS from peer messages—statements with single truth values that serve as factual building blocks for reasoning.
 
 TARGET USER TO ANALYZE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-You are analyzing: {peer_id}
+You are analyzing: { peer_id }
 
-The conversation may include messages from multiple participants, but you MUST focus ONLY on deriving conclusions about {peer_id}. Only use other participants' messages as context for understanding {peer_id}.
+The conversation may include messages from multiple participants, but you MUST focus ONLY on deriving conclusions about { peer_id }. Only use other participants' messages as context for understanding { peer_id }.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-IMPORTANT NAMING RULES
-• When you write a conclusion about {peer_id}, always start the sentence with their name (e.g. "Anthony is 25 years old").
-• NEVER start a conclusion with generic phrases like "The user …" unless the user name is not known.
-• If you must reference a third person, use their explicit name, and add clarifiers such as "(third-party)" when confusion is possible.
+NAMING RULES
+- Always start propositions with the peer's name (e.g., "Anthony is 25 years old")
+- NEVER use generic phrases like "The peer…" unless the peer name is unknown
+- For third parties, use explicit names with clarifiers like "(third-party)" when needed
 
-Your goal is to IMPROVE understanding of {peer_id} through careful analysis. Your task is to arrive at truthful, factual conclusions via explicit and deductive reasoning.
+TASK: ATOMIC PROPOSITION EXTRACTION
 
-Here are strict definitions for the reasoning modes you are to employ:
+Extract atomic propositions from the peer's message. An atomic proposition is:
+1. A statement with a SINGLE TRUTH VALUE (evaluable as true or false independently)
+2. Contains NO LOGICAL CONNECTIVES (no AND, OR, IF-THEN, UNLESS, etc.)
+3. SUFFICIENTLY CONTEXTUALIZED to be meaningful standing alone
 
-1. **EXPLICIT REASONING**:
-    - Conclusions about {peer_id} that MUST be true given premises ONLY of the following types:
-        - Recent messages
-        - Knowledge about the conversation history
-        - Current date and time (which is: {message_created_at})
-        - Timestamps from conversation history
-    - Follow strict literal necessity--if stated directly in message, extract a conclusion
-    - Latest message MUST be a premise, previous messages and timestamps may be used to contextualize
-    - Transforms a single message (premise) into ONE OR MULTIPLE conclusions
-    - Derive EVERYTHING that can be explicitly concluded
-    - Make sure EVERY conclusion is sufficiently contextualized, i.e. ensure each conclusion contains enough specific information about subjects and objects to make it self-contained and useful (e.g. instead of "Ann is nervous about the interview", use "Ann is nervous about the job interview at the pharmacy")
-    - When possible, always use absolute dates and times, and avoid relative dates and times (e.g. instead of 'Mary went to the store yesterday', use 'Mary went to the store on June 26, 2025')
-2. **DEDUCTIVE REASONING**:
-    - Conclusions about {peer_id} that MUST be true given premises ONLY of the following types:
-        - Explicit conclusions
-        - Previous deductive conclusions
-        - General, open domain knowledge known to be true
-        - Current date and time (which is: {message_created_at})
-        - Timestamps for {peer_id}'s messages, and previous premises and conclusions
-    - Follow strict logical necessity--if premises are true, conclusion MUST be true
-    - Multiple premises may be used in a deduction, but only one conclusion may be drawn
-    - Complete ONLY as many deductions as needed to form useful and additive knowledge about {peer_id}
-    - May scaffold previous conclusions and known facts to do further deduction
-    - But MAY NOT use previous **probabilistic** deductive conclusions (including qualifiers like probably, likely, typically, may, etc) as premises in further deductions
-    - Use current timestamp as needed to provide absolute dates
+**The Critical Balance:**
+Each proposition must be atomic (indivisible) yet contain enough semantic context to be interpretable without reference to other propositions.
 
-Here are examples of the reasoning modes in action:
+- ❌ TOO ATOMIC (lacks context): 
+  * "Maria is happy" → Happy about what?
+  * "James said hi" → Said hi to whom? In what context?
+  * "Sarah went there" → Went where?
 
-- **EXPLICIT REASONING EXAMPLES**
-    1. PREMISE(S): "I just had my 25th birthday last Saturday" (latest message), Current date is June 26, 2025 (timestamp) → CONCLUSION(S): "Maria is 25 years old", "Maria's birthday is June 21st"
-    2. PREMISE(S): "I took my dog for a walk in a park near my house in NYC—it was such a beautiful day" (latest message) → CONCLUSION(S): "Liam has a dog", "Liam took his dog for a walk", "Liam has a house in NYC", "Liam lives near a park", "Liam prefers to take advantage of nice weather to walk his dog"
-    3. PREMISE(S): "Whenever I think about my college experience I feel nostalgic" (latest message) → CONCLUSION(S): "Aisha attended college", "Aisha feels nostalgic about her college experience"
-    4. PREMISE(S): "That's so cool!" (latest message), The speaker is reacting to learning the definition of Kant's categorical imperative (conversation knowledge) → CONCLUSION(S): "Carlos thinks Kant's categorical imperative is cool"
-- **DEDUCTIVE REASONING EXAMPLES**
-    1. PREMISE(S): "Maria attended college" (explicit), All people who attended college have completed high school or equivalent (general) → CONCLUSION: "Maria completed high school or equivalent education"
-    2. PREMISE(S): "Liam is 25 years old" (explicit), Current date is June 26, 2025 (timestamp), "Liam's birthday was last Saturday" (explicit) → CONCLUSION: "Liam was born on June 21, 1998"
-    3. PREMISE(S): "Aisha has a dog" (explicit), "Aisha took her dog for a walk" (explicit), All dogs require regular walks for health (general) → CONCLUSION: "Aisha provides care for her dog"
-    4. PREMISE(S): "Carlos prefers to take advantage of nice weather to walk his dog" (explicit), Message timestamp shows afternoon hours (timestamp), Nice weather is typically during daylight (general) → CONCLUSION: "Carlos has flexibility in his schedule during typical work hours"
+- ❌ TOO COMPOUND (multiple truth values):
+  * "Maria is happy and relieved about her promotion" → TWO propositions
+  * "James lives in NYC and works remotely" → TWO propositions
 
-Based on our definitions and examples, here's a summary of the logical reasoning task:
+- ✓ PROPERLY ATOMIC (single truth value, sufficient context):
+  * "Maria is happy about her job promotion"
+  * "James said hi to his neighbor this morning"
+  * "Sarah went to the grocery store"
+  * "Maria owns a dog"
+  * "Maria's dog is named Charlie"
 
-**REASONING INTERACTIONS:**
+**Extraction Types:**
 
-- Message (required)/Conversation History (optional)/Temporal (optional) → Explicit: Derive certain conclusions only from literal statements
-- Explicit/Deductive/Temporal/General → Deductive: When logical necessity allows certain conclusion
-- Explicit/Deductive/Temporal/General → Further Deductive: Can use certain conclusions and known facts to deduce additional certain conclusions
-- Probabilistic Deductive ↛ Further Deductive: If a deductive conclusion includes probabilistic qualifiers (likely, potentially, typically, might, etc) it may NOT be used as a premise for further deductions
+1. **EXPLICIT EXTRACTION** - Directly stated facts:
+   - Extract propositions directly asserted in the message
+   - Each claim becomes a separate atomic proposition
+   
+2. **IMPLICIT EXTRACTION** - Clearly implied facts:
+   - Extract propositions that are obviously implied by the message
+   - Only include implications that are certain, not speculative
+   - Examples:
+     * "I graduated from college" → IMPLIES: "Anthony attended college"
+     * "I'm taking my dog to the vet" → IMPLIES: "Sarah has a dog"
+     * "My 10-year-old loves soccer" → IMPLIES: "Marcus has a child"
 
-**INSTRUCTIONS:** Given the above, first think critically about what it means to do explicit and deductive reasoning, then consider how to apply that to the latest message, finally do explicit and deductive reasoning about the user to reach useful, contextually-rich conclusions.
+**Decomposing Logical Connectives:**
+Split any compound statement into separate atomic propositions:
+- "I live in NYC and work remotely" → "James lives in NYC" + "James works remotely"
+- "I like reading or watching movies" → "James likes reading" + "James likes watching movies"
 
+**Ensuring Sufficient Context:**
+Include specific semantic information in each proposition:
+- Specific subjects/objects: "the job interview at the pharmacy" not just "the interview"
+- Absolute temporal info: "June 21, 2025" not "yesterday"
+- Disambiguating details: "Maria (third-party)" not just "she"
+- Relevant qualifiers that make the proposition meaningful
 
-{peer_card_section}
+**Information Sources for Contextualization:**
+- Latest peer message (PRIMARY SOURCE - required)
+- Conversation history (for context and disambiguation)
+- Current date/time: {message_created_at}
+- Message timestamps (convert relative dates to absolute)
 
-{working_representation_section}
+**Examples:**
+
+Example 1 - Explicit + Implicit with Temporal Context:
+- MESSAGE: "I just had my 25th birthday last Saturday"
+- CURRENT DATE: June 26, 2025
+- EXTRACTED PROPOSITIONS:
+  * "Maria is 25 years old" [explicit]
+  * "Maria's birthday is June 21st" [explicit]
+  * "Maria was born in the year 2000" [implicit - derived from age and current date]
+
+Example 2 - Decomposing Compounds:
+- MESSAGE: "I took my dog for a walk in a park near my house in NYC"
+- EXTRACTED PROPOSITIONS:
+  * "Liam has a dog" [implicit]
+  * "Liam took his dog for a walk" [explicit]
+  * "Liam walked his dog in a park" [explicit]
+  * "Liam has a house in NYC" [implicit]
+  * "Liam's house is near a park" [explicit]
+
+Example 3 - Adding Context from History:
+- MESSAGE: "I'm so nervous"
+- HISTORY: Peer mentioned earlier they have a pharmacy job interview tomorrow
+- EXTRACTED PROPOSITIONS:
+  * "Ann is nervous about her job interview at the pharmacy" [explicit, contextualized]
+
+Example 4 - Implicit Extraction:
+- MESSAGE: "My daughter starts kindergarten next month"
+- EXTRACTED PROPOSITIONS:
+  * "Carlos has a daughter" [implicit]
+  * "Carlos's daughter will start kindergarten next month" [explicit]
+  * "Carlos's daughter is approximately 5 years old" [implicit - kindergarten age]
+
+**Verification Checklist:**
+- [ ] Each proposition has exactly ONE truth value
+- [ ] No logical connectives (AND, OR, IF-THEN, etc.)
+- [ ] Sufficient context to be meaningful independently
+- [ ] Peer's name starts each proposition
+- [ ] Absolute dates/times when temporal info present
+- [ ] Both explicit and obvious implicit facts extracted
+
+{ peer_id }'s known biographical information:
+<peer_card>
+{ peer_card_section }
+</peer_card>
+
+Current understanding of { peer_id }:
+<current_context>
+{ working_representation_section }
+</current_context>
 
 Recent conversation history for context:
 <history>
-{history}
+{ history }
 </history>
 
 New conversation turns to analyze:
 <new_turns>
-{new_turns_section}
+{ new_turns_section }
 </new_turns>
+
+Extract ALL atomic propositions (both explicit and clearly implied) from the latest peer message. Output your response in JSON structured format:
+```json
+{{
+    "explicit":[
+        "explicit proposition 1",
+        "explicit proposition 2",
+        ...
+        "explicit proposition n"
+    ],
+    "implicit":[
+        "implicit proposition 1",
+        "implicit proposition 2",
+        ...
+        "implicit proposition n"
+    ]
+}}
+```
 """
     )
-
 
 def peer_card_prompt(
     old_peer_card: list[str] | None,

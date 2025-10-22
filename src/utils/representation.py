@@ -18,6 +18,10 @@ class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
 
 
+class ImplicitObservationBase(BaseModel):
+    content: str = Field(description="The implicit observation - a fact clearly implied by the message")
+
+
 class DeductiveObservationBase(BaseModel):
     premises: list[str] = Field(
         description="Supporting premises or evidence for this conclusion",
@@ -29,14 +33,15 @@ class DeductiveObservationBase(BaseModel):
 class PromptRepresentation(BaseModel):
     """
     The representation format that is used when getting structured output from an LLM.
+    Now follows the new prompt schema with explicit and implicit facts.
     """
 
-    explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+    explicit: list[str] = Field(
+        description="Facts DIRECTLY stated by the peer - atomic propositions with single truth values. Example: ['Maria is 25 years old', 'Maria has a dog named Rover']",
         default_factory=list,
     )
-    deductive: list[DeductiveObservationBase] = Field(
-        description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
+    implicit: list[str] = Field(
+        description="Facts CLEARLY IMPLIED by the peer's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
         default_factory=list,
     )
 
@@ -296,10 +301,14 @@ class Representation(BaseModel):
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
+        """
+        Convert PromptRepresentation (explicit/implicit strings) to Representation (explicit/deductive observations).
+        Implicit facts are stored as deductive observations with empty premises since they're implied by the message.
+        """
         return cls(
             explicit=[
                 ExplicitObservation(
-                    content=e.content,
+                    content=e,
                     created_at=created_at,
                     message_ids=[message_ids],
                     session_name=session_name,
@@ -308,13 +317,13 @@ class Representation(BaseModel):
             ],
             deductive=[
                 DeductiveObservation(
-                    conclusion=d.conclusion,
+                    conclusion=imp,
                     created_at=created_at,
                     message_ids=[message_ids],
                     session_name=session_name,
-                    premises=d.premises,
+                    premises=[],  # Implicit facts don't have explicit premises
                 )
-                for d in prompt_representation.deductive
+                for imp in prompt_representation.implicit
             ],
         )
 

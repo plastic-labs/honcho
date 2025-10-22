@@ -33,6 +33,7 @@ def save_trace_to_file(
     prompt: str,
     response: str,
     thinking: str | None,
+    message_metadata: dict[str, Any] | None = None,
 ) -> None:
     """
     Save the critical analysis call inputs and prompt to trace.jsonl file.
@@ -40,6 +41,29 @@ def save_trace_to_file(
     Use convert_trace_to_json() to convert to a proper JSON array format.
     """
     trace_file = Path("trace.jsonl")
+
+    # Parse response to extract explicit and implicit facts
+    response_parsed = None
+    try:
+        response_data = json.loads(response)
+        explicit_facts = response_data.get("explicit", [])
+        implicit_facts = response_data.get("implicit", [])
+
+        # Handle both old format (list of objects) and new format (list of strings)
+        if explicit_facts and isinstance(explicit_facts[0], dict):
+            # Old format: list of {content: "..."}
+            explicit_facts = [item.get("content", "") for item in explicit_facts]
+        if implicit_facts and isinstance(implicit_facts[0], dict):
+            # Old format: list of {conclusion: "...", premises: [...]}
+            implicit_facts = [item.get("conclusion", "") for item in implicit_facts]
+
+        response_parsed = {
+            "explicit": explicit_facts,
+            "implicit": implicit_facts,
+        }
+    except (json.JSONDecodeError, KeyError, TypeError, IndexError):
+        # If parsing fails, keep response_parsed as None
+        pass
 
     trace_data = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -49,29 +73,26 @@ def save_trace_to_file(
         "peer_id": peer_id,
         "peer_card": peer_card,
         "message_created_at": message_created_at.isoformat(),
-        "working_representation": {
+        "dataset_uuid": message_metadata.get("dataset_uuid") if message_metadata else None,
+        "conversation_id": message_metadata.get("conversation_id") if message_metadata else None,
+        "message_sequence_id": message_metadata.get("message_sequence_id") if message_metadata else None,
+        "total_messages": message_metadata.get("total_messages") if message_metadata else None,
+        "dataset": message_metadata.get("dataset") if message_metadata else None,
+        "working_representation_input": {
             "explicit": [
-                {
-                    "content": obs.content,
-                    "created_at": obs.created_at.isoformat(),
-                    "session_name": obs.session_name,
-                }
+                obs.content
                 for obs in working_representation.explicit
             ],
-            "deductive": [
-                {
-                    "conclusion": obs.conclusion,
-                    "premises": obs.premises,
-                    "created_at": obs.created_at.isoformat(),
-                    "session_name": obs.session_name,
-                }
+            "implicit": [
+                obs.conclusion
                 for obs in working_representation.deductive
             ],
         },
         "history": history,
         "new_turns": new_turns,
         "prompt": prompt,
-        "response": response,
+        "llm_output": response_parsed,
+        "llm_output_raw": response,
         "thinking": thinking,
     }
 

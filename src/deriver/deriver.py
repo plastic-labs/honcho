@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import time
+from typing import Any
 
 import sentry_sdk
 
@@ -48,6 +49,7 @@ async def critical_analysis_call(
     history: str,
     new_turns: list[str],
     estimated_input_tokens: int,
+    message_metadata: dict[str, Any] | None = None,
 ) -> PromptRepresentation:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
@@ -90,6 +92,7 @@ async def critical_analysis_call(
             prompt=prompt,
             response=json.dumps(response.content.model_dump()),
             thinking=response.think_trace,
+            message_metadata=message_metadata,
         )
 
     prometheus.DERIVER_TOKENS_PROCESSED.labels(
@@ -369,6 +372,7 @@ class CertaintyReasoner:
                 history=history,
                 new_turns=new_turns,
                 estimated_input_tokens=self.estimated_input_tokens,
+                message_metadata=latest_message.h_metadata if hasattr(latest_message, 'h_metadata') else None,
             )
         except Exception as e:
             raise exceptions.LLMError(

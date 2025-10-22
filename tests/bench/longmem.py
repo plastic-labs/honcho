@@ -1268,7 +1268,7 @@ Examples:
         metrics_output = Path(
             f"tests/bench/perf_metrics/{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         )
-        runner.metrics_collector.export_to_json(metrics_output)
+       l runner.metrics_collector.export_to_json(metrics_output)
         runner.metrics_collector.cleanup_collection()
 
         # Return exit code based on results
@@ -1279,7 +1279,9 @@ Examples:
         print("\nTest execution interrupted by user")
         return 1
     except Exception as e:
+        import traceback
         print(f"Error running tests: {e}")
+        traceback.print_exc()
         return 1
 
 
