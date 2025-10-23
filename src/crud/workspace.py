@@ -23,6 +23,10 @@ def workspace_cache_key(workspace_name: str) -> str:
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
     key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}",
 )
+@cache.locked(
+    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}",
+    ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+)
 async def _fetch_workspace(
     db: AsyncSession, workspace_name: str
 ) -> models.Workspace | None:
@@ -75,7 +79,6 @@ async def get_or_create_workspace(
         await db.commit()
         await db.refresh(honcho_workspace)
 
-        # Cache is handled by the @cache decorator
         logger.debug("Workspace created successfully: %s", workspace.name)
         return honcho_workspace
     except IntegrityError:

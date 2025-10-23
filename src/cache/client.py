@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 if settings.CACHE.ENABLED:
     try:
         cache.setup(  # pyright: ignore[reportUnknownMemberType]
-            settings.CACHE.URL,
+            settings_url=settings.CACHE.URL,
             pickle_type=PicklerType.SQLALCHEMY,  # Use sqlalchemy for SQLAlchemy object serialization
         )
         logger.debug("Cache setup completed at module import")

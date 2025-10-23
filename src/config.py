@@ -300,10 +300,13 @@ class CacheSettings(HonchoSettings):
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0"
     NAMESPACE: str = "honcho"
-    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = 300
+    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
+        300  # how long to keep items in cache
+    )
 
-    # Max number of workspaces in redis cache
-    MAX_WORKSPACE_LIMIT: Annotated[int, Field(default=50, ge=1, le=1000)] = 50
+    DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
+        5  # how long to hold a lock on a resource when fetching DB after cache miss
+    )
 
 
 class DreamSettings(HonchoSettings):

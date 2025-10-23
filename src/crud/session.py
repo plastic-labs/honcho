@@ -19,8 +19,6 @@ from src.exceptions import (
 from src.utils.filter import apply_filter
 
 from .peer import get_or_create_peers, get_peer
-
-# Import workspace and peer functions that are needed
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
@@ -36,6 +34,10 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
 @cache(
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
     key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}",
+)
+@cache.locked(
+    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}",
+    ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
 )
 async def _fetch_session(
     db: AsyncSession,

@@ -106,6 +106,10 @@ async def get_or_create_peers(
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
     key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:peer:{{peer_name}}",
 )
+@cache.locked(
+    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:peer:{{peer_name}}",
+    ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+)
 async def _fetch_peer(
     db: AsyncSession,
     workspace_name: str,
