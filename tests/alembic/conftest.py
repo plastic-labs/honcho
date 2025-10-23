@@ -57,6 +57,12 @@ def alembic_cfg(alembic_database: str) -> Config:
 def alembic_database() -> Generator[str, None, None]:
     """Provision a dedicated DB for Alembic verification tests."""
 
+    assert ALEMBIC_TEST_DB_URL.database == "alembic_migration_tests", (
+        "Can't set up Alembic test database fixture. "
+        + "ALEMBIC_TEST_DB_URL.database is {ALEMBIC_TEST_DB_URL.database}, "
+        + "expected 'alembic_migration_tests'. "
+    )
+
     if database_exists(ALEMBIC_TEST_DB_URL):
         drop_database(ALEMBIC_TEST_DB_URL)  # start fresh
     create_database(ALEMBIC_TEST_DB_URL)
@@ -65,7 +71,6 @@ def alembic_database() -> Generator[str, None, None]:
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-
         yield str(ALEMBIC_TEST_DB_URL)
     finally:
         engine.dispose()
@@ -85,7 +90,7 @@ def alembic_engine(alembic_database: str) -> Generator[Engine, None, None]:
 
 
 @pytest.fixture(autouse=True)
-def reset_database_between_tests(
+def reset_schema_between_tests(
     alembic_engine: Engine,
 ) -> Generator[None, None, None]:
     """Drop and recreate the schema for a clean slate each test (fast reset)."""

@@ -63,21 +63,10 @@ def parse_args() -> argparse.Namespace:
         "revision",
         help="Revision id (e.g. a1b2c3d4e5f6) or path to a migration file.",
     )
-    parser.add_argument(
-        "--migrations-dir",
-        default=MIGRATIONS_DIR,
-        type=Path,
-        help="Path to the Alembic migrations directory (defaults to migrations/versions).",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite the target test file if it already exists.",
-    )
     return parser.parse_args()
 
 
-def resolve_migration(path_or_revision: str, migrations_dir: Path) -> MigrationInfo:
+def resolve_migration(path_or_revision: str) -> MigrationInfo:
     candidate = Path(path_or_revision)
     if candidate.suffix == ".py" and candidate.exists():
         return MigrationInfo(
@@ -86,10 +75,10 @@ def resolve_migration(path_or_revision: str, migrations_dir: Path) -> MigrationI
             path=candidate.resolve(),
         )
 
-    matches = sorted(migrations_dir.glob(f"{path_or_revision}_*.py"))
+    matches = sorted(MIGRATIONS_DIR.glob(f"{path_or_revision}_*.py"))
     if not matches:
         raise FileNotFoundError(
-            f"Could not find migration matching {path_or_revision!r} in {migrations_dir}."
+            f"Could not find migration matching {path_or_revision!r} in {MIGRATIONS_DIR}."
         )
     if len(matches) > 1:
         options = ", ".join(match.name for match in matches)
@@ -116,13 +105,9 @@ def build_template(info: MigrationInfo) -> str:
     return dedent(content).rstrip() + "\n"
 
 
-def write_stub(info: MigrationInfo, overwrite: bool) -> Path:
+def write_stub(info: MigrationInfo) -> Path:
     TESTS_REVISION_DIR.mkdir(parents=True, exist_ok=True)
     target = TESTS_REVISION_DIR / info.test_filename
-    if target.exists() and not overwrite:
-        raise FileExistsError(
-            f"Test module {target} already exists. Use --overwrite to replace it."
-        )
     target.write_text(build_template(info), encoding="utf-8")
     return target
 
@@ -153,8 +138,8 @@ __all__ = [
 
 def main() -> None:
     args = parse_args()
-    info = resolve_migration(args.revision, args.migrations_dir)
-    target = write_stub(info, args.overwrite)
+    info = resolve_migration(args.revision)
+    target = write_stub(info)
     refresh_revision_init()
     print(f"Created {target.relative_to(PROJECT_ROOT)}")
 

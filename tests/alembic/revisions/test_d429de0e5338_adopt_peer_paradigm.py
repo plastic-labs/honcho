@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 
 from tests.alembic.registry import register_after_upgrade, register_before_upgrade
 from tests.alembic.verifier import MigrationVerifier
@@ -118,7 +118,7 @@ def prepare_peer_paradigm(verifier: MigrationVerifier) -> None:
 def verify_peer_paradigm(verifier: MigrationVerifier) -> None:
     """Validate the large-scale peer paradigm migration."""
 
-    inspector = inspect(verifier.conn)
+    inspector = verifier.get_inspector()
 
     assert inspector.has_table("workspaces", schema=verifier.schema)
     assert not inspector.has_table("apps", schema=verifier.schema)

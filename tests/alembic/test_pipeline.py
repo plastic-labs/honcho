@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine
 
+from tests.alembic.conftest import ALEMBIC_CONFIG_PATH
 from tests.alembic.registry import get_registered_hooks
 from tests.alembic.verifier import MigrationVerifier
 
@@ -17,8 +16,7 @@ from tests.alembic.verifier import MigrationVerifier
 def _load_revision_sequence() -> tuple[str, ...]:
     """Read the Alembic script directory to produce the linear revision order."""
 
-    config_path = Path(__file__).resolve().parents[2] / "alembic.ini"
-    script = ScriptDirectory.from_config(Config(str(config_path)))
+    script = ScriptDirectory.from_config(Config(str(ALEMBIC_CONFIG_PATH)))
     revisions = list(script.walk_revisions())  # newest -> oldest
     revisions.reverse()
     return tuple(revision.revision for revision in revisions)
@@ -44,7 +42,6 @@ def _test_single_revision(
     - Run the before_upgrade hook to seed and validate the state of the DB before the revision
     - Migrate to the current revision
     - Run the after_upgrade hook to validate the state of the DB after the revision
-    - Update our previous revision for the next iteration
     """
     hooks_map = get_registered_hooks()
     revision_order = list(REVISION_SEQUENCE)
