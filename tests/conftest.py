@@ -167,19 +167,15 @@ async def db_session(db_engine: AsyncEngine):
         await session.rollback()
 
 
-@pytest_asyncio.fixture(scope="function", autouse=True)
-async def fake_cache(monkeypatch: pytest.MonkeyPatch):
-    """Use fakeredis for caching in tests to enable cache testing without external dependencies."""
-
+@pytest_asyncio.fixture(scope="session")
+async def fake_cache_session():
+    """Set up fakeredis for caching once per test session."""
     # Store original settings
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    # Create a fake redis instance
+    # Create a fake redis instance that persists for the session
     fake_redis = FakeAsyncRedis(decode_responses=True)
-
-    # Clear any existing cache data
-    await fake_redis.flushall()  # pyright: ignore[reportUnknownMemberType]
 
     # Patch redis creation to use fakeredis
     # Cashews uses redis.asyncio.from_url to create connections
@@ -192,16 +188,13 @@ async def fake_cache(monkeypatch: pytest.MonkeyPatch):
 
     try:
         # Enable caching with fake backend
-        monkeypatch.setattr(settings.CACHE, "ENABLED", True)
+        settings.CACHE.ENABLED = True
         cache.setup(  # pyright: ignore[reportUnknownMemberType]
             "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
         )
 
-        yield cache
+        yield fake_redis
     finally:
-        # Clear cache after test
-        await fake_redis.flushall()  # pyright: ignore[reportUnknownMemberType]
-
         # Stop the patch
         redis_patch.stop()
 
@@ -217,6 +210,18 @@ async def fake_cache(monkeypatch: pytest.MonkeyPatch):
             cache.setup(original_url, pickle_type=PicklerType.SQLALCHEMY, enable=True)  # pyright: ignore[reportUnknownMemberType]
         else:
             cache.disable()
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def fake_cache(fake_cache_session: FakeAsyncRedis):
+    """Clear cache between tests."""
+    # Clear cache before each test
+    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+
+    yield cache
+
+    # Clear cache after each test
+    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
 
 
 @pytest.fixture(scope="function")
