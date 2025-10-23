@@ -36,6 +36,7 @@ dependencies = [
     "redis>=6.0.0",
     "types-redis>=4.6.0.20241004",
     "cashews[redis]>=7.4.3",
+    "fakeredis>=2.32.0",
 ]
 [tool.uv]
 dev-dependencies = [

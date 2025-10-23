@@ -7,6 +7,7 @@ import jwt
 import pytest
 import pytest_asyncio
 from cashews.picklers import PicklerType
+from fakeredis import FakeAsyncRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -168,19 +169,45 @@ async def db_session(db_engine: AsyncEngine):
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def fake_cache(monkeypatch: pytest.MonkeyPatch):
-    """Disable caching in tests to avoid stale data issues with SQLAlchemy sessions."""
+    """Use fakeredis for caching in tests to enable cache testing without external dependencies."""
 
     # Store original settings
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    # Disable caching entirely for tests
-    monkeypatch.setattr(settings.CACHE, "ENABLED", False)
-    cache.disable()
+    # Create a fake redis instance
+    fake_redis = FakeAsyncRedis(decode_responses=True)
+
+    # Clear any existing cache data
+    await fake_redis.flushall()
+
+    # Patch redis creation to use fakeredis
+    # Cashews uses redis.asyncio.from_url to create connections
+    def fake_redis_from_url(*_args: Any, **_kwargs: Any):
+        return fake_redis
+
+    # Start patching redis client creation
+    redis_patch = patch("redis.asyncio.from_url", fake_redis_from_url)
+    redis_patch.start()
 
     try:
+        # Enable caching with fake backend
+        monkeypatch.setattr(settings.CACHE, "ENABLED", True)
+        cache.setup(  # pyright: ignore[reportUnknownMemberType]
+            "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
+        )
+
         yield cache
     finally:
+        # Clear cache after test
+        await fake_redis.flushall()
+
+        # Stop the patch
+        redis_patch.stop()
+
+        # Disable cache
+        cache.disable()
+
         # Restore original settings
         settings.CACHE.ENABLED = original_enabled
         settings.CACHE.URL = original_url
