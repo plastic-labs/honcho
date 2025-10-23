@@ -15,15 +15,19 @@ from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
 
-PEER_CACHE_KEY_TEMPLATE = (
-    f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:peer:{{peer_name}}"
-)
+PEER_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:peer:{peer_name}"
+PEER_LOCK_PREFIX = f"{settings.CACHE.NAMESPACE}:lock"
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     """Generate cache key for peer."""
-    return PEER_CACHE_KEY_TEMPLATE.format(
-        workspace_name=workspace_name, peer_name=peer_name
+    return (
+        settings.CACHE.NAMESPACE
+        + ":"
+        + PEER_CACHE_KEY_TEMPLATE.format(
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
     )
 
 
@@ -110,13 +114,15 @@ async def get_or_create_peers(
 
 
 @cache(
-    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
     key=PEER_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    prefix=settings.CACHE.NAMESPACE,
     condition=NOT_NONE,
 )
 @cache.locked(
     key=PEER_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+    prefix=PEER_LOCK_PREFIX,
 )
 async def _fetch_peer(
     db: AsyncSession,

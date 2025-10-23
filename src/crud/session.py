@@ -24,26 +24,32 @@ from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
 
-SESSION_CACHE_KEY_TEMPLATE = (
-    f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}"
-)
+SESSION_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:session:{session_name}"
+SESSION_LOCK_PREFIX = f"{settings.CACHE.NAMESPACE}:lock"
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
     """Generate cache key for session."""
-    return SESSION_CACHE_KEY_TEMPLATE.format(
-        workspace_name=workspace_name, session_name=session_name
+    return (
+        settings.CACHE.NAMESPACE
+        + ":"
+        + SESSION_CACHE_KEY_TEMPLATE.format(
+            workspace_name=workspace_name,
+            session_name=session_name,
+        )
     )
 
 
 @cache(
-    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
     key=SESSION_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    prefix=settings.CACHE.NAMESPACE,
     condition=NOT_NONE,
 )
 @cache.locked(
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+    prefix=SESSION_LOCK_PREFIX,
 )
 async def _fetch_session(
     db: AsyncSession,
@@ -181,15 +187,10 @@ async def get_or_create_session(
     await db.commit()
     await db.refresh(honcho_session)
 
-    # Invalidate cache if session was modified - read-through pattern
-    if (
-        session.peer_names
-        or session.metadata is not None
-        or session.configuration is not None
-    ):
-        cache_key = session_cache_key(workspace_name, session.name)
-        await cache.delete(cache_key)
-
+    cache_key = session_cache_key(workspace_name, session.name)
+    await cache.set(
+        cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+    )
     return honcho_session
 
 

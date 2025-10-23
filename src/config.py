@@ -298,7 +298,7 @@ class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
-    URL: str = "redis://localhost:6379/0"
+    URL: str = "redis://localhost:16379/0?suppress=false"
     NAMESPACE: str = "honcho"
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache

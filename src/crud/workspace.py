@@ -14,24 +14,29 @@ from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
 
-WORKSPACE_CACHE_KEY_TEMPLATE = (
-    f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}"
-)
+WORKSPACE_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}"
+WORKSPACE_LOCK_PREFIX = f"{settings.CACHE.NAMESPACE}:lock"
 
 
 def workspace_cache_key(workspace_name: str) -> str:
     """Generate cache key for workspace."""
-    return WORKSPACE_CACHE_KEY_TEMPLATE.format(workspace_name=workspace_name)
+    return (
+        settings.CACHE.NAMESPACE
+        + ":"
+        + WORKSPACE_CACHE_KEY_TEMPLATE.format(workspace_name=workspace_name)
+    )
 
 
 @cache(
-    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
     key=WORKSPACE_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    prefix=settings.CACHE.NAMESPACE,
     condition=NOT_NONE,
 )
 @cache.locked(
     key=WORKSPACE_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+    prefix=WORKSPACE_LOCK_PREFIX,
 )
 async def _fetch_workspace(
     db: AsyncSession, workspace_name: str
@@ -86,6 +91,11 @@ async def get_or_create_workspace(
         await db.refresh(honcho_workspace)
 
         logger.debug("Workspace created successfully: %s", workspace.name)
+
+        cache_key = workspace_cache_key(workspace.name)
+        await cache.set(
+            cache_key, honcho_workspace, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+        )
         return honcho_workspace
     except IntegrityError:
         await db.rollback()
