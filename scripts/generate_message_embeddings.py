@@ -1,3 +1,4 @@
+#!/usr/bin/env uv run python
 """
 Script to generate embeddings for existing messages that don't already have embeddings.
 

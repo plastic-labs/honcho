@@ -83,7 +83,7 @@ def upgrade() -> None:
         sa.CheckConstraint("length(name) <= 512", name="name_length"),
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         sa.ForeignKeyConstraint(
-            ["app_id"], ["apps.public_id"], name=op.f("fk_users_app_id_apps")
+            ["app_id"], [f"{schema}.apps.public_id"], name=op.f("fk_users_app_id_apps")
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_users")),
         sa.UniqueConstraint("name", "app_id", name="unique_name_app_user"),
@@ -130,7 +130,9 @@ def upgrade() -> None:
         sa.CheckConstraint("length(public_id) = 21", name="public_id_length"),
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.public_id"], name=op.f("fk_sessions_user_id_users")
+            ["user_id"],
+            [f"{schema}.users.public_id"],
+            name=op.f("fk_sessions_user_id_users"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_sessions")),
         sa.UniqueConstraint("public_id", name=op.f("uq_sessions_public_id")),
@@ -186,7 +188,7 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         sa.ForeignKeyConstraint(
             ["session_id"],
-            ["sessions.public_id"],
+            [f"{schema}.sessions.public_id"],
             name=op.f("fk_messages_session_id_sessions"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_messages")),
@@ -246,7 +248,7 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         sa.ForeignKeyConstraint(
             ["message_id"],
-            ["messages.public_id"],
+            [f"{schema}.messages.public_id"],
             name=op.f("fk_metamessages_message_id_messages"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_metamessages")),
@@ -308,7 +310,9 @@ def upgrade() -> None:
         sa.CheckConstraint("length(name) <= 512", name="name_length"),
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.public_id"], name=op.f("fk_collections_user_id_users")
+            ["user_id"],
+            [f"{schema}.users.public_id"],
+            name=op.f("fk_collections_user_id_users"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_collections")),
         sa.UniqueConstraint("name", "user_id", name="unique_name_collection_user"),
@@ -372,7 +376,7 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         sa.ForeignKeyConstraint(
             ["collection_id"],
-            ["collections.public_id"],
+            [f"{schema}.collections.public_id"],
             name=op.f("fk_documents_collection_id_collections"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_documents")),
@@ -412,7 +416,9 @@ def upgrade() -> None:
         sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("processed", sa.Boolean(), nullable=False, server_default="false"),
         sa.ForeignKeyConstraint(
-            ["session_id"], ["sessions.id"], name=op.f("fk_queue_session_id_sessions")
+            ["session_id"],
+            [f"{schema}.sessions.id"],
+            name=op.f("fk_queue_session_id_sessions"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_queue")),
         schema=schema,
@@ -437,7 +443,7 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["session_id"],
-            ["sessions.id"],
+            [f"{schema}.sessions.id"],
             name=op.f("fk_active_queue_sessions_session_id_sessions"),
         ),
         sa.PrimaryKeyConstraint("session_id", name=op.f("pk_active_queue_sessions")),

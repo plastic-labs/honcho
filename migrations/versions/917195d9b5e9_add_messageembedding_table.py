@@ -40,14 +40,15 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         ),
         # Foreign key constraints
-        sa.ForeignKeyConstraint(["message_id"], ["messages.public_id"]),
-        sa.ForeignKeyConstraint(["workspace_name"], ["workspaces.name"]),
+        sa.ForeignKeyConstraint(["message_id"], [f"{schema}.messages.public_id"]),
+        sa.ForeignKeyConstraint(["workspace_name"], [f"{schema}.workspaces.name"]),
         sa.ForeignKeyConstraint(
             ["session_name", "workspace_name"],
-            ["sessions.name", "sessions.workspace_name"],
+            [f"{schema}.sessions.name", f"{schema}.sessions.workspace_name"],
         ),
         sa.ForeignKeyConstraint(
-            ["peer_name", "workspace_name"], ["peers.name", "peers.workspace_name"]
+            ["peer_name", "workspace_name"],
+            [f"{schema}.peers.name", f"{schema}.peers.workspace_name"],
         ),
         schema=schema,
     )

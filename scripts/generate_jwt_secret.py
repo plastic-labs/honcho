@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env uv run python
 """
 Utility script to generate a JWT secret for use in the .env file.
 This uses the same logic as the automatically generated version in security.py.
