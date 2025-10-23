@@ -51,7 +51,6 @@ async def init_cache() -> None:
             settings.CACHE.URL,
             e,
         )
-        print(e)
         settings.CACHE.ENABLED = False
         cache.disable()
 

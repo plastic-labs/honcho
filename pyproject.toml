@@ -49,7 +49,6 @@ dev-dependencies = [
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
-    "fakeredis>=2.20.0",
     "honcho-ai",
 ]
 
