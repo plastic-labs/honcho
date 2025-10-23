@@ -333,6 +333,7 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
+    LOCAL_TRACE_FILE: str = "trace.jsonl"
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)

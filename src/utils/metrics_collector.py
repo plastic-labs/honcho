@@ -39,8 +39,24 @@ def save_trace_to_file(
     Save the critical analysis call inputs and prompt to trace.jsonl file.
     Uses JSONL format (one JSON object per line) for efficient appending.
     Use convert_trace_to_json() to convert to a proper JSON array format.
+
+    The trace file path can be specified in message_metadata['trace_file_path'].
+    If not provided, falls back to environment variable or default setting.
     """
-    trace_file = Path("trace.jsonl")
+    import os
+
+    from src.config import settings
+
+    # Priority order for trace file path:
+    # 1. Message metadata (set by tracer script) - allows per-message trace routing
+    # 2. Environment variable (set by tracer process)
+    # 3. Settings default (trace.jsonl)
+    if message_metadata and "trace_file_path" in message_metadata:
+        trace_file_path = message_metadata["trace_file_path"]
+    else:
+        trace_file_path = os.environ.get("LOCAL_TRACE_FILE", settings.LOCAL_TRACE_FILE)
+
+    trace_file = Path(trace_file_path)
 
     # Parse response to extract explicit and implicit facts
     response_parsed = None

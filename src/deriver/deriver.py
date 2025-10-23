@@ -461,11 +461,12 @@ class CertaintyReasoner:
                 for observation in new_peer_card
                 if not observation.lower().startswith(("note", "notes"))
             ]
+            # Log peer card update count instead of full content to reduce debug noise
             accumulate_metric(
                 f"deriver_{self.ctx[-1].id}_{self.observer}",
-                "new_peer_card",
-                "\n".join(new_peer_card),
-                "blob",
+                "peer_card_update_count",
+                len(new_peer_card),
+                "count",
             )
             async with tracked_db("deriver.update_peer_card") as db:
                 await crud.set_peer_card(

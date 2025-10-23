@@ -1,34 +1,15 @@
 """
-Honcho Trace Data Collector
+Honcho Trace Generator
 
-A script that collects trace data from conversations processed through Honcho.
+A script that processes conversation data and generates trace files by sending
+messages through Honcho's representation system. This captures the theory-of-mind
+processing traces without evaluation.
+
 This script:
 1. Loads conversation data from JSON files
-2. Creates a workspace and sessions with the conversation messages
-3. Processes messages incrementally (one turn at a time)
-4. Waits for the deriver queue after each turn to capture traces
-5. Outputs trace data showing the theory of mind analysis evolution at each conversation step
-
-## Input Format
-
-The input JSON file should contain conversation data in the following format:
-```json
-{
-    "conversation_id": {
-        "dataset": "dataset_name",
-        "peers": ["peer1_id", "peer2_id"],
-        "messages": [
-            {
-                "timestamp": "2023-01-01 00:00:00",
-                "peer": "peer1_id",
-                "content": "message content"
-            },
-            ...
-        ]
-    },
-    ...
-}
-```
+2. Creates a workspace and session for each conversation
+3. Processes messages sequentially (preserving context dependencies)
+4. Generates trace data showing the representation building process
 
 ## To use
 
@@ -38,77 +19,101 @@ uv sync
 source .venv/bin/activate
 ```
 
-1. Run the tracer script:
+**IMPORTANT**: Ensure peer cards are enabled in your `.env` file:
 ```
-python tracer.py --conversation-file path/to/conversation_data.json
+PEER_CARD_ENABLED=true
+```
+This is required for peer card biographical information to be captured in traces.
+
+1. Run the test harness to start a Honcho instance:
+```
+python -m tests.bench.harness
+```
+
+2. Run this script with a conversation data file:
+```
+python -m tests.bench.tracer --data-file tests/bench/longmemeval_data/test_data.json
 ```
 
 Optional arguments:
 ```
---base-api-port: Base port for Honcho API instances (default: 8000)
---pool-size: Number of Honcho instances in the pool (default: 1)
---batch-size: Number of conversations to process concurrently in each batch (default: 10)
+--data-file: Path to conversation data JSON file (required)
+--base-api-port: Port for Honcho API instance (default: 8000)
 --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes)
---workspace-id-prefix: Prefix for workspace IDs (default: auto-generated)
 --cleanup-workspace: Delete workspace after processing (default: False)
+--limit: Limit number of conversations to process (default: process all)
+--concurrency: Number of conversations to process in parallel (default: 1)
+--output-json: Path for final JSON trace file (default: trace.json)
+--output-jsonl: Path for intermediate JSONL trace file (default: auto-derived from output-json)
+```
+
+**Note on Output Files**: The JSONL file is automatically derived from the JSON filename.
+For example, `--output-json results/my_trace.json` will automatically use
+`results/my_trace.jsonl`. The trace file path is embedded in each message's metadata,
+so the deriver knows exactly where to write traces. This ensures that:
+- Parallel tracer instances write to separate files without conflicts
+- The intermediate JSONL file is never written to the default "trace.jsonl"
+- Each tracer run produces uniquely named output files
+- Multiple tracer scripts can run simultaneously without interfering with each other
+
+**Note on Concurrency**: Setting `--concurrency` to a value greater than 1 will process
+multiple conversations in parallel to speed up processing. Each conversation's messages
+are still processed sequentially to maintain context dependencies.
+
+## Input Data Format
+
+The input JSON should be a dictionary where keys are conversation IDs and values contain:
+- dataset: Name of the dataset (string)
+- peers: List of peer IDs (list of strings)
+  - **Note**: Peer IDs with whitespaces or special characters will be automatically
+    sanitized (e.g., "user 1" becomes "user_1"). The original IDs are preserved in
+    the display, but the sanitized versions are used internally.
+- messages: List of message objects with:
+  - timestamp: Message timestamp (string in "YYYY-MM-DD HH:MM:SS" format)
+  - peer: Peer ID who sent the message (string, can contain whitespaces)
+  - content: Message content (string)
+
+Example:
+```json
+{
+    "conversation-1": {
+        "dataset": "dailydialog",
+        "peers": ["user_1", "assistant_1"],
+        "messages": [
+            {
+                "timestamp": "2023-01-01 00:00:00",
+                "peer": "user_1",
+                "content": "Hello!"
+            },
+            {
+                "timestamp": "2023-01-01 00:01:00",
+                "peer": "assistant_1",
+                "content": "Hi there!"
+            }
+        ]
+    }
+}
 ```
 
 ## Output
 
-The script produces a trace.json file containing trace data at each conversation turn:
-- Timestamp and model configuration
-- **Dataset UUID**: Unique identifier for this conversation/dataset
-- **Conversation ID**: Original conversation identifier from the input file
-- **Message Sequence ID**: Sequential number (1 to N) indicating the order of this message
-- **Total Messages**: Total number of messages in the conversation
-- **Dataset**: Name of the source dataset
-- Peer information
-- **Working representation input**: The representation passed into the analysis (explicit and deductive observations)
-- Conversation history and new turns
-- Full prompt sent to the LLM
-- **LLM output**: Structured response with explicit and implicit facts extracted
-- **LLM output raw**: Raw JSON response from the model
-- Thinking process (if available)
-
-For a conversation with N messages, this will generate N trace entries showing
-how the theory of mind representation evolves as each message is processed.
-
-Each trace entry can be correlated back to the original conversation using the
-dataset_uuid and conversation_id fields, and the message_sequence_id shows the
-order in which messages were processed.
-
-## Output Schema
-
-Each trace entry follows this schema:
-```json
-{
-  "timestamp": "ISO 8601 timestamp",
-  "dataset_uuid": "UUID for this conversation",
-  "conversation_id": "Original conversation ID",
-  "message_sequence_id": 1,
-  "total_messages": 10,
-  "dataset": "dataset_name",
-  "peer_id": "peer_identifier",
-  "message_created_at": "ISO 8601 timestamp",
-  "working_representation_input": {
-    "explicit": ["explicit fact 1", "explicit fact 2", ...],
-    "implicit": ["implicit fact 1", "implicit fact 2", ...]
-  },
-  "llm_output": {
-    "explicit": ["explicit fact 1", "explicit fact 2", ...],
-    "implicit": ["implicit fact 1", "implicit fact 2", ...]
-  },
-  "prompt": "Full prompt text",
-  "thinking": "Model thinking trace (if available)"
-}
-```
+The script generates a trace.json file containing the theory-of-mind processing
+traces for each message, including:
+- Input representation state
+- Message history
+- New conversation turns
+- Generated prompt
+- LLM output (extracted facts)
+- Metadata (conversation ID, message sequence, etc.)
 """
 
 import argparse
 import asyncio
 import json
 import logging
-import uuid
+import os
+import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -119,49 +124,120 @@ from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from tqdm import tqdm
+from typing_extensions import TypedDict
 
 from src.config import settings
-from src.utils.metrics_collector import MetricsCollector, convert_trace_to_json
+from src.utils.metrics_collector import convert_trace_to_json
 
 load_dotenv()
 
 
-class TraceCollector:
+def sanitize_peer_id(peer_id: str) -> str:
     """
-    Collects trace data from conversation processing through Honcho.
+    Sanitize peer ID to ensure it's safe for use in the system.
+
+    Replaces whitespaces and special characters with underscores,
+    removes consecutive underscores, and ensures the ID is not empty.
+
+    Args:
+        peer_id: Original peer ID that may contain whitespaces or special characters
+
+    Returns:
+        Sanitized peer ID safe for use in the system
+
+    Examples:
+        "user 1" -> "user_1"
+        "assistant  2" -> "assistant_2"
+        "peer@name!" -> "peer_name"
+        "   spaces   " -> "spaces"
+    """
+    # Replace whitespaces and special characters with underscores
+    sanitized = re.sub(r'[^\w\-]', '_', peer_id)
+
+    # Replace multiple consecutive underscores with a single one
+    sanitized = re.sub(r'_+', '_', sanitized)
+
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+
+    # Ensure the ID is not empty
+    if not sanitized:
+        sanitized = "peer"
+
+    return sanitized
+
+
+class ConversationData(TypedDict):
+    """Type definition for conversation data."""
+
+    dataset: str
+    peers: list[str]
+    messages: list[dict[str, Any]]
+
+
+class ProcessingResult(TypedDict):
+    """Type definition for conversation processing results."""
+
+    conversation_id: str
+    dataset: str
+    message_count: int
+    peer_count: int
+    success: bool
+    error: str | None
+    duration_seconds: float
+
+
+class TraceGenerator:
+    """
+    Processes conversation data through Honcho to generate theory-of-mind traces.
     """
 
     def __init__(
         self,
-        base_api_port: int = 8000,
-        pool_size: int = 1,
+        api_port: int = 8000,
         timeout_seconds: int | None = None,
-        workspace_id_prefix: str | None = None,
         cleanup_workspace: bool = False,
+        output_jsonl: Path | None = None,
+        output_json: Path | None = None,
+        concurrency: int = 1,
     ):
         """
-        Initialize the trace collector.
+        Initialize the trace generator.
 
         Args:
-            base_api_port: Base port for Honcho API instances (default: 8000)
-            pool_size: Number of Honcho instances in the pool (default: 1)
+            api_port: Port for Honcho API instance (default: 8000)
             timeout_seconds: Timeout for deriver queue in seconds
-            workspace_id_prefix: Prefix for workspace IDs (default: auto-generated)
             cleanup_workspace: If True, delete workspace after processing
+            output_jsonl: Path for intermediate JSONL trace file (auto-derived from output_json if not specified)
+            output_json: Path for final JSON trace file (default: trace.json)
+            concurrency: Number of conversations to process in parallel (default: 1)
         """
-        self.base_api_port: int = base_api_port
-        self.pool_size: int = pool_size
+        self.api_port: int = api_port
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 600
         )
-        self.workspace_id_prefix: str = workspace_id_prefix or f"trace_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.cleanup_workspace: bool = cleanup_workspace
+        self.output_json: Path = output_json or Path("trace.json")
 
-        # Initialize metrics collector
-        self.metrics_collector: MetricsCollector = MetricsCollector()
-        self.metrics_collector.start_collection(
-            f"trace_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
+        # Auto-derive JSONL filename from JSON filename if not explicitly provided
+        if output_jsonl is None:
+            # Replace .json extension with .jsonl (or append .jsonl if no extension)
+            if self.output_json.suffix == ".json":
+                self.output_jsonl = self.output_json.with_suffix(".jsonl")
+            else:
+                self.output_jsonl = Path(str(self.output_json) + ".jsonl")
+        else:
+            self.output_jsonl = output_jsonl
+
+        self.concurrency: int = concurrency
+
+        # Ensure parent directories exist
+        self.output_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        self.output_json.parent.mkdir(parents=True, exist_ok=True)
+
+        # Set the environment variable so the deriver uses our custom trace file path
+        os.environ["LOCAL_TRACE_FILE"] = str(self.output_jsonl)
 
         # Configure logging
         logging.basicConfig(
@@ -173,25 +249,38 @@ class TraceCollector:
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("httpcore").setLevel(logging.ERROR)
 
-    def get_honcho_url_for_index(self, conversation_index: int) -> str:
+    def get_honcho_url(self) -> str:
         """
-        Get the Honcho URL for a given conversation index using round-robin distribution.
-
-        Args:
-            conversation_index: Index of the conversation
+        Get the Honcho URL.
 
         Returns:
-            URL of the Honcho instance to use for this conversation
+            URL of the Honcho instance
         """
-        instance_id = conversation_index % self.pool_size
-        port = self.base_api_port + instance_id
-        return f"http://localhost:{port}"
+        return f"http://localhost:{self.api_port}"
+
+    def _format_duration(self, total_seconds: float) -> str:
+        """Format a duration in seconds into a human-readable string.
+
+        Args:
+            total_seconds: The duration in seconds.
+
+        Returns:
+            A formatted duration string.
+        """
+        minutes = int(total_seconds // 60)
+        if minutes > 0:
+            seconds_rounded = int(round(total_seconds - minutes * 60))
+            if seconds_rounded == 60:
+                minutes += 1
+                seconds_rounded = 0
+            return f"{minutes}m{seconds_rounded:02d}s"
+        return f"{total_seconds:.2f}s"
 
     def _parse_timestamp(self, timestamp_str: str) -> datetime:
         """Parse timestamp string to datetime.
 
         Args:
-            timestamp_str: Timestamp string in various formats
+            timestamp_str: Timestamp string in format "YYYY-MM-DD HH:MM:SS"
 
         Returns:
             Parsed datetime object
@@ -200,43 +289,31 @@ class TraceCollector:
             ValueError: If timestamp format is invalid
         """
         try:
-            # Try common formats
-            for fmt in [
-                "%Y-%m-%d %H:%M:%S",
-                "%Y/%m/%d %H:%M",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%d %H:%M:%S.%f",
-            ]:
-                try:
-                    return datetime.strptime(timestamp_str, fmt)
-                except ValueError:
-                    continue
-            raise ValueError(f"Unable to parse timestamp: {timestamp_str}")
-        except Exception as e:
-            raise ValueError(f"Failed to parse timestamp '{timestamp_str}': {e}") from e
+            return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError as e:
+            raise ValueError(
+                f"Failed to parse timestamp '{timestamp_str}': {e}"
+            ) from e
 
-    def load_conversation_file(self, conversation_file: Path) -> dict[str, Any]:
+    def load_conversation_file(self, data_file: Path) -> dict[str, ConversationData]:
         """
         Load conversation data from a JSON file.
 
         Args:
-            conversation_file: Path to the JSON conversation file
+            data_file: Path to the JSON data file
 
         Returns:
-            Dictionary containing conversation data
+            Dictionary mapping conversation IDs to conversation data
         """
-        with open(conversation_file) as f:
+        with open(data_file) as f:
             return json.load(f)
 
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
+    async def create_honcho_client(self, workspace_id: str) -> AsyncHoncho:
         """
         Create a Honcho client for a specific workspace.
 
         Args:
-            workspace_id: Workspace ID for the conversation
-            honcho_url: URL of the Honcho instance
+            workspace_id: Workspace ID
 
         Returns:
             AsyncHoncho client instance
@@ -244,24 +321,21 @@ class TraceCollector:
         return AsyncHoncho(
             environment="local",
             workspace_id=workspace_id,
-            base_url=honcho_url,
+            base_url=self.get_honcho_url(),
         )
 
     async def wait_for_deriver_queue_empty(
         self, honcho_client: AsyncHoncho, session_id: str | None = None
     ) -> bool:
-        """
-        Wait for the deriver queue to become empty.
+        """Wait for the deriver queue to empty.
 
         Args:
             honcho_client: Honcho client instance
-            session_id: Optional session ID to check
+            session_id: Optional session ID to check status for
 
         Returns:
-            True if queue became empty, False if timeout
+            True if queue emptied successfully, False if timeout
         """
-        import time
-
         start_time = time.time()
         while True:
             try:
@@ -282,305 +356,417 @@ class TraceCollector:
             await asyncio.sleep(1)
 
     async def process_conversation(
-        self, conversation_id: str, conversation_data: dict[str, Any], honcho_url: str
-    ) -> bool:
+        self, conversation_id: str, conversation_data: ConversationData
+    ) -> ProcessingResult:
         """
-        Process a single conversation and collect trace data.
+        Process a single conversation through Honcho to generate traces.
 
         Args:
-            conversation_id: Unique identifier for this conversation
-            conversation_data: Dictionary containing conversation data
-            honcho_url: URL of the Honcho instance to use
+            conversation_id: Unique identifier for the conversation
+            conversation_data: Conversation data containing messages and metadata
 
         Returns:
-            True if successful, False otherwise
+            Processing result
         """
-        self.logger.info(f"Processing conversation: {conversation_id} on {honcho_url}")
+        start_time = time.time()
 
-        # Generate a dataset UUID for this conversation
-        dataset_uuid = str(uuid.uuid4())
-
-        # Extract conversation data
-        dataset = conversation_data.get("dataset", "unknown")
-        peers_list = conversation_data.get("peers", [])
-        messages = conversation_data.get("messages", [])
-
-        if not messages:
-            self.logger.warning(f"No messages found in conversation {conversation_id}")
-            return False
-
-        # Create workspace ID for this conversation
-        workspace_id = f"{self.workspace_id_prefix}_{conversation_id}"
-
-        # Create Honcho client
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
+        dataset = conversation_data["dataset"]
+        peers = conversation_data["peers"]
+        messages = conversation_data["messages"]
 
         self.logger.info(
-            f"Dataset UUID: {dataset_uuid} | Conversation ID: {conversation_id} | Dataset: {dataset}"
+            f"Processing conversation {conversation_id} from dataset {dataset}"
         )
+        self.logger.info(f"  Peers: {peers}")
+        self.logger.info(f"  Messages: {len(messages)}")
+
+        # Create workspace for this conversation
+        workspace_id = f"trace_{dataset}_{conversation_id}"
+        honcho_client = await self.create_honcho_client(workspace_id)
+
+        result: ProcessingResult = {
+            "conversation_id": conversation_id,
+            "dataset": dataset,
+            "message_count": len(messages),
+            "peer_count": len(peers),
+            "success": False,
+            "error": None,
+            "duration_seconds": 0.0,
+        }
 
         try:
-            # Create session with metadata
-            session_id = f"{conversation_id}"
-            session = await honcho_client.session(
-                id=session_id,
-                metadata={
-                    "dataset_uuid": dataset_uuid,
-                    "conversation_id": conversation_id,
-                    "dataset": dataset,
-                },
-            )
-            self.logger.info(f"Created session: {session_id}")
+            # Create session for this conversation
+            session_id = f"{conversation_id}_session"
+            session = await honcho_client.session(id=session_id)
 
-            # Create peers and add to session
-            peers = {}
-            for peer_id in peers_list:
-                peer = await honcho_client.peer(id=peer_id)
-                peers[peer_id] = peer
-                self.logger.info(f"Created peer: {peer_id}")
+            # Create peer objects for all participants
+            # Sanitize peer IDs to handle whitespaces and special characters
+            peer_objects = {}
+            peer_id_mapping = {}  # Map original peer_id -> sanitized peer_id
 
-            # Add peers to session with observation settings
-            # First peer observes themselves, others don't
-            peer_configs = []
-            for idx, peer_id in enumerate(peers_list):
-                observe_me = idx == 0  # First peer observes themselves
-                peer_configs.append(
-                    (
-                        peers[peer_id],
-                        SessionPeerConfig(observe_me=observe_me, observe_others=False),
+            for original_peer_id in peers:
+                sanitized_peer_id = sanitize_peer_id(original_peer_id)
+                peer_id_mapping[original_peer_id] = sanitized_peer_id
+
+                # Log if sanitization changed the ID
+                if original_peer_id != sanitized_peer_id:
+                    self.logger.info(
+                        f"  Sanitized peer ID: '{original_peer_id}' -> '{sanitized_peer_id}'"
                     )
+
+                peer_obj = await honcho_client.peer(id=sanitized_peer_id)
+                peer_objects[original_peer_id] = peer_obj
+
+            # Add all peers to the session with observation enabled
+            # All peers observe themselves by default
+            peer_configs = [
+                (
+                    peer_obj,
+                    SessionPeerConfig(observe_me=True, observe_others=False),
                 )
+                for peer_obj in peer_objects.values()
+            ]
             await session.add_peers(peer_configs)
 
-            # Process messages incrementally to capture traces at each turn
-            total_messages = len(messages)
-            self.logger.info(
-                f"Processing {total_messages} messages incrementally to capture traces at each turn"
+            # Process messages sequentially to maintain context dependencies
+            self.logger.info(f"Processing {len(messages)} messages sequentially...")
+
+            # Create progress bar for message processing
+            progress_bar = tqdm(
+                total=len(messages),
+                desc=f"[{conversation_id}] Processing messages",
+                unit="msg",
+                leave=True,
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
             )
 
-            for turn_idx, msg in enumerate(messages, 1):
-                peer_id = msg["peer"]
-                content = msg["content"]
-                timestamp_str = msg["timestamp"]
+            try:
+                for msg_idx, msg_data in enumerate(messages):
+                    peer_id = msg_data["peer"]
+                    content = msg_data["content"]
+                    timestamp_str = msg_data["timestamp"]
 
-                if peer_id not in peers:
-                    self.logger.warning(
-                        f"Peer {peer_id} not found in peers list, skipping message"
+                    # Parse timestamp
+                    try:
+                        timestamp = self._parse_timestamp(timestamp_str)
+                    except ValueError as e:
+                        progress_bar.close()
+                        self.logger.error(f"Error parsing timestamp: {e}")
+                        result["error"] = str(e)
+                        return result
+
+                    # Get the peer object
+                    peer_obj = peer_objects.get(peer_id)
+                    if not peer_obj:
+                        progress_bar.close()
+                        error_msg = f"Unknown peer ID: {peer_id}"
+                        self.logger.error(error_msg)
+                        result["error"] = error_msg
+                        return result
+
+                    # Create message with metadata for trace tracking
+                    # Include trace file path so deriver knows where to write traces
+                    message_metadata = {
+                        "dataset_uuid": f"{dataset}_{conversation_id}",
+                        "conversation_id": conversation_id,
+                        "message_sequence_id": msg_idx,
+                        "total_messages": len(messages),
+                        "dataset": dataset,
+                        "trace_file_path": str(self.output_jsonl),  # Tell deriver where to write traces
+                    }
+
+                    # Add the message
+                    message_param = peer_obj.message(
+                        content, created_at=timestamp, metadata=message_metadata
                     )
-                    continue
 
-                if len(content) == 0:
-                    content = "(empty message)"
+                    await session.add_messages([message_param])
 
-                # Parse timestamp
-                try:
-                    message_time = self._parse_timestamp(timestamp_str)
-                except ValueError as e:
-                    self.logger.warning(f"Error parsing timestamp: {e}")
-                    message_time = datetime.now()
-
-                # Prepare messages for this turn (handle long messages)
-                # Add metadata with dataset_uuid and message sequence number
-                turn_messages: list[MessageCreateParam] = []
-                message_metadata = {
-                    "dataset_uuid": dataset_uuid,
-                    "conversation_id": conversation_id,
-                    "message_sequence_id": turn_idx,
-                    "total_messages": total_messages,
-                    "dataset": dataset,
-                }
-
-                # Split message if it exceeds 25000 characters
-                if len(content) > 25000:
-                    chunks = [
-                        content[i : i + 25000] for i in range(0, len(content), 25000)
-                    ]
-                    for chunk_idx, chunk in enumerate(chunks):
-                        chunk_metadata = message_metadata.copy()
-                        chunk_metadata["chunk_index"] = chunk_idx
-                        chunk_metadata["total_chunks"] = len(chunks)
-                        turn_messages.append(
-                            peers[peer_id].message(
-                                chunk, created_at=message_time, metadata=chunk_metadata
-                            )
+                    # Update progress bar description with current peer
+                    # Show sanitized peer ID if it was changed
+                    display_peer_id = peer_id_mapping.get(peer_id, peer_id)
+                    if peer_id != display_peer_id:
+                        progress_bar.set_description(
+                            f"[{conversation_id}] Processing {peer_id} ({display_peer_id})"
                         )
-                else:
-                    turn_messages.append(
-                        peers[peer_id].message(
-                            content, created_at=message_time, metadata=message_metadata
+                    else:
+                        progress_bar.set_description(
+                            f"[{conversation_id}] Processing {peer_id}"
                         )
+
+                    # Wait for deriver to process this message before continuing
+                    # This ensures sequential processing and proper context building
+                    self.logger.debug(
+                        f"  Waiting for deriver to process message {msg_idx + 1}/{len(messages)}..."
                     )
 
-                # Add this turn's messages
-                await session.add_messages(turn_messages)
+                    # Give a short delay to allow the message to be enqueued
+                    await asyncio.sleep(0.5)
 
-                self.logger.info(
-                    f"Turn {turn_idx}/{total_messages}: Added message from {peer_id}"
-                )
-
-                # Wait for deriver queue to process this turn before adding the next
-                self.logger.debug(
-                    f"Waiting for deriver to process turn {turn_idx}..."
-                )
-                await asyncio.sleep(0.5)  # Give time for tasks to be queued
-
-                queue_empty = await self.wait_for_deriver_queue_empty(honcho_client)
-                if not queue_empty:
-                    self.logger.error(
-                        f"Deriver queue timeout at turn {turn_idx} - not all messages processed"
+                    queue_empty = await self.wait_for_deriver_queue_empty(
+                        honcho_client, session_id=session_id
                     )
-                    return False
 
-                self.logger.debug(f"Turn {turn_idx} processed successfully")
+                    if not queue_empty:
+                        progress_bar.close()
+                        error_msg = f"Deriver queue timeout on message {msg_idx + 1}"
+                        self.logger.error(error_msg)
+                        result["error"] = error_msg
+                        return result
 
-            self.logger.info(f"Successfully processed conversation {conversation_id}")
+                    # Update progress
+                    progress_bar.update(1)
+
+                    self.logger.debug(
+                        f"  Message {msg_idx + 1}/{len(messages)} processed successfully"
+                    )
+
+                # Close the progress bar
+                progress_bar.close()
+            except Exception as e:
+                progress_bar.close()
+                raise
+
+            # Final wait to ensure all processing is complete
+            self.logger.info("Waiting for final deriver queue to empty...")
+            await asyncio.sleep(1)
+            queue_empty = await self.wait_for_deriver_queue_empty(
+                honcho_client, session_id=session_id
+            )
+
+            if not queue_empty:
+                result["error"] = "Final deriver queue timeout"
+                return result
 
             # Clean up workspace if requested
             if self.cleanup_workspace:
                 try:
                     await honcho_client.delete_workspace(workspace_id)
-                    self.logger.info(f"Cleaned up workspace: {workspace_id}")
+                    self.logger.info(f"Cleaned up workspace {workspace_id}")
                 except Exception as e:
                     self.logger.warning(f"Failed to delete workspace: {e}")
 
-            return True
+            result["success"] = True
+            result["duration_seconds"] = time.time() - start_time
+
+            self.logger.info(
+                f"Conversation {conversation_id} completed successfully "
+                f"(Duration: {self._format_duration(result['duration_seconds'])})"
+            )
 
         except Exception as e:
             self.logger.error(f"Error processing conversation {conversation_id}: {e}")
-            return False
+            result["error"] = str(e)
+            result["success"] = False
+            result["duration_seconds"] = time.time() - start_time
 
-    async def run(self, conversation_file: Path, batch_size: int = 10) -> bool:
+        return result
+
+    async def process_all_conversations(
+        self, data_file: Path, limit: int | None = None
+    ) -> tuple[list[ProcessingResult], float]:
         """
-        Run the trace collector on a conversation file.
+        Process all conversations in a data file with optional parallelism.
 
         Args:
-            conversation_file: Path to the conversation JSON file
-            batch_size: Number of conversations to process concurrently in each batch
+            data_file: Path to the conversation data JSON file
+            limit: Optional limit on number of conversations to process
 
         Returns:
-            True if successful, False otherwise
+            Tuple of (list of processing results, total duration)
         """
-        try:
-            # Load conversation data
-            conversations = self.load_conversation_file(conversation_file)
-            conversations_list = list(conversations.items())
+        conversations = self.load_conversation_file(data_file)
 
-            self.logger.info(
-                f"Loaded {len(conversations_list)} conversation(s) from {conversation_file}"
+        conversation_ids = list(conversations.keys())
+        if limit:
+            conversation_ids = conversation_ids[:limit]
+
+        self.logger.info(
+            f"Found {len(conversation_ids)} conversations to process in {data_file}"
+        )
+        if self.concurrency > 1:
+            self.logger.info(f"Processing with concurrency level: {self.concurrency}")
+
+        overall_start = time.time()
+
+        # Process conversations with controlled concurrency
+        # Messages within each conversation are still processed sequentially
+        all_results: list[ProcessingResult] = []
+
+        if self.concurrency == 1:
+            # Sequential processing (original behavior)
+            for idx, conv_id in enumerate(conversation_ids):
+                self.logger.info(
+                    f"\n{'=' * 80}\n"
+                    f"Processing conversation {idx + 1}/{len(conversation_ids)}: {conv_id}\n"
+                    f"{'=' * 80}"
+                )
+
+                result = await self.process_conversation(conv_id, conversations[conv_id])
+                all_results.append(result)
+
+                # Print result summary
+                status = "✓ SUCCESS" if result["success"] else "✗ FAILED"
+                self.logger.info(
+                    f"{status} - {conv_id} "
+                    f"({result['message_count']} messages, "
+                    f"{self._format_duration(result['duration_seconds'])})"
+                )
+
+                if result["error"]:
+                    self.logger.error(f"  Error: {result['error']}")
+        else:
+            # Parallel processing with semaphore for concurrency control
+            semaphore = asyncio.Semaphore(self.concurrency)
+
+            async def process_with_semaphore(
+                conv_id: str, conv_data: ConversationData, idx: int
+            ) -> ProcessingResult:
+                async with semaphore:
+                    self.logger.info(
+                        f"\n{'=' * 80}\n"
+                        f"Processing conversation {idx + 1}/{len(conversation_ids)}: {conv_id}\n"
+                        f"{'=' * 80}"
+                    )
+
+                    result = await self.process_conversation(conv_id, conv_data)
+
+                    # Print result summary
+                    status = "✓ SUCCESS" if result["success"] else "✗ FAILED"
+                    self.logger.info(
+                        f"{status} - {conv_id} "
+                        f"({result['message_count']} messages, "
+                        f"{self._format_duration(result['duration_seconds'])})"
+                    )
+
+                    if result["error"]:
+                        self.logger.error(f"  Error: {result['error']}")
+
+                    return result
+
+            # Create tasks for all conversations
+            tasks = [
+                process_with_semaphore(conv_id, conversations[conv_id], idx)
+                for idx, conv_id in enumerate(conversation_ids)
+            ]
+
+            # Run tasks concurrently
+            all_results = await asyncio.gather(*tasks)
+
+        overall_end = time.time()
+        overall_duration = overall_end - overall_start
+
+        # Convert trace file to JSON format
+        self.logger.info(
+            f"Converting trace file from {self.output_jsonl} to {self.output_json}..."
+        )
+        convert_trace_to_json(
+            input_file=str(self.output_jsonl), output_file=str(self.output_json)
+        )
+
+        return all_results, overall_duration
+
+    def print_summary(
+        self, results: list[ProcessingResult], total_elapsed_seconds: float
+    ) -> None:
+        """
+        Print a summary of all processing results.
+
+        Args:
+            results: List of processing results
+            total_elapsed_seconds: Total elapsed time
+        """
+        print(f"\n{'=' * 80}")
+        print("TRACE GENERATION SUMMARY")
+        print(f"{'=' * 80}")
+
+        total_conversations = len(results)
+        successful = sum(1 for r in results if r["success"])
+        failed = total_conversations - successful
+        total_messages = sum(r["message_count"] for r in results)
+
+        print(f"Total Conversations: {total_conversations}")
+        print(f"Successful: {successful}")
+        print(f"Failed: {failed}")
+        print(
+            f"Success Rate: {(successful / total_conversations) * 100:.1f}%"
+            if total_conversations > 0
+            else "N/A"
+        )
+        print(f"Total Messages Processed: {total_messages}")
+        print(f"Total Processing Time: {self._format_duration(total_elapsed_seconds)}")
+        print(f"Concurrency Level: {self.concurrency}")
+
+        if successful > 0:
+            avg_duration = sum(
+                r["duration_seconds"] for r in results if r["success"]
+            ) / successful
+            print(f"Average Duration per Conversation: {self._format_duration(avg_duration)}")
+
+        print("\nDetailed Results:")
+        print(
+            f"{'Conversation ID':<30} {'Dataset':<20} {'Messages':<10} {'Status':<10} {'Duration':<12}"
+        )
+        print(f"{'-' * 30} {'-' * 20} {'-' * 10} {'-' * 10} {'-' * 12}")
+
+        for result in results:
+            conv_id = result["conversation_id"]
+            dataset = result["dataset"]
+            msg_count = result["message_count"]
+            status = "SUCCESS" if result["success"] else "FAILED"
+            duration = self._format_duration(result["duration_seconds"])
+
+            print(
+                f"{conv_id:<30} {dataset:<20} {msg_count:<10} {status:<10} {duration:<12}"
             )
 
-            if self.pool_size > 1:
-                self.logger.info(
-                    f"Distributing conversations across {self.pool_size} Honcho instances "
-                    f"(ports {self.base_api_port}-{self.base_api_port + self.pool_size - 1})"
-                )
+        print(f"{'=' * 80}")
 
-            # Process conversations in batches
-            success_count = 0
-
-            for i in range(0, len(conversations_list), batch_size):
-                batch = conversations_list[i : i + batch_size]
-                batch_num = (i // batch_size) + 1
-                total_batches = (len(conversations_list) + batch_size - 1) // batch_size
-
-                self.logger.info(f"\n{'=' * 60}")
-                self.logger.info(
-                    f"Processing batch {batch_num}/{total_batches} ({len(batch)} conversations)"
-                )
-                self.logger.info(f"{'=' * 60}")
-
-                # Run conversations in current batch concurrently, distributing via round-robin
-                batch_results: list[bool] = await asyncio.gather(
-                    *[
-                        self.process_conversation(
-                            conv_id, conv_data, self.get_honcho_url_for_index(i + idx)
-                        )
-                        for idx, (conv_id, conv_data) in enumerate(batch)
-                    ]
-                )
-
-                # Count successes in this batch
-                batch_success_count = sum(1 for result in batch_results if result)
-                success_count += batch_success_count
-
-                self.logger.info(
-                    f"Batch {batch_num} completed: {batch_success_count}/{len(batch)} successful"
-                )
-
-            self.logger.info(
-                f"\nProcessed {success_count}/{len(conversations_list)} conversations successfully"
-            )
-
-            # Finalize metrics collection
-            self.metrics_collector.finalize_collection()
-
-            # Convert trace file to JSON
-            convert_trace_to_json()
-
-            # Cleanup
-            self.metrics_collector.cleanup_collection()
-
-            return success_count == len(conversations_list)
-
-        except Exception as e:
-            self.logger.error(f"Error running trace collector: {e}")
-            return False
+        # Check if trace file was created
+        if self.output_json.exists():
+            print(f"\n✓ Trace file created: {self.output_json}")
+            print(f"  File size: {self.output_json.stat().st_size / 1024:.1f} KB")
+        else:
+            print(f"\n✗ Warning: {self.output_json} file was not created")
 
 
 async def main() -> int:
     """
-    Main entry point for the trace collector.
+    Main entry point for the trace generator.
     """
     parser = argparse.ArgumentParser(
-        description="Collect trace data from Honcho conversation processing",
+        description="Generate theory-of-mind traces from conversation data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --conversation-file tests/bench/longmemeval_data/test_data.json
-  %(prog)s --conversation-file data.json --pool-size 4 --batch-size 20
-  %(prog)s --conversation-file data.json --workspace-id-prefix my_trace
+  %(prog)s --data-file tests/bench/longmemeval_data/test_data.json    # Process all conversations
+  %(prog)s --data-file data.json --limit 10                            # Process first 10 conversations
+  %(prog)s --data-file data.json --concurrency 5                       # Process 5 conversations in parallel
+  %(prog)s --data-file data.json --cleanup-workspace                   # Clean up after processing
+  %(prog)s --data-file data.json --output-json results/my_trace.json  # Auto-uses results/my_trace.jsonl
+  %(prog)s --data-file data.json --output-json out.json --output-jsonl custom.jsonl  # Override JSONL path
         """,
     )
 
     parser.add_argument(
-        "--conversation-file",
+        "--data-file",
         type=Path,
         required=True,
-        help="Path to conversation JSON file (required)",
+        help="Path to conversation data JSON file (required)",
     )
 
     parser.add_argument(
         "--base-api-port",
         type=int,
         default=8000,
-        help="Base port for Honcho API instances (default: 8000)",
-    )
-
-    parser.add_argument(
-        "--pool-size",
-        type=int,
-        default=1,
-        help="Number of Honcho instances in the pool (default: 1)",
-    )
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=10,
-        help="Number of conversations to process concurrently in each batch (default: 10)",
+        help="Port for Honcho API instance (default: 8000)",
     )
 
     parser.add_argument(
         "--timeout",
         type=int,
         default=None,
-        help="Timeout for deriver queue in seconds (default: 10 minutes)",
-    )
-
-    parser.add_argument(
-        "--workspace-id-prefix",
-        type=str,
-        help="Prefix for workspace IDs (default: auto-generated)",
+        help="Timeout for deriver queue to empty in seconds (default: 10 minutes)",
     )
 
     parser.add_argument(
@@ -589,42 +775,77 @@ Examples:
         help="Delete workspace after processing (default: False)",
     )
 
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of conversations to process (default: process all)",
+    )
+
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of conversations to process in parallel (default: 1)",
+    )
+
+    parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=None,
+        help="Path for final JSON trace file (default: trace.json)",
+    )
+
+    parser.add_argument(
+        "--output-jsonl",
+        type=Path,
+        default=None,
+        help="Path for intermediate JSONL trace file (default: auto-derived from output-json)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
-    if not args.conversation_file.exists():
-        print(f"Error: Conversation file {args.conversation_file} does not exist")
+    if not args.data_file.exists():
+        print(f"Error: Data file {args.data_file} does not exist")
         return 1
 
-    if args.batch_size <= 0:
-        print(f"Error: Batch size must be positive, got {args.batch_size}")
+    if args.limit is not None and args.limit <= 0:
+        print(f"Error: Limit must be positive, got {args.limit}")
         return 1
 
-    if args.pool_size <= 0:
-        print(f"Error: Pool size must be positive, got {args.pool_size}")
+    if args.concurrency <= 0:
+        print(f"Error: Concurrency must be positive, got {args.concurrency}")
         return 1
 
-    # Create trace collector
-    collector = TraceCollector(
-        base_api_port=args.base_api_port,
-        pool_size=args.pool_size,
+    # Create trace generator
+    generator = TraceGenerator(
+        api_port=args.base_api_port,
         timeout_seconds=args.timeout,
-        workspace_id_prefix=args.workspace_id_prefix,
         cleanup_workspace=args.cleanup_workspace,
+        output_jsonl=args.output_jsonl,
+        output_json=args.output_json,
+        concurrency=args.concurrency,
     )
 
     try:
-        # Run trace collection
-        success = await collector.run(args.conversation_file, args.batch_size)
-        return 0 if success else 1
+        # Process all conversations
+        results, total_elapsed = await generator.process_all_conversations(
+            args.data_file, args.limit
+        )
+        generator.print_summary(results, total_elapsed_seconds=total_elapsed)
+
+        # Return exit code based on results
+        all_successful = all(r["success"] for r in results)
+        return 0 if all_successful else 1
 
     except KeyboardInterrupt:
-        print("\nTrace collection interrupted by user")
+        print("\nProcessing interrupted by user")
         return 1
     except Exception as e:
         import traceback
 
-        print(f"Error collecting trace data: {e}")
+        print(f"Error processing conversations: {e}")
         traceback.print_exc()
         return 1
 
