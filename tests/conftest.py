@@ -179,7 +179,7 @@ async def fake_cache(monkeypatch: pytest.MonkeyPatch):
     fake_redis = FakeAsyncRedis(decode_responses=True)
 
     # Clear any existing cache data
-    await fake_redis.flushall()
+    await fake_redis.flushall()  # pyright: ignore[reportUnknownMemberType]
 
     # Patch redis creation to use fakeredis
     # Cashews uses redis.asyncio.from_url to create connections
@@ -200,7 +200,7 @@ async def fake_cache(monkeypatch: pytest.MonkeyPatch):
         yield cache
     finally:
         # Clear cache after test
-        await fake_redis.flushall()
+        await fake_redis.flushall()  # pyright: ignore[reportUnknownMemberType]
 
         # Stop the patch
         redis_patch.stop()
