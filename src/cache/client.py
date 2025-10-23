@@ -47,18 +47,18 @@ if is_cache_enabled():
         cache.setup("mem://")  # pyright: ignore[reportUnknownMemberType]
 else:
     cache.setup("mem://")  # pyright: ignore[reportUnknownMemberType]
-    cache.disable()
     logger.debug("Cache disabled via settings")
 
 
 async def init_cache() -> None:
     """Initialize and verify cache connection if enabled."""
     global cache_initialized
-    if not is_cache_enabled():
-        logger.info("Cache disabled")
-        return
-
     async with _cache_lock:
+        if not is_cache_enabled():
+            cache.disable()
+            logger.info("Cache disabled")
+            return
+
         # If cache was not successfully initialized at module import, try again here
         if not cache_initialized:
             try:
@@ -77,6 +77,7 @@ async def init_cache() -> None:
                 cache.disable()
                 return
 
+        cache.enable()
         # Retry Redis ping with exponential backoff
         try:
             async for attempt in AsyncRetrying(
