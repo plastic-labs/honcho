@@ -208,7 +208,7 @@ class HonchoHarness:
                 r = redis.Redis(
                     host="localhost", port=redis_port, decode_responses=True
                 )
-                r.ping()
+                r.ping()  # pyright: ignore[reportUnknownMemberType]
                 print("Redis is ready!")
                 return True
             except Exception:

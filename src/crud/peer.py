@@ -217,7 +217,7 @@ async def update_peer(
     cache_key = peer_cache_key(workspace_name, honcho_peer.name)
     await cache.delete(cache_key)
 
-    logger.debug(f"Peer {peer_name} updated successfully")
+    logger.debug("Peer %s updated successfully", peer_name)
     return honcho_peer
 
 
