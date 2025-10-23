@@ -715,7 +715,6 @@ source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "cashews", extra = ["redis"] },
-    { name = "fakeredis" },
     { name = "fastapi", extra = ["standard"] },
     { name = "fastapi-pagination" },
     { name = "google-genai" },
@@ -747,6 +746,7 @@ dependencies = [
 dev = [
     { name = "basedpyright" },
     { name = "coverage" },
+    { name = "fakeredis" },
     { name = "honcho-ai" },
     { name = "interrogate" },
     { name = "pre-commit" },
@@ -762,7 +762,6 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "cashews", extras = ["redis"], specifier = ">=7.4.3" },
-    { name = "fakeredis", specifier = ">=2.32.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.111.0" },
     { name = "fastapi-pagination", specifier = ">=0.12.24" },
     { name = "google-genai", specifier = ">=1.32.0" },
@@ -794,6 +793,7 @@ requires-dist = [
 dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "coverage", specifier = ">=7.6.0" },
+    { name = "fakeredis", specifier = ">=2.32.0" },
     { name = "honcho-ai", editable = "sdks/python" },
     { name = "interrogate", specifier = ">=1.7.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },

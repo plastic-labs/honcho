@@ -35,7 +35,6 @@ dependencies = [
     "json-repair>=0.49.0",
     "redis>=6.0.0",
     "cashews[redis]>=7.4.3",
-    "fakeredis>=2.32.0",
 ]
 [tool.uv]
 dev-dependencies = [
@@ -50,6 +49,7 @@ dev-dependencies = [
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
     "honcho-ai",
+    "fakeredis>=2.32.0",
 ]
 
 [tool.uv.workspace]
