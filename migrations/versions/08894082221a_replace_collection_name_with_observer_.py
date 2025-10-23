@@ -476,12 +476,10 @@ def downgrade() -> None:
     # Make peer_name NOT NULL
     op.alter_column("collections", "peer_name", nullable=False, schema=schema)
 
-    # Recreate the foreign key constraint for peer_name
-    if not fk_exists(
-        "collections", "collections_peer_name_workspace_name_fkey", inspector
-    ):
+    # Recreate the legacy foreign key constraint for peer_name
+    if not fk_exists("collections", "fk_collections_peer_name_peers", inspector):
         op.create_foreign_key(
-            "collections_peer_name_workspace_name_fkey",
+            "fk_collections_peer_name_peers",
             "collections",
             "peers",
             ["peer_name", "workspace_name"],
@@ -530,7 +528,7 @@ def downgrade() -> None:
     # Step 6: Make documents collection_name NOT NULL
     op.alter_column("documents", "collection_name", nullable=False, schema=schema)
 
-    # Step 6a: Restore peer_name column to documents (set to observed value)
+    # Step 6a: Restore peer_name column to documents (set to observer value)
     if not column_exists("documents", "peer_name", inspector):
         op.add_column(
             "documents",
@@ -637,14 +635,14 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Step 11: Recreate the old foreign key constraint from documents to collections
+    # Step 11: Recreate the legacy foreign key constraint from documents to collections
     if not fk_exists(
         "documents",
-        "documents_collection_name_peer_name_workspace_name_fkey",
+        "fk_documents_collection_name_collections",
         inspector,
     ):
         op.create_foreign_key(
-            "documents_collection_name_peer_name_workspace_name_fkey",
+            "fk_documents_collection_name_collections",
             "documents",
             "collections",
             ["collection_name", "peer_name", "workspace_name"],

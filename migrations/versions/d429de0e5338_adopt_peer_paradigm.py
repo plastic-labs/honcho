@@ -13,7 +13,7 @@ import sqlalchemy as sa
 import tiktoken
 from alembic import op
 from nanoid import generate as generate_nanoid
-from sqlalchemy import text
+from sqlalchemy import Inspector, text
 from sqlalchemy.dialects import postgresql
 
 from migrations.utils import (
@@ -114,8 +114,117 @@ def downgrade() -> None:
     # Step 11: Restore foreign keys
     restore_foreign_keys(schema)
 
+    # Step 12: Readd metamessages table
+    if not table_exists("metamessages", inspector):
+        op.create_table(
+            "metamessages",
+            sa.Column(
+                "id",
+                sa.BigInteger(),
+                sa.Identity(always=False),
+                primary_key=True,
+                autoincrement=True,
+                index=True,
+                nullable=False,
+            ),
+            sa.Column("public_id", sa.TEXT(), nullable=False, index=True, unique=True),
+            sa.Column("content", sa.TEXT(), nullable=True),
+            sa.Column(
+                "message_id",
+                sa.TEXT(),
+                sa.ForeignKey("messages.public_id"),
+                nullable=True,
+                index=True,
+            ),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                index=True,
+                server_default=sa.text("now()"),
+            ),
+            sa.Column("label", sa.TEXT(), nullable=False, index=True),
+            sa.Column(
+                "session_id",
+                sa.TEXT(),
+                sa.ForeignKey("sessions.public_id"),
+                nullable=True,
+                index=True,
+            ),
+            sa.Column(
+                "user_id",
+                sa.TEXT(),
+                sa.ForeignKey("users.public_id"),
+                nullable=True,
+                index=True,
+            ),
+            sa.Column(
+                "app_id",
+                sa.TEXT(),
+                sa.ForeignKey("apps.public_id"),
+                nullable=True,
+                index=True,
+            ),
+            sa.Column(
+                "metadata",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default=sa.text("'{}'::jsonb"),
+            ),
+            sa.Index(
+                "idx_metamessages_lookup",
+                "label",
+                sa.text("id DESC"),
+                postgresql_include=["public_id", "message_id", "created_at"],
+            ),
+            sa.Index(
+                "idx_metamessages_user_lookup",
+                "user_id",
+                "label",
+                sa.text("id DESC"),
+            ),
+            sa.Index(
+                "idx_metamessages_session_lookup",
+                "session_id",
+                "label",
+                sa.text("id DESC"),
+            ),
+            sa.Index(
+                "idx_metamessages_message_lookup",
+                "message_id",
+                "label",
+                sa.text("id DESC"),
+            ),
+            sa.CheckConstraint("length(public_id) = 21", name="public_id_length"),
+            sa.CheckConstraint(
+                "public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"
+            ),
+            sa.CheckConstraint("length(content) <= 65535", name="content_length"),
+            sa.CheckConstraint("length(label) <= 512", name="label_length"),
+            # Added constraints to ensure consistency
+            sa.CheckConstraint(
+                "(message_id IS NULL) OR (session_id IS NOT NULL)",
+                name="message_requires_session",
+            ),
+            sa.ForeignKeyConstraint(
+                ["session_id"],
+                [f"{schema}.sessions.public_id"],
+                "fk_metamessages_session_id_sessions",
+            ),
+            sa.ForeignKeyConstraint(
+                ["user_id"],
+                [f"{schema}.users.public_id"],
+                "fk_metamessages_user_id_users",
+            ),
+            sa.ForeignKeyConstraint(
+                ["app_id"],
+                [f"{schema}.apps.public_id"],
+                "fk_metamessages_app_id_apps",
+            ),
+        )
 
-def rename_tables(schema: str, inspector) -> None:
+
+def rename_tables(schema: str, inspector: Inspector) -> None:
     """Rename apps->workspaces and users->peers tables."""
     if inspector.has_table("apps", schema=schema):
         op.rename_table("apps", "workspaces", schema=schema)
@@ -123,7 +232,7 @@ def rename_tables(schema: str, inspector) -> None:
         op.rename_table("users", "peers", schema=schema)
 
 
-def update_workspaces_table(schema: str, inspector) -> None:
+def update_workspaces_table(schema: str, inspector: Inspector) -> None:
     """Update workspaces table (formerly apps)."""
 
     # Add configuration column
@@ -176,7 +285,7 @@ def update_workspaces_table(schema: str, inspector) -> None:
     )
 
 
-def update_peers_table(schema: str, inspector) -> None:
+def update_peers_table(schema: str, inspector: Inspector) -> None:
     """Update peers table (formerly users)."""
 
     # Add configuration column
@@ -266,9 +375,10 @@ def update_peers_table(schema: str, inspector) -> None:
     )
 
     op.drop_column("peers", "app_id", schema=schema)
+    op.alter_column("peers", "workspace_name", nullable=False, schema=schema)
 
 
-def update_sessions_table(schema: str, inspector) -> None:
+def update_sessions_table(schema: str, inspector: Inspector) -> None:
     """Update sessions table."""
 
     # Add configuration column
@@ -304,6 +414,7 @@ def update_sessions_table(schema: str, inspector) -> None:
             f"UPDATE {schema}.sessions SET workspace_name = workspaces.name FROM {schema}.workspaces WHERE sessions.app_id = workspaces.id"
         )
     )
+    op.alter_column("sessions", "workspace_name", nullable=False, schema=schema)
 
     op.add_column(
         "sessions",
@@ -365,7 +476,7 @@ def update_sessions_table(schema: str, inspector) -> None:
     )
 
 
-def create_and_populate_session_peers_table(schema: str, inspector) -> None:
+def create_and_populate_session_peers_table(schema: str, inspector: Inspector) -> None:
     """Create and populate session_peers table."""
 
     # Create session_peers table
@@ -400,11 +511,11 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
             ),
             sa.ForeignKeyConstraint(
                 ["peer_name", "workspace_name"],
-                ["peers.name", "peers.workspace_name"],
+                [f"{schema}.peers.name", f"{schema}.peers.workspace_name"],
             ),
             sa.ForeignKeyConstraint(
                 ["session_name", "workspace_name"],
-                ["sessions.name", "sessions.workspace_name"],
+                [f"{schema}.sessions.name", f"{schema}.sessions.workspace_name"],
             ),
             sa.PrimaryKeyConstraint("workspace_name", "session_name", "peer_name"),
         )
@@ -456,7 +567,7 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
         )
 
 
-def update_messages_table(schema: str, inspector) -> None:
+def update_messages_table(schema: str, inspector: Inspector) -> None:
     """Update messages table."""
 
     # Add new columns
@@ -618,7 +729,7 @@ def update_messages_table(schema: str, inspector) -> None:
     backfill_token_counts(schema)
 
 
-def update_collections_table(schema: str, inspector) -> None:
+def update_collections_table(schema: str, inspector: Inspector) -> None:
     """Update collections table."""
 
     # Add new columns
@@ -741,7 +852,7 @@ def update_collections_table(schema: str, inspector) -> None:
     )
 
 
-def update_documents_table(schema: str, inspector) -> None:
+def update_documents_table(schema: str, inspector: Inspector) -> None:
     """Update documents table."""
 
     # Add new columns
@@ -873,7 +984,9 @@ def update_documents_table(schema: str, inspector) -> None:
     )
 
 
-def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> None:
+def update_queue_and_active_queue_sessions_tables(
+    schema: str, inspector: Inspector
+) -> None:
     """Update queue and active_queue_sessions tables."""
 
     # Drop foreign key constraints first, before changing column types
@@ -903,7 +1016,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
 
     # Get the mapping of old session.id (integer) to new session.id (text, which is public_id)
     # At this point, sessions table still has both id (integer) and public_id (text) columns
-    session_id_mapping = {}
+    session_id_mapping: dict[int, str] = {}
     if table_exists("sessions", inspector):
         sessions_mapping = connection.execute(
             sa.text(f"SELECT id, public_id FROM {schema}.sessions")
@@ -1081,7 +1194,7 @@ def backfill_token_counts(schema: str) -> None:
             break
 
         # Calculate token counts and update messages in batches
-        batch_updates = []
+        batch_updates: list[tuple[int, int]] = []
         for message_id, content in messages:
             token_count = _count_tokens(content)
             batch_updates.append((message_id, token_count))
@@ -1110,7 +1223,7 @@ def backfill_token_counts(schema: str) -> None:
         offset += batch_size
 
 
-def restore_app_user_columns(schema: str, inspector) -> None:
+def restore_app_user_columns(schema: str, inspector: Inspector) -> None:
     """Restore app_id and user_id columns to peers and sessions."""
     # Add app_id back to peers
     if not column_exists("peers", "app_id", inspector):
@@ -1154,8 +1267,7 @@ def restore_app_user_columns(schema: str, inspector) -> None:
             schema=schema,
         )
         # Populate user_id from session_peers
-        # The user peer is the one that existed before agent peers were created
-        # Agent peers have names that match their IDs (both are nanoids), user peers have different names and IDs
+        # Prefer user peers (where id != name), but fall back to any peer if needed
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.sessions SET user_id = (
@@ -1172,7 +1284,7 @@ def restore_app_user_columns(schema: str, inspector) -> None:
         op.alter_column("sessions", "user_id", nullable=False, schema=schema)
 
 
-def restore_documents_table(schema: str, inspector) -> None:
+def restore_documents_table(schema: str, inspector: Inspector) -> None:
     """Restore documents table to pre-peer paradigm state."""
     # Add back id column as primary key
     if not column_exists("documents", "temp_id", inspector):
@@ -1306,7 +1418,7 @@ def restore_documents_table(schema: str, inspector) -> None:
     )
 
 
-def restore_collections_table(schema: str, inspector) -> None:
+def restore_collections_table(schema: str, inspector: Inspector) -> None:
     """Restore collections table to pre-peer paradigm state."""
     # Add back id column as primary key
     if not column_exists("collections", "temp_id", inspector):
@@ -1433,7 +1545,7 @@ def restore_collections_table(schema: str, inspector) -> None:
     )
 
 
-def restore_messages_table(schema: str, inspector) -> None:
+def restore_messages_table(schema: str, inspector: Inspector) -> None:
     """Restore messages table to pre-peer paradigm state."""
     # Add back old columns
     if not column_exists("messages", "session_id", inspector):
@@ -1553,8 +1665,20 @@ def restore_messages_table(schema: str, inspector) -> None:
         referent_schema=schema,
     )
 
+    op.create_index(
+        "idx_messages_session_lookup",
+        "messages",
+        ["session_id", "id"],
+        postgresql_include=[
+            "public_id",
+            "is_user",
+            "created_at",
+        ],
+        schema=schema,
+    )
 
-def restore_sessions_table(schema: str, inspector) -> None:
+
+def restore_sessions_table(schema: str, inspector: Inspector) -> None:
     """Restore sessions table to pre-peer paradigm state."""
     # Add back id column as BigInteger primary key
     if not column_exists("sessions", "temp_id", inspector):
@@ -1624,8 +1748,12 @@ def restore_sessions_table(schema: str, inspector) -> None:
         "public_id_format", "sessions", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
 
+    op.create_index(
+        "idx_sessions_user_lookup", "sessions", ["user_id", "public_id"], schema=schema
+    )
 
-def restore_peers_table(schema: str, inspector) -> None:
+
+def restore_peers_table(schema: str, inspector: Inspector) -> None:
     """Restore peers table to pre-user paradigm state."""
     # Add back id column as BigInteger primary key
     if not column_exists("peers", "temp_id", inspector):
@@ -1703,7 +1831,7 @@ def restore_peers_table(schema: str, inspector) -> None:
     )
 
 
-def restore_workspaces_table(schema: str, inspector) -> None:
+def restore_workspaces_table(schema: str, inspector: Inspector) -> None:
     """Restore workspaces table to pre-peer paradigm state (apps)."""
     # Add back id column as BigInteger primary key
     if not column_exists("workspaces", "temp_id", inspector):
@@ -1764,14 +1892,16 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     )
 
 
-def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> None:
+def restore_queue_and_active_queue_sessions_tables(
+    schema: str, inspector: Inspector
+) -> None:
     """Restore queue and active_queue_sessions tables to pre-peer paradigm state."""
 
     connection = op.get_bind()
 
     # Create reverse mapping from session.public_id (text) back to session.id (BigInteger)
     # At this point in downgrade, sessions table still has both id (BigInteger) and public_id (text)
-    session_id_reverse_mapping = {}
+    session_id_reverse_mapping: dict[str, int] = {}
     if table_exists("sessions", inspector):
         sessions_mapping = connection.execute(
             sa.text(f"SELECT id, public_id FROM {schema}.sessions")
@@ -1781,26 +1911,27 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
             session_id_reverse_mapping[text_id] = big_int_id
 
     # Update queue table
-    if table_exists("queue", inspector) and session_id_reverse_mapping:
+    if table_exists("queue", inspector):
         # Get current session_id values in queue table (they are text now)
-        queue_session_ids = connection.execute(
-            sa.text(
-                f"SELECT DISTINCT session_id FROM {schema}.queue WHERE session_id IS NOT NULL"
-            )
-        ).fetchall()
-
-        # Convert session_id values back to BigInteger
-        for (session_id,) in queue_session_ids:
-            if session_id in session_id_reverse_mapping:
-                old_id = session_id_reverse_mapping[session_id]
-                connection.execute(
-                    sa.text(
-                        f"UPDATE {schema}.queue SET session_id = :old_id WHERE session_id = :new_id"
-                    ),
-                    {"old_id": str(old_id), "new_id": str(session_id)},
+        if session_id_reverse_mapping:
+            queue_session_ids = connection.execute(
+                sa.text(
+                    f"SELECT DISTINCT session_id FROM {schema}.queue WHERE session_id IS NOT NULL"
                 )
+            ).fetchall()
 
-        # Change column type back to BigInteger
+            # Convert session_id values back to BigInteger
+            for (session_id,) in queue_session_ids:
+                if session_id in session_id_reverse_mapping:
+                    old_id = session_id_reverse_mapping[session_id]
+                    connection.execute(
+                        sa.text(
+                            f"UPDATE {schema}.queue SET session_id = :old_id WHERE session_id = :new_id"
+                        ),
+                        {"old_id": str(old_id), "new_id": str(session_id)},
+                    )
+
+        # Change column type back to BigInteger (always)
         op.alter_column(
             "queue",
             "session_id",
@@ -1810,36 +1941,40 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
         )
 
     # Update active_queue_sessions table
-    if table_exists("active_queue_sessions", inspector) and session_id_reverse_mapping:
-        # Get current session_id values in active_queue_sessions table (they are text now)
-        active_queue_session_ids = connection.execute(
-            sa.text(
-                f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
-            )
-        ).fetchall()
+    if table_exists("active_queue_sessions", inspector):
+        if session_id_reverse_mapping:
+            # Get current session_id values in active_queue_sessions table (they are text now)
+            active_queue_session_ids = connection.execute(
+                sa.text(
+                    f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
+                )
+            ).fetchall()
 
-        if constraint_exists(
-            "active_queue_sessions", "pk_active_queue_sessions", "primary", inspector
-        ):
-            op.drop_constraint(
-                "pk_active_queue_sessions",
+            if constraint_exists(
                 "active_queue_sessions",
-                type_="primary",
-                schema=schema,
-            )
-
-        # Convert session_id values back to BigInteger
-        for (session_id,) in active_queue_session_ids:
-            if session_id in session_id_reverse_mapping:
-                old_id = session_id_reverse_mapping[session_id]
-                connection.execute(
-                    sa.text(
-                        f"UPDATE {schema}.active_queue_sessions SET session_id = :old_id WHERE session_id = :new_id"
-                    ),
-                    {"old_id": str(old_id), "new_id": str(session_id)},
+                "pk_active_queue_sessions",
+                "primary",
+                inspector,
+            ):
+                op.drop_constraint(
+                    "pk_active_queue_sessions",
+                    "active_queue_sessions",
+                    type_="primary",
+                    schema=schema,
                 )
 
-        # Change column type back to BigInteger
+            # Convert session_id values back to BigInteger
+            for (session_id,) in active_queue_session_ids:
+                if session_id in session_id_reverse_mapping:
+                    old_id = session_id_reverse_mapping[session_id]
+                    connection.execute(
+                        sa.text(
+                            f"UPDATE {schema}.active_queue_sessions SET session_id = :old_id WHERE session_id = :new_id"
+                        ),
+                        {"old_id": str(old_id), "new_id": str(session_id)},
+                    )
+
+        # Change column type back to BigInteger (always)
         op.alter_column(
             "active_queue_sessions",
             "session_id",
@@ -1848,12 +1983,16 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
             postgresql_using="session_id::bigint",
         )
 
-        op.create_primary_key(
-            "pk_active_queue_sessions",
-            "active_queue_sessions",
-            ["session_id"],
-            schema=schema,
-        )
+        # Ensure primary key exists on session_id for pre-peer shape
+        if not constraint_exists(
+            "active_queue_sessions", "pk_active_queue_sessions", "primary", inspector
+        ):
+            op.create_primary_key(
+                "pk_active_queue_sessions",
+                "active_queue_sessions",
+                ["session_id"],
+                schema=schema,
+            )
 
         if constraint_exists(
             "active_queue_sessions",
@@ -1877,29 +2016,10 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
         if column_exists("active_queue_sessions", "task_type", inspector):
             op.drop_column("active_queue_sessions", "task_type", schema=schema)
 
-    # Restore foreign key constraints
-    if table_exists("queue", inspector):
-        op.create_foreign_key(
-            "fk_queue_session_id_sessions",
-            "queue",
-            "sessions",
-            ["session_id"],
-            ["id"],
-            referent_schema=schema,
-        )
-
-    if table_exists("active_queue_sessions", inspector):
-        op.create_foreign_key(
-            "fk_active_queue_sessions_session_id_sessions",
-            "active_queue_sessions",
-            "sessions",
-            ["session_id"],
-            ["id"],
-            referent_schema=schema,
-        )
+    # Defer restoring foreign key constraints to restore_foreign_keys()
 
 
-def restore_table_names(schema: str, inspector) -> None:
+def restore_table_names(schema: str, inspector: Inspector) -> None:
     """Restore table names: workspaces->apps and peers->users."""
     if inspector.has_table("workspaces", schema=schema):
         op.rename_table("workspaces", "apps", schema=schema)
@@ -1955,6 +2075,23 @@ def restore_foreign_keys(schema: str) -> None:
         "users",
         ["user_id"],
         ["public_id"],
+        referent_schema=schema,
+    )
+    # Restore queue/session FKs last, after all type changes are complete
+    op.create_foreign_key(
+        "fk_queue_session_id_sessions",
+        "queue",
+        "sessions",
+        ["session_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_active_queue_sessions_session_id_sessions",
+        "active_queue_sessions",
+        "sessions",
+        ["session_id"],
+        ["id"],
         referent_schema=schema,
     )
     op.create_foreign_key(

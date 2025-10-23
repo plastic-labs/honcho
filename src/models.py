@@ -113,7 +113,7 @@ class Peer(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+        ForeignKey("workspaces.name"), index=True, nullable=False
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
@@ -149,7 +149,7 @@ class Session(Base):
     )
     messages = relationship("Message", back_populates="session")
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+        ForeignKey("workspaces.name"), index=True, nullable=False
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
