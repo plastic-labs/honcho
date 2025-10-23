@@ -1,6 +1,7 @@
 from logging import getLogger
 from typing import Any
 
+from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, case, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -23,20 +24,25 @@ from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
 
+SESSION_CACHE_KEY_TEMPLATE = (
+    f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}"
+)
+
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
     """Generate cache key for session."""
-    return (
-        f"{settings.CACHE.NAMESPACE}:workspace:{workspace_name}:session:{session_name}"
+    return SESSION_CACHE_KEY_TEMPLATE.format(
+        workspace_name=workspace_name, session_name=session_name
     )
 
 
 @cache(
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}",
+    key=SESSION_CACHE_KEY_TEMPLATE,
+    condition=NOT_NONE,
 )
 @cache.locked(
-    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:session:{{session_name}}",
+    key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
 )
 async def _fetch_session(

@@ -1,6 +1,6 @@
 """Cache module for Honcho."""
 
-from .client import (
+from src.cache.client import (
     close_cache,
     init_cache,
     is_enabled,

@@ -1,6 +1,7 @@
 from logging import getLogger
 from typing import Any
 
+from cashews import NOT_NONE
 from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,18 +14,23 @@ from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
 
+WORKSPACE_CACHE_KEY_TEMPLATE = (
+    f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}"
+)
+
 
 def workspace_cache_key(workspace_name: str) -> str:
     """Generate cache key for workspace."""
-    return f"{settings.CACHE.NAMESPACE}:workspace:{workspace_name}"
+    return WORKSPACE_CACHE_KEY_TEMPLATE.format(workspace_name=workspace_name)
 
 
 @cache(
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}",
+    key=WORKSPACE_CACHE_KEY_TEMPLATE,
+    condition=NOT_NONE,
 )
 @cache.locked(
-    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}",
+    key=WORKSPACE_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
 )
 async def _fetch_workspace(

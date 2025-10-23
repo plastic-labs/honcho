@@ -1,6 +1,7 @@
 from logging import getLogger
 from typing import Any
 
+from cashews import NOT_NONE
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,10 +15,16 @@ from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
 
+PEER_CACHE_KEY_TEMPLATE = (
+    f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:peer:{{peer_name}}"
+)
+
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     """Generate cache key for peer."""
-    return f"{settings.CACHE.NAMESPACE}:peer:{workspace_name}:{peer_name}"
+    return PEER_CACHE_KEY_TEMPLATE.format(
+        workspace_name=workspace_name, peer_name=peer_name
+    )
 
 
 async def get_or_create_peers(
@@ -104,10 +111,11 @@ async def get_or_create_peers(
 
 @cache(
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:peer:{{peer_name}}",
+    key=PEER_CACHE_KEY_TEMPLATE,
+    condition=NOT_NONE,
 )
 @cache.locked(
-    key=f"{settings.CACHE.NAMESPACE}:workspace:{{workspace_name}}:peer:{{peer_name}}",
+    key=PEER_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
 )
 async def _fetch_peer(
