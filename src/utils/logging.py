@@ -95,6 +95,61 @@ def format_reasoning_inputs_as_markdown(
     return "\n".join(parts)
 
 
+def log_reasoning_step(
+    step_name: str,
+    prompt: str,
+    output: str | dict[str, Any],
+    step_number: int | None = None,
+) -> None:
+    """
+    Log a reasoning step with its prompt and output in a formatted panel.
+    Args:
+        step_name: Name of the reasoning step (e.g., "Explicit Reasoning")
+        prompt: The prompt sent to the LLM
+        output: The output from the LLM (can be string or dict)
+        step_number: Optional step number for sequencing
+    """
+    # Build step title
+    title = f"{'🔢 ' if step_number else ''}[bold yellow]{step_name}[/]"
+    if step_number:
+        title = f"🔢 [bold yellow]Step {step_number}: {step_name}[/]"
+
+    # Format output
+    if isinstance(output, dict):
+        import json
+        output_str = json.dumps(output, indent=2)
+    else:
+        output_str = str(output)
+
+    # Truncate very long prompts/outputs for display
+    max_length = 2000
+    prompt_display = prompt if len(prompt) <= max_length else f"{prompt[:max_length]}...\n[dim](truncated, {len(prompt)} total chars)[/]"
+    output_display = output_str if len(output_str) <= max_length else f"{output_str[:max_length]}...\n[dim](truncated, {len(output_str)} total chars)[/]"
+
+    # Create prompt section
+    prompt_text = Text()
+    prompt_text.append("📝 PROMPT:\n", style="bold cyan")
+    prompt_text.append(prompt_display, style="dim")
+
+    # Create output section
+    output_text = Text()
+    output_text.append("\n\n📤 OUTPUT:\n", style="bold green")
+    output_text.append(output_display, style="dim")
+
+    # Combine into panel
+    content = Group(prompt_text, output_text)
+    panel = Panel(
+        content,
+        title=title,
+        box=box.ROUNDED,
+        padding=(1, 2),
+        border_style="yellow",
+    )
+
+    console.print(panel)
+    console.print()
+
+
 def log_representation(
     representation: Representation,
 ) -> None:
@@ -109,8 +164,20 @@ def log_representation(
     for i, obs in enumerate(representation.explicit, 1):
         type_branch.add(f"[dim]{i}.[/] {obs}")
 
+    type_branch = tree.add(f"[bold cyan]IMPLICIT[/] ({len(representation.implicit)})")
+    for i, obs in enumerate(representation.implicit, 1):
+        type_branch.add(f"[dim]{i}.[/] {obs}")
+
     type_branch = tree.add(f"[bold cyan]DEDUCTIVE[/] ({len(representation.deductive)})")
     for i, obs in enumerate(representation.deductive, 1):
+        type_branch.add(f"[dim]{i}.[/] {obs}")
+
+    type_branch = tree.add(f"[bold cyan]INDUCTIVE[/] ({len(representation.inductive)})")
+    for i, obs in enumerate(representation.inductive, 1):
+        type_branch.add(f"[dim]{i}.[/] {obs}")
+
+    type_branch = tree.add(f"[bold cyan]ABDUCTIVE[/] ({len(representation.abductive)})")
+    for i, obs in enumerate(representation.abductive, 1):
         type_branch.add(f"[dim]{i}.[/] {obs}")
 
     console.print(tree)

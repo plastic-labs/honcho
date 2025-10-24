@@ -81,9 +81,23 @@ Each conclusion contains:
 - Direct, literal conclusions which were extracted from statements by the user in their messages
 - No interpretation - only derived from what was explicitly written
 
+**Implicit Conclusions** (Probable Facts)
+- Conclusions that are likely true based on the available evidence
+- Built from premises that may include explicit conclusions, deductive conclusions, temporal premises, and/or general knowledge known to be true
+
 **Deductive Conclusions** (Logical Certainties)
 - Conclusions that MUST be true given the premises
+- Built from premises that may include explicit conclusions, deductive conclusions, implicit conclusions, temporal premises, and/or general knowledge known to be true
+
+**Inductive Conclusions** (Probable Generalizations)
+- Conclusions that are likely true based on the available evidence
 - Built from premises that may include explicit conclusions, deductive conclusions, temporal premises, and/or general knowledge known to be true
+- Built from inductive reasoning over multiple specific observations
+
+**Abductive Conclusions** (Probable Explanations)
+- Conclusions that are likely true based on the available evidence
+- Built from premises that may include explicit conclusions, deductive conclusions, implicit conclusions, temporal premises, and/or general knowledge known to be true
+- Built from abductive reasoning over multiple specific observations
 
 ## SYNTHESIS PROCESS
 

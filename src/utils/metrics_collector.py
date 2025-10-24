@@ -20,7 +20,7 @@ from src.utils.representation import Representation
 logger = logging.getLogger(__name__)
 
 
-def save_trace_to_file(
+def save_explicit_trace(
     provider: str,
     model: str,
     max_tokens: int,
@@ -83,6 +83,7 @@ def save_trace_to_file(
 
     trace_data = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_type": "explicit",
         "provider": provider,
         "model": model,
         "max_tokens": max_tokens,
@@ -100,6 +101,10 @@ def save_trace_to_file(
                 for obs in working_representation.explicit
             ],
             "implicit": [
+                obs.content
+                for obs in working_representation.implicit
+            ],
+            "deductive": [
                 obs.conclusion
                 for obs in working_representation.deductive
             ],
@@ -115,7 +120,265 @@ def save_trace_to_file(
     try:
         with open(trace_file, "a") as f:
             f.write(json.dumps(trace_data) + "\n")
-        logger.debug("Saved trace to %s", trace_file)
+        logger.debug("Saved explicit trace to %s", trace_file)
+    except Exception as e:
+        logger.warning("Failed to save trace to file: %s", e)
+
+
+def save_deductive_trace(
+    provider: str,
+    model: str,
+    max_tokens: int,
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime,
+    existing_deductions: list[str],
+    atomic_propositions: list[str],
+    history: str,
+    new_turns: list[str],
+    prompt: str,
+    response: str,
+    thinking: str | None,
+    message_metadata: dict[str, Any] | None = None,
+) -> None:
+    """
+    Save the deductive reasoning call inputs and prompt to trace.jsonl file.
+    Uses JSONL format (one JSON object per line) for efficient appending.
+
+    The trace file path can be specified in message_metadata['trace_file_path'].
+    If not provided, falls back to environment variable or default setting.
+    """
+    import os
+
+    from src.config import settings
+
+    # Priority order for trace file path:
+    # 1. Message metadata (set by tracer script) - allows per-message trace routing
+    # 2. Environment variable (set by tracer process)
+    # 3. Settings default (trace.jsonl)
+    if message_metadata and "trace_file_path" in message_metadata:
+        trace_file_path = message_metadata["trace_file_path"]
+    else:
+        trace_file_path = os.environ.get("LOCAL_TRACE_FILE", settings.LOCAL_TRACE_FILE)
+
+    trace_file = Path(trace_file_path)
+
+    # Parse response to extract deductions
+    response_parsed = None
+    try:
+        response_data = json.loads(response)
+        deductions = response_data.get("deductions", [])
+        response_parsed = {
+            "deductions": deductions,
+        }
+    except (json.JSONDecodeError, KeyError, TypeError, IndexError):
+        # If parsing fails, keep response_parsed as None
+        pass
+
+    trace_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_type": "deductive",
+        "provider": provider,
+        "model": model,
+        "max_tokens": max_tokens,
+        "peer_id": peer_id,
+        "peer_card": peer_card,
+        "message_created_at": message_created_at.isoformat(),
+        "dataset_uuid": message_metadata.get("dataset_uuid") if message_metadata else None,
+        "conversation_id": message_metadata.get("conversation_id") if message_metadata else None,
+        "message_sequence_id": message_metadata.get("message_sequence_id") if message_metadata else None,
+        "total_messages": message_metadata.get("total_messages") if message_metadata else None,
+        "dataset": message_metadata.get("dataset") if message_metadata else None,
+        "deductive_reasoning_input": {
+            "existing_deductions": existing_deductions,
+            "atomic_propositions": atomic_propositions,
+        },
+        "history": history,
+        "new_turns": new_turns,
+        "prompt": prompt,
+        "llm_output": response_parsed,
+        "llm_output_raw": response,
+        "thinking": thinking,
+    }
+
+    try:
+        with open(trace_file, "a") as f:
+            f.write(json.dumps(trace_data) + "\n")
+        logger.debug("Saved deductive trace to %s", trace_file)
+    except Exception as e:
+        logger.warning("Failed to save trace to file: %s", e)
+
+
+def save_inductive_trace(
+    provider: str,
+    model: str,
+    max_tokens: int,
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime,
+    existing_inductions: list[str],
+    explicit_conclusions: list[str],
+    deductive_conclusions: list[str],
+    history: str,
+    new_turns: list[str],
+    prompt: str,
+    response: str,
+    thinking: str | None,
+    message_metadata: dict[str, Any] | None = None,
+) -> None:
+    """
+    Save the inductive reasoning call inputs and prompt to trace.jsonl file.
+    Uses JSONL format (one JSON object per line) for efficient appending.
+
+    The trace file path can be specified in message_metadata['trace_file_path'].
+    If not provided, falls back to environment variable or default setting.
+    """
+    import os
+
+    from src.config import settings
+
+    # Priority order for trace file path:
+    # 1. Message metadata (set by tracer script) - allows per-message trace routing
+    # 2. Environment variable (set by tracer process)
+    # 3. Settings default (trace.jsonl)
+    if message_metadata and "trace_file_path" in message_metadata:
+        trace_file_path = message_metadata["trace_file_path"]
+    else:
+        trace_file_path = os.environ.get("LOCAL_TRACE_FILE", settings.LOCAL_TRACE_FILE)
+
+    trace_file = Path(trace_file_path)
+
+    # Parse response to extract inductions
+    response_parsed = None
+    try:
+        response_data = json.loads(response)
+        inductions = response_data.get("inductions", [])
+        response_parsed = {
+            "inductions": inductions,
+        }
+    except (json.JSONDecodeError, KeyError, TypeError, IndexError):
+        # If parsing fails, keep response_parsed as None
+        pass
+
+    trace_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_type": "inductive",
+        "provider": provider,
+        "model": model,
+        "max_tokens": max_tokens,
+        "peer_id": peer_id,
+        "peer_card": peer_card,
+        "message_created_at": message_created_at.isoformat(),
+        "dataset_uuid": message_metadata.get("dataset_uuid") if message_metadata else None,
+        "conversation_id": message_metadata.get("conversation_id") if message_metadata else None,
+        "message_sequence_id": message_metadata.get("message_sequence_id") if message_metadata else None,
+        "total_messages": message_metadata.get("total_messages") if message_metadata else None,
+        "dataset": message_metadata.get("dataset") if message_metadata else None,
+        "inductive_reasoning_input": {
+            "existing_inductions": existing_inductions,
+            "explicit_conclusions": explicit_conclusions,
+            "deductive_conclusions": deductive_conclusions,
+        },
+        "history": history,
+        "new_turns": new_turns,
+        "prompt": prompt,
+        "llm_output": response_parsed,
+        "llm_output_raw": response,
+        "thinking": thinking,
+    }
+
+    try:
+        with open(trace_file, "a") as f:
+            f.write(json.dumps(trace_data) + "\n")
+        logger.debug("Saved inductive trace to %s", trace_file)
+    except Exception as e:
+        logger.warning("Failed to save trace to file: %s", e)
+
+
+def save_abductive_trace(
+    provider: str,
+    model: str,
+    max_tokens: int,
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime,
+    existing_abductions: list[str],
+    explicit_conclusions: list[str],
+    deductive_conclusions: list[str],
+    inductive_conclusions: list[str],
+    history: str,
+    new_turns: list[str],
+    prompt: str,
+    response: str,
+    thinking: str | None,
+    message_metadata: dict[str, Any] | None = None,
+) -> None:
+    """
+    Save the abductive reasoning call inputs and prompt to trace.jsonl file.
+    Uses JSONL format (one JSON object per line) for efficient appending.
+
+    The trace file path can be specified in message_metadata['trace_file_path'].
+    If not provided, falls back to environment variable or default setting.
+    """
+    import os
+
+    from src.config import settings
+
+    # Priority order for trace file path:
+    # 1. Message metadata (set by tracer script) - allows per-message trace routing
+    # 2. Environment variable (set by tracer process)
+    # 3. Settings default (trace.jsonl)
+    if message_metadata and "trace_file_path" in message_metadata:
+        trace_file_path = message_metadata["trace_file_path"]
+    else:
+        trace_file_path = os.environ.get("LOCAL_TRACE_FILE", settings.LOCAL_TRACE_FILE)
+
+    trace_file = Path(trace_file_path)
+
+    # Parse response to extract abductions
+    response_parsed = None
+    try:
+        response_data = json.loads(response)
+        abductions = response_data.get("abductions", [])
+        response_parsed = {
+            "abductions": abductions,
+        }
+    except (json.JSONDecodeError, KeyError, TypeError, IndexError):
+        # If parsing fails, keep response_parsed as None
+        pass
+
+    trace_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_type": "abductive",
+        "provider": provider,
+        "model": model,
+        "max_tokens": max_tokens,
+        "peer_id": peer_id,
+        "peer_card": peer_card,
+        "message_created_at": message_created_at.isoformat(),
+        "dataset_uuid": message_metadata.get("dataset_uuid") if message_metadata else None,
+        "conversation_id": message_metadata.get("conversation_id") if message_metadata else None,
+        "message_sequence_id": message_metadata.get("message_sequence_id") if message_metadata else None,
+        "total_messages": message_metadata.get("total_messages") if message_metadata else None,
+        "dataset": message_metadata.get("dataset") if message_metadata else None,
+        "abductive_reasoning_input": {
+            "existing_abductions": existing_abductions,
+            "explicit_conclusions": explicit_conclusions,
+            "deductive_conclusions": deductive_conclusions,
+            "inductive_conclusions": inductive_conclusions,
+        },
+        "history": history,
+        "new_turns": new_turns,
+        "prompt": prompt,
+        "llm_output": response_parsed,
+        "llm_output_raw": response,
+        "thinking": thinking,
+    }
+
+    try:
+        with open(trace_file, "a") as f:
+            f.write(json.dumps(trace_data) + "\n")
+        logger.debug("Saved abductive trace to %s", trace_file)
     except Exception as e:
         logger.warning("Failed to save trace to file: %s", e)
 

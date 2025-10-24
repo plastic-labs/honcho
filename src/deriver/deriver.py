@@ -19,17 +19,32 @@ from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
     log_performance_metrics,
-    # log_representation,
+    log_reasoning_step,
+    log_representation,
 )
-from src.utils.metrics_collector import save_trace_to_file
+from src.utils.metrics_collector import (
+    save_abductive_trace,
+    save_deductive_trace,
+    save_explicit_trace,
+    save_inductive_trace,
+)
 from src.utils.peer_card import PeerCardQuery
-from src.utils.representation import PromptRepresentation, Representation
+from src.utils.representation import (
+    AbductiveReasoningResponse,
+    DeductiveReasoningResponse,
+    InductiveReasoningResponse,
+    PromptRepresentation,
+    Representation,
+)
 from src.utils.tokens import estimate_tokens
 from src.utils.tracing import with_sentry_transaction
 
 from .prompts import (
-    critical_analysis_prompt,
+    abductive_reasoning_prompt,
+    deductive_reasoning_prompt,
     estimate_base_prompt_tokens,
+    explict_reasoning_prompt,
+    inductive_reasoning_prompt,
     peer_card_prompt,
 )
 
@@ -51,7 +66,8 @@ async def critical_analysis_call(
     estimated_input_tokens: int,
     message_metadata: dict[str, Any] | None = None,
 ) -> PromptRepresentation:
-    prompt = critical_analysis_prompt(
+    # Step 1: Explicit Reasoning
+    explicit_prompt = explict_reasoning_prompt(
         peer_id=peer_id,
         peer_card=peer_card,
         message_created_at=message_created_at,
@@ -63,10 +79,10 @@ async def critical_analysis_call(
     response = await honcho_llm_call(
         provider=settings.DERIVER.PROVIDER,
         model=settings.DERIVER.MODEL,
-        prompt=prompt,
+        prompt=explicit_prompt,
         max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
         or settings.LLM.DEFAULT_MAX_TOKENS,
-        track_name="Critical Analysis Call",
+        track_name="Explicit Reasoning Call",
         response_model=PromptRepresentation,
         json_mode=True,
         stop_seqs=["   \n", "\n\n\n\n"],
@@ -77,8 +93,18 @@ async def critical_analysis_call(
         retry_attempts=3,
     )
 
+    # Log explicit reasoning step
+    logger.debug("=" * 80)
+    logger.debug("STEP 1: EXPLICIT REASONING")
+    log_reasoning_step(
+        "Explicit Reasoning",
+        explicit_prompt,
+        response.content.model_dump(),
+        step_number=1,
+    )
+
     if MAKE_LOCAL_TRACE:
-        save_trace_to_file(
+        save_explicit_trace(
             provider=settings.DERIVER.PROVIDER,
             model=settings.DERIVER.MODEL,
             max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
@@ -89,7 +115,7 @@ async def critical_analysis_call(
             working_representation=working_representation,
             history=history,
             new_turns=new_turns,
-            prompt=prompt,
+            prompt=explicit_prompt,
             response=json.dumps(response.content.model_dump()),
             thinking=response.think_trace,
             message_metadata=message_metadata,
@@ -99,7 +125,271 @@ async def critical_analysis_call(
         task_type="representation",
     ).inc(response.output_tokens + estimated_input_tokens)
 
-    return response.content
+    # Step 2: Deductive Reasoning
+    # Combine explicit and implicit facts as atomic propositions for deductive reasoning
+    atomic_propositions = response.content.explicit + response.content.implicit
+
+    # Get existing deductions from working representation
+    existing_deductions = [
+        obs.conclusion for obs in working_representation.deductive
+    ]
+
+    # Only perform deductive reasoning if we have atomic propositions
+    deductive_response = None
+    if atomic_propositions:
+        deductive_prompt = deductive_reasoning_prompt(
+            peer_id=peer_id,
+            peer_card=peer_card,
+            message_created_at=message_created_at,
+            existing_deductions=existing_deductions,
+            atomic_propositions=atomic_propositions,
+            history=history,
+            new_turns=new_turns,
+        )
+
+        deductive_response = await honcho_llm_call(
+            provider=settings.DERIVER.PROVIDER,
+            model=settings.DERIVER.MODEL,
+            prompt=deductive_prompt,
+            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+            or settings.LLM.DEFAULT_MAX_TOKENS,
+            track_name="Deductive Reasoning Call",
+            response_model=DeductiveReasoningResponse,
+            json_mode=True,
+            thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+            reasoning_effort="minimal",
+            verbosity="medium",
+            enable_retry=True,
+            retry_attempts=3,
+        )
+
+        # Log deductive reasoning step
+        logger.debug("=" * 80)
+        logger.debug("STEP 2: DEDUCTIVE REASONING")
+        log_reasoning_step(
+            "Deductive Reasoning",
+            deductive_prompt,
+            deductive_response.content.model_dump(),
+            step_number=2,
+        )
+
+        if MAKE_LOCAL_TRACE:
+            save_deductive_trace(
+                provider=settings.DERIVER.PROVIDER,
+                model=settings.DERIVER.MODEL,
+                max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+                or settings.LLM.DEFAULT_MAX_TOKENS,
+                peer_id=peer_id,
+                peer_card=peer_card,
+                message_created_at=message_created_at,
+                existing_deductions=existing_deductions,
+                atomic_propositions=atomic_propositions,
+                history=history,
+                new_turns=new_turns,
+                prompt=deductive_prompt,
+                response=json.dumps(deductive_response.content.model_dump()),
+                thinking=deductive_response.think_trace,
+                message_metadata=message_metadata,
+            )
+
+        prometheus.DERIVER_TOKENS_PROCESSED.labels(
+            task_type="representation",
+        ).inc(deductive_response.output_tokens + estimated_input_tokens)
+
+    # Step 3: Inductive Reasoning
+    # Collect all existing inductions from working representation
+    existing_inductions = [
+        obs.conclusion for obs in working_representation.inductive
+    ]
+
+    # Collect explicit conclusions (from step 1) and deductive conclusions (from step 2)
+    explicit_conclusions = response.content.explicit
+    deductive_conclusions = [
+        ded.conclusion for ded in (deductive_response.content.deductions if deductive_response else [])
+    ]
+
+    # Only perform inductive reasoning if we have enough conclusions (need at least 3 for patterns)
+    inductive_response = None
+    if len(explicit_conclusions) + len(deductive_conclusions) >= 3:
+        inductive_prompt = inductive_reasoning_prompt(
+            peer_id=peer_id,
+            peer_card=peer_card,
+            message_created_at=message_created_at,
+            existing_inductions=existing_inductions,
+            explicit_conclusions=explicit_conclusions,
+            deductive_conclusions=deductive_conclusions,
+            history=history,
+            new_turns=new_turns,
+        )
+
+        inductive_response = await honcho_llm_call(
+            provider=settings.DERIVER.PROVIDER,
+            model=settings.DERIVER.MODEL,
+            prompt=inductive_prompt,
+            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+            or settings.LLM.DEFAULT_MAX_TOKENS,
+            track_name="Inductive Reasoning Call",
+            response_model=InductiveReasoningResponse,
+            json_mode=True,
+            thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+            reasoning_effort="minimal",
+            verbosity="medium",
+            enable_retry=True,
+            retry_attempts=3,
+        )
+
+        # Log inductive reasoning step
+        logger.debug("=" * 80)
+        logger.debug("STEP 3: INDUCTIVE REASONING")
+        log_reasoning_step(
+            "Inductive Reasoning",
+            inductive_prompt,
+            inductive_response.content.model_dump(),
+            step_number=3,
+        )
+
+        if MAKE_LOCAL_TRACE:
+            save_inductive_trace(
+                provider=settings.DERIVER.PROVIDER,
+                model=settings.DERIVER.MODEL,
+                max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+                or settings.LLM.DEFAULT_MAX_TOKENS,
+                peer_id=peer_id,
+                peer_card=peer_card,
+                message_created_at=message_created_at,
+                existing_inductions=existing_inductions,
+                explicit_conclusions=explicit_conclusions,
+                deductive_conclusions=deductive_conclusions,
+                history=history,
+                new_turns=new_turns,
+                prompt=inductive_prompt,
+                response=json.dumps(inductive_response.content.model_dump()),
+                thinking=inductive_response.think_trace,
+                message_metadata=message_metadata,
+            )
+
+        prometheus.DERIVER_TOKENS_PROCESSED.labels(
+            task_type="representation",
+        ).inc(inductive_response.output_tokens + estimated_input_tokens)
+
+    # Step 4: Abductive Reasoning
+    # Collect all existing abductions from working representation
+    existing_abductions = [
+        obs.conclusion for obs in working_representation.abductive
+    ]
+
+    # Collect explicit, deductive, and inductive conclusions
+    explicit_conclusions = response.content.explicit
+    deductive_conclusions = [
+        ded.conclusion for ded in (deductive_response.content.deductions if deductive_response else [])
+    ]
+    inductive_conclusions = [
+        ind.conclusion for ind in (inductive_response.content.inductions if inductive_response else [])
+    ]
+
+    # Only perform abductive reasoning if we have enough conclusions to explain
+    abductive_response = None
+    if len(explicit_conclusions) + len(deductive_conclusions) + len(inductive_conclusions) >= 3:
+        abductive_prompt = abductive_reasoning_prompt(
+            peer_id=peer_id,
+            peer_card=peer_card,
+            message_created_at=message_created_at,
+            existing_abductions=existing_abductions,
+            explicit_conclusions=explicit_conclusions,
+            deductive_conclusions=deductive_conclusions,
+            inductive_conclusions=inductive_conclusions,
+            history=history,
+            new_turns=new_turns,
+        )
+
+        abductive_response = await honcho_llm_call(
+            provider=settings.DERIVER.PROVIDER,
+            model=settings.DERIVER.MODEL,
+            prompt=abductive_prompt,
+            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+            or settings.LLM.DEFAULT_MAX_TOKENS,
+            track_name="Abductive Reasoning Call",
+            response_model=AbductiveReasoningResponse,
+            json_mode=True,
+            thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+            reasoning_effort="minimal",
+            verbosity="medium",
+            enable_retry=True,
+            retry_attempts=3,
+        )
+
+        # Log abductive reasoning step
+        logger.debug("=" * 80)
+        logger.debug("STEP 4: ABDUCTIVE REASONING")
+        log_reasoning_step(
+            "Abductive Reasoning",
+            abductive_prompt,
+            abductive_response.content.model_dump(),
+            step_number=4,
+        )
+
+        if MAKE_LOCAL_TRACE:
+            save_abductive_trace(
+                provider=settings.DERIVER.PROVIDER,
+                model=settings.DERIVER.MODEL,
+                max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+                or settings.LLM.DEFAULT_MAX_TOKENS,
+                peer_id=peer_id,
+                peer_card=peer_card,
+                message_created_at=message_created_at,
+                existing_abductions=existing_abductions,
+                explicit_conclusions=explicit_conclusions,
+                deductive_conclusions=deductive_conclusions,
+                inductive_conclusions=inductive_conclusions,
+                history=history,
+                new_turns=new_turns,
+                prompt=abductive_prompt,
+                response=json.dumps(abductive_response.content.model_dump()),
+                thinking=abductive_response.think_trace,
+                message_metadata=message_metadata,
+            )
+
+        prometheus.DERIVER_TOKENS_PROCESSED.labels(
+            task_type="representation",
+        ).inc(abductive_response.output_tokens + estimated_input_tokens)
+
+    # Create combined result with explicit, implicit, deductive, inductive, and abductive
+    combined_result = PromptRepresentation(
+        explicit=response.content.explicit,
+        implicit=response.content.implicit,
+    )
+
+    # Store deductive results
+    if deductive_response:
+        combined_result.deductions = deductive_response.content.deductions
+    else:
+        combined_result.deductions = []
+
+    # Store inductive results
+    if inductive_response:
+        combined_result.inductions = inductive_response.content.inductions
+    else:
+        combined_result.inductions = []
+
+    # Store abductive results
+    if abductive_response:
+        combined_result.abductions = abductive_response.content.abductions
+    else:
+        combined_result.abductions = []
+
+    # Log final combined result
+    logger.debug("=" * 80)
+    logger.debug("FINAL COMBINED RESULT")
+    from src.utils.representation import Representation
+    final_rep = Representation.from_prompt_representation(
+        combined_result,
+        (0, 0),  # dummy message ids for display
+        "session",  # dummy session name for display
+        message_created_at,
+    )
+    log_representation(final_rep)
+
+    return combined_result
 
 
 async def peer_card_call(
@@ -248,9 +538,12 @@ async def process_representation_tasks_batch(
     )
 
     logger.debug(
-        "Using working representation with %s explicit, %s deductive observations",
+        "Using working representation with %s explicit, %s implicit, %s deductive, %s inductive, %s abductive observations",
         len(working_representation.explicit),
+        len(working_representation.implicit),
         len(working_representation.deductive),
+        len(working_representation.inductive),
+        len(working_representation.abductive),
     )
 
     # instantiate representation manager from collection
@@ -281,7 +574,7 @@ async def process_representation_tasks_batch(
     )
 
     # Display final observations in a beautiful tree
-    # log_representation(final_observations)
+    log_representation(final_observations)
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -292,8 +585,12 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    total_observations = len(final_observations.explicit) + len(
-        final_observations.deductive
+    total_observations = (
+        len(final_observations.explicit)
+        + len(final_observations.implicit)
+        + len(final_observations.deductive)
+        + len(final_observations.inductive)
+        + len(final_observations.abductive)
     )
 
     accumulate_metric(

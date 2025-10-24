@@ -1268,7 +1268,7 @@ Examples:
         metrics_output = Path(
             f"tests/bench/perf_metrics/{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         )
-       l runner.metrics_collector.export_to_json(metrics_output)
+        runner.metrics_collector.export_to_json(metrics_output)
         runner.metrics_collector.cleanup_collection()
 
         # Return exit code based on results

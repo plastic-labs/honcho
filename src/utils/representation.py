@@ -30,10 +30,37 @@ class DeductiveObservationBase(BaseModel):
     conclusion: str = Field(description="The deductive conclusion")
 
 
+class InductiveObservationBase(BaseModel):
+    premises: list[str] = Field(
+        description="Supporting specific instances for this generalization",
+        default_factory=list,
+    )
+    conclusion: str = Field(description="The inductive conclusion (probabilistic generalization)")
+
+
+class AbductiveObservationBase(BaseModel):
+    premises: list[str] = Field(
+        description="Supporting observations that this explanation accounts for",
+        default_factory=list,
+    )
+    conclusion: str = Field(description="The abductive conclusion (probable explanation)")
+
+
+class DeductionItem(BaseModel):
+    """A single deduction with its conclusion and premises."""
+
+    conclusion: str = Field(description="The deductive conclusion")
+    premises: list[str] = Field(
+        description="The premises that support this conclusion",
+        default_factory=list,
+    )
+
+
 class PromptRepresentation(BaseModel):
     """
     The representation format that is used when getting structured output from an LLM.
     Now follows the new prompt schema with explicit and implicit facts.
+    Can also include deductive, inductive, and abductive reasoning results.
     """
 
     explicit: list[str] = Field(
@@ -42,6 +69,74 @@ class PromptRepresentation(BaseModel):
     )
     implicit: list[str] = Field(
         description="Facts CLEARLY IMPLIED by the peer's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
+        default_factory=list,
+    )
+    deductions: list[DeductionItem] = Field(
+        description="Deductive conclusions with their supporting premises",
+        default_factory=list,
+    )
+    inductions: list["InductionItem"] = Field(
+        description="Inductive generalizations with their supporting instances",
+        default_factory=list,
+    )
+    abductions: list["AbductionItem"] = Field(
+        description="Abductive explanations with their supporting observations",
+        default_factory=list,
+    )
+
+
+class DeductiveReasoningResponse(BaseModel):
+    """
+    The response format for deductive reasoning from an LLM.
+    Contains a list of deductions, each with a conclusion and supporting premises.
+    """
+
+    deductions: list[DeductionItem] = Field(
+        description="List of deductive conclusions with their supporting premises",
+        default_factory=list,
+    )
+
+
+class InductionItem(BaseModel):
+    """A single induction with its conclusion and supporting premises."""
+
+    conclusion: str = Field(description="The inductive conclusion (probabilistic generalization)")
+    premises: list[str] = Field(
+        description="The specific instances that support this generalization",
+        default_factory=list,
+    )
+
+
+class AbductionItem(BaseModel):
+    """A single abduction with its conclusion and supporting observations."""
+
+    conclusion: str = Field(description="The abductive conclusion (probable explanation)")
+    premises: list[str] = Field(
+        description="The observations that this explanation accounts for",
+        default_factory=list,
+    )
+
+
+class InductiveReasoningResponse(BaseModel):
+    """
+    The response format for inductive reasoning from an LLM.
+    Contains a list of inductions, each with a probable conclusion and supporting instances.
+    """
+
+    inductions: list[InductionItem] = Field(
+        description="List of inductive generalizations with their supporting instances",
+        default_factory=list,
+    )
+
+
+class AbductiveReasoningResponse(BaseModel):
+    """
+    The response format for abductive reasoning from an LLM.
+    Contains a list of abductions, each with a probable explanation and supporting observations.
+    """
+
+    abductions: list[AbductionItem] = Field(
+        description="List of abductive explanations with their supporting observations",
         default_factory=list,
     )
 
@@ -71,6 +166,30 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
             and self.session_name == other.session_name
         )
 
+class ImplicitObservation(ImplicitObservationBase, ObservationMetadata):
+    """Implicit observation with content and metadata."""
+
+    def __str__(self) -> str:
+        return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
+
+    def __hash__(self) -> int:
+        """
+        Make ImplicitObservation hashable for use in sets.
+        """
+        return hash((self.content, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for ImplicitObservation objects.
+        Two observations are equal if all their fields match.
+        """
+        if not isinstance(other, ImplicitObservation):
+            return False
+        return (
+            self.content == other.content
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
 
 class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
     """Deductive observation with multiple premises and one conclusion, plus metadata."""
@@ -103,6 +222,68 @@ class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
         )
 
 
+class InductiveObservation(InductiveObservationBase, ObservationMetadata):
+    """Inductive observation with multiple supporting instances and one probable generalization, plus metadata."""
+
+    def __str__(self) -> str:
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
+
+    def str_no_timestamps(self) -> str:
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"{self.conclusion}\n{premises_text}"
+
+    def __hash__(self) -> int:
+        """
+        Make InductiveObservation hashable for use in sets. NOTE: premises are not included in the hash.
+        """
+        return hash((self.conclusion, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for InductiveObservation objects.
+        Two observations are equal if all their fields match -- NOTE: premises are not included in the equality check.
+        """
+        if not isinstance(other, InductiveObservation):
+            return False
+        return (
+            self.conclusion == other.conclusion
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
+
+
+class AbductiveObservation(AbductiveObservationBase, ObservationMetadata):
+    """Abductive observation with multiple supporting observations and one probable explanation, plus metadata."""
+
+    def __str__(self) -> str:
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
+
+    def str_no_timestamps(self) -> str:
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"{self.conclusion}\n{premises_text}"
+
+    def __hash__(self) -> int:
+        """
+        Make AbductiveObservation hashable for use in sets. NOTE: premises are not included in the hash.
+        """
+        return hash((self.conclusion, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for AbductiveObservation objects.
+        Two observations are equal if all their fields match -- NOTE: premises are not included in the equality check.
+        """
+        if not isinstance(other, AbductiveObservation):
+            return False
+        return (
+            self.conclusion == other.conclusion
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
+
+
 class Representation(BaseModel):
     """
     A Representation is a traversable and diffable map of observations.
@@ -126,8 +307,20 @@ class Representation(BaseModel):
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']",
         default_factory=list,
     )
+    implicit: list[ImplicitObservation] = Field(
+        description="Facts CLEARLY IMPLIED by the peer's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
+        default_factory=list,
+    )
     deductive: list[DeductiveObservation] = Field(
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
+        default_factory=list,
+    )
+    inductive: list[InductiveObservation] = Field(
+        description="Probable generalizations derived from multiple specific instances - pattern recognition moving from specific to general. Each induction should have supporting instances and a probabilistic conclusion.",
+        default_factory=list,
+    )
+    abductive: list[AbductiveObservation] = Field(
+        description="Probable explanations for observed patterns and behaviors - inference to the best explanation. Each abduction should have supporting observations and an explanatory conclusion.",
         default_factory=list,
     )
 
@@ -135,7 +328,13 @@ class Representation(BaseModel):
         """
         Check if the representation is empty.
         """
-        return len(self.explicit) == 0 and len(self.deductive) == 0
+        return (
+            len(self.explicit) == 0
+            and len(self.implicit) == 0
+            and len(self.deductive) == 0
+            and len(self.inductive) == 0
+            and len(self.abductive) == 0
+        )
 
     def diff_representation(self, other: "Representation") -> "Representation":
         """
@@ -144,7 +343,10 @@ class Representation(BaseModel):
         """
         diff = Representation()
         diff.explicit = [o for o in other.explicit if o not in self.explicit]
+        diff.implicit = [o for o in other.implicit if o not in self.implicit]
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
+        diff.inductive = [o for o in other.inductive if o not in self.inductive]
+        diff.abductive = [o for o in other.abductive if o not in self.abductive]
         return diff
 
     def merge_representation(
@@ -152,7 +354,7 @@ class Representation(BaseModel):
     ):
         """
         Merge another representation object into this one.
-        This will automatically deduplicate explicit and deductive observations.
+        This will automatically deduplicate explicit, implicit, deductive, and inductive observations.
         This *preserves order* of observations so that they retain FIFO order.
 
         NOTE: observations with the *same* timestamp will not have order preserved.
@@ -160,14 +362,24 @@ class Representation(BaseModel):
         """
         # removing duplicates by going list->set->list
         self.explicit = list(set(self.explicit + other.explicit))
+        self.implicit = list(set(self.implicit + other.implicit))
         self.deductive = list(set(self.deductive + other.deductive))
+        self.inductive = list(set(self.inductive + other.inductive))
+        self.abductive = list(set(self.abductive + other.abductive))
+
         # sort by created_at
         self.explicit.sort(key=lambda x: x.created_at)
+        self.implicit.sort(key=lambda x: x.created_at)
         self.deductive.sort(key=lambda x: x.created_at)
+        self.inductive.sort(key=lambda x: x.created_at)
+        self.abductive.sort(key=lambda x: x.created_at)
 
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
+            self.implicit = self.implicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
+            self.inductive = self.inductive[-max_observations:]
+            self.abductive = self.abductive[-max_observations:]
 
     def __str__(self) -> str:
         """
@@ -195,9 +407,33 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation}")
         parts.append("")
 
+        parts.append("IMPLICIT:\n")
+        for i, observation in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {observation}")
+        parts.append("")
+
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation}")
+            parts.append(f"{i}. {observation.conclusion}")
+            for premise in observation.premises:
+                parts.append(f"    - {premise}")
+            parts.append("")
+        parts.append("")
+
+        parts.append("INDUCTIVE:\n")
+        for i, observation in enumerate(self.inductive, 1):
+            parts.append(f"{i}. {observation.conclusion}")
+            for premise in observation.premises:
+                parts.append(f"    - {premise}")
+            parts.append("")
+        parts.append("")
+
+        parts.append("ABDUCTIVE:\n")
+        for i, observation in enumerate(self.abductive, 1):
+            parts.append(f"{i}. {observation.conclusion}")
+            for premise in observation.premises:
+                parts.append(f"    - {premise}")
+            parts.append("")
         parts.append("")
 
         return "\n".join(parts)
@@ -226,8 +462,23 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation.content}")
         parts.append("")
 
+        parts.append("IMPLICIT:\n")
+        for i, observation in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {observation.content}")
+        parts.append("")
+
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
+            parts.append(f"{i}. {observation.str_no_timestamps()}")
+        parts.append("")
+
+        parts.append("INDUCTIVE:\n")
+        for i, observation in enumerate(self.inductive, 1):
+            parts.append(f"{i}. {observation.str_no_timestamps()}")
+        parts.append("")
+
+        parts.append("ABDUCTIVE:\n")
+        for i, observation in enumerate(self.abductive, 1):
             parts.append(f"{i}. {observation.str_no_timestamps()}")
         parts.append("")
 
@@ -250,12 +501,40 @@ class Representation(BaseModel):
             parts.append(f"{i}. {obs}")
         parts.append("")
 
+        # Add implicit observations
+        parts.append("## Implicit Observations\n")
+        for i, obs in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {obs}")
+        parts.append("")
+
         # Add deductive observations
         parts.append("## Deductive Observations\n")
         for i, obs in enumerate(self.deductive, 1):
             parts.append(f"{i}. **Conclusion**: {obs.conclusion}")
             if obs.premises:
                 parts.append("   **Premises**:")
+                for premise in obs.premises:
+                    parts.append(f"   - {premise}")
+            parts.append("")
+        parts.append("")
+
+        # Add inductive observations
+        parts.append("## Inductive Observations\n")
+        for i, obs in enumerate(self.inductive, 1):
+            parts.append(f"{i}. **Conclusion**: {obs.conclusion}")
+            if obs.premises:
+                parts.append("   **Supporting Instances**:")
+                for premise in obs.premises:
+                    parts.append(f"   - {premise}")
+            parts.append("")
+        parts.append("")
+
+        # Add abductive observations
+        parts.append("## Abductive Observations\n")
+        for i, obs in enumerate(self.abductive, 1):
+            parts.append(f"{i}. **Explanation**: {obs.conclusion}")
+            if obs.premises:
+                parts.append("   **Supporting Observations**:")
                 for premise in obs.premises:
                     parts.append(f"   - {premise}")
             parts.append("")
@@ -278,6 +557,18 @@ class Representation(BaseModel):
                 for doc in documents
                 if doc.internal_metadata.get("level") == "explicit"
             ],
+            implicit=[
+                ImplicitObservation(
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    content=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
+                )
+                for doc in documents
+                if doc.internal_metadata.get("level") == "implicit"
+            ],
             deductive=[
                 DeductiveObservation(
                     created_at=_safe_datetime_from_metadata(
@@ -291,6 +582,32 @@ class Representation(BaseModel):
                 for doc in documents
                 if doc.internal_metadata.get("level") == "deductive"
             ],
+            inductive=[
+                InductiveObservation(
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    conclusion=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
+                    premises=doc.internal_metadata.get("premises", []),
+                )
+                for doc in documents
+                if doc.internal_metadata.get("level") == "inductive"
+            ],
+            abductive=[
+                AbductiveObservation(
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    conclusion=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
+                    premises=doc.internal_metadata.get("premises", []),
+                )
+                for doc in documents
+                if doc.internal_metadata.get("level") == "abductive"
+            ],
         )
 
     @classmethod
@@ -302,9 +619,61 @@ class Representation(BaseModel):
         created_at: datetime,
     ) -> "Representation":
         """
-        Convert PromptRepresentation (explicit/implicit strings) to Representation (explicit/deductive observations).
-        Implicit facts are stored as deductive observations with empty premises since they're implied by the message.
+        Convert PromptRepresentation (explicit/implicit/deductions/inductions) to Representation.
+        - Explicit facts become ExplicitObservation objects
+        - Implicit facts become ImplicitObservation objects
+        - Implicit facts are ALSO stored as DeductiveObservation with empty premises (for backward compatibility)
+        - Deductions from deductive reasoning become DeductiveObservation with their premises
+        - Inductions from inductive reasoning become InductiveObservation with their supporting instances
         """
+        # Implicit facts as deductive observations with empty premises
+        implicit_as_deductive = [
+            DeductiveObservation(
+                conclusion=imp,
+                created_at=created_at,
+                message_ids=[message_ids],
+                session_name=session_name,
+                premises=[],  # Implicit facts don't have explicit premises
+            )
+            for imp in prompt_representation.implicit
+        ]
+
+        # Proper deductions with premises
+        proper_deductions = [
+            DeductiveObservation(
+                conclusion=ded.conclusion,
+                created_at=created_at,
+                message_ids=[message_ids],
+                session_name=session_name,
+                premises=ded.premises,
+            )
+            for ded in prompt_representation.deductions
+        ]
+
+        # Inductions with supporting instances
+        inductions = [
+            InductiveObservation(
+                conclusion=ind.conclusion,
+                created_at=created_at,
+                message_ids=[message_ids],
+                session_name=session_name,
+                premises=ind.premises,
+            )
+            for ind in prompt_representation.inductions
+        ]
+
+        # Abductions with supporting observations
+        abductions = [
+            AbductiveObservation(
+                conclusion=abd.conclusion,
+                created_at=created_at,
+                message_ids=[message_ids],
+                session_name=session_name,
+                premises=abd.premises,
+            )
+            for abd in prompt_representation.abductions
+        ]
+
         return cls(
             explicit=[
                 ExplicitObservation(
@@ -315,16 +684,18 @@ class Representation(BaseModel):
                 )
                 for e in prompt_representation.explicit
             ],
-            deductive=[
-                DeductiveObservation(
-                    conclusion=imp,
+            implicit=[
+                ImplicitObservation(
+                    content=imp,
                     created_at=created_at,
                     message_ids=[message_ids],
                     session_name=session_name,
-                    premises=[],  # Implicit facts don't have explicit premises
                 )
                 for imp in prompt_representation.implicit
             ],
+            deductive=implicit_as_deductive + proper_deductions,
+            inductive=inductions,
+            abductive=abductions,
         )
 
 

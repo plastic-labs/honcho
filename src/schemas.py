@@ -299,12 +299,12 @@ class DocumentMetadata(BaseModel):
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
-    level: Literal["explicit", "deductive"] = Field(
-        description="The level of the document (explicit or deductive)"
+    level: Literal["explicit", "implicit", "deductive", "inductive", "abductive"] = Field(
+        description="The level of the document (explicit, implicit, deductive, inductive, or abductive)"
     )
     premises: list[str] | None = Field(
         default=None,
-        description="The premises of the deduction -- only applicable for deductive observations",
+        description="The premises/supporting evidence -- only applicable for deductive, inductive, and abductive observations",
     )
 
 

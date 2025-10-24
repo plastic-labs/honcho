@@ -27,7 +27,7 @@ The `harness.py` script orchestrates the complete Honcho development environment
 Run the harness with default settings (database on port 5433):
 
 ```bash
-python tests/bench/harness.py
+    python tests/bench/harness.py
 ```
 
 ### Custom Database Port
