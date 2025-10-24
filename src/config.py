@@ -50,6 +50,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DB": "db",
         "AUTH": "auth",
         "SENTRY": "sentry",
+        "CACHE": "cache",
         "LLM": "llm",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
@@ -293,6 +294,21 @@ class MetricsSettings(HonchoSettings):
     NAMESPACE: str = "honcho"
 
 
+class CacheSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    URL: str = "redis://localhost:6379/0?suppress=false"
+    NAMESPACE: str = "honcho"
+    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
+        300  # how long to keep items in cache
+    )
+
+    DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
+        5  # how long to hold a lock on a resource when fetching DB after cache miss
+    )
+
+
 class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
@@ -334,6 +350,8 @@ class AppSettings(HonchoSettings):
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
 
+    NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
@@ -345,6 +363,7 @@ class AppSettings(HonchoSettings):
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")

@@ -11,6 +11,7 @@ This script:
 """
 
 import argparse
+import asyncio
 import os
 import shutil
 import subprocess
@@ -21,6 +22,8 @@ import time
 from pathlib import Path
 
 import yaml
+
+from src.cache.client import close_cache, init_cache
 
 
 class HonchoHarness:
@@ -64,6 +67,9 @@ class HonchoHarness:
 
         # Update the database port
         compose_data["services"]["database"]["ports"] = [f"{self.db_port}:5432"]
+
+        # Update the Redis port
+        compose_data["services"]["redis"]["ports"] = ["6379:6379"]
 
         # Add a unique project name to avoid conflicts
         compose_data["name"] = f"honcho_harness_{self.db_port}"
@@ -111,13 +117,15 @@ class HonchoHarness:
 
     def get_database_env_vars(self) -> dict[str, str]:
         """
-        Get environment variables for database configuration and required API keys.
+        Get environment variables for database configuration, cache configuration, and required API keys.
 
         Returns:
-            Dictionary of environment variables for database connection and API keys
+            Dictionary of environment variables for database connection, cache, and API keys
         """
         return {
             "DB_CONNECTION_URI": f"postgresql+psycopg://testuser:testpwd@localhost:{self.db_port}/honcho",
+            "CACHE_ENABLED": "true",
+            "CACHE_URL": "redis://localhost:6379/0",
         }
 
     def start_database(self) -> None:
@@ -148,6 +156,99 @@ class HonchoHarness:
             sys.exit(1)
 
         print("Database started successfully")
+
+    def start_redis(self) -> None:
+        """
+        Start the Redis cache server using Docker Compose.
+        """
+        print("Starting Redis cache server on port 6379...")
+
+        # Change to the temp directory and start the redis service
+        result = subprocess.run(
+            [
+                "docker-compose",
+                "-f",
+                str(self.docker_compose_file),
+                "-p",
+                f"honcho_harness_{self.db_port}",
+                "up",
+                "-d",
+                "redis",
+            ],
+            cwd=self.temp_dir,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            print(f"Failed to start Redis: {result.stderr}")
+            sys.exit(1)
+
+        print("Redis started successfully")
+
+    def wait_for_redis(self, timeout: int = 30) -> bool:
+        """
+        Wait for Redis to be ready.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+
+        Returns:
+            True if Redis is ready, False otherwise
+        """
+        print("Waiting for Redis to be ready...")
+        start_time = time.time()
+        redis_port = 6379
+
+        while time.time() - start_time < timeout:
+            try:
+                import redis
+
+                # Test Redis connection
+                r = redis.Redis(
+                    host="localhost", port=redis_port, decode_responses=True
+                )
+                r.ping()  # pyright: ignore[reportUnknownMemberType]
+                print("Redis is ready!")
+                return True
+            except Exception:
+                pass
+
+            time.sleep(1)  # Check every second
+
+        print("Redis failed to become ready within timeout")
+        return False
+
+    async def init_cache(self) -> None:
+        """
+        Initialize the Redis cache connection.
+        """
+        try:
+            # Add the project root to the path so we can import Honcho modules
+            sys.path.insert(0, str(self.project_root))
+
+            # Set environment variables for cache configuration
+            env = self.get_database_env_vars()
+            for key, value in env.items():
+                os.environ[key] = value
+
+            await init_cache()
+            print(f"[Instance {self.instance_id}] Cache initialized successfully")
+        except Exception as e:
+            print(f"[Instance {self.instance_id}] Failed to initialize cache: {e}")
+
+    async def close_cache(self) -> None:
+        """
+        Close the Redis cache connection.
+        """
+        try:
+            # Add the project root to the path so we can import Honcho modules
+            sys.path.insert(0, str(self.project_root))
+
+            await close_cache()
+            print(f"[Instance {self.instance_id}] Cache closed successfully")
+        except Exception as e:
+            print(f"[Instance {self.instance_id}] Failed to close cache: {e}")
 
     def wait_for_database(self, timeout: int = 60) -> bool:
         """
@@ -576,10 +677,16 @@ except Exception as e:
             except Exception as e:
                 print(f"Error removing temp directory: {e}")
 
+        # Close cache
+        try:
+            asyncio.run(self.close_cache())
+        except Exception as e:
+            print(f"Error closing cache: {e}")
+
         # Restore .env file
         self.restore_env_file()
 
-    def run(self) -> None:
+    async def run(self) -> None:
         """
         Run the complete Honcho harness.
         """
@@ -606,10 +713,21 @@ except Exception as e:
             # Start database
             self.start_database()
 
+            # Start Redis
+            self.start_redis()
+
             # Wait for database to be ready
             if not self.wait_for_database():
                 print("Database failed to start. Exiting.")
                 sys.exit(1)
+
+            # Wait for Redis to be ready
+            if not self.wait_for_redis():
+                print("Redis failed to start. Exiting.")
+                sys.exit(1)
+
+            # Initialize cache
+            await self.init_cache()
 
             # Provision database
             self.provision_database()
@@ -700,7 +818,7 @@ class HonchoHarnessPool:
             )
             self.harnesses.append(harness)
 
-    def run(self) -> None:
+    async def run(self) -> None:
         """
         Run all Honcho harnesses in the pool.
         """
@@ -748,12 +866,25 @@ class HonchoHarnessPool:
                 # Start database
                 harness.start_database()
 
+                # Start Redis
+                harness.start_redis()
+
                 # Wait for database to be ready
                 if not harness.wait_for_database():
                     print(
                         f"Database failed to start for instance {harness.instance_id}. Exiting."
                     )
                     sys.exit(1)
+
+                # Wait for Redis to be ready
+                if not harness.wait_for_redis():
+                    print(
+                        f"Redis failed to start for instance {harness.instance_id}. Exiting."
+                    )
+                    sys.exit(1)
+
+                # Initialize cache
+                await harness.init_cache()
 
                 # Provision database
                 harness.provision_database()
@@ -903,7 +1034,7 @@ Examples:
             base_api_port=args.api_port,
             project_root=args.project_root,
         )
-        pool.run()
+        asyncio.run(pool.run())
     else:
         harness = HonchoHarness(
             db_port=args.port,
@@ -911,7 +1042,7 @@ Examples:
             project_root=args.project_root,
             instance_id=0,
         )
-        harness.run()
+        asyncio.run(harness.run())
 
 
 if __name__ == "__main__":

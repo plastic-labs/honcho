@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
+from cashews.picklers import PicklerType
+from fakeredis import FakeAsyncRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -26,6 +28,7 @@ from sqlalchemy_utils import (
 )
 
 from src import models
+from src.cache.client import cache
 from src.config import settings
 from src.db import Base
 from src.dependencies import get_db
@@ -164,8 +167,68 @@ async def db_session(db_engine: AsyncEngine):
         await session.rollback()
 
 
+@pytest_asyncio.fixture(scope="session")
+async def fake_cache_session():
+    """Set up fakeredis for caching once per test session."""
+    # Store original settings
+    original_enabled = settings.CACHE.ENABLED
+    original_url = settings.CACHE.URL
+
+    # Create a fake redis instance that persists for the session
+    fake_redis = FakeAsyncRedis(decode_responses=True)
+
+    # Patch redis creation to use fakeredis
+    # Cashews uses redis.asyncio.from_url to create connections
+    def fake_redis_from_url(*_args: Any, **_kwargs: Any):
+        return fake_redis
+
+    # Start patching redis client creation
+    redis_patch = patch("redis.asyncio.from_url", fake_redis_from_url)
+    redis_patch.start()
+
+    try:
+        # Enable caching with fake backend
+        settings.CACHE.ENABLED = True
+        cache.setup(  # pyright: ignore[reportUnknownMemberType]
+            "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
+        )
+
+        yield fake_redis
+    finally:
+        # Stop the patch
+        redis_patch.stop()
+
+        # Disable cache
+        cache.disable()
+
+        # Restore original settings
+        settings.CACHE.ENABLED = original_enabled
+        settings.CACHE.URL = original_url
+
+        # Reconfigure with original settings if enabled
+        if original_enabled:
+            cache.setup(original_url, pickle_type=PicklerType.SQLALCHEMY, enable=True)  # pyright: ignore[reportUnknownMemberType]
+        else:
+            cache.disable()
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def fake_cache(fake_cache_session: FakeAsyncRedis):
+    """Clear cache between tests."""
+    # Clear cache before each test
+    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+
+    yield cache
+
+    # Clear cache after each test
+    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+
+
 @pytest.fixture(scope="function")
-async def client(db_session: AsyncSession):
+async def client(
+    db_session: AsyncSession,
+    fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
 
     # Register exception handlers for tests
@@ -491,6 +554,7 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
+        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dreamer.tracked_db", mock_tracked_db_context),

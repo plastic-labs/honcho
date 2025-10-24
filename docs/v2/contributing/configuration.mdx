@@ -46,14 +46,19 @@ cp config.toml.example config.toml
 
 Then modify the values as needed. The TOML file is organized into sections:
 
-- `[app]` - Application-level settings (log level, host, port, embedding settings)
-- `[db]` - Database connection and pool settings
-- `[auth]` - Authentication configuration
-- `[llm]` - LLM provider API keys and general settings
-- `[dialectic]` - Dialectic API configuration (provider, model, search settings)
-- `[deriver]` - Background worker settings and theory of mind configuration
-- `[summary]` - Session summarization settings
-- `[sentry]` - Error tracking and monitoring settings
+- `[app]` - Application-level settings (log level, session limits, embedding settings, Langfuse integration, local metrics collection)
+- `[db]` - Database connection and pool settings (connection URI, pool size, timeouts, connection recycling)
+- `[auth]` - Authentication configuration (enable/disable auth, JWT secret)
+- `[cache]` - Redis cache configuration (enable/disable caching, Redis URL, TTL settings, lock configuration for cache stampede prevention)
+- `[llm]` - LLM provider API keys (Anthropic, OpenAI, Gemini, Groq, OpenAI-compatible endpoints) and general LLM settings
+- `[dialectic]` - Dialectic API configuration (provider, model, query generation settings, semantic search parameters, context window size)
+- `[deriver]` - Background worker settings (worker count, polling intervals, queue management) and theory of mind configuration (model, tokens, observation limits)
+- `[peer_card]` - Peer card generation settings (provider, model, token limits)
+- `[summary]` - Session summarization settings (frequency thresholds, provider, model, token limits for short and long summaries)
+- `[dream]` - Dream processing configuration (enable/disable, thresholds, idle timeouts, dream types, LLM settings)
+- `[webhook]` - Webhook configuration (webhook secret, workspace limits)
+- `[metrics]` - Metrics collection settings (enable/disable metrics, namespace)
+- `[sentry]` - Error tracking and monitoring settings (enable/disable, DSN, environment, sample rates)
 
 ### Using Environment Variables
 
@@ -107,28 +112,33 @@ The application will use the production connection URI while keeping the pool si
 
 ### Application Settings
 
+Application-level settings control core behavior of the Honcho server including logging, session limits, message handling, and optional integrations.
+
 **Basic Application Configuration:**
 ```bash
 # Logging and server settings
-LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
-SESSION_PEERS_LIMIT=10
-GET_CONTEXT_MAX_TOKENS=100000
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
-# Embedding settings (optional)
-EMBED_MESSAGES=false
-MAX_EMBEDDING_TOKENS=8192
-MAX_EMBEDDING_TOKENS_PER_REQUEST=300000
+# Session and context limits
+SESSION_OBSERVERS_LIMIT=10  # Maximum number of observers per session
+GET_CONTEXT_MAX_TOKENS=100000  # Maximum tokens for context retrieval
+MAX_MESSAGE_SIZE=25000  # Maximum message size in characters
+
+# Embedding settings
+EMBED_MESSAGES=true  # Enable vector embeddings for messages
+MAX_EMBEDDING_TOKENS=8192  # Maximum tokens per embedding
+MAX_EMBEDDING_TOKENS_PER_REQUEST=300000  # Batch embedding limit
 ```
 
-**Environment-specific settings:**
+**Optional Integrations:**
 ```bash
-# Development
-LOG_LEVEL=DEBUG
-FASTAPI_HOST=127.0.0.1
+# Langfuse integration for LLM observability
+LANGFUSE_HOST=https://cloud.langfuse.com
+LANGFUSE_PUBLIC_KEY=your-langfuse-public-key
 
-# Production
-LOG_LEVEL=WARNING
-FASTAPI_HOST=0.0.0.0
+# Local metrics collection
+COLLECT_METRICS_LOCAL=false
+LOCAL_METRICS_FILE=metrics.jsonl
 ```
 
 ### Database Configuration
@@ -196,6 +206,36 @@ AUTH_JWT_SECRET=your-super-secret-jwt-key
 python scripts/generate_jwt_secret.py
 ```
 
+### Cache Configuration
+
+Honcho supports Redis caching to improve performance by caching frequently accessed data like peers, sessions, and working representations. Caching also includes lock mechanisms to prevent cache stampede scenarios.
+
+**Redis Cache Settings:**
+```bash
+# Enable/disable Redis caching
+CACHE_ENABLED=false  # Set to true to enable caching
+
+# Redis connection
+CACHE_URL=redis://localhost:6379/0?suppress=false
+
+# Cache namespace and TTL
+CACHE_NAMESPACE=honcho  # Prefix for all cache keys
+CACHE_DEFAULT_TTL_SECONDS=300  # How long items stay in cache (5 minutes)
+
+# Lock settings for preventing cache stampede
+CACHE_DEFAULT_LOCK_TTL_SECONDS=5  # Lock duration when fetching from DB on cache miss
+```
+
+**When to Enable Caching:**
+- High-traffic production environments
+- Applications with many repeated reads of the same data
+- When you need to reduce database load
+
+**Note:** Caching requires a Redis instance. You can run Redis locally with Docker:
+```bash
+docker run -d -p 6379:6379 redis:latest
+```
+
 ## LLM Provider Configuration
 
 Honcho supports multiple LLM providers for different tasks. API keys are configured in the `[llm]` section, while specific features use their own configuration sections.
@@ -221,6 +261,9 @@ LLM_OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
 ```bash
 # Default settings for all LLM calls
 LLM_DEFAULT_MAX_TOKENS=2500
+
+# Embedding provider (used when EMBED_MESSAGES=true)
+LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini
 ```
 
 ### Feature-Specific Model Configuration
@@ -228,67 +271,147 @@ LLM_DEFAULT_MAX_TOKENS=2500
 Different features can use different providers and models:
 
 **Dialectic API:**
+
+The Dialectic API provides theory-of-mind informed responses by integrating long-term facts with current context.
+
 ```bash
 # Main dialectic model (default: Anthropic)
 DIALECTIC_PROVIDER=anthropic
 DIALECTIC_MODEL=claude-sonnet-4-20250514
 DIALECTIC_MAX_OUTPUT_TOKENS=2500
-DIALECTIC_THINKING_BUDGET_TOKENS=1024
+DIALECTIC_THINKING_BUDGET_TOKENS=1024  # Only used with Anthropic provider
+DIALECTIC_CONTEXT_WINDOW_SIZE=100000  # Maximum context window tokens
 
-# Query generation for dialectic (default: Groq)
+# Query generation for dialectic searches
+DIALECTIC_PERFORM_QUERY_GENERATION=false  # Enable query generation for semantic search
 DIALECTIC_QUERY_GENERATION_PROVIDER=groq
 DIALECTIC_QUERY_GENERATION_MODEL=llama-3.1-8b-instant
 
 # Semantic search settings
-DIALECTIC_SEMANTIC_SEARCH_TOP_K=10
-DIALECTIC_SEMANTIC_SEARCH_MAX_DISTANCE=0.85
+DIALECTIC_SEMANTIC_SEARCH_TOP_K=10  # Number of results to retrieve
+DIALECTIC_SEMANTIC_SEARCH_MAX_DISTANCE=0.85  # Maximum distance for relevance
 ```
 
-**Deriver:**
+**Deriver (Theory of Mind):**
+
+The Deriver is a background processing system that extracts facts from messages and builds theory-of-mind representations of peers.
+
 ```bash
-# Deriver model (default: Google)
+# LLM settings for deriver
 DERIVER_PROVIDER=google
-DERIVER_MODEL=gemini-2.0-flash-lite
+DERIVER_MODEL=gemini-2.5-flash-lite
+DERIVER_MAX_OUTPUT_TOKENS=10000
+DERIVER_THINKING_BUDGET_TOKENS=1024  # Only used with Anthropic provider
+DERIVER_MAX_INPUT_TOKENS=23000  # Maximum input tokens for deriver
 
 # Worker settings
-DERIVER_WORKERS=1
-DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
-DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+DERIVER_WORKERS=1  # Number of background worker processes
+DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0  # Time between queue checks
+DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5  # Timeout for stale sessions
 
-# Peer card settings
-DERIVER_PEER_CARD_PROVIDER=openai
-DERIVER_PEER_CARD_MODEL=gpt-5-nano-2025-08-07
-DERIVER_PEER_CARD_MAX_OUTPUT_TOKENS=2000
+# Queue management
+DERIVER_QUEUE_ERROR_RETENTION_SECONDS=2592000  # Keep errored items for 30 days
 
-# Maximum number of observations to store in working representation
-# This is applied to both explicit and deductive observations
-DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS=100
+# Working representation settings
+DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS=50  # Max observations stored
+DERIVER_REPRESENTATION_BATCH_MAX_TOKENS=4096  # Max tokens per batch
+```
+
+**Peer Card:**
+
+Peer cards are short, structured summaries of peer identity and characteristics.
+
+```bash
+# Enable/disable peer card generation
+PEER_CARD_ENABLED=true
+
+# LLM settings for peer card generation
+PEER_CARD_PROVIDER=openai
+PEER_CARD_MODEL=gpt-5-nano-2025-08-07
+PEER_CARD_MAX_OUTPUT_TOKENS=4000  # Includes thinking tokens for GPT-5 models
 ```
 
 **Summary Generation:**
-```bash
-# Summary model (default: Google)
-SUMMARY_PROVIDER=google
-SUMMARY_MODEL=gemini-1.5-flash-latest
-SUMMARY_MAX_TOKENS_SHORT=1000
-SUMMARY_MAX_TOKENS_LONG=2000
-SUMMARY_THINKING_BUDGET_TOKENS=512
 
-# Summary frequency
-SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20
-SUMMARY_MESSAGES_PER_LONG_SUMMARY=60
+Session summaries provide compressed context for long conversations. Honcho creates two types: short summaries (frequent) and long summaries (comprehensive).
+
+```bash
+# Enable/disable summarization
+SUMMARY_ENABLED=true
+
+# LLM settings for summary generation
+SUMMARY_PROVIDER=openai
+SUMMARY_MODEL=gpt-4o-mini-2024-07-18
+SUMMARY_MAX_TOKENS_SHORT=1000  # Max tokens for short summaries
+SUMMARY_MAX_TOKENS_LONG=4000  # Max tokens for long summaries
+SUMMARY_THINKING_BUDGET_TOKENS=512  # Only used with Anthropic provider
+
+# Summary frequency thresholds
+SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20  # Create short summary every N messages
+SUMMARY_MESSAGES_PER_LONG_SUMMARY=60  # Create long summary every N messages
 ```
 
 ### Default Provider Usage
 
 By default, Honcho uses:
-- **Anthropic** for dialectic API responses
-- **Groq** for query generation
-- **Google** for deriving theory of mind and summarization
+- **Anthropic** (Claude) for dialectic API responses
+- **Groq** for query generation (fast, cost-effective)
+- **Google** (Gemini) for theory of mind derivation
+- **OpenAI** (GPT) for peer cards and summarization
 - **OpenAI** for embeddings (if `EMBED_MESSAGES=true`)
 
-You only need to set the API keys for the providers you plan to use.
+You only need to set the API keys for the providers you plan to use. All providers are configurable per feature.
 
+## Additional Features Configuration
+
+### Dream Processing
+
+Dream processing consolidates and refines peer representations during idle periods, similar to how human memory consolidation works during sleep.
+
+**Dream Settings:**
+```bash
+# Enable/disable dream processing
+DREAM_ENABLED=true
+
+# Trigger thresholds
+DREAM_DOCUMENT_THRESHOLD=50  # Minimum documents to trigger a dream
+DREAM_IDLE_TIMEOUT_MINUTES=60  # Minutes of inactivity before dream can start
+DREAM_MIN_HOURS_BETWEEN_DREAMS=8  # Minimum hours between dreams for a peer
+
+# Dream types to enable
+DREAM_ENABLED_TYPES=["consolidate"]  # Currently supported: consolidate
+
+# LLM settings for dream processing
+DREAM_PROVIDER=openai
+DREAM_MODEL=gpt-4o-mini-2024-07-18
+DREAM_MAX_OUTPUT_TOKENS=2000
+```
+
+### Webhook Configuration
+
+Webhooks allow you to receive real-time notifications when events occur in Honcho (e.g., new messages, session updates).
+
+**Webhook Settings:**
+```bash
+# Webhook secret for signing payloads (optional but recommended)
+WEBHOOK_SECRET=your-webhook-signing-secret
+
+# Limit on webhooks per workspace
+WEBHOOK_MAX_WORKSPACE_LIMIT=10
+```
+
+### Metrics Collection
+
+Enable metrics collection for monitoring Honcho performance and usage.
+
+**Metrics Settings:**
+```bash
+# Enable/disable metrics collection
+METRICS_ENABLED=false
+
+# Namespace for metrics (used in metric names)
+METRICS_NAMESPACE=honcho
+```
 
 ## Monitoring Configuration
 
@@ -296,13 +419,17 @@ You only need to set the API keys for the providers you plan to use.
 
 **Sentry Settings:**
 ```bash
-# Enable/disable Sentry
+# Enable/disable Sentry error tracking
 SENTRY_ENABLED=false
 
 # Sentry configuration
 SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
-SENTRY_TRACES_SAMPLE_RATE=0.1
-SENTRY_PROFILES_SAMPLE_RATE=0.1
+SENTRY_RELEASE=2.4.0  # Optional: track which version errors come from
+SENTRY_ENVIRONMENT=production  # Environment name (development, staging, production)
+
+# Sampling rates (0.0 to 1.0)
+SENTRY_TRACES_SAMPLE_RATE=0.1  # 10% of transactions tracked
+SENTRY_PROFILES_SAMPLE_RATE=0.1  # 10% of transactions profiled
 ```
 
 ## Environment-Specific Examples
@@ -313,7 +440,7 @@ SENTRY_PROFILES_SAMPLE_RATE=0.1
 ```toml
 [app]
 LOG_LEVEL = "DEBUG"
-SESSION_PEERS_LIMIT = 10
+SESSION_OBSERVERS_LIMIT = 10
 EMBED_MESSAGES = false
 
 [db]
@@ -323,21 +450,40 @@ POOL_SIZE = 5
 [auth]
 USE_AUTH = false
 
+[cache]
+ENABLED = false
+
 [dialectic]
 PROVIDER = "anthropic"
 MODEL = "claude-sonnet-4-20250514"
-QUERY_GENERATION_PROVIDER = "groq"
-QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
+PERFORM_QUERY_GENERATION = false
 MAX_OUTPUT_TOKENS = 2500
-
-[summary]
-PROVIDER = "google"
-MODEL = "gemini-1.5-flash-latest"
-MAX_TOKENS_SHORT = 1000
-MAX_TOKENS_LONG = 2000
 
 [deriver]
 WORKERS = 1
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+
+[peer_card]
+ENABLED = true
+PROVIDER = "openai"
+MODEL = "gpt-5-nano-2025-08-07"
+
+[summary]
+ENABLED = true
+PROVIDER = "openai"
+MODEL = "gpt-4o-mini-2024-07-18"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 4000
+
+[dream]
+ENABLED = true
+
+[webhook]
+MAX_WORKSPACE_LIMIT = 10
+
+[metrics]
+ENABLED = false
 
 [sentry]
 ENABLED = false
@@ -349,7 +495,12 @@ ENABLED = false
 LOG_LEVEL=DEBUG
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho_dev
 AUTH_USE_AUTH=false
-ANTHROPIC_API_KEY=your-dev-anthropic-key
+CACHE_ENABLED=false
+
+# LLM Provider API Keys
+LLM_ANTHROPIC_API_KEY=your-dev-anthropic-key
+LLM_OPENAI_API_KEY=your-dev-openai-key
+LLM_GEMINI_API_KEY=your-dev-gemini-key
 ```
 
 ### Production Configuration
@@ -358,7 +509,7 @@ ANTHROPIC_API_KEY=your-dev-anthropic-key
 ```toml
 [app]
 LOG_LEVEL = "WARNING"
-SESSION_PEERS_LIMIT = 10
+SESSION_OBSERVERS_LIMIT = 10
 EMBED_MESSAGES = true
 
 [db]
@@ -369,27 +520,50 @@ MAX_OVERFLOW = 40
 [auth]
 USE_AUTH = true
 
+[cache]
+ENABLED = true
+URL = "redis://redis:6379/0"
+DEFAULT_TTL_SECONDS = 300
+
 [dialectic]
 PROVIDER = "anthropic"
 MODEL = "claude-sonnet-4-20250514"
-QUERY_GENERATION_PROVIDER = "groq"
-QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
+PERFORM_QUERY_GENERATION = false
 MAX_OUTPUT_TOKENS = 2500
-
-[summary]
-PROVIDER = "google"
-MODEL = "gemini-1.5-flash-latest"
-MAX_TOKENS_SHORT = 1000
-MAX_TOKENS_LONG = 2000
 
 [deriver]
 WORKERS = 4
 PROVIDER = "google"
-MODEL = "gemini-2.0-flash-lite"
+MODEL = "gemini-2.5-flash-lite"
+
+[peer_card]
+ENABLED = true
+PROVIDER = "openai"
+MODEL = "gpt-5-nano-2025-08-07"
+
+[summary]
+ENABLED = true
+PROVIDER = "openai"
+MODEL = "gpt-4o-mini-2024-07-18"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 4000
+
+[dream]
+ENABLED = true
+PROVIDER = "openai"
+MODEL = "gpt-4o-mini-2024-07-18"
+
+[webhook]
+MAX_WORKSPACE_LIMIT = 10
+
+[metrics]
+ENABLED = true
 
 [sentry]
 ENABLED = true
+ENVIRONMENT = "production"
 TRACES_SAMPLE_RATE = 0.1
+PROFILES_SAMPLE_RATE = 0.1
 ```
 
 **Environment variables for production:**
@@ -397,11 +571,27 @@ TRACES_SAMPLE_RATE = 0.1
 # .env.production
 LOG_LEVEL=WARNING
 DB_CONNECTION_URI=postgresql+psycopg://honcho_user:secure_password@prod-db:5432/honcho_prod
+
+# Authentication
 AUTH_USE_AUTH=true
 AUTH_JWT_SECRET=your-super-secret-jwt-key
-ANTHROPIC_API_KEY=your-prod-anthropic-key
-GEMINI_API_KEY=your-prod-gemini-key
+
+# Cache
+CACHE_ENABLED=true
+CACHE_URL=redis://redis:6379/0
+
+# LLM Provider API Keys
+LLM_ANTHROPIC_API_KEY=your-prod-anthropic-key
+LLM_OPENAI_API_KEY=your-prod-openai-key
+LLM_GEMINI_API_KEY=your-prod-gemini-key
+LLM_GROQ_API_KEY=your-prod-groq-key
+
+# Webhooks
+WEBHOOK_SECRET=your-webhook-signing-secret
+
+# Monitoring
 SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
+SENTRY_ENVIRONMENT=production
 ```
 
 ## Migration Management

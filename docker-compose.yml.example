@@ -45,3 +45,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  redis:
+    image: redis:8.2
+    restart: always
+    ports:
+      - 6379:6379
+    volumes:
+      - ./redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
