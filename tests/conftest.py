@@ -225,7 +225,10 @@ async def fake_cache(fake_cache_session: FakeAsyncRedis):
 
 
 @pytest.fixture(scope="function")
-async def client(db_session: AsyncSession):
+async def client(
+    db_session: AsyncSession,
+    fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
 
     # Register exception handlers for tests
