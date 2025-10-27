@@ -29,6 +29,10 @@ schema = get_schema()
 
 def upgrade() -> None:
     conn = op.get_bind()
+    """
+    The application code has been previously updated to ensure none of the following columns have NULL values but the actual DB schema is out of sync with our SQLAlchemy model definitions.
+    This migration fixes this by making the columns non-nullable using a non-blocking approach to minimize lock duration.
+    """
 
     # Make peers.workspace_name non-nullable
     if column_exists("peers", "workspace_name"):

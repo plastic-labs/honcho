@@ -96,7 +96,17 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
     conn = op.get_bind()
     constraint_name = f"{table_name}_{column_name}_not_null"
 
-    # Step 1: Add CHECK constraint without validation (instant)
+    # Step 1: Check if the column is already non-nullable
+    inspector = sa.inspect(op.get_bind())
+    columns = inspector.get_columns(table_name, schema=schema)
+    column_info = next((col for col in columns if col["name"] == column_name), None)
+    if column_info is None:
+        raise ValueError(f"Column {table_name}.{column_name} does not exist")
+    if not column_info["nullable"]:
+        print(f"Column {table_name}.{column_name} is already non-nullable, skipping...")
+        return
+
+    # Step 2: Add CHECK constraint without validation (instant)
     # Note: op.create_check_constraint() doesn't support NOT VALID, so use raw SQL
     if not constraint_exists(table_name, constraint_name, "check"):
         conn.execute(
@@ -110,14 +120,14 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
             )
         )
 
-    # Step 2: Validate constraint (scans but allows concurrent operations)
+    # Step 3: Validate constraint (scans but allows concurrent operations)
     conn.execute(
         sa.text(
             f"ALTER TABLE {schema}.{table_name} VALIDATE CONSTRAINT {constraint_name}"
         )
     )
 
-    # Step 3: Set NOT NULL (fast with validated constraint)
+    # Step 4: Set NOT NULL (fast with validated constraint)
     op.alter_column(
         table_name,
         column_name,
@@ -125,7 +135,7 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
         schema=schema,
     )
 
-    # Step 4: Drop the redundant CHECK constraint
+    # Step 5: Drop the redundant CHECK constraint
     op.drop_constraint(
         constraint_name,
         table_name,
