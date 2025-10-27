@@ -7,6 +7,7 @@ import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/mess
 import type { Uploadable } from '@honcho-ai/core/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
+import type { RepresentationOptions } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
@@ -478,7 +479,8 @@ export class Session {
     tokens?: number,
     peerTarget?: string | Peer,
     lastUserMessage?: string | Message,
-    peerPerspective?: string | Peer
+    peerPerspective?: string | Peer,
+    representationOptions?: RepresentationOptions
   ): Promise<SessionContext>
   async getContext(options?: {
     summary?: boolean
@@ -486,6 +488,7 @@ export class Session {
     peerTarget?: string | Peer
     lastUserMessage?: string | Message
     peerPerspective?: string | Peer
+    representationOptions?: RepresentationOptions
   }): Promise<SessionContext>
   async getContext(
     summaryOrOptions?:
@@ -500,7 +503,8 @@ export class Session {
     tokens?: number,
     peerTarget?: string | Peer,
     lastUserMessage?: string | Message,
-    peerPerspective?: string | Peer
+    peerPerspective?: string | Peer,
+    representationOptions?: RepresentationOptions
   ): Promise<SessionContext> {
     // Normalize positional arguments into options object
     let options: {

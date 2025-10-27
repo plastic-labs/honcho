@@ -1,6 +1,4 @@
-import asyncio
 import logging
-from typing import cast
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
@@ -34,6 +32,11 @@ async def _get_working_representation_task(
     *,
     observer: str,
     observed: str,
+    session_name: str | None,
+    search_top_k: int | None,
+    search_max_distance: int | None,
+    include_most_derived: bool,
+    max_observations: int | None,
 ) -> Representation:
     """
     Atomic task to get working representation using tracked_db.
@@ -43,16 +46,27 @@ async def _get_working_representation_task(
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
         observed: Name of the observed peer
+        session_name: Optional session to filter by
+        search_top_k: Number of semantic-search-retrieved observations to include in the representation
+        search_max_distance: Maximum distance to search for semantically relevant observations
+        include_most_derived: Whether to include the most derived observations in the representation
+        max_observations: Maximum number of observations to include in the representation
 
     Returns:
         The working representation
     """
     return await crud.get_working_representation(
         workspace_name=workspace_id,
-        include_semantic_query=last_message,
-        include_most_derived=True,
         observer=observer,
         observed=observed,
+        session_name=session_name,
+        include_semantic_query=last_message,
+        semantic_search_top_k=search_top_k,
+        semantic_search_max_distance=search_max_distance,
+        include_most_derived=include_most_derived,
+        max_observations=max_observations
+        if max_observations is not None
+        else config.settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
     )
 
 
@@ -481,6 +495,32 @@ async def get_session_context(
         None,
         description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
     ),
+    limit_to_session: bool = Query(
+        default=False,
+        description="Only used if `last_message` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
+    ),
+    search_top_k: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Only used if `last_message` is provided. The number of semantic-search-retrieved observations to include in the representation",
+    ),
+    search_max_distance: int | None = Query(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant observations",
+    ),
+    include_most_derived: bool = Query(
+        default=False,
+        description="Only used if `last_message` is provided. Whether to include the most derived observations in the representation",
+    ),
+    max_observations: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Only used if `last_message` is provided. The maximum number of observations to include in the representation",
+    ),
 ):
     """
     Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.
@@ -511,24 +551,20 @@ async def get_session_context(
     observer = peer_perspective or peer_target
     observed = peer_target
 
-    # Run representation and card tasks in parallel
-    representation, card = await asyncio.gather(
-        _get_working_representation_task(
-            workspace_id, last_message, observer=observer, observed=observed
-        ),
-        _get_peer_card_task(workspace_id, observer=observer, observed=observed),
-        return_exceptions=True,
+    # Run representation and card tasks sequentially to avoid event loop issues
+    # with tracked_db creating separate database sessions
+    representation = await _get_working_representation_task(
+        workspace_id,
+        last_message,
+        observer=observer,
+        observed=observed,
+        session_name=session_id if limit_to_session else None,
+        search_top_k=search_top_k,
+        search_max_distance=search_max_distance,
+        include_most_derived=include_most_derived,
+        max_observations=max_observations,
     )
-
-    # Handle any exceptions from the parallel tasks
-    if isinstance(representation, Exception):
-        raise representation
-    if isinstance(card, Exception):
-        raise card
-
-    # At this point, we know the types are correct - cast to help type checker
-    representation = cast(Representation, representation)
-    card = cast(list[str] | None, card)
+    card = await _get_peer_card_task(workspace_id, observer=observer, observed=observed)
 
     # adjust token limit downward to account for approximate token count of representation and card
     # TODO determine if this impacts performance too much

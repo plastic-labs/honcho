@@ -1,6 +1,7 @@
 import type HonchoCore from '@honcho-ai/core'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
+import type { RepresentationOptions } from './representation'
 import { Session } from './session'
 import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
 import {
@@ -399,7 +400,7 @@ export class Peer {
     session?: string | Session,
     target?: string | Peer,
     searchQuery?: string,
-    size?: number
+    options?: RepresentationOptions
   ): Promise<Record<string, unknown>> {
     return await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
@@ -412,7 +413,10 @@ export class Peer {
       {
         body: {
           search_query: searchQuery,
-          size: size,
+          search_top_k: options?.searchTopK,
+          search_max_distance: options?.searchMaxDistance,
+          include_most_derived: options?.includeMostDerived,
+          max_observations: options?.maxObservations,
         },
       }
     )

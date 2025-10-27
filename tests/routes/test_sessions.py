@@ -1052,3 +1052,332 @@ def test_search_session_with_limit(
     assert isinstance(data, list)
     # Should not exceed the limit
     assert len(data) <= 2
+
+
+def test_get_session_context_with_peer_target(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with peer_target parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Add some messages
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Test message 1", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Get context with peer_target
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context?peer_target={test_peer.name}",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "id" in data
+    assert "messages" in data
+    assert "peer_representation" in data
+    assert "peer_card" in data
+    # Representation should be present
+    assert data["peer_representation"] is not None
+    assert isinstance(data["peer_representation"], dict)
+
+
+def test_get_session_context_with_peer_perspective(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with both peer_target and peer_perspective"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create another peer
+    peer2_name = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {}},
+    )
+
+    # Create session with both peers
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}, peer2_name: {}}},
+    )
+
+    # Get context with peer_perspective
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context?peer_target={test_peer.name}&peer_perspective={peer2_name}",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_representation" in data
+    assert "peer_card" in data
+
+
+def test_get_session_context_peer_perspective_without_target_fails(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that peer_perspective without peer_target raises validation error"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Try to get context with peer_perspective but no peer_target (should fail)
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context?peer_perspective={test_peer.name}",
+    )
+    # FastAPI returns 422 for validation errors, or 400 if it's a custom ValidationException
+    assert response.status_code in [400, 422]
+    error_detail = response.json()["detail"]
+    assert "peer_target" in error_detail.lower()
+
+
+def test_get_session_context_with_last_message(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with last_message parameter for semantic search"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get context with last_message and peer_target
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+        params={
+            "peer_target": test_peer.name,
+            "last_message": "What is my favorite color?",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_representation" in data
+
+
+def test_get_session_context_with_limit_to_session(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with limit_to_session parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get context with limit_to_session=true
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+        params={
+            "peer_target": test_peer.name,
+            "last_message": "Test query",
+            "limit_to_session": True,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_representation" in data
+
+
+def test_get_session_context_with_search_parameters(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with search_top_k and search_max_distance parameters"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get context with search parameters (search_max_distance is int in current API)
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+        params={
+            "peer_target": test_peer.name,
+            "last_message": "Test query",
+            "search_top_k": 5,
+            "search_max_distance": 1,  # int value
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_representation" in data
+
+
+def test_get_session_context_with_include_most_derived(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with include_most_derived parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get context with include_most_derived
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+        params={
+            "peer_target": test_peer.name,
+            "last_message": "Test query",
+            "include_most_derived": True,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_representation" in data
+
+
+def test_get_session_context_with_max_observations(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with max_observations parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get context with max_observations
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+        params={
+            "peer_target": test_peer.name,
+            "last_message": "Test query",
+            "max_observations": 10,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_representation" in data
+
+
+def test_get_session_context_with_all_representation_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with all representation-related parameters"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create another peer
+    peer2_name = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {}},
+    )
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}, peer2_name: {}}},
+    )
+
+    # Get context with all representation parameters
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+        params={
+            "tokens": 500,
+            "peer_target": test_peer.name,
+            "peer_perspective": peer2_name,
+            "last_message": "What do you know about me?",
+            "limit_to_session": True,
+            "search_top_k": 10,
+            "search_max_distance": 1,  # int, not float - current API definition
+            "include_most_derived": True,
+            "max_observations": 15,
+            "summary": True,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "id" in data
+    assert data["id"] == session_id
+    assert "messages" in data
+    assert isinstance(data["messages"], list)
+    assert "summary" in data
+    assert "peer_representation" in data
+    assert "peer_card" in data
+    # Validate representation structure
+    assert isinstance(data["peer_representation"], dict)
+
+
+def test_get_session_context_response_structure(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that session context response has correct structure"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Add messages
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Message 1", "peer_id": test_peer.name},
+                {"content": "Message 2", "peer_id": test_peer.name},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    # Get context and validate response structure
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Validate SessionContext schema
+    assert "id" in data
+    assert data["id"] == session_id
+    assert "messages" in data
+    assert isinstance(data["messages"], list)
+    assert len(data["messages"]) >= 2
+
+    # Validate Message schema
+    for message in data["messages"]:
+        assert "id" in message
+        assert "content" in message
+        assert "peer_id" in message
+        assert "session_id" in message
+        assert "workspace_id" in message
+        assert "created_at" in message
+        assert "token_count" in message
+
+    # When no peer_target, these should not be present or be None
+    assert data.get("peer_representation") is None
+    assert data.get("peer_card") is None

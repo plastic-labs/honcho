@@ -255,8 +255,13 @@ async def get_working_representation(
             observed=options.target if options.target is not None else peer_id,
             session_name=options.session_id,
             include_semantic_query=options.search_query,
-            max_observations=options.size
-            if options.size is not None
+            semantic_search_top_k=options.search_top_k,
+            semantic_search_max_distance=options.search_max_distance,
+            include_most_derived=options.include_most_derived
+            if options.include_most_derived is not None
+            else False,
+            max_observations=options.max_observations
+            if options.max_observations is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
         )
         return {"representation": representation}

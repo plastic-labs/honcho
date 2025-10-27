@@ -106,11 +106,27 @@ class PeerRepresentationGet(BaseModel):
         None,
         description="Optional input to curate the representation around semantic search results",
     )
-    size: int | None = Field(
+    search_top_k: int | None = Field(
+        None,
+        ge=1,
+        le=100,
+        description="Only used if `search_query` is provided. Number of semantic-search-retrieved observations to include in the representation",
+    )
+    search_max_distance: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Only used if `search_query` is provided. Maximum distance to search for semantically relevant observations",
+    )
+    include_most_derived: bool | None = Field(
+        default=None,
+        description="Only used if `search_query` is provided. Whether to include the most derived observations in the representation",
+    )
+    max_observations: int | None = Field(
         default=25,
         ge=1,
         le=100,
-        description="Number of observations to include in the representation",
+        description="Only used if `search_query` is provided. Maximum number of observations to include in the representation",
     )
 
 
