@@ -94,7 +94,10 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         echo=False,
         poolclass=pool.NullPool,
-        connect_args={"prepare_threshold": None},
+        connect_args={
+            "prepare_threshold": None,
+            "options": "-c statement_timeout=300000",  # 5 minutes in milliseconds
+        },
     )
 
     with connectable.connect() as connection:
