@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
+from cashews.backends.interface import ControlMixin
 from cashews.picklers import PicklerType
 from fakeredis import FakeAsyncRedis
 from fastapi import Request
@@ -182,34 +183,45 @@ async def fake_cache_session():
     def fake_redis_from_url(*_args: Any, **_kwargs: Any):
         return fake_redis
 
-    # Start patching redis client creation
+    # Patch the cashews backend's _disable property to avoid ContextVar issues
+    # This works around cashews' ContextVar not being properly initialized in TestClient context
+
+    original_disable_property = ControlMixin._disable  # pyright: ignore[reportPrivateUsage]
+
+    @property  # type: ignore
+    def patched_disable_property(self):  # pyright: ignore
+        try:
+            return original_disable_property.fget(self)  # pyright: ignore[reportOptionalCall]
+        except LookupError:
+            # Return empty set as default if ContextVar not set in current context
+            return set()  # pyright: ignore
+
+    # Start patching
     redis_patch = patch("redis.asyncio.from_url", fake_redis_from_url)
     redis_patch.start()
+    ControlMixin._disable = patched_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
 
     try:
-        # Enable caching with fake backend
+        # Enable caching and set URL for tests
         settings.CACHE.ENABLED = True
+        settings.CACHE.URL = "redis://fake-redis:6379/0"
+
+        # Setup cache for tests that don't use TestClient (direct CRUD tests)
+        # For TestClient tests, the app's lifespan handler will also call cache.setup()
+        # The ContextVar patch above handles any context issues
         cache.setup(  # pyright: ignore[reportUnknownMemberType]
             "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
         )
 
         yield fake_redis
     finally:
-        # Stop the patch
+        # Stop the patches
         redis_patch.stop()
-
-        # Disable cache
-        cache.disable()
+        ControlMixin._disable = original_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
 
         # Restore original settings
         settings.CACHE.ENABLED = original_enabled
         settings.CACHE.URL = original_url
-
-        # Reconfigure with original settings if enabled
-        if original_enabled:
-            cache.setup(original_url, pickle_type=PicklerType.SQLALCHEMY, enable=True)  # pyright: ignore[reportUnknownMemberType]
-        else:
-            cache.disable()
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
