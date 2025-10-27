@@ -436,7 +436,10 @@ class Peer(BaseModel):
         session: str | Session | None = None,
         target: str | Peer | None = None,
         search_query: str | None = None,
-        size: int | None = 25,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
     ) -> dict[str, object]:
         """
         Get a working representation for this peer.
@@ -445,8 +448,11 @@ class Peer(BaseModel):
             session: Optional session to scope the representation to.
             target: Optional target peer to get the representation of. If provided,
             returns the representation of the target from the perspective of this peer.
-            search_query: Optional search query to curate the representation around semantic search results.
-            size: Optional number of observations to include in the representation.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
 
         Returns:
             A dictionary containing information about the peer's representation.
@@ -465,11 +471,15 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             session_id=session_id,
             target=str(target.id) if isinstance(target, Peer) else target,
-            # TODO: switch to using stainless fields in next version
-            extra_body={
-                "search_query": search_query,
-                "size": size,
-            },
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
 
     def __repr__(self) -> str:

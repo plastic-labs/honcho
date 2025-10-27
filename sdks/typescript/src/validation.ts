@@ -139,6 +139,30 @@ const MessageSchema: z.ZodType<Message> = z.object({
 }) as z.ZodType<Message>
 
 /**
+ * Schema for representation options.
+ */
+export const RepresentationOptionsSchema = z.object({
+  searchTopK: z
+    .number()
+    .int()
+    .min(1, 'searchTopK must be at least 1')
+    .max(100, 'searchTopK must be at most 100')
+    .optional(),
+  searchMaxDistance: z
+    .number()
+    .min(0.0, 'searchMaxDistance must be at least 0.0')
+    .max(1.0, 'searchMaxDistance must be at most 1.0')
+    .optional(),
+  includeMostDerived: z.boolean().optional(),
+  maxObservations: z
+    .number()
+    .int()
+    .min(1, 'maxObservations must be at least 1')
+    .max(100, 'maxObservations must be at most 100')
+    .optional(),
+})
+
+/**
  * Schema for context retrieval parameters.
  */
 export const ContextParamsSchema = z
@@ -156,6 +180,8 @@ export const ContextParamsSchema = z
       .optional(),
     peerTarget: PeerIdSchema.optional(),
     peerPerspective: PeerIdSchema.optional(),
+    limitToSession: z.boolean().optional(),
+    representationOptions: RepresentationOptionsSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.lastUserMessage && !data.peerTarget) {
@@ -225,6 +251,29 @@ export const FileUploadSchema = z.object({
 export const WorkingRepParamsSchema = z.object({
   peer: z.union([z.string(), z.object({ id: z.string() })]),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  options: z
+    .object({
+      searchQuery: z.string().optional(),
+      searchTopK: z
+        .number()
+        .int()
+        .min(1, 'searchTopK must be at least 1')
+        .max(100, 'searchTopK must be at most 100')
+        .optional(),
+      searchMaxDistance: z
+        .number()
+        .min(0.0, 'searchMaxDistance must be at least 0.0')
+        .max(1.0, 'searchMaxDistance must be at most 1.0')
+        .optional(),
+      includeMostDerived: z.boolean().optional(),
+      maxObservations: z
+        .number()
+        .int()
+        .min(1, 'maxObservations must be at least 1')
+        .max(100, 'maxObservations must be at most 100')
+        .optional(),
+    })
+    .optional(),
 })
 
 /**

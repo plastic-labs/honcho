@@ -34,7 +34,7 @@ async def _get_working_representation_task(
     observed: str,
     session_name: str | None,
     search_top_k: int | None,
-    search_max_distance: int | None,
+    search_max_distance: float | None,
     include_most_derived: bool,
     max_observations: int | None,
 ) -> Representation:
@@ -505,7 +505,7 @@ async def get_session_context(
         le=100,
         description="Only used if `last_message` is provided. The number of semantic-search-retrieved observations to include in the representation",
     ),
-    search_max_distance: int | None = Query(
+    search_max_distance: float | None = Query(
         None,
         ge=0.0,
         le=1.0,

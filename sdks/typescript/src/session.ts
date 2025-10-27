@@ -554,6 +554,7 @@ export class Session {
     peerTarget?: string | Peer
     lastUserMessage?: string | Message
     peerPerspective?: string | Peer
+    limitToSession?: boolean
     representationOptions?: RepresentationOptions
   }): Promise<SessionContext>
   async getContext(
@@ -565,6 +566,8 @@ export class Session {
           peerTarget?: string | Peer
           lastUserMessage?: string | Message
           peerPerspective?: string | Peer
+          limitToSession?: boolean
+          representationOptions?: RepresentationOptions
         },
     tokens?: number,
     peerTarget?: string | Peer,
@@ -579,6 +582,8 @@ export class Session {
       peerTarget?: string
       lastUserMessage?: string
       peerPerspective?: string
+      limitToSession?: boolean
+      representationOptions?: RepresentationOptions
     }
 
     if (
@@ -598,6 +603,7 @@ export class Session {
           typeof peerPerspective === 'object'
             ? peerPerspective.id
             : peerPerspective,
+        representationOptions,
       }
     } else {
       // Options object pattern
@@ -610,6 +616,8 @@ export class Session {
       peerTarget: options.peerTarget,
       lastUserMessage: options.lastUserMessage,
       peerPerspective: options.peerPerspective,
+      limitToSession: options.limitToSession,
+      representationOptions: options.representationOptions,
     })
 
     // Extract message ID if lastUserMessage is a Message object
@@ -627,6 +635,13 @@ export class Session {
         last_message: lastMessageId,
         peer_target: contextParams.peerTarget,
         peer_perspective: contextParams.peerPerspective,
+        limit_to_session: contextParams.limitToSession,
+        search_top_k: contextParams.representationOptions?.searchTopK,
+        search_max_distance:
+          contextParams.representationOptions?.searchMaxDistance,
+        include_most_derived:
+          contextParams.representationOptions?.includeMostDerived,
+        max_observations: contextParams.representationOptions?.maxObservations,
       }
     )
     // Convert the summary response to Summary object if present
@@ -862,6 +877,7 @@ export class Session {
    * @param peer - The peer to get the working representation of. Can be peer ID string or Peer object
    * @param target - Optional target peer. If provided, returns what `peer` knows about
    *                 `target` within this session context rather than `peer`'s global representation
+   * @param options - Optional representation options to filter and configure the results
    * @returns Promise resolving to a dictionary containing the peer's representation information,
    *          including facts, characteristics, and contextual knowledge
    *
@@ -872,13 +888,30 @@ export class Session {
    *
    * // Get what user123 knows about assistant in this session
    * const localRep = await session.workingRep('user123', 'assistant')
+   *
+   * // Get representation with semantic search
+   * const searchedRep = await session.workingRep('user123', undefined, {
+   *   searchQuery: 'preferences',
+   *   searchTopK: 10
+   * })
    * ```
    */
   async workingRep(
     peer: string | Peer,
-    target?: string | Peer
+    target?: string | Peer,
+    options?: {
+      searchQuery?: string
+      searchTopK?: number
+      searchMaxDistance?: number
+      includeMostDerived?: boolean
+      maxObservations?: number
+    }
   ): Promise<Record<string, unknown>> {
-    const workingRepParams = WorkingRepParamsSchema.parse({ peer, target })
+    const workingRepParams = WorkingRepParamsSchema.parse({
+      peer,
+      target,
+      options,
+    })
     const peerId =
       typeof workingRepParams.peer === 'string'
         ? workingRepParams.peer
@@ -895,6 +928,11 @@ export class Session {
       {
         session_id: this.id,
         target: targetId,
+        search_query: workingRepParams.options?.searchQuery,
+        search_top_k: workingRepParams.options?.searchTopK,
+        search_max_distance: workingRepParams.options?.searchMaxDistance,
+        include_most_derived: workingRepParams.options?.includeMostDerived,
+        max_observations: workingRepParams.options?.maxObservations,
       }
     )
   }

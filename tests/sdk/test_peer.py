@@ -197,8 +197,12 @@ async def test_peer_chat_streaming(client_fixture: tuple[Honcho | AsyncHoncho, s
             yield 'data: {"delta": {"content": " async"}}'
             yield 'data: {"done": true}'
 
+        mock_http_response = Mock()
+        mock_http_response.raise_for_status = Mock()
+
         mock_response = AsyncMock()
         mock_response.iter_lines = mock_aiter_lines
+        mock_response.http_response = mock_http_response
         mock_response.__aenter__ = AsyncMock(return_value=mock_response)
         mock_response.__aexit__ = AsyncMock(return_value=None)
 
@@ -562,17 +566,17 @@ async def test_peer_working_rep_with_size(
             [peer.message(f"Message number {i}") for i in range(10)]
         )
 
-        # Get working representation with custom size
-        result = await peer.working_rep(size=5)
+        # Get working representation with custom max_observations
+        result = await peer.working_rep(max_observations=5)
         assert isinstance(result, dict)
         assert "representation" in result
 
-        # Test with different size values
-        result = await peer.working_rep(size=1)
+        # Test with different max_observations values
+        result = await peer.working_rep(max_observations=1)
         assert isinstance(result, dict)
         assert "representation" in result
 
-        result = await peer.working_rep(size=100)
+        result = await peer.working_rep(max_observations=100)
         assert isinstance(result, dict)
         assert "representation" in result
     else:
@@ -584,16 +588,16 @@ async def test_peer_working_rep_with_size(
         session.add_messages([peer.message(f"Message number {i}") for i in range(10)])
 
         # Get working representation with custom size
-        result = peer.working_rep(size=5)
+        result = peer.working_rep(max_observations=5)
         assert isinstance(result, dict)
         assert "representation" in result
 
-        # Test with different size values
-        result = peer.working_rep(size=1)
+        # Test with different max_observations values
+        result = peer.working_rep(max_observations=1)
         assert isinstance(result, dict)
         assert "representation" in result
 
-        result = peer.working_rep(size=100)
+        result = peer.working_rep(max_observations=100)
         assert isinstance(result, dict)
         assert "representation" in result
 
@@ -625,7 +629,7 @@ async def test_peer_working_rep_with_all_params(
 
         # Get working representation with all parameters
         result = await observer.working_rep(
-            session=session, target=target, search_query="Python", size=10
+            session=session, target=target, search_query="Python", max_observations=10
         )
         assert isinstance(result, dict)
         assert "representation" in result
@@ -635,7 +639,7 @@ async def test_peer_working_rep_with_all_params(
             session=session.id,
             target=target.id,
             search_query="machine learning",
-            size=5,
+            max_observations=5,
         )
         assert isinstance(result, dict)
         assert "representation" in result
@@ -657,7 +661,7 @@ async def test_peer_working_rep_with_all_params(
 
         # Get working representation with all parameters
         result = observer.working_rep(
-            session=session, target=target, search_query="Python", size=10
+            session=session, target=target, search_query="Python", max_observations=10
         )
         assert isinstance(result, dict)
         assert "representation" in result
@@ -667,7 +671,7 @@ async def test_peer_working_rep_with_all_params(
             session=session.id,
             target=target.id,
             search_query="machine learning",
-            size=5,
+            max_observations=5,
         )
         assert isinstance(result, dict)
         assert "representation" in result

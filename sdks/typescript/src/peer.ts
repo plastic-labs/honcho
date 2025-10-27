@@ -445,14 +445,28 @@ export class Peer {
    * @param session - Optional session to scope the representation to.
    * @param target - Optional target peer to get the representation of. If provided,
    *                 returns the representation of the target from the perspective of this peer.
-   * @param searchQuery - Optional search query to curate the representation around semantic search results.
-   * @param size - Optional number of observations to include in the representation.
+   * @param options - Optional representation options to filter and configure the results
    * @returns Promise resolving to a dictionary containing information about the peer's representation.
+   *
+   * @example
+   * ```typescript
+   * // Get global representation
+   * const globalRep = await peer.workingRep()
+   *
+   * // Get representation scoped to a session
+   * const sessionRep = await peer.workingRep('session-123')
+   *
+   * // Get representation with semantic search
+   * const searchedRep = await peer.workingRep(undefined, undefined, {
+   *   searchQuery: 'preferences',
+   *   searchTopK: 10,
+   *   maxObservations: 50
+   * })
+   * ```
    */
   async workingRep(
     session?: string | Session,
     target?: string | Peer,
-    searchQuery?: string,
     options?: RepresentationOptions
   ): Promise<Record<string, unknown>> {
     return await this._client.workspaces.peers.workingRepresentation(
@@ -461,16 +475,11 @@ export class Peer {
       {
         session_id: typeof session === 'string' ? session : session?.id,
         target: typeof target === 'string' ? target : target?.id,
-      },
-      // TODO: switch to using stainless fields in next version
-      {
-        body: {
-          search_query: searchQuery,
-          search_top_k: options?.searchTopK,
-          search_max_distance: options?.searchMaxDistance,
-          include_most_derived: options?.includeMostDerived,
-          max_observations: options?.maxObservations,
-        },
+        search_query: options?.searchQuery,
+        search_top_k: options?.searchTopK,
+        search_max_distance: options?.searchMaxDistance,
+        include_most_derived: options?.includeMostDerived,
+        max_observations: options?.maxObservations,
       }
     )
   }

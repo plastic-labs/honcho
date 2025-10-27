@@ -1211,14 +1211,14 @@ def test_get_session_context_with_search_parameters(
         json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
-    # Get context with search parameters (search_max_distance is int in current API)
+    # Get context with search parameters
     response = client.get(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
             "last_message": "Test query",
             "search_top_k": 5,
-            "search_max_distance": 1,  # int value
+            "search_max_distance": 0.8,  # float value (semantic distance 0.0-1.0)
         },
     )
     assert response.status_code == 200
@@ -1310,7 +1310,7 @@ def test_get_session_context_with_all_representation_params(
             "last_message": "What do you know about me?",
             "limit_to_session": True,
             "search_top_k": 10,
-            "search_max_distance": 1,  # int, not float - current API definition
+            "search_max_distance": 0.9,  # float value (semantic distance 0.0-1.0)
             "include_most_derived": True,
             "max_observations": 15,
             "summary": True,

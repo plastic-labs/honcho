@@ -723,6 +723,11 @@ class AsyncSession(BaseModel):
         peer: str | AsyncPeer,
         *,
         target: str | AsyncPeer | None = None,
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
     ) -> dict[str, object]:
         """
         Get the current working representation of the peer in this session.
@@ -731,6 +736,11 @@ class AsyncSession(BaseModel):
             peer: Peer to get the working representation of.
             target: Optional target peer to get the representation of. If provided,
             queries what `peer` knows about the `target`.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
 
         Returns:
             A dictionary containing information about the peer.
@@ -742,6 +752,15 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             session_id=self.id,
             target=str(target.id) if isinstance(target, AsyncPeer) else target,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
 
     @validate_call

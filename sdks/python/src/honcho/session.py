@@ -480,6 +480,32 @@ class Session(BaseModel):
             None,
             description="A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.",
         ),
+        limit_to_session: bool = Field(
+            False,
+            description="Whether to limit the representation to this session only. If True, only observations from this session will be included.",
+        ),
+        search_top_k: int | None = Field(
+            None,
+            ge=1,
+            le=100,
+            description="Number of semantically relevant facts to return when searching with `last_user_message`.",
+        ),
+        search_max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=1.0,
+            description="Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.",
+        ),
+        include_most_derived: bool | None = Field(
+            None,
+            description="Whether to include the most derived observations in the representation.",
+        ),
+        max_observations: int | None = Field(
+            None,
+            ge=1,
+            le=100,
+            description="Maximum number of observations to include in the representation.",
+        ),
     ) -> SessionContext:
         """
         Get optimized context for this session within a token limit.
@@ -496,6 +522,11 @@ class Session(BaseModel):
             peer_target: A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.
             last_user_message: The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
             peer_perspective: A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.
+            limit_to_session: Whether to limit the representation to this session only. If True, only observations from this session will be included.
+            search_top_k: Number of semantically relevant facts to return when searching with `last_user_message`.
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.
+            include_most_derived: Whether to include the most derived observations in the representation.
+            max_observations: Maximum number of observations to include in the representation.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -532,6 +563,15 @@ class Session(BaseModel):
             else omit,
             peer_target=peer_target if peer_target is not None else omit,
             peer_perspective=peer_perspective if peer_perspective is not None else omit,
+            limit_to_session=limit_to_session,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
 
         # Convert the honcho_core summary to our Summary if it exists
@@ -694,6 +734,11 @@ class Session(BaseModel):
         peer: str | Peer,
         *,
         target: str | Peer | None = None,
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
     ) -> dict[str, object]:
         """
         Get the current working representation of the peer in this session.
@@ -702,6 +747,11 @@ class Session(BaseModel):
             peer: Peer to get the working representation of.
             target: Optional target peer to get the representation of. If provided,
             queries what `peer` knows about the `target`.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
 
         Returns:
             A dictionary containing information about the peer.
@@ -713,6 +763,15 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             session_id=self.id,
             target=str(target.id) if isinstance(target, Peer) else target,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
 
     @validate_call
