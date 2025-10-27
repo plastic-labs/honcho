@@ -18,6 +18,10 @@ class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
 
 
+class ImplicitObservationBase(BaseModel):
+    content: str = Field(description="The implicit observation")
+
+
 class DeductiveObservationBase(BaseModel):
     premises: list[str] = Field(
         description="Supporting premises or evidence for this conclusion",
@@ -33,6 +37,10 @@ class PromptRepresentation(BaseModel):
 
     explicit: list[ExplicitObservationBase] = Field(
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        default_factory=list,
+    )
+    implicit: list[ImplicitObservationBase] = Field(
+        description="Facts CLEARLY IMPLIED by the user's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
         default_factory=list,
     )
     deductive: list[DeductiveObservationBase] = Field(
@@ -59,6 +67,32 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
         Two observations are equal if all their fields match.
         """
         if not isinstance(other, ExplicitObservation):
+            return False
+        return (
+            self.content == other.content
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
+
+
+class ImplicitObservation(ImplicitObservationBase, ObservationMetadata):
+    """Implicit observation with content and metadata."""
+
+    def __str__(self) -> str:
+        return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
+    
+    def __hash__(self) -> int:
+        """
+        Make ImplicitObservation hashable for use in sets.
+        """
+        return hash((self.content, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for ImplicitObservation objects.
+        Two observations are equal if all their fields match.
+        """
+        if not isinstance(other, ImplicitObservation):
             return False
         return (
             self.content == other.content
@@ -121,6 +155,10 @@ class Representation(BaseModel):
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']",
         default_factory=list,
     )
+    implicit: list[ImplicitObservation] = Field(
+        description="Facts CLEARLY IMPLIED by the user's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
+        default_factory=list,
+    )
     deductive: list[DeductiveObservation] = Field(
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
         default_factory=list,
@@ -130,7 +168,9 @@ class Representation(BaseModel):
         """
         Check if the representation is empty.
         """
-        return len(self.explicit) == 0 and len(self.deductive) == 0
+        return len(self.explicit) == 0 and \
+            len(self.implicit) == 0 and \
+            len(self.deductive) == 0
 
     def diff_representation(self, other: "Representation") -> "Representation":
         """
@@ -139,6 +179,7 @@ class Representation(BaseModel):
         """
         diff = Representation()
         diff.explicit = [o for o in other.explicit if o not in self.explicit]
+        diff.implicit = [o for o in other.implicit if o not in self.implicit]
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
         return diff
 
@@ -155,13 +196,16 @@ class Representation(BaseModel):
         """
         # removing duplicates by going list->set->list
         self.explicit = list(set(self.explicit + other.explicit))
+        self.implicit = list(set(self.implicit + other.implicit))
         self.deductive = list(set(self.deductive + other.deductive))
         # sort by created_at
         self.explicit.sort(key=lambda x: x.created_at)
+        self.implicit.sort(key=lambda x: x.created_at)
         self.deductive.sort(key=lambda x: x.created_at)
 
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
+            self.implicit = self.implicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
 
     def __str__(self) -> str:
@@ -176,6 +220,9 @@ class Representation(BaseModel):
             1. [2025-01-01 12:00:00] The user has a dog named Rover
             2. [2025-01-01 12:01:00] The user's dog is 5 years old
             3. [2025-01-01 12:05:00] The user is 25 years old
+            IMPLICIT:
+            1. [2025-01-01 12:02:00] The user graduated from college
+            2. [2025-01-01 12:03:00] The user is 25 years old
             DEDUCTIVE:
             1. [2025-01-01 12:01:00] Rover is 5 years old
                 - The user has a dog named Rover
@@ -189,6 +236,13 @@ class Representation(BaseModel):
         for i, observation in enumerate(self.explicit, 1):
             parts.append(f"{i}. {observation}")
         parts.append("")
+
+        '''
+        parts.append("IMPLICIT:\n")
+        for i, observation in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {observation}")
+        parts.append("")
+        '''
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
@@ -208,6 +262,9 @@ class Representation(BaseModel):
             1. The user has a dog named Rover
             2. The user's dog is 5 years old
             3. The user is 25 years old
+            IMPLICIT:
+            1. The user graduated from college
+            2. The user is 25 years old
             DEDUCTIVE:
             1. Rover is 5 years old
                 - The user has a dog named Rover
@@ -245,6 +302,14 @@ class Representation(BaseModel):
             parts.append(f"{i}. {obs}")
         parts.append("")
 
+        '''
+        # Add implicit observations
+        parts.append("## Implicit Observations\n")
+        for i, obs in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {obs}")
+        parts.append("")
+        '''
+
         # Add deductive observations
         parts.append("## Deductive Observations\n")
         for i, obs in enumerate(self.deductive, 1):
@@ -272,6 +337,18 @@ class Representation(BaseModel):
                 )
                 for doc in documents
                 if doc.internal_metadata.get("level") == "explicit"
+            ],
+            implicit=[
+                ImplicitObservation(
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    content=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
+                )
+                for doc in documents
+                if doc.internal_metadata.get("level") == "implicit"
             ],
             deductive=[
                 DeductiveObservation(
@@ -305,6 +382,15 @@ class Representation(BaseModel):
                     session_name=session_name,
                 )
                 for e in prompt_representation.explicit
+            ],
+            implicit=[
+                ImplicitObservation(
+                    content=i.content,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                )
+                for i in prompt_representation.implicit
             ],
             deductive=[
                 DeductiveObservation(

@@ -125,6 +125,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -145,6 +146,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -165,6 +167,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[True] = ...,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -184,6 +187,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: bool = False,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     client = CLIENTS.get(provider)
     if not client:
@@ -219,6 +223,7 @@ async def honcho_llm_call(
             verbosity,
             thinking_budget_tokens,
             True,
+            sys_prompt,
         )
     else:
         return await decorated(
@@ -233,6 +238,7 @@ async def honcho_llm_call(
             verbosity,
             thinking_budget_tokens,
             False,
+            sys_prompt,
         )
 
 
@@ -250,6 +256,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: Literal[False] = False,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -267,6 +274,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: Literal[False] = False,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -284,6 +292,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: Literal[True] = ...,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -300,6 +309,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: bool = False,
+    sys_prompt: str | None = None,  # Optional system prompt
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     # has already been validated by honcho_llm_call
     client = CLIENTS[provider]

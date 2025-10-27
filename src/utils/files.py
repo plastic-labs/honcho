@@ -3,10 +3,12 @@ from io import BytesIO
 from typing import Any, Protocol
 
 import pdfplumber
+from pathlib import Path
 from fastapi import UploadFile
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Integer, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from jinja2 import Environment, FileSystemLoader, Template, TemplateNotFound
 
 from src import schemas
 from src.config import settings
@@ -223,3 +225,20 @@ async def process_file_uploads_for_messages(
         raise FileProcessingError()
 
     return all_message_data
+
+def load_prompt_template(
+    prompt_path: Path,
+    template_filename: str,
+) -> Template:
+    """
+    Load a prompt template from a file and return a Jinja2 Template object.
+    """
+    try:
+        env = Environment(loader=FileSystemLoader(prompt_path))
+        template = env.get_template(template_filename)
+        return template
+    except TemplateNotFound:
+        return None
+    except Exception as e:
+        logger.warning("Error loading prompt template: %s", e)
+        raise e
