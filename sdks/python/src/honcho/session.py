@@ -42,14 +42,24 @@ class Session(BaseModel):
 
     Attributes:
         id: Unique identifier for this session
-        _honcho: Reference to the parent Honcho client instance
-        anonymous: Whether this is an anonymous session
-        summarize: Whether automatic summarization is enabled
+        workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this session. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this session. May be stale if not
+            recently fetched. Call get_config() for fresh data.
     """
 
     id: str = Field(..., min_length=1, description="Unique identifier for this session")
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
+    )
+    metadata: dict[str, object] | None = Field(
+        None,
+        description="Cached metadata for this session. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        description="Cached configuration for this session. May be stale. Use get_config() for fresh data.",
     )
     _client: HonchoCore = PrivateAttr()
 
@@ -93,16 +103,21 @@ class Session(BaseModel):
         super().__init__(
             id=session_id,
             workspace_id=workspace_id,
+            metadata=metadata,
+            configuration=config,
         )
         self._client = client
 
         if config is not None or metadata is not None:
-            self._client.workspaces.sessions.get_or_create(
+            session_data = self._client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
                 configuration=config if config is not None else omit,
                 metadata=metadata if metadata is not None else omit,
             )
+            # Update cached values with API response
+            self.metadata = session_data.metadata
+            self.configuration = session_data.configuration
 
     def add_peers(
         self,
@@ -352,18 +367,18 @@ class Session(BaseModel):
 
         Makes an API call to retrieve the current metadata associated with this session.
         Metadata can include custom attributes, settings, or any other key-value data.
+        This method also updates the cached metadata attribute.
 
         Returns:
             A dictionary containing the session's metadata. Returns an empty dictionary
             if no metadata is set
         """
-        return (
-            self._client.workspaces.sessions.get_or_create(
-                workspace_id=self.workspace_id,
-                id=self.id,
-            ).metadata
-            or {}
+        session_data = self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
         )
+        self.metadata = session_data.metadata or {}
+        return self.metadata
 
     def delete(self) -> None:
         """
@@ -388,6 +403,7 @@ class Session(BaseModel):
 
         Makes an API call to update the metadata associated with this session.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with this session.
@@ -398,6 +414,51 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
+        self.metadata = metadata
+
+    def get_config(self) -> dict[str, object]:
+        """
+        Get configuration for this session.
+
+        Makes an API call to retrieve the current configuration associated with this session.
+        Configuration includes settings that control session behavior.
+        This method also updates the cached configuration attribute.
+
+        Returns:
+            A dictionary containing the session's configuration. Returns an empty dictionary
+            if no configuration is set
+        """
+        session_data = self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        self.configuration = session_data.configuration or {}
+        return self.configuration
+
+    @validate_call
+    def set_config(
+        self,
+        configuration: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this session"
+        ),
+    ) -> None:
+        """
+        Set configuration for this session.
+
+        Makes an API call to update the configuration associated with this session.
+        This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
+
+        Args:
+            configuration: A dictionary of configuration to associate with this session.
+                          Keys must be strings, values can be any JSON-serializable type
+        """
+        self._client.workspaces.sessions.update(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            configuration=configuration,
+        )
+        self.configuration = configuration
 
     @validate_call
     def get_context(

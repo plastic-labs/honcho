@@ -29,12 +29,24 @@ class AsyncPeer(BaseModel):
 
     Attributes:
         id: Unique identifier for this peer
-        _client: Reference to the parent AsyncHoncho client instance
+        workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this peer. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this peer. May be stale if not
+            recently fetched. Call get_config() for fresh data.
     """
 
     id: str = Field(..., min_length=1, description="Unique identifier for this peer")
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
+    )
+    metadata: dict[str, object] | None = Field(
+        None,
+        description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
     )
     _client: AsyncHonchoCore = PrivateAttr()
 
@@ -52,6 +64,9 @@ class AsyncPeer(BaseModel):
         client: AsyncHonchoCore = Field(
             ..., description="Reference to the parent AsyncHoncho client instance"
         ),
+        *,
+        metadata: dict[str, object] | None = None,
+        config: dict[str, object] | None = None,
     ) -> None:
         """
         Initialize a new AsyncPeer.
@@ -60,8 +75,15 @@ class AsyncPeer(BaseModel):
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent AsyncHoncho client instance
+            metadata: Optional metadata to initialize the cached value
+            config: Optional configuration to initialize the cached value
         """
-        super().__init__(id=peer_id, workspace_id=workspace_id)
+        super().__init__(
+            id=peer_id,
+            workspace_id=workspace_id,
+            metadata=metadata,
+            configuration=config,
+        )
         self._client = client
 
     @classmethod
@@ -92,17 +114,22 @@ class AsyncPeer(BaseModel):
         Returns:
             A new AsyncPeer instance
         """
-        peer = cls(peer_id, workspace_id, client)
-
         if config is not None or metadata is not None:
-            await client.workspaces.peers.get_or_create(
+            peer_data = await client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
                 configuration=config if config is not None else omit,
                 metadata=metadata if metadata is not None else omit,
             )
+            return cls(
+                peer_id,
+                workspace_id,
+                client,
+                metadata=peer_data.metadata,
+                config=peer_data.configuration,
+            )
 
-        return peer
+        return cls(peer_id, workspace_id, client)
 
     async def chat(
         self,
@@ -248,7 +275,7 @@ class AsyncPeer(BaseModel):
 
         Makes an async API call to retrieve metadata associated with this peer. Metadata
         can include custom attributes, settings, or any other key-value data
-        associated with the peer.
+        associated with the peer. This method also updates the cached metadata attribute.
 
         Returns:
             A dictionary containing the peer's metadata. Returns an empty dictionary
@@ -258,7 +285,8 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.metadata or {}
+        self.metadata = peer.metadata or {}
+        return self.metadata
 
     @validate_call
     async def set_metadata(
@@ -272,6 +300,7 @@ class AsyncPeer(BaseModel):
 
         Makes an async API call to update the metadata associated with this peer.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with this peer.
@@ -282,13 +311,15 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
+        self.metadata = metadata
 
-    async def get_peer_config(self) -> dict[str, object]:
+    async def get_config(self) -> dict[str, object]:
         """
         Get the current workspace-level configuration for this peer.
 
         Makes an API call to retrieve configuration associated with this peer.
         Configuration currently includes one optional flag, `observe_me`.
+        This method also updates the cached configuration attribute.
 
         Returns:
             A dictionary containing the peer's configuration
@@ -297,10 +328,11 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.configuration or {}
+        self.configuration = peer.configuration or {}
+        return self.configuration
 
     @validate_call
-    async def set_peer_config(
+    async def set_config(
         self,
         config: dict[str, object] = Field(
             ..., description="Configuration dictionary to associate with this peer"
@@ -313,6 +345,7 @@ class AsyncPeer(BaseModel):
 
         Makes an API call to update the configuration associated with this peer.
         This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
 
         Args:
             config: A dictionary of configuration to associate with this peer.
@@ -323,6 +356,37 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
+        self.configuration = config
+
+    async def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`get_config` instead.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        return await self.get_config()
+
+    @validate_call
+    async def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`set_config` instead.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer
+        """
+        return await self.set_config(config)
 
     @validate_call
     async def search(

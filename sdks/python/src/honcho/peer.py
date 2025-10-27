@@ -29,12 +29,24 @@ class Peer(BaseModel):
 
     Attributes:
         id: Unique identifier for this peer
-        _client: Reference to the parent Honcho client instance
+        workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this peer. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this peer. May be stale if not
+            recently fetched. Call get_config() for fresh data.
     """
 
     id: str = Field(..., min_length=1, description="Unique identifier for this peer")
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
+    )
+    metadata: dict[str, object] | None = Field(
+        None,
+        description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
     )
     _client: HonchoCore = PrivateAttr()
 
@@ -77,16 +89,24 @@ class Peer(BaseModel):
             config: Optional configuration to set for this peer.
             If set, will get/create peer immediately with flags.
         """
-        super().__init__(id=peer_id, workspace_id=workspace_id)
+        super().__init__(
+            id=peer_id,
+            workspace_id=workspace_id,
+            metadata=metadata,
+            configuration=config,
+        )
         self._client = client
 
         if config is not None or metadata is not None:
-            self._client.workspaces.peers.get_or_create(
+            peer_data = self._client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
                 configuration=config if config is not None else omit,
                 metadata=metadata if metadata is not None else omit,
             )
+            # Update cached values with API response
+            self.metadata = peer_data.metadata
+            self.configuration = peer_data.configuration
 
     def chat(
         self,
@@ -231,7 +251,7 @@ class Peer(BaseModel):
 
         Makes an API call to retrieve metadata associated with this peer. Metadata
         can include custom attributes, settings, or any other key-value data
-        associated with the peer.
+        associated with the peer. This method also updates the cached metadata attribute.
 
         Returns:
             A dictionary containing the peer's metadata. Returns an empty dictionary
@@ -241,7 +261,8 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.metadata or {}
+        self.metadata = peer.metadata or {}
+        return self.metadata
 
     @validate_call
     def set_metadata(
@@ -255,6 +276,7 @@ class Peer(BaseModel):
 
         Makes an API call to update the metadata associated with this peer.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with this peer.
@@ -265,13 +287,15 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
+        self.metadata = metadata
 
-    def get_peer_config(self) -> dict[str, object]:
+    def get_config(self) -> dict[str, object]:
         """
         Get the current workspace-level configuration for this peer.
 
         Makes an API call to retrieve configuration associated with this peer.
         Configuration currently includes one optional flag, `observe_me`.
+        This method also updates the cached configuration attribute.
 
         Returns:
             A dictionary containing the peer's configuration
@@ -280,10 +304,11 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.configuration or {}
+        self.configuration = peer.configuration or {}
+        return self.configuration
 
     @validate_call
-    def set_peer_config(
+    def set_config(
         self,
         config: dict[str, object] = Field(
             ..., description="Configuration dictionary to associate with this peer"
@@ -296,6 +321,7 @@ class Peer(BaseModel):
 
         Makes an API call to update the configuration associated with this peer.
         This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
 
         Args:
             config: A dictionary of configuration to associate with this peer.
@@ -306,6 +332,37 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
+        self.configuration = config
+
+    def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`get_config` instead.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        return self.get_config()
+
+    @validate_call
+    def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`set_config` instead.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer
+        """
+        return self.set_config(config)
 
     @validate_call
     def search(

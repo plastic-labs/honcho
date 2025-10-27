@@ -113,6 +113,22 @@ export class Session {
    * Reference to the parent Honcho client instance.
    */
   private _client: HonchoCore
+  /**
+   * Cached metadata for this session. May be stale if the session
+   * was not recently fetched from the API.
+   *
+   * Call getMetadata() to get the latest metadata from the server,
+   * which will also update this cached value.
+   */
+  metadata?: Record<string, unknown>
+  /**
+   * Cached configuration for this session. May be stale if the session
+   * was not recently fetched from the API.
+   *
+   * Call getConfig() to get the latest configuration from the server,
+   * which will also update this cached value.
+   */
+  configuration?: Record<string, unknown>
 
   /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
@@ -120,11 +136,21 @@ export class Session {
    * @param id - Unique identifier for this session within the workspace
    * @param workspaceId - Workspace ID for scoping operations
    * @param client - Reference to the parent Honcho client instance
+   * @param metadata - Optional metadata to initialize the cached value
+   * @param configuration - Optional configuration to initialize the cached value
    */
-  constructor(id: string, workspaceId: string, client: HonchoCore) {
+  constructor(
+    id: string,
+    workspaceId: string,
+    client: HonchoCore,
+    metadata?: Record<string, unknown>,
+    configuration?: Record<string, unknown>
+  ) {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
+    this.metadata = metadata
+    this.configuration = configuration
   }
 
   /**
@@ -404,7 +430,8 @@ export class Session {
    *
    * Makes an API call to retrieve the current metadata associated with this session.
    * Metadata can include custom attributes, settings, or any other key-value data
-   * that provides context about the session.
+   * that provides context about the session. This method also updates the cached
+   * metadata property.
    *
    * @returns Promise resolving to a dictionary containing the session's metadata.
    *          Returns an empty dictionary if no metadata is set
@@ -414,7 +441,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    return session.metadata || {}
+    this.metadata = session.metadata || {}
+    return this.metadata
   }
 
   /**
@@ -423,7 +451,8 @@ export class Session {
    * Makes an API call to update the metadata associated with this session.
    * This will overwrite any existing metadata with the provided values.
    * Metadata is useful for storing custom attributes, configuration, or
-   * contextual information about the session.
+   * contextual information about the session. This method also updates the
+   * cached metadata property.
    *
    * @param metadata - A dictionary of metadata to associate with this session.
    *                   Keys must be strings, values can be any JSON-serializable type
@@ -432,6 +461,43 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       metadata,
     })
+    this.metadata = metadata
+  }
+
+  /**
+   * Get configuration for this session.
+   *
+   * Makes an API call to retrieve the current configuration associated with this session.
+   * Configuration includes settings that control session behavior. This method also
+   * updates the cached configuration property.
+   *
+   * @returns Promise resolving to a dictionary containing the session's configuration.
+   *          Returns an empty dictionary if no configuration is set
+   */
+  async getConfig(): Promise<Record<string, unknown>> {
+    const session = await this._client.workspaces.sessions.getOrCreate(
+      this.workspaceId,
+      { id: this.id }
+    )
+    this.configuration = session.configuration || {}
+    return this.configuration
+  }
+
+  /**
+   * Set configuration for this session.
+   *
+   * Makes an API call to update the configuration associated with this session.
+   * This will overwrite any existing configuration with the provided values.
+   * This method also updates the cached configuration property.
+   *
+   * @param configuration - A dictionary of configuration to associate with this session.
+   *                        Keys must be strings, values can be any JSON-serializable type
+   */
+  async setConfig(configuration: Record<string, unknown>): Promise<void> {
+    await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
+      configuration,
+    })
+    this.configuration = configuration
   }
 
   /**

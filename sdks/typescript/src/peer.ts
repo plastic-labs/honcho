@@ -35,6 +35,22 @@ export class Peer {
    * Reference to the parent Honcho client instance.
    */
   private _client: HonchoCore
+  /**
+   * Cached metadata for this peer. May be stale if the peer
+   * was not recently fetched from the API.
+   *
+   * Call getMetadata() to get the latest metadata from the server,
+   * which will also update this cached value.
+   */
+  metadata?: Record<string, unknown>
+  /**
+   * Cached configuration for this peer. May be stale if the peer
+   * was not recently fetched from the API.
+   *
+   * Call getConfig() to get the latest configuration from the server,
+   * which will also update this cached value.
+   */
+  configuration?: Record<string, unknown>
 
   /**
    * Initialize a new Peer. **Do not call this directly, use the client.peer() method instead.**
@@ -42,11 +58,21 @@ export class Peer {
    * @param id - Unique identifier for this peer within the workspace
    * @param workspaceId - Workspace ID for scoping operations
    * @param client - Reference to the parent Honcho client instance
+   * @param metadata - Optional metadata to initialize the cached value
+   * @param configuration - Optional configuration to initialize the cached value
    */
-  constructor(id: string, workspaceId: string, client: HonchoCore) {
+  constructor(
+    id: string,
+    workspaceId: string,
+    client: HonchoCore,
+    metadata?: Record<string, unknown>,
+    configuration?: Record<string, unknown>
+  ) {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
+    this.metadata = metadata
+    this.configuration = configuration
   }
 
   /**
@@ -246,7 +272,7 @@ export class Peer {
    *
    * Makes an API call to retrieve metadata associated with this peer. Metadata
    * can include custom attributes, settings, or any other key-value data
-   * associated with the peer.
+   * associated with the peer. This method also updates the cached metadata property.
    *
    * @returns Promise resolving to a dictionary containing the peer's metadata.
    *          Returns an empty dictionary if no metadata is set
@@ -256,7 +282,8 @@ export class Peer {
       this.workspaceId,
       { id: this.id }
     )
-    return peer.metadata || {}
+    this.metadata = peer.metadata || {}
+    return this.metadata
   }
 
   /**
@@ -264,6 +291,7 @@ export class Peer {
    *
    * Makes an API call to update the metadata associated with this peer.
    * This will overwrite any existing metadata with the provided values.
+   * This method also updates the cached metadata property.
    *
    * @param metadata - A dictionary of metadata to associate with this peer.
    *                   Keys must be strings, values can be any JSON-serializable type
@@ -272,6 +300,7 @@ export class Peer {
     await this._client.workspaces.peers.update(this.workspaceId, this.id, {
       metadata,
     })
+    this.metadata = metadata
   }
 
   /**
@@ -279,15 +308,17 @@ export class Peer {
    *
    * Makes an API call to retrieve configuration associated with this peer.
    * Configuration currently includes one optional flag, `observe_me`.
+   * This method also updates the cached configuration property.
    *
    * @returns Promise resolving to a dictionary containing the peer's configuration
    */
-  async getPeerConfig(): Promise<Record<string, unknown>> {
+  async getConfig(): Promise<Record<string, unknown>> {
     const peer = await this._client.workspaces.peers.getOrCreate(
       this.workspaceId,
       { id: this.id }
     )
-    return peer.configuration || {}
+    this.configuration = peer.configuration || {}
+    return this.configuration
   }
 
   /**
@@ -297,14 +328,36 @@ export class Peer {
    *
    * Makes an API call to update the configuration associated with this peer.
    * This will overwrite any existing configuration with the provided values.
+   * This method also updates the cached configuration property.
    *
    * @param config - A dictionary of configuration to associate with this peer.
    *                 Keys must be strings, values can be any JSON-serializable type
    */
-  async setPeerConfig(config: Record<string, unknown>): Promise<void> {
+  async setConfig(config: Record<string, unknown>): Promise<void> {
     await this._client.workspaces.peers.update(this.workspaceId, this.id, {
       configuration: config,
     })
+    this.configuration = config
+  }
+
+  /**
+   * Get the current workspace-level configuration for this peer.
+   *
+   * @deprecated Use getConfig() instead
+   * @returns Promise resolving to a dictionary containing the peer's configuration
+   */
+  async getPeerConfig(): Promise<Record<string, unknown>> {
+    return this.getConfig()
+  }
+
+  /**
+   * Set the configuration for this peer.
+   *
+   * @deprecated Use setConfig() instead
+   * @param config - A dictionary of configuration to associate with this peer
+   */
+  async setPeerConfig(config: Record<string, unknown>): Promise<void> {
+    return this.setConfig(config)
   }
 
   /**
