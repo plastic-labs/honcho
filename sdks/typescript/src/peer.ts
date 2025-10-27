@@ -384,6 +384,41 @@ export class Peer {
   }
 
   /**
+   * Get a working representation for this peer.
+   *
+   * Makes an API call to retrieve the working representation for this peer.
+   *
+   * @param session - Optional session to scope the representation to.
+   * @param target - Optional target peer to get the representation of. If provided,
+   *                 returns the representation of the target from the perspective of this peer.
+   * @param searchQuery - Optional search query to curate the representation around semantic search results.
+   * @param size - Optional number of observations to include in the representation.
+   * @returns Promise resolving to a dictionary containing information about the peer's representation.
+   */
+  async workingRep(
+    session?: string | Session,
+    target?: string | Peer,
+    searchQuery?: string,
+    size?: number
+  ): Promise<Record<string, unknown>> {
+    return await this._client.workspaces.peers.workingRepresentation(
+      this.workspaceId,
+      this.id,
+      {
+        session_id: typeof session === 'string' ? session : session?.id,
+        target: typeof target === 'string' ? target : target?.id,
+      },
+      // TODO: switch to using stainless fields in next version
+      {
+        body: {
+          search_query: searchQuery,
+          size: size,
+        },
+      }
+    )
+  }
+
+  /**
    * Return a string representation of the Peer.
    *
    * @returns A string representation suitable for debugging

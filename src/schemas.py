@@ -102,6 +102,16 @@ class PeerRepresentationGet(BaseModel):
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
     )
+    search_query: str | None = Field(
+        None,
+        description="Optional input to curate the representation around semantic search results",
+    )
+    size: int | None = Field(
+        default=25,
+        ge=1,
+        le=100,
+        description="Number of observations to include in the representation",
+    )
 
 
 class PeerCardResponse(BaseModel):

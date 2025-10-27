@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
 import asyncio
-import time
 import logging
+import time
+from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
@@ -314,7 +314,7 @@ class AsyncSession(BaseModel):
         messages: MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Messages to add to the session"
         ),
-    ) -> None:
+    ) -> list[Message]:
         """
         Add one or more messages to this session.
 
@@ -330,7 +330,7 @@ class AsyncSession(BaseModel):
         if not isinstance(messages, list):
             messages = [messages]
 
-        await self._client.workspaces.sessions.messages.create(
+        return await self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
             messages=[MessageCreateParam(**message) for message in messages],

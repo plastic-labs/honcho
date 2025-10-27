@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
@@ -12,8 +12,8 @@ from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
-from .types import DialecticStreamResponse
 from .pagination import SyncPage
+from .types import DialecticStreamResponse
 
 if TYPE_CHECKING:
     from .session import Session
@@ -373,6 +373,47 @@ class Peer(BaseModel):
         items: list[str] = response.peer_card
 
         return "\n".join(items)
+
+    def working_rep(
+        self,
+        session: str | Session | None = None,
+        target: str | Peer | None = None,
+        search_query: str | None = None,
+        size: int | None = 25,
+    ) -> dict[str, object]:
+        """
+        Get a working representation for this peer.
+
+        Args:
+            session: Optional session to scope the representation to.
+            target: Optional target peer to get the representation of. If provided,
+            returns the representation of the target from the perspective of this peer.
+            search_query: Optional search query to curate the representation around semantic search results.
+            size: Optional number of observations to include in the representation.
+
+        Returns:
+            A dictionary containing information about the peer's representation.
+        """
+
+        session_id = (
+            None
+            if session is None
+            else session
+            if isinstance(session, str)
+            else session.id
+        )
+
+        return self._client.workspaces.peers.working_representation(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            session_id=session_id,
+            target=str(target.id) if isinstance(target, Peer) else target,
+            # TODO: switch to using stainless fields in next version
+            extra_body={
+                "search_query": search_query,
+                "size": size,
+            },
+        )
 
     def __repr__(self) -> str:
         """

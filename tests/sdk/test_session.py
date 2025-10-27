@@ -278,6 +278,83 @@ async def test_session_search(client_fixture: tuple[Honcho | AsyncHoncho, str]):
 
 
 @pytest.mark.asyncio
+async def test_session_add_messages_return_value(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests that add_messages returns a list of Message objects.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-add-msg-return")
+        assert isinstance(session, AsyncSession)
+        user = await honcho_client.peer(id="user-add-msg-return")
+        assert isinstance(user, AsyncPeer)
+        assistant = await honcho_client.peer(id="assistant-add-msg-return")
+        assert isinstance(assistant, AsyncPeer)
+
+        # Test single message return value
+        from honcho_core.types.workspaces.sessions.message import Message
+
+        result = await session.add_messages(user.message("Hello assistant"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], Message)
+        assert result[0].content == "Hello assistant"
+        assert result[0].peer_id == user.id
+
+        # Test multiple messages return value
+        result = await session.add_messages(
+            [
+                user.message("How are you?"),
+                assistant.message("I'm doing well, thank you!"),
+            ]
+        )
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(isinstance(msg, Message) for msg in result)
+        assert result[0].content == "How are you?"
+        assert result[0].peer_id == user.id
+        assert result[1].content == "I'm doing well, thank you!"
+        assert result[1].peer_id == assistant.id
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-add-msg-return")
+        assert isinstance(session, Session)
+        user = honcho_client.peer(id="user-add-msg-return")
+        assert isinstance(user, Peer)
+        assistant = honcho_client.peer(id="assistant-add-msg-return")
+        assert isinstance(assistant, Peer)
+
+        # Test single message return value
+        from honcho_core.types.workspaces.sessions.message import Message
+
+        result = session.add_messages(user.message("Hello assistant"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], Message)
+        assert result[0].content == "Hello assistant"
+        assert result[0].peer_id == user.id
+
+        # Test multiple messages return value
+        result = session.add_messages(
+            [
+                user.message("How are you?"),
+                assistant.message("I'm doing well, thank you!"),
+            ]
+        )
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(isinstance(msg, Message) for msg in result)
+        assert result[0].content == "How are you?"
+        assert result[0].peer_id == user.id
+        assert result[1].content == "I'm doing well, thank you!"
+        assert result[1].peer_id == assistant.id
+
+
+@pytest.mark.asyncio
 async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests getting the working representation of a peer in a session.

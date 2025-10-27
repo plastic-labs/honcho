@@ -568,6 +568,62 @@ describe('Session', () => {
         ],
       })
     })
+
+    it('should return list of messages when created', async () => {
+      const mockMessages = [
+        {
+          id: 'msg1',
+          peer_id: 'peer1',
+          content: 'Hello',
+          created_at: '2023-01-01T00:00:00Z',
+          metadata: {},
+        },
+        {
+          id: 'msg2',
+          peer_id: 'peer2',
+          content: 'Hi there',
+          created_at: '2023-01-01T00:00:01Z',
+          metadata: {},
+        },
+      ]
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue(
+        mockMessages
+      )
+
+      const messages = [
+        { peer_id: 'peer1', content: 'Hello' },
+        { peer_id: 'peer2', content: 'Hi there' },
+      ]
+      const result = await session.addMessages(messages)
+
+      expect(result).toEqual(mockMessages)
+      expect(result).toHaveLength(2)
+      expect(result[0].id).toBe('msg1')
+      expect(result[0].content).toBe('Hello')
+      expect(result[1].id).toBe('msg2')
+      expect(result[1].content).toBe('Hi there')
+    })
+
+    it('should return single message when adding single message', async () => {
+      const mockMessage = {
+        id: 'msg1',
+        peer_id: 'peer1',
+        content: 'Hello',
+        created_at: '2023-01-01T00:00:00Z',
+        metadata: {},
+      }
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue([
+        mockMessage,
+      ])
+
+      const message = { peer_id: 'peer1', content: 'Hello' }
+      const result = await session.addMessages(message)
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toEqual(mockMessage)
+      expect(result[0].id).toBe('msg1')
+      expect(result[0].content).toBe('Hello')
+    })
   })
 
   describe('getMessages', () => {

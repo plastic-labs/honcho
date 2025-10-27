@@ -292,7 +292,7 @@ class Session(BaseModel):
         messages: MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Messages to add to the session"
         ),
-    ) -> None:
+    ) -> list[Message]:
         """
         Add one or more messages to this session.
 
@@ -308,7 +308,7 @@ class Session(BaseModel):
         if not isinstance(messages, list):
             messages = [messages]
 
-        self._client.workspaces.sessions.messages.create(
+        return self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
             messages=[MessageCreateParam(**message) for message in messages],

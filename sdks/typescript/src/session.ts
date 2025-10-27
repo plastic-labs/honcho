@@ -364,12 +364,12 @@ export class Session {
    * })
    * ```
    */
-  async addMessages(messages: MessageAddition): Promise<void> {
+  async addMessages(messages: MessageAddition): Promise<Message[]> {
     const validatedMessages = MessageAdditionSchema.parse(messages)
     const messagesList = Array.isArray(validatedMessages)
       ? validatedMessages
       : [validatedMessages]
-    await this._client.workspaces.sessions.messages.create(
+    return await this._client.workspaces.sessions.messages.create(
       this.workspaceId,
       this.id,
       {
