@@ -252,7 +252,7 @@ class MessageEmbedding(Base):
         ForeignKey("workspaces.name"), index=True
     )
     session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
-    peer_name: Mapped[str | None] = mapped_column(TEXT, index=True)
+    peer_name: Mapped[str] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -418,7 +418,7 @@ class ActiveQueueSession(Base):
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
 
-    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
+    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True)
 
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
@@ -441,7 +441,6 @@ class WebhookEndpoint(Base):
 
     __table_args__ = (
         CheckConstraint("length(url) <= 2048", name="webhook_endpoint_url_length"),
-        Index("idx_webhook_endpoints_workspace_lookup", "workspace_name"),
     )
 
     def __repr__(self) -> str:
