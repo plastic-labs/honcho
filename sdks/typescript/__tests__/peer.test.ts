@@ -693,7 +693,7 @@ describe('Peer', () => {
         mockRepresentation
       );
 
-      const result = await peer.workingRep(undefined, undefined, undefined, 10);
+      const result = await peer.workingRep(undefined, undefined, undefined, { maxObservations: 10 });
 
       expect(result).toEqual(mockRepresentation);
       expect(
@@ -704,7 +704,10 @@ describe('Peer', () => {
       }, {
         body: {
           search_query: undefined,
-          size: 10,
+          search_top_k: undefined,
+          search_max_distance: undefined,
+          include_most_derived: undefined,
+          max_observations: 10,
         },
       });
     });
@@ -726,7 +729,7 @@ describe('Peer', () => {
         session,
         targetPeer,
         'Python programming',
-        25
+        { maxObservations: 25 }
       );
 
       expect(result).toEqual(mockRepresentation);
@@ -738,7 +741,10 @@ describe('Peer', () => {
       }, {
         body: {
           search_query: 'Python programming',
-          size: 25,
+          search_top_k: undefined,
+          search_max_distance: undefined,
+          include_most_derived: undefined,
+          max_observations: 25,
         },
       });
     });
@@ -757,7 +763,7 @@ describe('Peer', () => {
         'session-456',
         'target-peer-123',
         'machine learning',
-        50
+        { maxObservations: 50 }
       );
 
       expect(result).toEqual(mockRepresentation);
@@ -769,7 +775,10 @@ describe('Peer', () => {
       }, {
         body: {
           search_query: 'machine learning',
-          size: 50,
+          search_top_k: undefined,
+          search_max_distance: undefined,
+          include_most_derived: undefined,
+          max_observations: 50,
         },
       });
     });
@@ -785,7 +794,7 @@ describe('Peer', () => {
       );
 
       // Test size = 1
-      await peer.workingRep(undefined, undefined, undefined, 1);
+      await peer.workingRep(undefined, undefined, undefined, { maxObservations: 1 });
       expect(
         mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenLastCalledWith('test-workspace', 'test-peer', {
@@ -794,12 +803,15 @@ describe('Peer', () => {
       }, {
         body: {
           search_query: undefined,
-          size: 1,
+          search_top_k: undefined,
+          search_max_distance: undefined,
+          include_most_derived: undefined,
+          max_observations: 1,
         },
       });
 
       // Test size = 100
-      await peer.workingRep(undefined, undefined, undefined, 100);
+      await peer.workingRep(undefined, undefined, undefined, { maxObservations: 100 });
       expect(
         mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenLastCalledWith('test-workspace', 'test-peer', {
@@ -808,7 +820,10 @@ describe('Peer', () => {
       }, {
         body: {
           search_query: undefined,
-          size: 100,
+          search_top_k: undefined,
+          search_max_distance: undefined,
+          include_most_derived: undefined,
+          max_observations: 100,
         },
       });
     });
