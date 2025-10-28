@@ -3,6 +3,7 @@ import { Peer } from '../src/peer'
 import { Page } from '../src/pagination'
 import { SessionContext } from '../src/session_context'
 import { Honcho } from '../src/client'
+import { Representation } from '../src/representation'
 
 // Mock the @honcho-ai/core module
 jest.mock('@honcho-ai/core', () => {
@@ -903,18 +904,27 @@ describe('Session', () => {
 
   describe('workingRep', () => {
     it('should get working representation with peer string', async () => {
-      const mockRepresentation = {
-        peer_id: 'peer1',
-        knowledge: 'Some knowledge about the peer',
-        relationships: ['peer2', 'peer3'],
+      const mockRepresentationData = {
+        explicit: [
+          {
+            content: 'Some knowledge about the peer',
+            created_at: '2024-01-01T00:00:00Z',
+            message_ids: [[1, 2]],
+            session_name: 'test-session',
+          },
+        ],
+        deductive: [],
       }
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentation
+        mockRepresentationData
       )
 
       const result = await session.workingRep('peer1')
 
-      expect(result).toEqual(mockRepresentation)
+      expect(result).toBeInstanceOf(Representation)
+      expect(result.explicit).toHaveLength(1)
+      expect(result.explicit[0].content).toBe('Some knowledge about the peer')
+      expect(result.deductive).toHaveLength(0)
       expect(
         mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
@@ -925,17 +935,27 @@ describe('Session', () => {
 
     it('should get working representation with Peer object', async () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
-      const mockRepresentation = {
-        peer_id: 'peer1',
-        knowledge: 'Some knowledge',
+      const mockRepresentationData = {
+        explicit: [
+          {
+            content: 'Some knowledge',
+            created_at: '2024-01-01T00:00:00Z',
+            message_ids: [[1, 2]],
+            session_name: 'test-session',
+          },
+        ],
+        deductive: [],
       }
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentation
+        mockRepresentationData
       )
 
       const result = await session.workingRep(peer)
 
-      expect(result).toEqual(mockRepresentation)
+      expect(result).toBeInstanceOf(Representation)
+      expect(result.explicit).toHaveLength(1)
+      expect(result.explicit[0].content).toBe('Some knowledge')
+      expect(result.deductive).toHaveLength(0)
       expect(
         mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
@@ -945,17 +965,27 @@ describe('Session', () => {
     })
 
     it('should get working representation with target peer string', async () => {
-      const mockRepresentation = {
-        peer_id: 'peer1',
-        target_knowledge: 'What peer1 knows about target',
+      const mockRepresentationData = {
+        explicit: [
+          {
+            content: 'What peer1 knows about target',
+            created_at: '2024-01-01T00:00:00Z',
+            message_ids: [[1, 2]],
+            session_name: 'test-session',
+          },
+        ],
+        deductive: [],
       }
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentation
+        mockRepresentationData
       )
 
       const result = await session.workingRep('peer1', 'target-peer')
 
-      expect(result).toEqual(mockRepresentation)
+      expect(result).toBeInstanceOf(Representation)
+      expect(result.explicit).toHaveLength(1)
+      expect(result.explicit[0].content).toBe('What peer1 knows about target')
+      expect(result.deductive).toHaveLength(0)
       expect(
         mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
@@ -967,17 +997,27 @@ describe('Session', () => {
     it('should get working representation with target Peer object', async () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
       const target = new Peer('target-peer', 'test-workspace', mockClient)
-      const mockRepresentation = {
-        peer_id: 'peer1',
-        target_knowledge: 'What peer1 knows about target',
+      const mockRepresentationData = {
+        explicit: [
+          {
+            content: 'What peer1 knows about target',
+            created_at: '2024-01-01T00:00:00Z',
+            message_ids: [[1, 2]],
+            session_name: 'test-session',
+          },
+        ],
+        deductive: [],
       }
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentation
+        mockRepresentationData
       )
 
       const result = await session.workingRep(peer, target)
 
-      expect(result).toEqual(mockRepresentation)
+      expect(result).toBeInstanceOf(Representation)
+      expect(result.explicit).toHaveLength(1)
+      expect(result.explicit[0].content).toBe('What peer1 knows about target')
+      expect(result.deductive).toHaveLength(0)
       expect(
         mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {

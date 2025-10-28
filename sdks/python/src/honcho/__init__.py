@@ -45,7 +45,13 @@ from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
-from .types import DialecticStreamResponse, RepresentationOptions
+from .types import (
+    DeductiveObservation,
+    DialecticStreamResponse,
+    ExplicitObservation,
+    Representation,
+    RepresentationOptions,
+)
 
 __version__ = "1.5.0"
 __author__ = "Plastic Labs"
@@ -65,4 +71,7 @@ __all__ = [
     "SyncPage",
     "DialecticStreamResponse",
     "RepresentationOptions",
+    "Representation",
+    "ExplicitObservation",
+    "DeductiveObservation",
 ]

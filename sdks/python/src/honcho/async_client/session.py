@@ -17,6 +17,7 @@ from ..utils import prepare_file_for_upload
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
+    from ..types import Representation
     from .peer import AsyncPeer
 
 logger = logging.getLogger(__name__)
@@ -728,7 +729,7 @@ class AsyncSession(BaseModel):
         search_max_distance: float | None = None,
         include_most_derived: bool | None = None,
         max_observations: int | None = None,
-    ) -> dict[str, object]:
+    ) -> "Representation":
         """
         Get the current working representation of the peer in this session.
 
@@ -743,15 +744,33 @@ class AsyncSession(BaseModel):
             max_observations: Maximum number of observations to include
 
         Returns:
-            A dictionary containing information about the peer.
-        """
-        from .peer import AsyncPeer
+            A Representation object containing explicit and deductive observations
 
-        return await self._client.workspaces.peers.working_representation(
-            str(peer.id) if isinstance(peer, AsyncPeer) else peer,
+        Example:
+            ```python
+            # Get peer's representation in this session
+            rep = await session.working_rep('user123')
+            print(rep)
+
+            # Get what user123 knows about assistant in this session
+            local_rep = await session.working_rep('user123', target='assistant')
+
+            # Get representation with semantic search
+            searched_rep = await session.working_rep(
+                'user123',
+                search_query='preferences',
+                search_top_k=10
+            )
+            ```
+        """
+        from ..types import Representation as _Representation
+        from .peer import AsyncPeer as _AsyncPeer
+
+        data = await self._client.workspaces.peers.working_representation(
+            str(peer.id) if isinstance(peer, _AsyncPeer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            target=str(target.id) if isinstance(target, AsyncPeer) else target,
+            target=str(target.id) if isinstance(target, _AsyncPeer) else target,
             search_query=search_query if search_query is not None else omit,
             search_top_k=search_top_k if search_top_k is not None else omit,
             search_max_distance=search_max_distance
@@ -762,6 +781,7 @@ class AsyncSession(BaseModel):
             else omit,
             max_observations=max_observations if max_observations is not None else omit,
         )
+        return _Representation.from_dict(data)  # type: ignore
 
     @validate_call
     async def get_deriver_status(

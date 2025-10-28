@@ -1,7 +1,7 @@
 import type HonchoCore from '@honcho-ai/core'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
-import type { RepresentationOptions } from './representation'
+import { Representation, type RepresentationOptions } from './representation'
 import { Session } from './session'
 import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
 import {
@@ -446,12 +446,13 @@ export class Peer {
    * @param target - Optional target peer to get the representation of. If provided,
    *                 returns the representation of the target from the perspective of this peer.
    * @param options - Optional representation options to filter and configure the results
-   * @returns Promise resolving to a dictionary containing information about the peer's representation.
+   * @returns Promise resolving to a Representation object containing explicit and deductive observations
    *
    * @example
    * ```typescript
    * // Get global representation
    * const globalRep = await peer.workingRep()
+   * console.log(globalRep.toString())
    *
    * // Get representation scoped to a session
    * const sessionRep = await peer.workingRep('session-123')
@@ -468,8 +469,8 @@ export class Peer {
     session?: string | Session,
     target?: string | Peer,
     options?: RepresentationOptions
-  ): Promise<Record<string, unknown>> {
-    return await this._client.workspaces.peers.workingRepresentation(
+  ): Promise<Representation> {
+    const data = await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
       this.id,
       {
@@ -482,6 +483,7 @@ export class Peer {
         max_observations: options?.maxObservations,
       }
     )
+    return Representation.fromData(data as any)
   }
 
   /**

@@ -17,6 +17,7 @@ from .types import DialecticStreamResponse
 
 if TYPE_CHECKING:
     from .session import Session
+    from .types import Representation
 
 
 class Peer(BaseModel):
@@ -440,7 +441,7 @@ class Peer(BaseModel):
         search_max_distance: float | None = None,
         include_most_derived: bool | None = None,
         max_observations: int | None = None,
-    ) -> dict[str, object]:
+    ) -> "Representation":
         """
         Get a working representation for this peer.
 
@@ -455,8 +456,26 @@ class Peer(BaseModel):
             max_observations: Maximum number of observations to include
 
         Returns:
-            A dictionary containing information about the peer's representation.
+            A Representation object containing explicit and deductive observations
+
+        Example:
+            ```python
+            # Get global representation
+            rep = peer.working_rep()
+            print(rep)
+
+            # Get representation scoped to a session
+            session_rep = peer.working_rep(session='session-123')
+
+            # Get representation with semantic search
+            searched_rep = peer.working_rep(
+                search_query='preferences',
+                search_top_k=10,
+                max_observations=50
+            )
+            ```
         """
+        from .types import Representation as _Representation
 
         session_id = (
             None
@@ -466,7 +485,7 @@ class Peer(BaseModel):
             else session.id
         )
 
-        return self._client.workspaces.peers.working_representation(
+        data = self._client.workspaces.peers.working_representation(
             peer_id=self.id,
             workspace_id=self.workspace_id,
             session_id=session_id,
@@ -481,6 +500,7 @@ class Peer(BaseModel):
             else omit,
             max_observations=max_observations if max_observations is not None else omit,
         )
+        return _Representation.from_dict(data)  # type: ignore
 
     def __repr__(self) -> str:
         """

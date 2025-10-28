@@ -7,7 +7,7 @@ import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/mess
 import type { Uploadable } from '@honcho-ai/core/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import type { RepresentationOptions } from './representation'
+import { Representation, type RepresentationOptions } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
@@ -878,13 +878,13 @@ export class Session {
    * @param target - Optional target peer. If provided, returns what `peer` knows about
    *                 `target` within this session context rather than `peer`'s global representation
    * @param options - Optional representation options to filter and configure the results
-   * @returns Promise resolving to a dictionary containing the peer's representation information,
-   *          including facts, characteristics, and contextual knowledge
+   * @returns Promise resolving to a Representation object containing explicit and deductive observations
    *
    * @example
    * ```typescript
    * // Get peer's global representation in this session
    * const globalRep = await session.workingRep('user123')
+   * console.log(globalRep.toString())
    *
    * // Get what user123 knows about assistant in this session
    * const localRep = await session.workingRep('user123', 'assistant')
@@ -906,7 +906,7 @@ export class Session {
       includeMostDerived?: boolean
       maxObservations?: number
     }
-  ): Promise<Record<string, unknown>> {
+  ): Promise<Representation> {
     const workingRepParams = WorkingRepParamsSchema.parse({
       peer,
       target,
@@ -922,7 +922,7 @@ export class Session {
         : workingRepParams.target.id
       : undefined
 
-    return await this._client.workspaces.peers.workingRepresentation(
+    const data = await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
       peerId,
       {
@@ -935,6 +935,7 @@ export class Session {
         max_observations: workingRepParams.options?.maxObservations,
       }
     )
+    return Representation.fromData(data as any)
   }
 
   /**
