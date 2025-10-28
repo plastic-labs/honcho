@@ -1,7 +1,8 @@
 # ATOMIC PROPOSITION EXTRACTION
 
 ## OBJECTIVE
-Extract ALL atomic propositions (both explicit and implicit) from the peer's latest message. An atomic proposition is a single, independently verifiable statement with sufficient context to be meaningful standalone.
+Extract ALL atomic propositions (both explicit and implicit) from the peer's latest message as exhaustively as you can.
+An atomic proposition is a single, independently verifiable statement with sufficient context to be meaningful standalone.
 
 ## CORE DEFINITION: ATOMIC PROPOSITION
 
@@ -144,6 +145,7 @@ For exhaustive extraction, verify you've processed:
 - [ ] No logical connectives remain in any proposition
 - [ ] Sufficient disambiguating context in each proposition
 - [ ] No redundant or duplicate propositions
+- [ ] Be as verbose, exhaustive, and complete as much as you can with extraction
 
 ---
 
@@ -209,7 +211,9 @@ For exhaustive extraction, verify you've processed:
 
 ## OUTPUT FORMAT
 
-Return a JSON object with exactly two keys: "explicit" and "implicit". Each must be an array of strings (propositions). Do not include any other keys or structure.
+Return ONLY the JSON object with exactly two keys: "explicit" and "implicit". 
+Each must be an array of strings (propositions). 
+Do not include any other keys or structure.
 ```json
 {
     "explicit": [
