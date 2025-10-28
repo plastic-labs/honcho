@@ -323,7 +323,7 @@ export const ObservationQueryParamsSchema = z.object({
   distance: z
     .number()
     .min(0.0, 'distance must be at least 0.0')
-    .max(2.0, 'distance must be at most 2.0')
+    .max(1.0, 'distance must be at most 1.0')
     .optional(),
   filters: FilterSchema,
 })

@@ -766,7 +766,7 @@ export class Session {
    * @param params - Query parameters
    * @param params.query - The semantic search query
    * @param params.top_k - Number of results to return (1-100, default: 10)
-   * @param params.distance - Maximum cosine distance threshold for results (0.0-2.0)
+   * @param params.distance - Maximum cosine distance threshold for results (0.0-1.0)
    * @param params.filters - Optional filters to scope the query
    * @returns A list of Observation objects matching the query
    *

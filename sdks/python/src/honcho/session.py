@@ -732,7 +732,7 @@ class Session(BaseModel):
         distance: float | None = Field(
             default=None,
             ge=0.0,
-            le=2.0,
+            le=1.0,
             description="Maximum cosine distance threshold for results",
         ),
         filters: dict[str, object] | None = Field(
@@ -748,7 +748,7 @@ class Session(BaseModel):
         Args:
             query: The semantic search query
             top_k: Number of results to return (1-100, default: 10)
-            distance: Maximum cosine distance threshold for results (0.0-2.0)
+            distance: Maximum cosine distance threshold for results (0.0-1.0)
             filters: Optional filters to scope the query
 
         Returns:
