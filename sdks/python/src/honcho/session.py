@@ -383,9 +383,16 @@ class Session(BaseModel):
 
     def delete(self) -> None:
         """
-        Delete this session
+        Delete this session and all associated data.
 
-        Makes an API call to mark this session as inactive.
+        Makes an API call to permanently delete this session and all related data including:
+        - Messages
+        - Message embeddings
+        - Documents
+        - Session-Peer associations
+        - Background processing queue items
+
+        This action cannot be undone.
         """
         self._client.workspaces.sessions.delete(
             session_id=self.id,

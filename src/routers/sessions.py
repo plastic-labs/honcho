@@ -237,7 +237,18 @@ async def delete_session(
     session_id: str = Path(..., description="ID of the session to delete"),
     db: AsyncSession = db,
 ):
-    """Delete a session by marking it as inactive"""
+    """
+    Delete a session and all associated data.
+
+    This permanently deletes the session and all related data including:
+    - Messages
+    - Message embeddings
+    - Documents (theory-of-mind data)
+    - Session peer associations
+    - Background processing queue items
+
+    This action cannot be undone.
+    """
     try:
         await crud.delete_session(
             db, workspace_name=workspace_id, session_name=session_id

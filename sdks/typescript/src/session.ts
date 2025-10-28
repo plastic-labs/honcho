@@ -501,9 +501,16 @@ export class Session {
   }
 
   /**
-   * Delete this session.
+   * Delete this session and all associated data.
    *
-   * Makes an API call to mark this session as inactive.
+   * Makes an API call to permanently delete this session and all related data including:
+   * - Messages
+   * - Message embeddings
+   * - Documents
+   * - Session-Peer associations
+   * - Background processing queue items
+   *
+   * This action cannot be undone.
    */
   async delete(): Promise<void> {
     await this._client.workspaces.sessions.delete(this.workspaceId, this.id)

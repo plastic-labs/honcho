@@ -2,7 +2,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, case, cast, func, insert, select, update
+from sqlalchemy import Select, case, cast, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,7 +228,16 @@ async def delete_session(
     db: AsyncSession, workspace_name: str, session_name: str
 ) -> bool:
     """
-    Mark a session as inactive (soft delete).
+    Delete a session and all associated data (hard delete).
+
+    This performs cascading deletes for all session-related data including:
+    - Active queue sessions
+    - Queue items
+    - Message embeddings
+    - Documents (theory-of-mind data)
+    - Messages
+    - Session peer associations
+    - The session itself
 
     Args:
         db: Database session
@@ -255,9 +264,66 @@ async def delete_session(
         )
         raise ResourceNotFoundException("Session not found")
 
-    honcho_session.is_active = False
-    await db.commit()
-    logger.debug("Session %s marked as inactive", session_name)
+    # Perform cascading deletes in order
+    # Order is important to avoid foreign key constraint violations
+    try:
+        # Delete ActiveQueueSession entries
+        # Work unit keys have format: {task_type}:{workspace_name}:{session_name}:{...}
+        await db.execute(
+            delete(models.ActiveQueueSession).where(
+                func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
+                == session_name
+            )
+        )
+
+        # Delete QueueItem entries
+        await db.execute(
+            delete(models.QueueItem).where(
+                models.QueueItem.session_id == honcho_session.id
+            )
+        )
+
+        # Delete MessageEmbedding entries
+        await db.execute(
+            delete(models.MessageEmbedding).where(
+                models.MessageEmbedding.session_name == session_name,
+                models.MessageEmbedding.workspace_name == workspace_name,
+            )
+        )
+
+        # Delete Document entries associated with this session
+        await db.execute(
+            delete(models.Document).where(
+                models.Document.session_name == session_name,
+                models.Document.workspace_name == workspace_name,
+            )
+        )
+
+        # Delete Message entries
+        await db.execute(
+            delete(models.Message).where(
+                models.Message.session_name == session_name,
+                models.Message.workspace_name == workspace_name,
+            )
+        )
+
+        # Delete SessionPeer associations
+        await db.execute(
+            delete(models.SessionPeer).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+            )
+        )
+
+        # Finally, delete the session itself
+        await db.delete(honcho_session)
+        await db.commit()
+        logger.debug("Session %s and all associated data deleted", session_name)
+    except Exception as e:
+        logger.error("Failed to delete session %s: %s", session_name, e)
+        await db.rollback()
+        raise e
+
     return True
 
 

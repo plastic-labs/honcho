@@ -393,9 +393,16 @@ class AsyncSession(BaseModel):
 
     async def delete(self) -> None:
         """
-        Delete this session.
+        Delete this session and all associated data.
 
-        Makes an async API call to delete this session.
+        Makes an async API call to permanently delete this session and all related data including:
+        - Messages
+        - Message embeddings
+        - Documents
+        - Session-Peer associations
+        - Background processing queue items
+
+        This action cannot be undone.
         """
         await self._client.workspaces.sessions.delete(
             session_id=self.id,
