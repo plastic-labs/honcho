@@ -2,7 +2,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, case, cast, delete, func, insert, select, update
+from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -271,8 +271,12 @@ async def delete_session(
         # Work unit keys have format: {task_type}:{workspace_name}:{session_name}:{...}
         await db.execute(
             delete(models.ActiveQueueSession).where(
-                func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
-                == session_name
+                and_(
+                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
+                    == workspace_name,
+                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
+                    == session_name,
+                )
             )
         )
 
