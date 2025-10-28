@@ -396,9 +396,9 @@ describe('Honcho SDK Integration Tests', () => {
         ],
       }
 
-      mockWorkspacesApi.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockWorkingRepData
-      )
+      mockWorkspacesApi.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockWorkingRepData,
+      })
 
       const session = await honcho.session('working-rep-session')
       const alice = await honcho.peer('alice')

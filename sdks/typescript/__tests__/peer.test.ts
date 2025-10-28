@@ -547,9 +547,9 @@ describe('Peer', () => {
           },
         ],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep();
 
@@ -584,9 +584,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep('session-123');
 
@@ -620,9 +620,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(session);
 
@@ -655,9 +655,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(undefined, 'target-peer');
 
@@ -691,9 +691,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(undefined, targetPeer);
 
@@ -726,9 +726,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(
         undefined,
@@ -765,9 +765,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(undefined, undefined, { maxObservations: 10 });
 
@@ -810,9 +810,9 @@ describe('Peer', () => {
           },
         ],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(
         session,
@@ -850,9 +850,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       const result = await peer.workingRep(
         'session-456',
@@ -889,9 +889,9 @@ describe('Peer', () => {
         ],
         deductive: [],
       };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      );
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      });
 
       // Test size = 1
       const result1 = await peer.workingRep(undefined, undefined, { maxObservations: 1 });

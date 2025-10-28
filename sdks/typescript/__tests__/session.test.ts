@@ -915,9 +915,9 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      )
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      })
 
       const result = await session.workingRep('peer1')
 
@@ -946,9 +946,9 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      )
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      })
 
       const result = await session.workingRep(peer)
 
@@ -976,9 +976,9 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      )
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      })
 
       const result = await session.workingRep('peer1', 'target-peer')
 
@@ -1008,9 +1008,9 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(
-        mockRepresentationData
-      )
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
+        representation: mockRepresentationData,
+      })
 
       const result = await session.workingRep(peer, target)
 
