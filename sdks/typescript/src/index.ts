@@ -10,7 +10,7 @@ export {
   SessionContext,
   SessionSummaries,
   Summary,
-  SummaryData,
+  type SummaryData,
 } from './session_context'
 export {
   type DialecticStreamChunk,
