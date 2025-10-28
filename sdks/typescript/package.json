@@ -20,7 +20,7 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
-    "@honcho-ai/core": "file:./dist.tar.gz",
+    "@honcho-ai/core": "github:plastic-labs/honcho-node-core#release-please--branches--main--changes--next--components--core",
     "@types/node": "^24.0.1",
     "zod": "4.0.0"
   },

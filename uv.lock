@@ -780,7 +780,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", git = "https://github.com/stainless-sdks/honcho-python.git?rev=dr-frmr%2Fdev" },
+    { name = "honcho-core", git = "https://github.com/plastic-labs/honcho-python-core.git?rev=release-please--branches--main--changes--next" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -791,8 +791,8 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.5.0"
-source = { git = "https://github.com/stainless-sdks/honcho-python.git?rev=dr-frmr%2Fdev#ce7916c384949b9a3e6a1ed5edfd73f7db9334ac" }
+version = "1.6.0"
+source = { git = "https://github.com/plastic-labs/honcho-python-core.git?rev=release-please--branches--main--changes--next#9eb640b14bd30171b817f5b55df569038b31e962" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
