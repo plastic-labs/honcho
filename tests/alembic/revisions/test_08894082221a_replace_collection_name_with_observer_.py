@@ -262,7 +262,9 @@ def verify_observer_observed_migration(verifier: MigrationVerifier) -> None:
         "collections", "unique_observer_observed_collection", "unique"
     )
     verifier.assert_constraint_exists(
-        "documents", "documents_observer_observed_workspace_name_fkey", "foreign_key"
+        "documents",
+        "fk_documents_observer_observed_workspace_name_collections",
+        "foreign_key",
     )
 
     collection = verifier.conn.execute(
