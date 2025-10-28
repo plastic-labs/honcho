@@ -339,26 +339,27 @@ async def honcho_llm_call_inner(
 
     match client:
         case AsyncAnthropic():
-            if response_model:
-                raise NotImplementedError(
-                    "Response model is not supported for Anthropic"
-                )
-            if sys_prompt:
-                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": list(params["messages"]),
             }
-            if json_mode:
-                anthropic_params["messages"].append(
-                    {"role": "assistant", "content": "{"}
-                )
+            # Anthropic uses a top-level system parameter, not a system message
+            if sys_prompt:
+                anthropic_params["system"] = sys_prompt
+
+            # Extended thinking is incompatible with JSON prefilling
+            # When thinking is enabled, the model will output JSON after thinking
             if thinking_budget_tokens:
                 anthropic_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+            elif json_mode or response_model:
+                # Only use JSON prefilling when thinking is disabled
+                anthropic_params["messages"].append(
+                    {"role": "assistant", "content": "{"}
+                )
             anthropic_response: AnthropicMessage = await client.messages.create(  # pyright: ignore
                 **anthropic_params
             )
@@ -371,6 +372,32 @@ async def honcho_llm_call_inner(
             # Safely extract usage and stop_reason
             usage = anthropic_response.usage  # pyright: ignore
             stop_reason = anthropic_response.stop_reason  # pyright: ignore
+
+            # Handle response model parsing
+            if response_model:
+                raw_content = "\n".join(text_blocks)
+                try:
+                    # Add opening brace if it was prefilled and not in response
+                    if not raw_content.strip().startswith("{"):
+                        raw_content = "{" + raw_content
+
+                    # Validate and repair JSON
+                    repaired_json = validate_and_repair_json(raw_content)
+
+                    # Parse JSON and validate against model
+                    parsed_content = response_model.model_validate_json(repaired_json)
+
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
+                        finish_reasons=[stop_reason] if stop_reason else [],
+                    )
+                except (json.JSONDecodeError, ValidationError) as e:
+                    logger.error(f"Failed to parse Anthropic response as {response_model.__name__}: {e}")
+                    logger.debug(f"Raw content: {raw_content}")
+                    raise ValueError(
+                        f"Failed to parse Anthropic response as {response_model.__name__}: {e}"
+                    ) from e
 
             return HonchoLLMCallResponse(
                 content="\n".join(text_blocks),
@@ -670,24 +697,29 @@ async def handle_streaming_response(
         case AsyncAnthropic():
             if response_model:
                 raise NotImplementedError(
-                    "Response model is not supported for Anthropic"
+                    "Response model is not supported for Anthropic streaming"
                 )
-            if sys_prompt:
-                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": list(params["messages"]),
             }
-            if json_mode:
-                anthropic_params["messages"].append(
-                    {"role": "assistant", "content": "{"}
-                )
+            # Anthropic uses a top-level system parameter, not a system message
+            if sys_prompt:
+                anthropic_params["system"] = sys_prompt
+
+            # Extended thinking is incompatible with JSON prefilling
+            # When thinking is enabled, the model will output JSON after thinking
             if thinking_budget_tokens:
                 anthropic_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+            elif json_mode:
+                # Only use JSON prefilling when thinking is disabled
+                anthropic_params["messages"].append(
+                    {"role": "assistant", "content": "{"}
+                )
             async with client.messages.stream(**anthropic_params) as anthropic_stream:
                 async for chunk in anthropic_stream:
                     if (
