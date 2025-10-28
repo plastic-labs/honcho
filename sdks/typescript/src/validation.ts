@@ -251,29 +251,9 @@ export const FileUploadSchema = z.object({
 export const WorkingRepParamsSchema = z.object({
   peer: z.union([z.string(), z.object({ id: z.string() })]),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  options: z
-    .object({
-      searchQuery: z.string().optional(),
-      searchTopK: z
-        .number()
-        .int()
-        .min(1, 'searchTopK must be at least 1')
-        .max(100, 'searchTopK must be at most 100')
-        .optional(),
-      searchMaxDistance: z
-        .number()
-        .min(0.0, 'searchMaxDistance must be at least 0.0')
-        .max(1.0, 'searchMaxDistance must be at most 1.0')
-        .optional(),
-      includeMostDerived: z.boolean().optional(),
-      maxObservations: z
-        .number()
-        .int()
-        .min(1, 'maxObservations must be at least 1')
-        .max(100, 'maxObservations must be at most 100')
-        .optional(),
-    })
-    .optional(),
+  options: RepresentationOptionsSchema.extend({
+    searchQuery: SearchQuerySchema.optional(),
+  }).optional(),
 })
 
 /**

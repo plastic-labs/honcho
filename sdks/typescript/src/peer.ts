@@ -42,7 +42,7 @@ export class Peer {
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown> | null
   /**
    * Cached configuration for this peer. May be stale if the peer
    * was not recently fetched from the API.
@@ -50,7 +50,7 @@ export class Peer {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  configuration?: Record<string, unknown>
+  configuration?: Record<string, unknown> | null
 
   /**
    * Initialize a new Peer. **Do not call this directly, use the client.peer() method instead.**
@@ -65,8 +65,8 @@ export class Peer {
     id: string,
     workspaceId: string,
     client: HonchoCore,
-    metadata?: Record<string, unknown>,
-    configuration?: Record<string, unknown>
+    metadata?: Record<string, unknown> | null,
+    configuration?: Record<string, unknown> | null
   ) {
     this.id = id
     this.workspaceId = workspaceId

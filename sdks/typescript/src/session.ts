@@ -120,7 +120,7 @@ export class Session {
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown> | null
   /**
    * Cached configuration for this session. May be stale if the session
    * was not recently fetched from the API.
@@ -128,7 +128,7 @@ export class Session {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  configuration?: Record<string, unknown>
+  configuration?: Record<string, unknown> | null
 
   /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
@@ -143,8 +143,8 @@ export class Session {
     id: string,
     workspaceId: string,
     client: HonchoCore,
-    metadata?: Record<string, unknown>,
-    configuration?: Record<string, unknown>
+    metadata?: Record<string, unknown> | null,
+    configuration?: Record<string, unknown> | null
   ) {
     this.id = id
     this.workspaceId = workspaceId

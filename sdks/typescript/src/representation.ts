@@ -162,11 +162,13 @@ export class Representation {
     // Convert back to arrays and sort by created_at
     this.explicit = Array.from(explicitMap.values()).sort(
       (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        this._parseTimestampForSort(a.created_at) -
+        this._parseTimestampForSort(b.created_at)
     )
     this.deductive = Array.from(deductiveMap.values()).sort(
       (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        this._parseTimestampForSort(a.created_at) -
+        this._parseTimestampForSort(b.created_at)
     )
 
     // Apply max observations limit if specified
@@ -338,6 +340,29 @@ export class Representation {
       return date.toISOString().replace(/\.\d{3}Z$/, 'Z')
     } catch {
       return timestamp
+    }
+  }
+
+  /**
+   * Safely parse a timestamp and return milliseconds since epoch for sorting.
+   * Handles microsecond precision by truncating to milliseconds before parsing.
+   *
+   * @param timestamp - ISO 8601 timestamp string (may include microseconds)
+   * @returns Milliseconds since epoch, or 0 if parsing fails
+   */
+  private _parseTimestampForSort(timestamp: string): number {
+    try {
+      // Normalize fractional seconds to 3 digits (milliseconds)
+      // Match pattern: YYYY-MM-DDTHH:mm:ss.SSSSSS(Z or timezone)
+      const normalized = timestamp.replace(
+        /(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/,
+        '$1$2'
+      )
+      const time = new Date(normalized).getTime()
+      // Return 0 if parsing failed (NaN)
+      return isNaN(time) ? 0 : time
+    } catch {
+      return 0
     }
   }
 }
