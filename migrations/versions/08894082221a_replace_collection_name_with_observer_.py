@@ -22,6 +22,9 @@ down_revision: str | None = "564ba40505c5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Batch size for bulk operations
+BATCH_SIZE = 10000
+
 
 def upgrade() -> None:
     """Replace collections.name and documents.collection_name with observer and observed fields."""
@@ -56,7 +59,6 @@ def upgrade() -> None:
                 {"session_id": session_id, "workspace_name": workspace_name},
             )
         # Update all documents with NULL session_name in batches
-        batch_size = 5000
         while True:
             result = connection.execute(
                 text(
@@ -75,7 +77,7 @@ def upgrade() -> None:
                     AND d.session_name IS NULL
                     """
                 ),
-                {"batch_size": batch_size},
+                {"batch_size": BATCH_SIZE},
             )
             if result.rowcount == 0:
                 break
@@ -117,31 +119,37 @@ def upgrade() -> None:
 
     # Step 2b: Delete documents that reference collections marked for deletion (in batches)
     if collections_to_delete:
-        # Delete documents in batches
-        batch_size = 5000
-        for i in range(0, len(collections_to_delete), batch_size):
-            batch = collections_to_delete[i : i + batch_size]
-            collection_ids = [row.id for row in batch]
+        collection_ids = [row.id for row in collections_to_delete]
 
-            connection.execute(
+        # Delete in smaller chunks of actual documents to avoid locking issues
+        while True:
+            result = connection.execute(
                 text(
                     f"""
-                    DELETE FROM {schema}.documents d
-                    USING {schema}.collections c
-                    WHERE d.collection_name = c.name
-                        AND d.peer_name = c.peer_name
-                        AND d.workspace_name = c.workspace_name
-                        AND c.id = ANY(:collection_ids)
-                """
+                    WITH to_delete AS (
+                        SELECT d.id
+                        FROM {schema}.documents d
+                        JOIN {schema}.collections c
+                            ON d.collection_name = c.name
+                            AND d.peer_name = c.peer_name
+                            AND d.workspace_name = c.workspace_name
+                        WHERE c.id = ANY(:collection_ids)
+                        LIMIT :batch_size
+                    )
+                    DELETE FROM {schema}.documents
+                    WHERE id IN (SELECT id FROM to_delete)
+                    """
                 ),
-                {"collection_ids": collection_ids},
+                {"collection_ids": collection_ids, "batch_size": BATCH_SIZE},
             )
+
+            if result.rowcount == 0:
+                break  # No more rows to delete
 
     # Step 2c: Delete the collections identified in step 2a (in batches)
     if collections_to_delete:
-        batch_size = 5000
-        for i in range(0, len(collections_to_delete), batch_size):
-            batch = collections_to_delete[i : i + batch_size]
+        for i in range(0, len(collections_to_delete), BATCH_SIZE):
+            batch = collections_to_delete[i : i + BATCH_SIZE]
             collection_ids = [row.id for row in batch]
 
             connection.execute(
@@ -161,7 +169,6 @@ def upgrade() -> None:
     # - If name starts with peer_name + "_", extract the observed part (pattern: observer_observed)
     # - If name ends with "_" + peer_name, extract the first part (pattern: observed_observer)
     # - Any legacy edge cases will have been deleted in step 2a.
-    batch_size = 5000
     while True:
         result = connection.execute(
             text(
@@ -186,7 +193,7 @@ def upgrade() -> None:
                 WHERE c.id = batch.id
             """
             ),
-            {"batch_size": batch_size},
+            {"batch_size": BATCH_SIZE},
         )
         if result.rowcount == 0:
             break
@@ -213,16 +220,16 @@ def upgrade() -> None:
 
     # Step 5: Populate documents observer and observed from collections table
     # Join to the already-populated collections table to get authoritative values
-    # Process in batches of 1000 to reduce query size
-    batch_size = 1000
+    # Process in batches to reduce query size
     while True:
         result = connection.execute(
             text(
                 f"""
                 WITH batch AS (
-                    SELECT d.ctid
+                    SELECT d.id
                     FROM {schema}.documents d
                     WHERE d.observer IS NULL OR d.observed IS NULL
+                    ORDER BY d.id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
@@ -230,14 +237,14 @@ def upgrade() -> None:
                     observer = c.observer,
                     observed = c.observed
                 FROM {schema}.collections c, batch
-                WHERE d.ctid = batch.ctid
+                WHERE d.id = batch.id
                     AND d.collection_name = c.name
                     AND d.peer_name = c.peer_name
                     AND d.workspace_name = c.workspace_name
                     AND (d.observer IS NULL OR d.observed IS NULL)
             """
             ),
-            {"batch_size": batch_size},
+            {"batch_size": BATCH_SIZE},
         )
         if result.rowcount == 0:
             break
@@ -498,7 +505,6 @@ def downgrade() -> None:
         )
 
     # Step 5: Populate documents collection_name from observer and observed in batches
-    batch_size = 5000
     while True:
         result = connection.execute(
             text(
@@ -520,7 +526,7 @@ def downgrade() -> None:
                 AND d.collection_name IS NULL
             """
             ),
-            {"batch_size": batch_size},
+            {"batch_size": BATCH_SIZE},
         )
         if result.rowcount == 0:
             break
@@ -537,7 +543,6 @@ def downgrade() -> None:
         )
 
     # Populate peer_name with observed value in batches
-    batch_size = 5000
     while True:
         result = connection.execute(
             text(
@@ -556,7 +561,7 @@ def downgrade() -> None:
                 AND d.peer_name IS NULL
             """
             ),
-            {"batch_size": batch_size},
+            {"batch_size": BATCH_SIZE},
         )
         if result.rowcount == 0:
             break

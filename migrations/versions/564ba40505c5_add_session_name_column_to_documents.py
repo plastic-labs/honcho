@@ -38,7 +38,7 @@ def upgrade() -> None:
     # Process in batches to avoid timeout with large datasets
     # Only migrate documents that have 'session_name' key with a non-null, non-empty value
     bind = op.get_bind()
-    batch_size = 5000
+    batch_size = 10000
 
     while True:
         result = bind.execute(
