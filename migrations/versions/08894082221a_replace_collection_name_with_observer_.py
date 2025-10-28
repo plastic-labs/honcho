@@ -342,10 +342,10 @@ def upgrade() -> None:
 
     # Step 10: Add composite foreign key constraint for observer peer on collections
     if not fk_exists(
-        "collections", "collections_observer_workspace_name_fkey", inspector
+        "collections", "fk_collections_observer_workspace_name_peers", inspector
     ):
         op.create_foreign_key(
-            "collections_observer_workspace_name_fkey",
+            "fk_collections_observer_workspace_name_peers",
             "collections",
             "peers",
             ["observer", "workspace_name"],
@@ -356,10 +356,10 @@ def upgrade() -> None:
 
     # Step 11: Add composite foreign key constraint for observed peer on collections
     if not fk_exists(
-        "collections", "collections_observed_workspace_name_fkey", inspector
+        "collections", "fk_collections_observed_workspace_name_peers", inspector
     ):
         op.create_foreign_key(
-            "collections_observed_workspace_name_fkey",
+            "fk_collections_observed_workspace_name_peers",
             "collections",
             "peers",
             ["observed", "workspace_name"],
@@ -370,10 +370,12 @@ def upgrade() -> None:
 
     # Step 12: Add composite foreign key constraint from documents to collections using observer/observed
     if not fk_exists(
-        "documents", "documents_observer_observed_workspace_name_fkey", inspector
+        "documents",
+        "fk_documents_observer_observed_workspace_name_collections",
+        inspector,
     ):
         op.create_foreign_key(
-            "documents_observer_observed_workspace_name_fkey",
+            "fk_documents_observer_observed_workspace_name_collections",
             "documents",
             "collections",
             ["observer", "observed", "workspace_name"],
@@ -383,9 +385,11 @@ def upgrade() -> None:
         )
 
     # Step 13: Add composite foreign key constraint for observer peer on documents
-    if not fk_exists("documents", "documents_observer_workspace_name_fkey", inspector):
+    if not fk_exists(
+        "documents", "fk_documents_observer_workspace_name_peers", inspector
+    ):
         op.create_foreign_key(
-            "documents_observer_workspace_name_fkey",
+            "fk_documents_observer_workspace_name_peers",
             "documents",
             "peers",
             ["observer", "workspace_name"],
@@ -395,9 +399,11 @@ def upgrade() -> None:
         )
 
     # Step 14: Add composite foreign key constraint for observed peer on documents
-    if not fk_exists("documents", "documents_observed_workspace_name_fkey", inspector):
+    if not fk_exists(
+        "documents", "fk_documents_observed_workspace_name_peers", inspector
+    ):
         op.create_foreign_key(
-            "documents_observed_workspace_name_fkey",
+            "fk_documents_observed_workspace_name_peers",
             "documents",
             "peers",
             ["observed", "workspace_name"],
@@ -595,9 +601,11 @@ def downgrade() -> None:
     op.alter_column("documents", "peer_name", nullable=False, schema=schema)
 
     # Recreate the foreign key constraint for peer_name on documents
-    if not fk_exists("documents", "documents_peer_name_workspace_name_fkey", inspector):
+    if not fk_exists(
+        "documents", "fk_documents_peer_name_workspace_name_peers", inspector
+    ):
         op.create_foreign_key(
-            "documents_peer_name_workspace_name_fkey",
+            "fk_documents_peer_name_workspace_name_peers",
             "documents",
             "peers",
             ["peer_name", "workspace_name"],
@@ -618,26 +626,28 @@ def downgrade() -> None:
     # CONSTRAINTS AND INDEXES
     # Step 8: Drop new foreign key constraints from documents
     if fk_exists(
-        "documents", "documents_observer_observed_workspace_name_fkey", inspector
+        "documents",
+        "fk_documents_observer_observed_workspace_name_collections",
+        inspector,
     ):
         op.drop_constraint(
-            "documents_observer_observed_workspace_name_fkey",
+            "fk_documents_observer_observed_workspace_name_collections",
             "documents",
             type_="foreignkey",
             schema=schema,
         )
 
-    if fk_exists("documents", "documents_observer_workspace_name_fkey", inspector):
+    if fk_exists("documents", "fk_documents_observer_workspace_name_peers", inspector):
         op.drop_constraint(
-            "documents_observer_workspace_name_fkey",
+            "fk_documents_observer_workspace_name_peers",
             "documents",
             type_="foreignkey",
             schema=schema,
         )
 
-    if fk_exists("documents", "documents_observed_workspace_name_fkey", inspector):
+    if fk_exists("documents", "fk_documents_observed_workspace_name_peers", inspector):
         op.drop_constraint(
-            "documents_observed_workspace_name_fkey",
+            "fk_documents_observed_workspace_name_peers",
             "documents",
             type_="foreignkey",
             schema=schema,
@@ -682,17 +692,21 @@ def downgrade() -> None:
         )
 
     # Step 12: Drop foreign key constraints from collections
-    if fk_exists("collections", "collections_observer_workspace_name_fkey", inspector):
+    if fk_exists(
+        "collections", "fk_collections_observer_workspace_name_peers", inspector
+    ):
         op.drop_constraint(
-            "collections_observer_workspace_name_fkey",
+            "fk_collections_observer_workspace_name_peers",
             "collections",
             type_="foreignkey",
             schema=schema,
         )
 
-    if fk_exists("collections", "collections_observed_workspace_name_fkey", inspector):
+    if fk_exists(
+        "collections", "fk_collections_observed_workspace_name_peers", inspector
+    ):
         op.drop_constraint(
-            "collections_observed_workspace_name_fkey",
+            "fk_collections_observed_workspace_name_peers",
             "collections",
             type_="foreignkey",
             schema=schema,
