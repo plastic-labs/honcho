@@ -76,7 +76,7 @@ def upgrade() -> None:
             break
 
     # Drop temporary index after batching is complete
-    if index_exists("documents", "idx_temp_docs_null_session", inspector):
+    if index_exists("documents", "idx_temp_docs_null_session"):
         op.drop_index("idx_temp_docs_null_session", "documents", schema=schema)
 
     # Step 3: Create index on session_name for efficient querying

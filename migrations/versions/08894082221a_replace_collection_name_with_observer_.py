@@ -169,7 +169,7 @@ def upgrade() -> None:
     # - Any legacy edge cases will have been deleted in step 2a.
 
     # Create temporary index to speed up batching
-    if not index_exists("collections", "idx_temp_collections_null_observer", inspector):
+    if not index_exists("collections", "idx_temp_collections_null_observer"):
         op.create_index(
             "idx_temp_collections_null_observer",
             "collections",
@@ -237,7 +237,7 @@ def upgrade() -> None:
     # Process in batches to reduce query size
 
     # Create temporary index to speed up batching
-    if not index_exists("documents", "idx_temp_docs_null_observer", inspector):
+    if not index_exists("documents", "idx_temp_docs_null_observer"):
         op.create_index(
             "idx_temp_docs_null_observer",
             "documents",

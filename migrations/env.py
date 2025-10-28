@@ -60,7 +60,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = get_url()
+    url = ensure_session_pooler(get_url())
 
     context.configure(
         url=url,
