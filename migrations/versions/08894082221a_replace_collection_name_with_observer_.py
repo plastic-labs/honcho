@@ -67,14 +67,12 @@ def upgrade() -> None:
                         SELECT id
                         FROM {schema}.documents
                         WHERE session_name IS NULL
-                        ORDER BY id
                         LIMIT :batch_size
                     )
                     UPDATE {schema}.documents d
                     SET session_name = '__global_observations__'
                     FROM batch
                     WHERE d.id = batch.id
-                    AND d.session_name IS NULL
                     """
                 ),
                 {"batch_size": BATCH_SIZE},
@@ -169,6 +167,17 @@ def upgrade() -> None:
     # - If name starts with peer_name + "_", extract the observed part (pattern: observer_observed)
     # - If name ends with "_" + peer_name, extract the first part (pattern: observed_observer)
     # - Any legacy edge cases will have been deleted in step 2a.
+
+    # Create temporary index to speed up batching
+    if not index_exists("collections", "idx_temp_collections_null_observer", inspector):
+        op.create_index(
+            "idx_temp_collections_null_observer",
+            "collections",
+            ["id"],
+            postgresql_where=text("observer IS NULL OR observed IS NULL"),
+            schema=schema,
+        )
+
     while True:
         result = connection.execute(
             text(
@@ -177,7 +186,6 @@ def upgrade() -> None:
                     SELECT id
                     FROM {schema}.collections
                     WHERE observer IS NULL OR observed IS NULL
-                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.collections c
@@ -197,6 +205,12 @@ def upgrade() -> None:
         )
         if result.rowcount == 0:
             break
+
+    # Drop temporary index after batching is complete
+    if index_exists("collections", "idx_temp_collections_null_observer", inspector):
+        op.drop_index(
+            "idx_temp_collections_null_observer", "collections", schema=schema
+        )
 
     # Step 3: Make collections observer and observed NOT NULL
     op.alter_column("collections", "observer", nullable=False, schema=schema)
@@ -221,6 +235,17 @@ def upgrade() -> None:
     # Step 5: Populate documents observer and observed from collections table
     # Join to the already-populated collections table to get authoritative values
     # Process in batches to reduce query size
+
+    # Create temporary index to speed up batching
+    if not index_exists("documents", "idx_temp_docs_null_observer", inspector):
+        op.create_index(
+            "idx_temp_docs_null_observer",
+            "documents",
+            ["id"],
+            postgresql_where=text("observer IS NULL OR observed IS NULL"),
+            schema=schema,
+        )
+
     while True:
         result = connection.execute(
             text(
@@ -229,7 +254,6 @@ def upgrade() -> None:
                     SELECT d.id
                     FROM {schema}.documents d
                     WHERE d.observer IS NULL OR d.observed IS NULL
-                    ORDER BY d.id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
@@ -241,13 +265,16 @@ def upgrade() -> None:
                     AND d.collection_name = c.name
                     AND d.peer_name = c.peer_name
                     AND d.workspace_name = c.workspace_name
-                    AND (d.observer IS NULL OR d.observed IS NULL)
             """
             ),
             {"batch_size": BATCH_SIZE},
         )
         if result.rowcount == 0:
             break
+
+    # Drop temporary index after batching is complete
+    if index_exists("documents", "idx_temp_docs_null_observer", inspector):
+        op.drop_index("idx_temp_docs_null_observer", "documents", schema=schema)
 
     # Step 6: Make documents observer and observed NOT NULL
     op.alter_column("documents", "observer", nullable=False, schema=schema)
@@ -513,7 +540,6 @@ def downgrade() -> None:
                     SELECT id
                     FROM {schema}.documents
                     WHERE collection_name IS NULL
-                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
@@ -551,7 +577,6 @@ def downgrade() -> None:
                     SELECT id
                     FROM {schema}.documents
                     WHERE peer_name IS NULL
-                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d

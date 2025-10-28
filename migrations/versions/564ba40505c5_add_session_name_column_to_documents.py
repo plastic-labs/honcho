@@ -40,6 +40,16 @@ def upgrade() -> None:
     bind = op.get_bind()
     batch_size = 10000
 
+    # Create temporary index to speed up batching
+    if not index_exists("documents", "idx_temp_docs_null_session", inspector):
+        op.create_index(
+            "idx_temp_docs_null_session",
+            "documents",
+            ["id"],
+            postgresql_where=sa.text("session_name IS NULL"),
+            schema=schema,
+        )
+
     while True:
         result = bind.execute(
             sa.text(
@@ -51,14 +61,12 @@ def upgrade() -> None:
                     AND internal_metadata ? 'session_name'
                     AND internal_metadata->>'session_name' IS NOT NULL
                     AND internal_metadata->>'session_name' != ''
-                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
                 SET session_name = d.internal_metadata->>'session_name'
                 FROM batch b
                 WHERE d.id = b.id
-                AND d.session_name IS NULL
                 """
             ),
             {"batch_size": batch_size},
@@ -66,6 +74,10 @@ def upgrade() -> None:
 
         if result.rowcount == 0:
             break
+
+    # Drop temporary index after batching is complete
+    if index_exists("documents", "idx_temp_docs_null_session", inspector):
+        op.drop_index("idx_temp_docs_null_session", "documents", schema=schema)
 
     # Step 3: Create index on session_name for efficient querying
     if not index_exists("documents", "idx_documents_session_name", inspector):
