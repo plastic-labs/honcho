@@ -139,7 +139,7 @@ def run_migrations_online() -> None:
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",
-        echo=False,
+        echo=True,
         connect_args={
             "prepare_threshold": None,
             "options": "-c statement_timeout=300000",  # 5 minutes in milliseconds
