@@ -13,6 +13,7 @@ from alembic import op
 
 from migrations.utils import (
     column_exists,
+    constraint_exists,
     fk_exists,
     get_schema,
     make_column_non_nullable_safe,
@@ -71,8 +72,28 @@ def upgrade() -> None:
     if column_exists("documents", "embedding"):
         make_column_non_nullable_safe("documents", "embedding")
 
+    # Add primary key constraint to message_embeddings.id
+    if column_exists("message_embeddings", "id") and not constraint_exists(
+        "message_embeddings", "pk_message_embeddings", "primary"
+    ):
+        conn.execute(
+            sa.text(
+                f"""
+                ALTER TABLE {schema}.message_embeddings
+                ADD CONSTRAINT pk_message_embeddings
+                PRIMARY KEY (id)
+                """
+            )
+        )
+
 
 def downgrade() -> None:
+    # Drop primary key constraint from message_embeddings.id
+    if constraint_exists("message_embeddings", "pk_message_embeddings", "primary"):
+        op.drop_constraint(
+            "pk_message_embeddings", "message_embeddings", "primary", schema=schema
+        )
+
     # Make documents.embedding nullable
     if column_exists("documents", "embedding"):
         op.alter_column(
