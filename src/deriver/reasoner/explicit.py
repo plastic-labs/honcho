@@ -302,11 +302,11 @@ New observations:
         )
 
         # Initialize and Render Prompts
-        sys_prompt = self.peer_card_prompt['system'].render(
+        sys_prompt = self.peer_prompt['system'].render(
             old_peer_card_section=old_peer_card_section,
             new_observations=new_observations_section,
         ) if self.peer_prompt['system'] else None
-        usr_prompt = self.peer_card_prompt['user'].render(
+        usr_prompt = self.peer_prompt['user'].render(
             old_peer_card_section=old_peer_card_section,
             new_observations=new_observations_section,
         ) if self.peer_prompt['user'] else ''

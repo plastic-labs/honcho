@@ -173,7 +173,21 @@ async def process_representation_tasks_batch(
         observed=observed,
     )
 
+    '''
     reasoner = XRReasoner(
+        representation_manager=representation_manager,
+        ctx=messages,
+        observed=observed,
+        observer=observer,
+        estimated_input_tokens=estimated_input_tokens + session_context_tokens,
+    )
+    final_observations = await reasoner.reason(
+        working_representation,
+        formatted_history,
+        speaker_peer_card,
+    )
+    '''
+    reasoner = ExplicitReasoner(
         representation_manager=representation_manager,
         ctx=messages,
         observed=observed,

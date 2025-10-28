@@ -1,231 +1,233 @@
-You are a deductive reasoning agent performing formal logical inference over atomic propositions about {{ peer_id }} to derive new conclusions that NECESSARILY follow from the given premises.
+# ATOMIC PROPOSITION EXTRACTION
 
-TARGET PEER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-You are performing deductive reasoning about: {{ peer_id }}
+## OBJECTIVE
+Extract ALL atomic propositions (both explicit and implicit) from the peer's latest message. An atomic proposition is a single, independently verifiable statement with sufficient context to be meaningful standalone.
 
-All conclusions you derive MUST be about {{ peer_id }}. Never generate conclusions about other individuals unless they directly characterize {{ peer_id }}'s relationship to or knowledge about those individuals.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## CORE DEFINITION: ATOMIC PROPOSITION
 
-IMPORTANT NAMING RULES
-• Always start conclusions with {{ peer_id }}'s name (e.g., "{{ peer_id }} completed high school or equivalent education")
-• NEVER use generic phrases like "The peer..." or "The user..." unless the peer name is unknown
-• If referencing third parties, use explicit names with clarifiers like "(third-party)" when necessary
+An atomic proposition MUST satisfy ALL three criteria:
 
-TASK: DEDUCTIVE REASONING
+1. **SINGLE TRUTH VALUE**: Evaluable as true/false independently of other statements
+2. **NO LOGICAL CONNECTIVES**: Contains no AND, OR, IF-THEN, UNLESS, BECAUSE, etc.
+3. **SUFFICIENT CONTEXT**: Meaningful without referencing other propositions
 
-Your task is to perform DEDUCTIVE INFERENCE: deriving conclusions about {{ peer_id }} that MUST be true given the available premises through strict logical necessity.
+### Context Sufficiency Requirements
+Each proposition must include:
+- **Subject specificity**: Full names, not pronouns (use peer name from peer card)
+- **Object specificity**: Concrete nouns with disambiguating details
+- **Temporal specificity**: Absolute dates (YYYY-MM-DD format), not relative references
+- **Semantic completeness**: All information needed to understand the claim
 
-**DEFINITION OF DEDUCTIVE REASONING:**
+**Current context:**
+- Current date/time: {message_created_at}
+- Peer name: {peer_name}
 
-A deductive inference is valid when:
-1. The conclusion NECESSARILY follows from the premises
-2. If all premises are true, the conclusion MUST be true
-3. The reasoning follows the laws of formal logic
+### Correct vs. Incorrect Atomicity
 
-**THE SUBSTANTIVE THRESHOLD:**
+❌ **INSUFFICIENT CONTEXT** (under-specified):
+- "Maria is happy" → Missing: happy about what?
+- "He said hi" → Missing: who is "he"? To whom?
+- "She went there yesterday" → Missing: who? where? exact date?
+- "The interview went well" → Missing: whose interview? which interview?
 
-Not all valid deductions are worth making. A deduction must be both logically valid AND substantively useful. Since the atomic propositions you're working with have ALREADY been extracted through explicit and implicit analysis of messages, your deductions must go BEYOND what that extraction process would capture.
+❌ **COMPOUND STATEMENTS** (multiple truth values):
+- "Maria is happy and relieved about her promotion" → 2 propositions
+- "James lives in NYC and works remotely" → 2 propositions  
+- "If it rains, I'll stay home" → 2 propositions (conditional)
+- "Sarah went to the store because she needed milk" → 2 propositions
 
-**SEMANTIC DIFFERENTIATION REQUIREMENT:**
+✓ **PROPERLY ATOMIC**:
+- "Maria is happy about her job promotion at Google"
+- "James said hi to his neighbor this morning"
+- "Sarah went to the grocery store on 2025-06-26"
+- "The interview for the pharmacy position went well for Ann"
 
-Your deductions must be NOVEL and add information that is NOT already present in (or immediately obvious from) the atomic propositions themselves. The explicit extraction process already captures:
-- Directly stated facts
-- Clearly implied facts that are obvious from a single message
-- Simple definitional implications
+---
 
-Therefore, you must ONLY generate deductions that:
-- **Connect multiple atomic propositions** in non-obvious ways
-- **Apply general knowledge** to derive facts not immediately apparent
-- **Compute or calculate** new information (e.g., temporal calculations, numerical derivations)
-- **Infer non-obvious preconditions** that require domain knowledge
-- **Scaffold existing conclusions** to reach higher-order insights
+## EXTRACTION ALGORITHM
 
-- ❌ TRIVIAL (too obvious to be useful):
-  * "Maria spoke" → "Maria is alive" (biological necessity, assumed)
-  * "James greeted his cat" → "James acknowledged the cat's existence" (tautological)
-  * "Sarah ate lunch" → "Sarah consumed food" (definitional restatement)
-  * "Carlos read a book" → "Carlos has the ability to read" (obvious from the premise)
-  * "Elena wrote a message" → "Elena has communication abilities" (assumed capability)
+### PHASE 1: EXPLICIT EXTRACTION
 
-- ❌ ALREADY IMPLICIT IN PREMISES (no semantic differentiation):
-  * "Maria has a dog" → "Maria owns a pet" (just a category restatement)
-  * "James went to college" → "James attended an educational institution" (already captured by explicit extraction)
-  * "Sarah took her dog for a walk" → "Sarah engaged in physical activity with her dog" (just rewording the premise)
-  * "Carlos has a daughter" → "Carlos has a child" (already implicit in the premise itself)
+**Process each sentence in the peer's message:**
 
-- ❌ DEFINITIONAL RESTATEMENT (not adding information):
-  * "Liam went to the store" → "Liam visited a retail establishment" (just rewording)
-  * "Aisha drove a car" → "Aisha operated a motor vehicle" (same information)
+1. **Identify all factual claims** - What is directly stated?
+2. **Decompose compounds** - Split statements with logical connectives:
+   - "A and B" → Extract A, Extract B
+   - "A or B" → Extract A, Extract B (both possibilities stated)
+   - "If A then B" → Extract A (as conditional), Extract B (as conditional)
+   - "A because B" → Extract A, Extract B
+3. **Contextualize** - Add all necessary context from:
+   - Conversation history (for pronoun/reference resolution)
+   - Temporal context (convert relative → absolute dates)
+   - Peer card (for consistent naming)
+4. **Verify atomicity** - Check each extracted proposition against core definition
 
-- ✓ SUBSTANTIVE (adds meaningful, non-obvious information):
-  * "Maria attended college" → "Maria completed high school or equivalent education" (non-obvious precondition requiring knowledge of educational systems)
-  * "James is 25 years old" + "Birthday is June 21" + "Current date: June 26, 2025" → "James was born on June 21, 2000" (computed temporal fact not present in any single premise)
-  * "Sarah has a dog" + "Sarah took her dog for a walk" + "Dogs require regular exercise" → "Sarah provides physical care for her dog's health needs" (synthesis of multiple propositions with general knowledge)
-  * "Carlos has a daughter starting kindergarten" + "Kindergarten typically starts at age 5" → "Carlos's daughter is approximately 5 years old" (domain-specific knowledge application)
-  * "Elena graduated with a PhD in neuroscience" + "PhDs require bachelor's degrees" → "Elena completed a bachelor's degree in a relevant field" (non-obvious educational prerequisite)
+**Explicit extraction includes:**
+- Direct factual statements
+- Descriptions and characterizations
+- Stated preferences, feelings, and opinions
+- Reported events and actions
+- Stated relationships and connections
+- Negations (what is explicitly denied)
 
-**KEY PRINCIPLE:** Only generate deductions that add substantive information that is semantically differentiated from the atomic propositions. Ask yourself: 
-1. "Would the explicit/implicit extraction have already captured this?" If yes, don't generate it.
-2. "Does this conclusion connect or build on multiple propositions in a non-obvious way?" If no, don't generate it.
-3. "Does this add meaningful context about who {{ peer_id }} is that isn't already present?" If no, don't generate it.
+### PHASE 2: IMPLICIT EXTRACTION
 
-**PERMITTED PREMISE TYPES:**
+**For each explicit proposition, identify certain implications:**
 
-You may ONLY use the following as premises in your deductions:
-1. **Atomic propositions** provided below (explicitly extracted from {{ peer_id }}'s messages)
-2. **Previous deductions** provided below (if any)
-3. **General knowledge** - widely accepted facts about the world that are known to be true
-4. **Temporal information** - current date/time: {message_created_at}
-5. **Logical principles** - fundamental laws of logic and necessary relationships
+Only extract implications that are **logically necessary** or **definitionally true**. Do NOT extract:
+- Speculations or possibilities
+- Cultural assumptions
+- Probabilistic inferences
+- Subjective interpretations
 
-**CRITICAL CONSTRAINT ON PREMISES:**
+**Categories of valid implicit extraction:**
 
-You MAY NOT use probabilistic or uncertain conclusions as premises for further deductions. If a previous deduction contains qualifiers indicating uncertainty (e.g., "likely", "probably", "typically", "may", "might", "potentially", "appears to", "seems to"), it CANNOT be used as a premise for further deduction.
+1. **Definitional implications:**
+   - "I graduated from MIT" → "Anthony attended MIT"
+   - "My daughter starts school" → "Carlos has a daughter"
+   - "I'm taking my dog to the vet" → "Sarah has a dog"
 
-Only use conclusions that express certainty and logical necessity.
+2. **Temporal/mathematical implications:**
+   - "I'm 25 years old" + current date → Calculate birth year
+   - "My 10th birthday" + current date → Calculate current age
+   - "Next month" → Calculate absolute date
 
-**DEDUCTIVE INFERENCE PATTERNS:**
+3. **Relational implications:**
+   - "My spouse loves hiking" → "Marcus has a spouse"
+   - "I called my brother" → "Anna has a brother"
 
-Common valid deductive patterns include:
+4. **Possessive/locational implications:**
+   - "I painted my house" → "James has a house"
+   - "I left my keys at home" → "Sarah has keys" + "Sarah has a home"
 
-1. **Categorical Syllogism**
-   - Premise 1: All A are B (general knowledge)
-   - Premise 2: X is A (atomic proposition)
-   - Conclusion: X is B
+5. **Role/status implications:**
+   - "I graduated from law school" → "Michelle attended law school"
+   - "My company promoted me" → "Alex is employed" + "Alex works for a company"
 
-2. **Temporal Calculation**
-   - Premise 1: X is N years old (atomic proposition)
-   - Premise 2: X's birthday is DATE (atomic proposition)
-   - Premise 3: Current date is {message_created_at} (temporal)
-   - Conclusion: X was born in YEAR
+**Do NOT extract:**
+- Future possibilities ("might," "could," "planning to")
+- Uncertain states ("probably," "maybe")
+- Conditional outcomes that didn't occur
+- Motivations or reasons (unless explicitly stated)
+- Emotional interpretations beyond what's stated
 
-3. **Necessary Precondition**
-   - Premise 1: X completed Y (atomic proposition)
-   - Premise 2: Completing Y requires Z (general knowledge)
-   - Conclusion: X completed Z
+---
 
-4. **Definitional Inference**
-   - Premise 1: X has a Y (atomic proposition)
-   - Premise 2: Having Y means being a Z (definitional)
-   - Conclusion: X is a Z
+## SYSTEMATIC EXTRACTION CHECKLIST
 
-5. **Composite Inference**
-   - Premise 1: Multiple atomic propositions about X
-   - Premise 2: General knowledge about relationships
-   - Conclusion: Necessarily implied fact about X
+For exhaustive extraction, verify you've processed:
 
-**EXAMPLES OF VALID DEDUCTIONS:**
+### Content Elements
+- [ ] Every independent clause extracted
+- [ ] All compound statements decomposed
+- [ ] All pronouns resolved to peer name
+- [ ] All relative temporal references converted to absolute dates
+- [ ] All possessive relationships extracted (both item and possession)
+- [ ] All relational terms extracted (family, work, social)
+- [ ] All locations/places contextualized
+- [ ] All negations captured
+- [ ] All quantitative information (ages, counts, measurements)
 
-Example 1 - Categorical Syllogism:
-- PREMISES: 
-  * "Maria attended college" (atomic proposition)
-  * All people who attended college completed high school or equivalent (general knowledge)
-- CONCLUSION: "Maria completed high school or equivalent education"
+### Implicit Derivations
+- [ ] Family relationships implied by possessives ("my daughter" → has daughter)
+- [ ] Possessions implied by actions ("walked my dog" → has dog)
+- [ ] Locations implied by actions ("went home" → has home)
+- [ ] Past states implied by transitions ("graduated" → attended)
+- [ ] Age/birth year calculated from age statements
+- [ ] Employment implied by role references
+- [ ] Skill/knowledge implied by actions ("I coded" → knows programming)
 
-Example 2 - Temporal Calculation:
-- PREMISES:
-  * "Liam is 25 years old" (atomic proposition)
-  * "Liam's birthday is June 21st" (atomic proposition)
-  * Current date is June 26, 2025 (temporal)
-- CONCLUSION: "Liam was born on June 21, 2000"
+### Quality Checks
+- [ ] Each proposition starts with peer name
+- [ ] Each proposition has exactly ONE truth value
+- [ ] Each proposition is self-contained (understandable without others)
+- [ ] No logical connectives remain in any proposition
+- [ ] Sufficient disambiguating context in each proposition
+- [ ] No redundant or duplicate propositions
 
-Example 3 - Necessary Precondition:
-- PREMISES:
-  * "Aisha has a dog" (atomic proposition)
-  * "Aisha took her dog for a walk" (atomic proposition)
-  * Dogs require regular exercise for health (general knowledge)
-- CONCLUSION: "Aisha provides physical care for her dog's health needs"
+---
 
-Example 4 - Definitional Inference:
-- PREMISES:
-  * "Carlos has a daughter" (atomic proposition)
-  * Having a child makes one a parent (definitional)
-- CONCLUSION: "Carlos is a parent"
+## CONTEXT SOURCES (Priority Order)
 
-Example 5 - Multi-step Scaffolding:
-- PREMISES:
-  * "Elena graduated with a PhD in neuroscience" (atomic proposition)
-  * A PhD requires completing a bachelor's degree (general knowledge)
-  * A bachelor's degree requires completing high school (general knowledge)
-- CONCLUSIONS: 
-  * "Elena completed a bachelor's degree"
-  * "Elena completed high school or equivalent education"
+1. **Latest peer message** (PRIMARY - required)
+2. **Conversation history** (for resolving references and pronouns)
+3. **Peer card** (for consistent naming and existing facts)
+4. **Working representation** (for additional context if needed)
+5. **Current timestamp** ({message_created_at}) for temporal calculations
 
-**SCOPE AND COMPLETENESS:**
+---
 
-- Derive ALL deductive conclusions that necessarily follow from the available premises
-- Each deduction should contain ONE conclusion derived from one or more premises
-- You may perform multi-step deductions by using previous certain deductions as premises
-- Ensure each conclusion is sufficiently contextualized to be meaningful on its own
-- Use absolute dates/times rather than relative references when possible
+## EDGE CASES & SPECIAL HANDLING
 
-**WHAT NOT TO DO:**
+### Temporal References
+- "yesterday" → Calculate exact date from {message_created_at}
+- "next month" → Calculate month and year
+- "last Saturday" → Calculate exact date
+- "when I was 10" → Do NOT extract as current fact; requires past tense: "Anthony was 10 years old in [year]"
 
-- DO NOT speculate or guess beyond what logically follows
-- DO NOT make inductive generalizations from patterns
-- DO NOT make abductive inferences about motivations or explanations
-- DO NOT include information that goes beyond logical necessity
-- DO NOT generate trivial deductions that any downstream system would assume (e.g., "spoke" → "is alive")
-- DO NOT simply restate premises in different words without adding substantive information
+### Negations
+- "I don't have a car" → "Anthony does not have a car"
+- Include negations as atomic propositions (they have truth values)
 
-**CONTEXTUALIZATION REQUIREMENTS:**
+### Conditional Statements
+- "If it rains tomorrow, I'll cancel" → Extract both possibilities with conditional context
+  - "Anthony will cancel [activity] if it rains on [date]"
+  - DO NOT extract as definite future: "Anthony will cancel"
 
-Each deduction must be self-contained and include sufficient context:
-- Specific subjects and objects (not vague references)
-- Absolute temporal information when relevant
-- Disambiguating details that make the conclusion independently meaningful
-- All necessary qualifiers to ensure accuracy
+### Modal Statements (Uncertainty)
+- "I might go to the party" → "Anthony is considering going to the party"
+- "I should study more" → "Anthony believes they should study more"
+- Preserve the modal/epistemic status
+
+### Questions and Plans
+- Future plans: "I'm planning to visit Japan" → "Anthony is planning to visit Japan"
+- NOT: "Anthony will visit Japan" (removes intentionality)
+
+### Comparatives and Superlatives
+- "I'm taller than my brother" → "Anthony is taller than Anthony's brother"
+- Requires relationship context to be meaningful
+
+---
+
+## INPUT DATA
 
 {{ peer_card_section }}
 
-{{ existing_deductions_section }}
+{{ working_representation_section }}
 
-Atomic propositions to use as premises:
-<atomic_propositions>
-{{ atomic_propositions_section }}
-</atomic_propositions>
+### Recent conversation history:
+<history>
+{{ history }}
+</history>
 
-**INSTRUCTIONS:**
+### New message to analyze:
+<new_turns>
+{{ new_turns_section }}
+</new_turns>
 
-Perform deductive reasoning over the atomic propositions provided above. For each deduction:
-1. Identify the premises being used (atomic propositions, previous deductions, general knowledge)
-2. Verify that the conclusion NECESSARILY follows from the premises
-3. Ensure the conclusion is about {{ peer_id }} and properly formatted
-4. Ensure the conclusion is sufficiently contextualized to stand alone
+---
 
-Generate ALL valid deductions that can be derived from the available premises. Show your reasoning for each deduction. Output your response in JSON structured format:
+## OUTPUT FORMAT
+
+Return a JSON object with exactly two keys: "explicit" and "implicit". Each must be an array of strings (propositions). Do not include any other keys or structure.
 ```json
 {
-    "deductions": [
-        {
-            "conclusion": "...",
-            "premises": [
-                "premise 1",
-                "premise 2",
-                ...
-                "premise n"
-            ]
-        },
-        {
-            "conclusion": "...",
-            "premises": [
-                "premise 1",
-                "premise 2",
-                ...
-                "premise n"
-            ]
-        },
-        ...
-        {
-            "conclusion": "...",
-            "premises": [
-                "premise 1",
-                "premise 2",
-                ...
-                "premise n"
-            ]
-        },
+    "explicit": [
+        "proposition 1",
+        "proposition 2"
+    ],
+    "implicit": [
+        "proposition 1",
+        "proposition 2"
     ]
 }
 ```
+
+**Before outputting:**
+1. Review the peer's message sentence by sentence
+2. Apply the extraction algorithm systematically
+3. Use the checklist to ensure exhaustive coverage
+4. Verify each proposition meets the three core criteria
+5. Ensure proper JSON formatting
+
+Extract ALL atomic propositions now.

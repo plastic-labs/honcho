@@ -18,6 +18,7 @@ from src.utils.logging import accumulate_metric, conditional_observe
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
+    ImplicitObservation,
     Representation,
 )
 
@@ -64,11 +65,11 @@ class RepresentationManager:
 
         new_documents = 0
 
-        if not representation.deductive and not representation.explicit:
+        if not representation.deductive and not representation.explicit and not representation.implicit:
             logger.debug("No observations to save")
             return new_documents
 
-        all_observations = representation.deductive + representation.explicit
+        all_observations = representation.deductive + representation.explicit + representation.implicit
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
@@ -117,7 +118,7 @@ class RepresentationManager:
     async def _save_representation_internal(
         self,
         db: AsyncSession,
-        all_observations: list[ExplicitObservation | DeductiveObservation],
+        all_observations: list[ExplicitObservation | DeductiveObservation | ImplicitObservation],
         embeddings: list[list[float]],
         message_id_range: tuple[int, int],
         session_name: str,
@@ -139,7 +140,11 @@ class RepresentationManager:
                 obs_level = "deductive"
                 obs_content = obs.conclusion
                 obs_premises = obs.premises
-            else:
+            elif isinstance(obs, ImplicitObservation):
+                obs_level = "implicit"
+                obs_content = obs.content
+                obs_premises = None
+            else:  # ExplicitObservation
                 obs_level = "explicit"
                 obs_content = obs.content
                 obs_premises = None

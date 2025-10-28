@@ -331,6 +331,7 @@ async def honcho_llm_call_inner(
             response_model,
             reasoning_effort,
             verbosity,
+            sys_prompt,
         )
 
     # Remove stream parameter for non-streaming calls as some providers don't accept it
@@ -342,6 +343,8 @@ async def honcho_llm_call_inner(
                 raise NotImplementedError(
                     "Response model is not supported for Anthropic"
                 )
+            if sys_prompt:
+                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
@@ -376,6 +379,8 @@ async def honcho_llm_call_inner(
             )
 
         case AsyncOpenAI():
+            if sys_prompt:
+                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             openai_params: dict[str, Any] = {
                 "model": params["model"],
                 "messages": params["messages"],
@@ -514,17 +519,20 @@ async def honcho_llm_call_inner(
 
         case genai.Client():
             if response_model is None:
+                config = {
+                    "response_mime_type": "application/json" if json_mode else None,
+                }
+                if sys_prompt:
+                    config["system_instruction"] = sys_prompt
                 gemini_response: GenerateContentResponse = (
                     await client.aio.models.generate_content(
                         model=model,
                         contents=prompt,
-                        config={
-                            "response_mime_type": "application/json"
-                            if json_mode
-                            else None,
-                        },
+                        config=config,
                     )
                 )
+
+                logger.info(f"DEBUG: Gemini Response: {gemini_response.text}")
 
                 # Safely extract response data
                 text_content = gemini_response.text if gemini_response.text else ""
@@ -547,14 +555,19 @@ async def honcho_llm_call_inner(
                 )
 
             else:
+                config = {
+                    "response_mime_type": "application/json",
+                    "response_schema": response_model,
+                }
+                if sys_prompt:
+                    config["system_instruction"] = sys_prompt
                 gemini_response = await client.aio.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config={
-                        "response_mime_type": "application/json",
-                        "response_schema": response_model,
-                    },
+                    config=config,
                 )
+
+                logger.info(f"DEBUG: Gemini Response: {gemini_response.text}")
 
                 token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
@@ -581,6 +594,8 @@ async def honcho_llm_call_inner(
                 )
 
         case AsyncGroq():
+            if sys_prompt:
+                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             groq_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
@@ -634,6 +649,7 @@ async def handle_streaming_response(
     response_model: type[BaseModel] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
     verbosity: Literal["low", "medium", "high"] | None = None,
+    sys_prompt: str | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """
     Handle streaming responses for all supported providers.
@@ -656,6 +672,8 @@ async def handle_streaming_response(
                 raise NotImplementedError(
                     "Response model is not supported for Anthropic"
                 )
+            if sys_prompt:
+                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
@@ -689,6 +707,8 @@ async def handle_streaming_response(
                 )
 
         case AsyncOpenAI():
+            if sys_prompt:
+                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             openai_params: dict[str, Any] = {
                 "model": params["model"],
                 "messages": params["messages"],
@@ -728,21 +748,27 @@ async def handle_streaming_response(
             prompt_text = params["messages"][0]["content"] if params["messages"] else ""
 
             if response_model is not None:
+                config = {
+                    "response_mime_type": "application/json",
+                    "response_schema": response_model,
+                }
+                if sys_prompt:
+                    config["system_instruction"] = sys_prompt
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
-                    config={
-                        "response_mime_type": "application/json",
-                        "response_schema": response_model,
-                    },
+                    config=config,
                 )
             else:
+                config = {
+                    "response_mime_type": "application/json" if json_mode else None,
+                }
+                if sys_prompt:
+                    config["system_instruction"] = sys_prompt
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
-                    config={
-                        "response_mime_type": "application/json" if json_mode else None,
-                    },
+                    config=config,
                 )
 
             final_chunk = None
@@ -766,6 +792,8 @@ async def handle_streaming_response(
             )
 
         case AsyncGroq():
+            if sys_prompt:
+                params["messages"].insert(0, {"role": "system", "content": sys_prompt})
             groq_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],

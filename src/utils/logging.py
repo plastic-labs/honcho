@@ -109,6 +109,10 @@ def log_representation(
     for i, obs in enumerate(representation.explicit, 1):
         type_branch.add(f"[dim]{i}.[/] {obs}")
 
+    type_branch = tree.add(f"[bold cyan]IMPLICIT[/] ({len(representation.implicit)})")
+    for i, obs in enumerate(representation.implicit, 1):
+        type_branch.add(f"[dim]{i}.[/] {obs}")
+
     type_branch = tree.add(f"[bold cyan]DEDUCTIVE[/] ({len(representation.deductive)})")
     for i, obs in enumerate(representation.deductive, 1):
         type_branch.add(f"[dim]{i}.[/] {obs}")

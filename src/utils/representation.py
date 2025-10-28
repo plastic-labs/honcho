@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src import models
 from src.utils.formatting import parse_datetime_iso
@@ -47,6 +47,62 @@ class PromptRepresentation(BaseModel):
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
         default_factory=list,
     )
+
+    @field_validator('explicit', mode='before')
+    @classmethod
+    def normalize_explicit(cls, v):
+        """Handle both flat strings and nested objects."""
+        if not v:
+            return []
+
+        normalized = []
+        for item in v:
+            if isinstance(item, str):
+                # Flat string format: "string" -> {"content": "string"}
+                normalized.append({"content": item})
+            elif isinstance(item, dict):
+                # Already nested: {"content": "string"} -> pass through
+                normalized.append(item)
+            else:
+                # Already an object
+                normalized.append(item)
+        return normalized
+
+    @field_validator('implicit', mode='before')
+    @classmethod
+    def normalize_implicit(cls, v):
+        """Handle both flat strings and nested objects."""
+        if not v:
+            return []
+
+        normalized = []
+        for item in v:
+            if isinstance(item, str):
+                normalized.append({"content": item})
+            elif isinstance(item, dict):
+                normalized.append(item)
+            else:
+                normalized.append(item)
+        return normalized
+
+    @field_validator('deductive', mode='before')
+    @classmethod
+    def normalize_deductive(cls, v):
+        """Handle various formats for deductive observations."""
+        if not v:
+            return []
+
+        normalized = []
+        for item in v:
+            if isinstance(item, str):
+                normalized.append({"conclusion": item, "premises": []})
+            elif isinstance(item, dict):
+                if "premises" not in item:
+                    item["premises"] = []
+                normalized.append(item)
+            else:
+                normalized.append(item)
+        return normalized
 
 
 class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
@@ -237,12 +293,10 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation}")
         parts.append("")
 
-        '''
         parts.append("IMPLICIT:\n")
         for i, observation in enumerate(self.implicit, 1):
             parts.append(f"{i}. {observation}")
         parts.append("")
-        '''
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
@@ -278,6 +332,12 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation.content}")
         parts.append("")
 
+        if len(self.implicit) > 0:
+            parts.append("IMPLICIT:\n")
+            for i, observation in enumerate(self.implicit, 1):
+                parts.append(f"{i}. {observation.content}")
+            parts.append("")
+
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
             parts.append(f"{i}. {observation.str_no_timestamps()}")
@@ -302,13 +362,11 @@ class Representation(BaseModel):
             parts.append(f"{i}. {obs}")
         parts.append("")
 
-        '''
         # Add implicit observations
         parts.append("## Implicit Observations\n")
         for i, obs in enumerate(self.implicit, 1):
             parts.append(f"{i}. {obs}")
         parts.append("")
-        '''
 
         # Add deductive observations
         parts.append("## Deductive Observations\n")

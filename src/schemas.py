@@ -299,8 +299,8 @@ class DocumentMetadata(BaseModel):
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
-    level: Literal["explicit", "deductive"] = Field(
-        description="The level of the document (explicit or deductive)"
+    level: Literal["explicit", "implicit", "deductive"] = Field(
+        description="The level of the document (explicit, implicit, or deductive)"
     )
     premises: list[str] | None = Field(
         default=None,

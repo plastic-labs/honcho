@@ -233,6 +233,12 @@ async def chat(
     )
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
+        "working_rep_implicit",
+        len(working_representation.implicit),
+        "count",
+    )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
         "working_rep_deductive",
         len(working_representation.deductive),
         "count",
