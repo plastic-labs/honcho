@@ -7,7 +7,11 @@ import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/mess
 import type { Uploadable } from '@honcho-ai/core/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import { Representation, type RepresentationOptions } from './representation'
+import {
+  Representation,
+  type RepresentationData,
+  type RepresentationOptions,
+} from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
@@ -922,7 +926,7 @@ export class Session {
         : workingRepParams.target.id
       : undefined
 
-    const data = await this._client.workspaces.peers.workingRepresentation(
+    const response = await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
       peerId,
       {
@@ -935,7 +939,9 @@ export class Session {
         max_observations: workingRepParams.options?.maxObservations,
       }
     )
-    return Representation.fromData(data as any)
+    const data = (response as { representation: RepresentationData })
+      .representation
+    return Representation.fromData(data)
   }
 
   /**
