@@ -2,6 +2,7 @@ from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
 from .document import (
     create_documents,
+    delete_document,
     get_all_documents,
     query_documents,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "create_documents",
     "get_all_documents",
     "query_documents",
+    "delete_document",
     # Message
     "create_messages",
     "get_messages",

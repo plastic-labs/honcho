@@ -69,11 +69,13 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{
     # get all documents in the collection
     async with tracked_db("dream_consolidate") as db:
         documents = await crud.get_all_documents(
-            db,
             payload.workspace_name,
             observer=payload.observer,
             observed=payload.observed,
         )
+
+        result = await db.execute(documents)
+        documents = result.scalars().all()
 
         logger.info("found %d documents to consolidate", len(documents))
 

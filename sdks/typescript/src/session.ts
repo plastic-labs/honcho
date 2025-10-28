@@ -9,6 +9,7 @@ import { Page } from './pagination'
 import { Peer } from './peer'
 import { Representation, type RepresentationOptions } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
+import type { Observation, ObservationQueryParams } from './types'
 import {
   ContextParamsSchema,
   type DeriverStatusOptions,
@@ -19,6 +20,7 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
+  ObservationQueryParamsSchema,
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -725,6 +727,88 @@ export class Session {
         filters: validatedFilters,
         limit: validatedLimit,
       }
+    )
+  }
+
+  /**
+   * List all observations for this session.
+   *
+   * Observations are theory-of-mind data (documents) that peers have formed about each other.
+   * Returns paginated results that can be filtered by observer_id and observed_id.
+   *
+   * @param filters - Optional filters to scope the observations: see [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @returns A paginated list of Observation objects.
+   *
+   * @example
+   * ```typescript
+   * const observations = await session.listObservations()
+   * for await (const observation of observations) {
+   *   console.log(`${observation.observer_id} observed: ${observation.content}`)
+   * }
+   * ```
+   */
+  async listObservations(filters?: Filters): Promise<Page<Observation>> {
+    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
+    const response = await this._client.workspaces.sessions.observations.list(
+      this.workspaceId,
+      this.id,
+      { filters: validatedFilters }
+    )
+    return new Page(response)
+  }
+
+  /**
+   * Query observations using semantic search.
+   *
+   * Performs vector similarity search on observations to find semantically relevant results.
+   * Use this to find observations related to a specific topic or concept.
+   *
+   * @param params - Query parameters
+   * @param params.query - The semantic search query
+   * @param params.top_k - Number of results to return (1-100, default: 10)
+   * @param params.distance - Maximum cosine distance threshold for results (0.0-2.0)
+   * @param params.filters - Optional filters to scope the query
+   * @returns A list of Observation objects matching the query
+   *
+   * @example
+   * ```typescript
+   * const observations = await session.queryObservations({
+   *   query: "user preferences about music",
+   *   top_k: 5,
+   *   distance: 0.8
+   * })
+   * ```
+   */
+  async queryObservations(
+    params: ObservationQueryParams
+  ): Promise<Observation[]> {
+    const validated = ObservationQueryParamsSchema.parse(params)
+    return await this._client.workspaces.sessions.observations.query(
+      this.workspaceId,
+      this.id,
+      validated
+    )
+  }
+
+  /**
+   * Delete a specific observation by ID.
+   *
+   * This permanently deletes the observation (document) from the theory-of-mind system.
+   * This action cannot be undone.
+   *
+   * @param observationId - The ID of the observation to delete
+   * @returns A promise that resolves when the observation is deleted
+   *
+   * @example
+   * ```typescript
+   * await session.deleteObservation('obs_123abc')
+   * ```
+   */
+  async deleteObservation(observationId: string): Promise<void> {
+    await this._client.workspaces.sessions.observations.delete(
+      this.workspaceId,
+      this.id,
+      observationId
     )
   }
 
