@@ -15,11 +15,14 @@ class ParsedWorkUnit(BaseModel):
     observed: str | None
 
 
-def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
+def construct_work_unit_key(
+    workspace_name: str, payload: dict[str, Any] | ParsedWorkUnit
+) -> str:
     """
     Generate a work unit key for a given task type, workspace name, and event type.
 
     Args:
+        workspace_name: The name of the workspace the work unit belongs to
         payload: Dictionary containing work unit information
 
     Returns:
@@ -31,7 +34,6 @@ def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
     if isinstance(payload, ParsedWorkUnit):
         payload = payload.model_dump()
 
-    workspace_name: str | None = payload.get("workspace_name")
     task_type: str | None = payload.get("task_type")
     if not workspace_name or not task_type:
         raise ValueError(

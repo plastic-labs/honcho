@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 @sentry_sdk.trace
 async def process_dream(
     payload: DreamPayload,
+    workspace_name: str,
 ) -> None:
     """
     Process a dream task by performing collection maintenance operations.
@@ -36,7 +37,7 @@ async def process_dream(
 
     try:
         if payload.dream_type == "consolidate":
-            await _process_consolidate_dream(payload)
+            await _process_consolidate_dream(payload, workspace_name)
         ## TODO other dream types
 
     except Exception as e:
@@ -49,7 +50,9 @@ async def process_dream(
         # Don't re-raise - we want to mark the dream task as processed even if it fails
 
 
-async def _process_consolidate_dream(payload: DreamPayload) -> None:
+async def _process_consolidate_dream(
+    payload: DreamPayload, workspace_name: str
+) -> None:
     """
     Process a consolidation dream task.
 
@@ -70,7 +73,7 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{
     async with tracked_db("dream_consolidate") as db:
         documents = await crud.get_all_documents(
             db,
-            payload.workspace_name,
+            workspace_name,
             observer=payload.observer,
             observed=payload.observed,
         )
@@ -87,7 +90,7 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{
         for cluster in clusters:
             await _consolidate_cluster(
                 cluster,
-                payload.workspace_name,
+                workspace_name,
                 db,
                 observer=payload.observer,
                 observed=payload.observed,

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from src.dependencies import tracked_db
 from src.models import QueueItem
 from src.utils.queue_payload import create_webhook_payload
-from src.utils.work_unit import get_work_unit_key
+from src.utils.work_unit import construct_work_unit_key
 
 logger = logging.getLogger(__name__)
 
@@ -51,23 +51,26 @@ async def publish_webhook_event(event: WebhookEvent) -> None:
         event: The webhook event to publish.
     """
     try:
+        # Note: workspace_name is no longer included in the payload
+        # It's stored directly on the queue item
         payload = create_webhook_payload(
-            workspace_name=event.workspace_id,
             event_type=event.type.value,
             data=event.model_dump(mode="json", exclude={"type"}),
         )
 
         async with tracked_db("publish_webhook_event") as db:
             queue_item = QueueItem(
-                work_unit_key=get_work_unit_key(
+                work_unit_key=construct_work_unit_key(
+                    event.workspace_id,
                     {
                         "task_type": "webhook",
-                        "workspace_name": event.workspace_id,
-                    }
+                    },
                 ),
                 payload=payload,
                 session_id=None,
                 task_type="webhook",
+                workspace_name=event.workspace_id,
+                message_id=None,  # Webhooks don't have a message_id
             )
             db.add(queue_item)
             await db.commit()

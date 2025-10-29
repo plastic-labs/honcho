@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.deriver.queue_manager import QueueManager, WorkerOwnership
-from src.utils.work_unit import get_work_unit_key
+from src.utils.work_unit import construct_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ class TestQueueProcessing:
         for message in messages:
             await db_session.refresh(message)
 
-        payloads: list[Any] = []
+        payloads: list[tuple[dict[str, Any], int]] = []
         for message in messages:
             payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=message,
@@ -147,9 +147,9 @@ class TestQueueProcessing:
                 observed=peer.name,
                 observer=peer.name,
             )
-            payloads.append(payload)
+            payloads.append((payload, message.id))
 
-        items = await add_queue_items(payloads, session.id)
+        items = await add_queue_items(payloads, session.id, session.workspace_name)
         # Determine ascending order by DB id
         ordered = (
             (
@@ -304,20 +304,23 @@ class TestQueueProcessing:
             await db_session.refresh(message)
 
         # Create queue items with token counts
-        payloads = [
-            create_queue_payload(  # type: ignore[reportUnknownArgumentType]
-                message=msg,
-                task_type="representation",
-                observed=peer.name,
-                observer=peer.name,
+        payload_entries = [
+            (
+                create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                    message=msg,
+                    task_type="representation",
+                    observed=peer.name,
+                    observer=peer.name,
+                ),
+                msg,
             )
             for msg in messages
         ]
 
         queue_items: list[models.QueueItem] = []
-        for payload in payloads:
+        for payload, message in payload_entries:
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(payload)
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -325,6 +328,8 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -430,7 +435,7 @@ class TestQueueProcessing:
                 observed=peer.name,
                 observer=target.name,
             )
-            work_unit_key = get_work_unit_key(payload)
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -438,6 +443,8 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
             )
             db_session.add(queue_item)
 
@@ -596,7 +603,7 @@ class TestQueueProcessing:
                 observed=peer.name,
                 observer=target.name,
             )
-            work_unit_key = get_work_unit_key(payload)
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -604,6 +611,8 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
             )
             db_session.add(queue_item)
 
@@ -729,7 +738,7 @@ class TestQueueProcessing:
             )
             payload["token_count"] = token_counts[i]
 
-            work_unit_key = get_work_unit_key(payload)
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -737,6 +746,8 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -747,10 +758,11 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_item(
-            task_type: str,
-            queue_payload: dict[str, Any],  # pyright: ignore[reportUnusedParameter]
+            queue_item: models.QueueItem,
         ) -> None:
-            processed_batches.append({"task_type": task_type, "payload_count": 1})
+            processed_batches.append(
+                {"task_type": queue_item.task_type, "payload_count": 1}
+            )
 
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
@@ -838,21 +850,24 @@ class TestQueueProcessing:
             await db_session.refresh(message)
 
         # Create queue items
-        payloads = [
-            create_queue_payload(  # type: ignore[reportUnknownArgumentType]
-                message=msg,
-                task_type="representation",
-                observed=peer.name,
-                observer=peer.name,
+        payload_entries = [
+            (
+                create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                    message=msg,
+                    task_type="representation",
+                    observed=peer.name,
+                    observer=peer.name,
+                ),
+                msg,
             )
             for msg in messages
         ]
 
         # Add items to queue
         queue_items: list[models.QueueItem] = []
-        for payload in payloads:
+        for payload, message in payload_entries:
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(payload)
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -860,6 +875,8 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -949,21 +966,24 @@ class TestQueueProcessing:
             await db_session.refresh(message)
 
         # Create queue items
-        payloads = [
-            create_queue_payload(  # type: ignore[reportUnknownArgumentType]
-                message=msg,
-                task_type="representation",
-                observed=peer.name,
-                observer=peer.name,
+        payload_entries = [
+            (
+                create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                    message=msg,
+                    task_type="representation",
+                    observed=peer.name,
+                    observer=peer.name,
+                ),
+                msg,
             )
             for msg in messages
         ]
 
         # Add items to queue
         queue_items: list[models.QueueItem] = []
-        for payload in payloads:
+        for payload, message in payload_entries:
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(payload)
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -971,6 +991,8 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)

@@ -407,9 +407,32 @@ class QueueItem(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_queue_workspace_name",
+            "workspace_name",
+        ),
+        Index(
+            "ix_queue_message_id_not_null",
+            "message_id",
+            postgresql_where=text("message_id IS NOT NULL"),
+        ),
+        Index("ix_queue_workspace_name_processed", "workspace_name", "processed"),
+        Index(
+            "ix_queue_work_unit_key_processed_id",
+            "work_unit_key",
+            "processed",
+            "id",
+        ),
+    )
 
     def __repr__(self) -> str:
-        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed})"
+        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
 
 
 @final

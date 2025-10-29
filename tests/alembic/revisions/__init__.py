@@ -15,6 +15,7 @@ from . import (
     test_bb6fb3a7a643_add_message_seq_in_session_column,
     test_c3828084f472_add_indexes_for_messages_and_,
     test_d429de0e5338_adopt_peer_paradigm,
+    test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "test_bb6fb3a7a643_add_message_seq_in_session_column",
     "test_c3828084f472_add_indexes_for_messages_and_",
     "test_d429de0e5338_adopt_peer_paradigm",
+    "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
 ]

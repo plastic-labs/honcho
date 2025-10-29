@@ -10,7 +10,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import BigInteger, and_, delete, select, update
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -463,9 +463,7 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_item(
-                                    work_unit.task_type, queue_item.payload
-                                )
+                                await process_item(queue_item)
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )
@@ -614,8 +612,7 @@ class QueueManager:
                 .select_from(models.QueueItem)
                 .join(
                     models.Message,
-                    func.cast(models.QueueItem.payload["message_id"].astext, BigInteger)
-                    == models.Message.id,
+                    models.QueueItem.message_id == models.Message.id,
                 )
                 .where(~models.QueueItem.processed)
                 .where(models.Message.session_name == parsed_key.session_name)
@@ -661,10 +658,7 @@ class QueueManager:
                     and_(
                         models.QueueItem.work_unit_key == work_unit_key,
                         ~models.QueueItem.processed,
-                        func.cast(
-                            models.QueueItem.payload["message_id"].astext, BigInteger
-                        )
-                        == models.Message.id,
+                        models.QueueItem.message_id == models.Message.id,
                     ),
                 )
                 .where(allowed_condition)
@@ -689,7 +683,11 @@ class QueueManager:
 
             if items_to_process:
                 max_queue_item_message_id = max(
-                    [qi.payload["message_id"] for qi in items_to_process]
+                    [
+                        qi.message_id
+                        for qi in items_to_process
+                        if qi.message_id is not None
+                    ]
                 )
                 messages_context = [  # remove any messages that are after the last message_id from queue items
                     m for m in messages_context if m.id <= max_queue_item_message_id

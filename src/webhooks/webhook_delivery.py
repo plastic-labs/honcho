@@ -15,13 +15,15 @@ from src.utils.queue_payload import WebhookPayload
 logger = logging.getLogger(__name__)
 
 
-async def deliver_webhook(db: AsyncSession, payload: WebhookPayload) -> None:
+async def deliver_webhook(
+    db: AsyncSession, payload: WebhookPayload, workspace_name: str
+) -> None:
     """
     Deliver a single webhook event to its configured endpoints.
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            webhook_urls = await _get_webhook_urls(db, payload.workspace_name)
+            webhook_urls = await _get_webhook_urls(db, workspace_name)
             if not webhook_urls:
                 logger.debug(
                     f"No webhook endpoints for workspace {payload.workspace_name}, skipping."
