@@ -51,8 +51,8 @@ session_peers_table = Table(
         nullable=False,
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
-    Column("configuration", JSONB, default=dict),
-    Column("internal_metadata", JSONB, default=dict),
+    Column("configuration", JSONB, default=dict, nullable=False),
+    Column("internal_metadata", JSONB, default=dict, nullable=False),
     Column(
         "joined_at",
         DateTime(timezone=True),
@@ -81,11 +81,11 @@ session_peers_table = Table(
 class Workspace(Base):
     __tablename__: str = "workspaces"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
+    name: Mapped[str] = mapped_column(TEXT, unique=True)
     peers = relationship("Peer", back_populates="workspace")
     webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -97,6 +97,8 @@ class Workspace(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        Index("ix_workspaces_created_at", "created_at"),
+        Index("ix_workspaces_name", "name"),
     )
 
 
@@ -104,16 +106,18 @@ class Workspace(Base):
 class Peer(Base):
     __tablename__: str = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    name: Mapped[str] = mapped_column(TEXT, index=True)
+    name: Mapped[str] = mapped_column(
+        TEXT,
+    )
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True, nullable=False
+        ForeignKey("workspaces.name"), nullable=False
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
@@ -128,6 +132,9 @@ class Peer(Base):
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         Index("idx_peers_workspace_lookup", "workspace_name", "name"),
+        Index("ix_peers_created_at", "created_at"),
+        Index("ix_peers_name", "name"),
+        Index("ix_peers_workspace_name", "workspace_name"),
     )
 
     def __repr__(self) -> str:
@@ -145,7 +152,7 @@ class Session(Base):
         "internal_metadata", JSONB, default=dict
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
     messages = relationship("Message", back_populates="session")
     workspace_name: Mapped[str] = mapped_column(
@@ -162,6 +169,7 @@ class Session(Base):
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        Index("ix_sessions_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:
@@ -175,11 +183,13 @@ class Message(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
+        TEXT,
+        unique=True,
+        default=generate_nanoid,
     )
     # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
     # We have since assigned all of these messages to a default session.
-    session_name: Mapped[str] = mapped_column(index=True, nullable=False)
+    session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -189,12 +199,12 @@ class Message(Base):
     seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
     session = relationship("Session", back_populates="messages")
-    peer_name: Mapped[str] = mapped_column(index=True)
+    peer_name: Mapped[str] = mapped_column(TEXT)
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+        ForeignKey("workspaces.name"),
     )
 
     __table_args__ = (
@@ -229,6 +239,11 @@ class Message(Base):
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
+        Index("ix_messages_created_at", "created_at"),
+        Index("ix_messages_id", "id"),
+        Index("ix_messages_peer_name", "peer_name"),
+        Index("ix_messages_public_id", "public_id"),
+        Index("ix_messages_workspace_name", "workspace_name"),
     )
 
     @override
@@ -246,15 +261,15 @@ class MessageEmbedding(Base):
     content: Mapped[str] = mapped_column(TEXT)
     embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     message_id: Mapped[str] = mapped_column(
-        ForeignKey("messages.public_id"), index=True
+        ForeignKey("messages.public_id"),
     )
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+        ForeignKey("workspaces.name"),
     )
-    session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
-    peer_name: Mapped[str] = mapped_column(TEXT, index=True)
+    session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    peer_name: Mapped[str] = mapped_column(TEXT)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
 
     # Relationship to Message
@@ -278,6 +293,11 @@ class MessageEmbedding(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        Index("idx_message_embeddings_created_at", "created_at"),
+        Index("idx_message_embeddings_message_id", "message_id"),
+        Index("idx_message_embeddings_peer_name", "peer_name"),
+        Index("idx_message_embeddings_session_name", "session_name"),
+        Index("idx_message_embeddings_workspace_name", "workspace_name"),
     )
 
 
@@ -286,10 +306,10 @@ class Collection(Base):
     __tablename__: str = "collections"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    observer: Mapped[str] = mapped_column(TEXT, index=True)
-    observed: Mapped[str] = mapped_column(TEXT, index=True)
+    observer: Mapped[str] = mapped_column(TEXT)
+    observed: Mapped[str] = mapped_column(TEXT)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -321,6 +341,9 @@ class Collection(Base):
             ["observed", "workspace_name"],
             ["peers.name", "peers.workspace_name"],
         ),
+        Index("idx_collections_observer", "observer"),
+        Index("idx_collections_observed", "observed"),
+        Index("ix_collections_created_at", "created_at"),
     )
 
 
@@ -334,15 +357,15 @@ class Document(Base):
     content: Mapped[str] = mapped_column(TEXT)
     embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
 
-    observer: Mapped[str] = mapped_column(TEXT, index=True)
-    observed: Mapped[str] = mapped_column(TEXT, index=True)
+    observer: Mapped[str] = mapped_column(TEXT)
+    observed: Mapped[str] = mapped_column(TEXT)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    session_name: Mapped[str] = mapped_column(TEXT, index=True)
+    session_name: Mapped[str] = mapped_column(TEXT)
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
@@ -383,6 +406,10 @@ class Document(Base):
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
         ),
+        Index("idx_documents_observer", "observer"),
+        Index("idx_documents_observed", "observed"),
+        Index("idx_documents_session_name", "session_name"),
+        Index("ix_documents_created_at", "created_at"),
     )
 
 
@@ -395,9 +422,7 @@ class QueueItem(Base):
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
-    session_id: Mapped[str] = mapped_column(
-        ForeignKey("sessions.id"), index=True, nullable=True
-    )
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=True)
     work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
@@ -405,7 +430,12 @@ class QueueItem(Base):
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_queue_created_at", "created_at"),
+        Index("ix_queue_session_id", "session_id"),
     )
 
     def __repr__(self) -> str:
@@ -418,7 +448,7 @@ class ActiveQueueSession(Base):
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
 
-    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True)
+    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
 
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
@@ -430,7 +460,7 @@ class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True, nullable=False
+        ForeignKey("workspaces.name"), nullable=False
     )
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -441,6 +471,7 @@ class WebhookEndpoint(Base):
 
     __table_args__ = (
         CheckConstraint("length(url) <= 2048", name="webhook_endpoint_url_length"),
+        Index("idx_webhook_endpoints_workspace_lookup", "workspace_name"),
     )
 
     def __repr__(self) -> str:

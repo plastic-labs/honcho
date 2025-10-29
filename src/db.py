@@ -48,15 +48,7 @@ SessionLocal = async_sessionmaker(
 table_schema = settings.DB.SCHEMA
 # Note: column_0_N_name expands to include all columns in multi-column constraints
 # e.g., "workspace_id_tenant_id" for a composite constraint on both columns
-meta = MetaData(
-    naming_convention={  # sets default names for constraints if not specified
-        "ix": "ix_%(table_name)s_%(column_0_N_name)s",
-        "uq": "unique_%(table_name)s_%(column_0_N_name)s",
-        "ck": "ck_%(table_name)s_%(constraint_name)s",
-        "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",
-        "pk": "pk_%(table_name)s",
-    }
-)
+meta = MetaData()
 meta.schema = table_schema
 Base = declarative_base(metadata=meta)
 

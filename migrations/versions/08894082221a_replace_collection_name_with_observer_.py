@@ -406,7 +406,10 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 17: Drop the name column from collections
+    # Step 17: Drop the name_length check constraint before dropping the name column from collections
+    if constraint_exists("collections", "name_length", "check", inspector):
+        op.drop_constraint("name_length", "collections", schema=schema)
+
     if column_exists("collections", "name", inspector):
         op.drop_column("collections", "name", schema=schema)
 

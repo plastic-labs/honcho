@@ -16,6 +16,7 @@ from migrations.utils import (
     constraint_exists,
     fk_exists,
     get_schema,
+    index_exists,
     make_column_non_nullable_safe,
 )
 
@@ -47,6 +48,78 @@ def upgrade() -> None:
     if column_exists("active_queue_sessions", "work_unit_key"):
         make_column_non_nullable_safe("active_queue_sessions", "work_unit_key")
 
+    # Make documents.embedding non-nullable
+    if column_exists("documents", "embedding"):
+        make_column_non_nullable_safe("documents", "embedding")
+
+    # Add primary key constraint to message_embeddings.id
+    if column_exists("message_embeddings", "id") and not constraint_exists(
+        "message_embeddings", "pk_message_embeddings", "primary"
+    ):
+        conn.execute(
+            sa.text(
+                f"""
+                ALTER TABLE {schema}.message_embeddings
+                ADD CONSTRAINT pk_message_embeddings
+                PRIMARY KEY (id)
+                """
+            )
+        )
+
+    # Rename indexes on peers table
+    inspector = sa.inspect(conn)
+    index_renames = [
+        ("peers", "ix_users_created_at", "ix_peers_created_at"),
+        ("peers", "ix_users_name", "ix_peers_name"),
+        ("workspaces", "ix_apps_created_at", "ix_workspaces_created_at"),
+        ("workspaces", "ix_apps_name", "ix_workspaces_name"),
+    ]
+    for table_name, old_name, new_name in index_renames:
+        if index_exists(table_name, old_name, inspector):
+            conn.execute(
+                sa.text(f"ALTER INDEX {schema}.{old_name} RENAME TO {new_name}")
+            )
+
+    # Drop redundant indexes
+    if index_exists("workspaces", "ix_apps_public_id", inspector):
+        op.drop_index("ix_apps_public_id", table_name="workspaces", schema=schema)
+    if index_exists("peers", "ix_users_public_id", inspector):
+        op.drop_index("ix_users_public_id", table_name="peers", schema=schema)
+    if index_exists("sessions", "ix_sessions_public_id", inspector):
+        op.drop_index("ix_sessions_public_id", table_name="sessions", schema=schema)
+    if index_exists("documents", "ix_documents_public_id", inspector):
+        op.drop_index("ix_documents_public_id", table_name="documents", schema=schema)
+    if index_exists("collections", "ix_collections_public_id", inspector):
+        op.drop_index(
+            "ix_collections_public_id", table_name="collections", schema=schema
+        )
+
+    # Drop redundant unique constraints
+    if constraint_exists("workspaces", "uq_apps_public_id", "unique", inspector):
+        op.drop_constraint(
+            "uq_apps_public_id", "workspaces", type_="unique", schema=schema
+        )
+
+    if constraint_exists("peers", "uq_users_public_id", "unique", inspector):
+        op.drop_constraint("uq_users_public_id", "peers", type_="unique", schema=schema)
+
+    if constraint_exists("sessions", "uq_sessions_public_id", "unique", inspector):
+        op.drop_constraint(
+            "uq_sessions_public_id", "sessions", type_="unique", schema=schema
+        )
+
+    if constraint_exists(
+        "collections", "uq_collections_public_id", "unique", inspector
+    ):
+        op.drop_constraint(
+            "uq_collections_public_id", "collections", type_="unique", schema=schema
+        )
+
+    if constraint_exists("documents", "uq_documents_public_id", "unique", inspector):
+        op.drop_constraint(
+            "uq_documents_public_id", "documents", type_="unique", schema=schema
+        )
+
     # Add FK constraint on queue.session_id to sessions.id
     if not fk_exists("queue", "fk_queue_session_id"):
         # Add constraint without validation (fast, doesn't scan)
@@ -68,26 +141,77 @@ def upgrade() -> None:
             )
         )
 
-    # Make documents.embedding non-nullable
-    if column_exists("documents", "embedding"):
-        make_column_non_nullable_safe("documents", "embedding")
-
-    # Add primary key constraint to message_embeddings.id
-    if column_exists("message_embeddings", "id") and not constraint_exists(
-        "message_embeddings", "pk_message_embeddings", "primary"
-    ):
-        conn.execute(
-            sa.text(
-                f"""
-                ALTER TABLE {schema}.message_embeddings
-                ADD CONSTRAINT pk_message_embeddings
-                PRIMARY KEY (id)
-                """
-            )
-        )
-
 
 def downgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+
+    # First, drop the FK constraint (we'll recreate it later if needed)
+    if fk_exists("queue", "fk_queue_session_id"):
+        op.drop_constraint(
+            "fk_queue_session_id",
+            "queue",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    # Recreate the redundant unique constraints
+    if not constraint_exists("sessions", "uq_sessions_public_id", "unique", inspector):
+        op.create_unique_constraint(
+            "uq_sessions_public_id", "sessions", ["id"], schema=schema
+        )
+    if not constraint_exists("peers", "uq_users_public_id", "unique", inspector):
+        op.create_unique_constraint(
+            "uq_users_public_id", "peers", ["id"], schema=schema
+        )
+    if not constraint_exists("workspaces", "uq_apps_public_id", "unique", inspector):
+        op.create_unique_constraint(
+            "uq_apps_public_id", "workspaces", ["id"], schema=schema
+        )
+
+    if not constraint_exists(
+        "collections", "uq_collections_public_id", "unique", inspector
+    ):
+        op.create_unique_constraint(
+            "uq_collections_public_id", "collections", ["id"], schema=schema
+        )
+    if not constraint_exists(
+        "documents", "uq_documents_public_id", "unique", inspector
+    ):
+        op.create_unique_constraint(
+            "uq_documents_public_id", "documents", ["id"], schema=schema
+        )
+
+    # Recreate the redundant indexes
+    if not index_exists("sessions", "ix_sessions_public_id", inspector):
+        op.create_index("ix_sessions_public_id", "sessions", ["id"], schema=schema)
+    if not index_exists("peers", "ix_users_public_id", inspector):
+        op.create_index("ix_users_public_id", "peers", ["id"], schema=schema)
+    if not index_exists("workspaces", "ix_apps_public_id", inspector):
+        op.create_index("ix_apps_public_id", "workspaces", ["id"], schema=schema)
+    if not index_exists("documents", "ix_documents_public_id", inspector):
+        op.create_index("ix_documents_public_id", "documents", ["id"], schema=schema)
+    if not index_exists("collections", "ix_collections_public_id", inspector):
+        op.create_index(
+            "ix_collections_public_id",
+            "collections",
+            ["id"],
+            schema=schema,
+        )
+
+    # Rename indexes on peers table back to original names
+    index_renames = [
+        ("peers", "ix_peers_created_at", "ix_users_created_at"),
+        ("peers", "ix_peers_name", "ix_users_name"),
+        ("workspaces", "ix_workspaces_created_at", "ix_apps_created_at"),
+        ("workspaces", "ix_workspaces_name", "ix_apps_name"),
+    ]
+    for table_name, new_name, old_name in index_renames:
+        if index_exists(table_name, new_name, inspector):
+            conn.execute(
+                sa.text(f"ALTER INDEX {schema}.{new_name} RENAME TO {old_name}")
+            )
+
     # Drop primary key constraint from message_embeddings.id
     if constraint_exists("message_embeddings", "pk_message_embeddings", "primary"):
         op.drop_constraint(
@@ -100,15 +224,6 @@ def downgrade() -> None:
             "documents",
             "embedding",
             nullable=True,
-            schema=schema,
-        )
-
-    # Drop FK constraint on queue.session_id
-    if fk_exists("queue", "fk_queue_session_id"):
-        op.drop_constraint(
-            "fk_queue_session_id",
-            "queue",
-            type_="foreignkey",
             schema=schema,
         )
 

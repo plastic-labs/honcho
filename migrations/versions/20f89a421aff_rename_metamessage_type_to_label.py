@@ -11,6 +11,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from migrations.utils import constraint_exists
+
 # revision identifiers, used by Alembic.
 revision: str = "20f89a421aff"
 down_revision: str | None = "556a16564f50"
@@ -61,7 +63,8 @@ def upgrade() -> None:
     )
 
     # Rename check constraint
-    op.execute("ALTER TABLE metamessages DROP CONSTRAINT metamessage_type_length;")
+    if constraint_exists("metamessages", "metamessage_type_length", "check"):
+        op.execute("ALTER TABLE metamessages DROP CONSTRAINT metamessage_type_length;")
     op.create_check_constraint("label_length", "metamessages", "length(label) <= 512")
     # ### end Alembic commands ###
 
