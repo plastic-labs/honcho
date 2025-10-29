@@ -184,8 +184,7 @@ async def consolidate_call(
     prompt = consolidation_prompt(representation)
 
     response = await honcho_llm_call(
-        provider=settings.DREAM.PROVIDER,
-        model=settings.DREAM.MODEL,
+        llm_settings=settings.DREAM,
         prompt=prompt,
         max_tokens=settings.DREAM.MAX_OUTPUT_TOKENS,
         track_name="Dream Call",

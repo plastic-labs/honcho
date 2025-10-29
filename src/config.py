@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, Protocol
 
 import tomllib
 from dotenv import load_dotenv
@@ -38,6 +38,15 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
 
 # Load TOML config once
 TOML_CONFIG = load_toml_config()
+
+
+class LLMComponentSettings(Protocol):
+    """Protocol for settings classes that use LLM providers with backup support."""
+
+    PROVIDER: SupportedProviders
+    MODEL: str
+    BACKUP_PROVIDER: SupportedProviders | None
+    BACKUP_MODEL: str | None
 
 
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -198,6 +207,8 @@ class DeriverSettings(HonchoSettings):
 
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     # Thinking budget tokens are only applied when using Anthropic as provider
@@ -220,6 +231,15 @@ class DeriverSettings(HonchoSettings):
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
     @model_validator(mode="after")
+    def validate_backup_configuration(self):
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
@@ -235,8 +255,19 @@ class PeerCardSettings(HonchoSettings):
 
     PROVIDER: SupportedProviders = "openai"
     MODEL: str = "gpt-5-nano-2025-08-07"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
     # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=1000, le=10_000)] = 4000
+
+    @model_validator(mode="after")
+    def validate_backup_configuration(self):
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
 
 
 class DialecticSettings(HonchoSettings):
@@ -244,6 +275,8 @@ class DialecticSettings(HonchoSettings):
 
     PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-sonnet-4-20250514"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
 
     PERFORM_QUERY_GENERATION: bool = False
     QUERY_GENERATION_PROVIDER: SupportedProviders = "groq"
@@ -262,6 +295,15 @@ class DialecticSettings(HonchoSettings):
         int, Field(default=100_000, gt=10_000, le=200_000)
     ] = 100_000
 
+    @model_validator(mode="after")
+    def validate_backup_configuration(self):
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
+
 
 class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
@@ -273,10 +315,21 @@ class SummarySettings(HonchoSettings):
 
     PROVIDER: SupportedProviders = "openai"
     MODEL: str = "gpt-4o-mini-2024-07-18"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
+
+    @model_validator(mode="after")
+    def validate_backup_configuration(self):
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
 
 
 class WebhookSettings(HonchoSettings):
@@ -305,7 +358,18 @@ class DreamSettings(HonchoSettings):
     # LLM settings for dream processing
     PROVIDER: SupportedProviders = "openai"
     MODEL: str = "gpt-4o-mini-2024-07-18"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+
+    @model_validator(mode="after")
+    def validate_backup_configuration(self):
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
 
 
 class AppSettings(HonchoSettings):
