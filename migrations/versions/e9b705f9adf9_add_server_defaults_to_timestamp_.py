@@ -1,7 +1,7 @@
 """add server defaults to timestamp boolean and jsonb columns
 
 Revision ID: e9b705f9adf9
-Revises: bb6fb3a7a643
+Revises: 066e87ca5b07
 Create Date: 2025-10-29 12:08:36.803611
 
 """
@@ -15,7 +15,7 @@ from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "e9b705f9adf9"
-down_revision: str | None = "bb6fb3a7a643"
+down_revision: str | None = "066e87ca5b07"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
