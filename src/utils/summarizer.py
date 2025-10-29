@@ -13,6 +13,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
+from src.utils.config_helpers import get_summary_config
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric
 
@@ -194,9 +195,19 @@ async def summarize_if_needed(
         workspace_name: The workspace name
         session_name: The session name
         message_id: The message ID
+        message_seq_in_session: The sequence number of the message in the session
+        message_public_id: The public ID of the message
     """
-    should_create_long: bool = message_seq_in_session % MESSAGES_PER_LONG_SUMMARY == 0
-    should_create_short: bool = message_seq_in_session % MESSAGES_PER_SHORT_SUMMARY == 0
+    # Resolve summary configuration with hierarchical fallback
+    async with tracked_db("resolve_summary_config") as db:
+        session = await crud.get_session(db, session_name, workspace_name)
+        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
+        messages_per_short_summary, messages_per_long_summary = get_summary_config(
+            session, workspace
+        )
+
+    should_create_long: bool = message_seq_in_session % messages_per_long_summary == 0
+    should_create_short: bool = message_seq_in_session % messages_per_short_summary == 0
 
     # If both summaries need to be created, run them in parallel with separate database sessions
     if should_create_long and should_create_short:

@@ -10,6 +10,7 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import get_affected_dream_keys, get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
+from src.utils.config_helpers import get_summary_config
 from src.utils.queue_payload import create_payload
 from src.utils.work_unit import get_work_unit_key
 
@@ -92,6 +93,14 @@ async def handle_session(
         workspace_name=workspace_name,
     )
 
+    # Fetch workspace for configuration resolution
+    workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
+
+    # Resolve summary configuration with hierarchical fallback
+    messages_per_short_summary, messages_per_long_summary = get_summary_config(
+        session, workspace
+    )
+
     deriver_disabled = bool(session.configuration.get("deriver_disabled"))
 
     peers_with_configuration = await get_peers_with_configuration(
@@ -108,6 +117,8 @@ async def handle_session(
                 peers_with_configuration,
                 session.id,
                 deriver_disabled=deriver_disabled,
+                messages_per_short_summary=messages_per_short_summary,
+                messages_per_long_summary=messages_per_long_summary,
             )
         )
     return queue_records
@@ -246,6 +257,8 @@ async def generate_queue_records(
     session_id: str,
     *,
     deriver_disabled: bool,
+    messages_per_short_summary: int,
+    messages_per_long_summary: int,
 ) -> list[dict[str, Any]]:
     """
     Process a single message and generate queue records based on configurations.
@@ -256,7 +269,8 @@ async def generate_queue_records(
         deriver_disabled: Whether deriver is disabled for the session
         peers_with_configuration: Dictionary of peer configurations
         session_id: Session ID
-        message_seq_map: Optional pre-fetched mapping of message_id to sequence number
+        messages_per_short_summary: Number of messages per short summary
+        messages_per_long_summary: Number of messages per long summary
 
     Returns:
         List of queue records for this message
@@ -277,8 +291,8 @@ async def generate_queue_records(
     records: list[dict[str, Any]] = []
 
     if settings.SUMMARY.ENABLED and (
-        message_seq_in_session % settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY == 0
-        or message_seq_in_session % settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY == 0
+        message_seq_in_session % messages_per_short_summary == 0
+        or message_seq_in_session % messages_per_long_summary == 0
     ):
         records.append(
             create_summary_record(

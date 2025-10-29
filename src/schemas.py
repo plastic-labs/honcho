@@ -30,8 +30,37 @@ class WorkspaceCreate(WorkspaceBase):
     ]
     metadata: dict[str, Any] = {}
     configuration: dict[str, Any] = {}
+    messages_per_short_summary: int | None = Field(
+        default=None,
+        ge=10,
+        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
+    )
+    messages_per_long_summary: int | None = Field(
+        default=None,
+        ge=20,
+        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
+    )
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
+
+    @model_validator(mode="after")
+    def validate_summary_thresholds(self) -> Self:
+        """Validate that short summary threshold <= long summary threshold."""
+        short = self.messages_per_short_summary
+        long = self.messages_per_long_summary
+
+        if short is not None and long is not None and short > long:
+            raise ValueError(
+                "messages_per_short_summary must be less than messages_per_long_summary"
+            )
+
+        # Merge summary config into configuration dict if provided
+        if short is not None:
+            self.configuration["messages_per_short_summary"] = short
+        if long is not None:
+            self.configuration["messages_per_long_summary"] = long
+
+        return self
 
 
 class WorkspaceGet(WorkspaceBase):
@@ -41,6 +70,38 @@ class WorkspaceGet(WorkspaceBase):
 class WorkspaceUpdate(WorkspaceBase):
     metadata: dict[str, Any] | None = None
     configuration: dict[str, Any] | None = None
+    messages_per_short_summary: int | None = Field(
+        default=None,
+        ge=10,
+        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
+    )
+    messages_per_long_summary: int | None = Field(
+        default=None,
+        ge=20,
+        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
+    )
+
+    @model_validator(mode="after")
+    def validate_summary_thresholds(self) -> Self:
+        """Validate that short summary threshold <= long summary threshold."""
+        short = self.messages_per_short_summary
+        long = self.messages_per_long_summary
+
+        if short is not None and long is not None and short > long:
+            raise ValueError(
+                "messages_per_short_summary must be less than messages_per_long_summary"
+            )
+
+        # Merge summary config into configuration dict if provided
+        if short is not None or long is not None:
+            if self.configuration is None:
+                self.configuration = {}
+            if short is not None:
+                self.configuration["messages_per_short_summary"] = short
+            if long is not None:
+                self.configuration["messages_per_long_summary"] = long
+
+        return self
 
 
 class Workspace(WorkspaceBase):
@@ -230,8 +291,40 @@ class SessionCreate(SessionBase):
     metadata: dict[str, Any] | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
     configuration: dict[str, Any] | None = None
+    messages_per_short_summary: int | None = Field(
+        default=None,
+        ge=10,
+        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
+    )
+    messages_per_long_summary: int | None = Field(
+        default=None,
+        ge=20,
+        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
+    )
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
+
+    @model_validator(mode="after")
+    def validate_summary_thresholds(self) -> Self:
+        """Validate that short summary threshold <= long summary threshold."""
+        short = self.messages_per_short_summary
+        long = self.messages_per_long_summary
+
+        if short is not None and long is not None and short > long:
+            raise ValueError(
+                "messages_per_short_summary must be less than messages_per_long_summary"
+            )
+
+        # Merge summary config into configuration dict if provided
+        if short is not None or long is not None:
+            if self.configuration is None:
+                self.configuration = {}
+            if short is not None:
+                self.configuration["messages_per_short_summary"] = short
+            if long is not None:
+                self.configuration["messages_per_long_summary"] = long
+
+        return self
 
 
 class SessionGet(SessionBase):
@@ -241,6 +334,38 @@ class SessionGet(SessionBase):
 class SessionUpdate(SessionBase):
     metadata: dict[str, Any] | None = None
     configuration: dict[str, Any] | None = None
+    messages_per_short_summary: int | None = Field(
+        default=None,
+        ge=10,
+        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
+    )
+    messages_per_long_summary: int | None = Field(
+        default=None,
+        ge=20,
+        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
+    )
+
+    @model_validator(mode="after")
+    def validate_summary_thresholds(self) -> Self:
+        """Validate that short summary threshold <= long summary threshold."""
+        short = self.messages_per_short_summary
+        long = self.messages_per_long_summary
+
+        if short is not None and long is not None and short > long:
+            raise ValueError(
+                "messages_per_short_summary must be less than messages_per_long_summary"
+            )
+
+        # Merge summary config into configuration dict if provided
+        if short is not None or long is not None:
+            if self.configuration is None:
+                self.configuration = {}
+            if short is not None:
+                self.configuration["messages_per_short_summary"] = short
+            if long is not None:
+                self.configuration["messages_per_long_summary"] = long
+
+        return self
 
 
 class Session(SessionBase):
