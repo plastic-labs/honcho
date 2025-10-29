@@ -193,21 +193,33 @@ async def search(
         peer_name = filters["peer_perspective"]
         # Remove from filters dict so apply_filter doesn't try to handle it
         filters = {k: v for k, v in filters.items() if k != "peer_perspective"}
+        # Safety: peer_perspective must be scoped to a workspace
+        if not filters or (
+            "workspace_id" not in filters and "workspace_name" not in filters
+        ):
+            raise ValidationException(
+                "peer_perspective requires a workspace scope (workspace_id or workspace_name)."
+            )
 
         # Join with session_peers_table to get messages from sessions the peer was in
         # Only include messages created during the time window the peer was active
-        stmt = stmt.join(
-            session_peers_table,
-            and_(
-                models.Message.session_name == session_peers_table.c.session_name,
-                models.Message.workspace_name == session_peers_table.c.workspace_name,
-                models.Message.created_at >= session_peers_table.c.joined_at,
-                or_(
-                    session_peers_table.c.left_at.is_(None),
-                    models.Message.created_at <= session_peers_table.c.left_at,
+        stmt = (
+            stmt.join(
+                session_peers_table,
+                and_(
+                    models.Message.session_name == session_peers_table.c.session_name,
+                    models.Message.workspace_name
+                    == session_peers_table.c.workspace_name,
+                    models.Message.created_at >= session_peers_table.c.joined_at,
+                    or_(
+                        session_peers_table.c.left_at.is_(None),
+                        models.Message.created_at <= session_peers_table.c.left_at,
+                    ),
                 ),
-            ),
-        ).where(session_peers_table.c.peer_name == peer_name)
+            )
+            .where(session_peers_table.c.peer_name == peer_name)
+            .distinct()
+        )
 
     stmt = apply_filter(stmt, models.Message, filters)
 
