@@ -50,106 +50,102 @@ def upgrade() -> None:
     )
 
     # Step 4: Backfill workspace_name from payload in batches
-    op.execute(
-        sa.text(
-            f"""
-            DO $$
-            DECLARE
-                rows_updated INT;
-            BEGIN
-                LOOP
-                    UPDATE "{schema}".queue
-                    SET workspace_name = payload->>'workspace_name'
-                    WHERE id IN (
-                        SELECT id FROM "{schema}".queue
-                        WHERE workspace_name IS NULL
-                        LIMIT 1000
-                    );
-
-                    GET DIAGNOSTICS rows_updated = ROW_COUNT;
-                    EXIT WHEN rows_updated = 0;
-                END LOOP;
-            END $$;
-            """
+    conn = op.get_bind()
+    batch_size = 5000
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM "{schema}".queue
+                    WHERE workspace_name IS NULL
+                    ORDER BY id
+                    LIMIT :batch_size
+                )
+                UPDATE "{schema}".queue q
+                SET workspace_name = q.payload->>'workspace_name'
+                FROM batch
+                WHERE q.id = batch.id
+                AND q.workspace_name IS NULL
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 5: Backfill message_id from payload in batches (only where it exists)
-    op.execute(
-        sa.text(
-            f"""
-            DO $$
-            DECLARE
-                rows_updated INT;
-            BEGIN
-                LOOP
-                    UPDATE "{schema}".queue
-                    SET message_id = (payload->>'message_id')::bigint
-                    WHERE id IN (
-                        SELECT id FROM "{schema}".queue
-                        WHERE message_id IS NULL
-                          AND payload ? 'message_id'
-                          AND payload->>'message_id' IS NOT NULL
-                        LIMIT 1000
-                    );
-
-                    GET DIAGNOSTICS rows_updated = ROW_COUNT;
-                    EXIT WHEN rows_updated = 0;
-                END LOOP;
-            END $$;
-            """
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM "{schema}".queue
+                    WHERE message_id IS NULL
+                      AND payload ? 'message_id'
+                      AND payload->>'message_id' IS NOT NULL
+                    ORDER BY id
+                    LIMIT :batch_size
+                )
+                UPDATE "{schema}".queue q
+                SET message_id = (q.payload->>'message_id')::bigint
+                FROM batch
+                WHERE q.id = batch.id
+                AND q.message_id IS NULL
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 6: Remove workspace_name from JSONB payloads in batches
-    op.execute(
-        sa.text(
-            f"""
-            DO $$
-            DECLARE
-                rows_updated INT;
-            BEGIN
-                LOOP
-                    UPDATE "{schema}".queue
-                    SET payload = payload - 'workspace_name'
-                    WHERE id IN (
-                        SELECT id FROM "{schema}".queue
-                        WHERE payload ? 'workspace_name'
-                        LIMIT 1000
-                    );
-
-                    GET DIAGNOSTICS rows_updated = ROW_COUNT;
-                    EXIT WHEN rows_updated = 0;
-                END LOOP;
-            END $$;
-            """
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM "{schema}".queue
+                    WHERE payload ? 'workspace_name'
+                    ORDER BY id
+                    LIMIT :batch_size
+                )
+                UPDATE "{schema}".queue q
+                SET payload = q.payload - 'workspace_name'
+                FROM batch
+                WHERE q.id = batch.id
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 7: Remove message_id from JSONB payloads in batches
-    op.execute(
-        sa.text(
-            f"""
-            DO $$
-            DECLARE
-                rows_updated INT;
-            BEGIN
-                LOOP
-                    UPDATE "{schema}".queue
-                    SET payload = payload - 'message_id'
-                    WHERE id IN (
-                        SELECT id FROM "{schema}".queue
-                        WHERE payload ? 'message_id'
-                        LIMIT 1000
-                    );
-
-                    GET DIAGNOSTICS rows_updated = ROW_COUNT;
-                    EXIT WHEN rows_updated = 0;
-                END LOOP;
-            END $$;
-            """
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM "{schema}".queue
+                    WHERE payload ? 'message_id'
+                    ORDER BY id
+                    LIMIT :batch_size
+                )
+                UPDATE "{schema}".queue q
+                SET payload = q.payload - 'message_id'
+                FROM batch
+                WHERE q.id = batch.id
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 8: Make workspace_name non-nullable
     op.alter_column("queue", "workspace_name", nullable=False, schema=schema)
@@ -234,57 +230,56 @@ def downgrade() -> None:
         op.drop_constraint("fk_queue_workspace_name", "queue", schema=schema)
 
     # Restore workspace_name and message_id to payload in batches
-    if column_exists("queue", "workspace_name", inspector):
-        op.execute(
-            sa.text(
-                f"""
-                DO $$
-                DECLARE
-                    rows_updated INT;
-                BEGIN
-                    LOOP
-                        UPDATE "{schema}".queue
-                        SET payload = jsonb_set(payload, '{{workspace_name}}', to_jsonb(workspace_name))
-                        WHERE id IN (
-                            SELECT id FROM "{schema}".queue
-                            WHERE workspace_name IS NOT NULL
-                              AND NOT (payload ? 'workspace_name')
-                            LIMIT 1000
-                        );
+    conn = op.get_bind()
+    batch_size = 5000
 
-                        GET DIAGNOSTICS rows_updated = ROW_COUNT;
-                        EXIT WHEN rows_updated = 0;
-                    END LOOP;
-                END $$;
-                """
+    if column_exists("queue", "workspace_name", inspector):
+        while True:
+            result = conn.execute(
+                sa.text(
+                    f"""
+                    WITH batch AS (
+                        SELECT id
+                        FROM "{schema}".queue
+                        WHERE workspace_name IS NOT NULL
+                          AND NOT (payload ? 'workspace_name')
+                        ORDER BY id
+                        LIMIT :batch_size
+                    )
+                    UPDATE "{schema}".queue q
+                    SET payload = jsonb_set(q.payload, '{{workspace_name}}', to_jsonb(q.workspace_name))
+                    FROM batch
+                    WHERE q.id = batch.id
+                    """
+                ),
+                {"batch_size": batch_size},
             )
-        )
+            if result.rowcount == 0:
+                break
 
     if column_exists("queue", "message_id", inspector):
-        op.execute(
-            sa.text(
-                f"""
-                DO $$
-                DECLARE
-                    rows_updated INT;
-                BEGIN
-                    LOOP
-                        UPDATE "{schema}".queue
-                        SET payload = jsonb_set(payload, '{{message_id}}', to_jsonb(message_id))
-                        WHERE id IN (
-                            SELECT id FROM "{schema}".queue
-                            WHERE message_id IS NOT NULL
-                              AND NOT (payload ? 'message_id')
-                            LIMIT 1000
-                        );
-
-                        GET DIAGNOSTICS rows_updated = ROW_COUNT;
-                        EXIT WHEN rows_updated = 0;
-                    END LOOP;
-                END $$;
-                """
+        while True:
+            result = conn.execute(
+                sa.text(
+                    f"""
+                    WITH batch AS (
+                        SELECT id
+                        FROM "{schema}".queue
+                        WHERE message_id IS NOT NULL
+                          AND NOT (payload ? 'message_id')
+                        ORDER BY id
+                        LIMIT :batch_size
+                    )
+                    UPDATE "{schema}".queue q
+                    SET payload = jsonb_set(q.payload, '{{message_id}}', to_jsonb(q.message_id))
+                    FROM batch
+                    WHERE q.id = batch.id
+                    """
+                ),
+                {"batch_size": batch_size},
             )
-        )
+            if result.rowcount == 0:
+                break
 
     # Drop columns
     if column_exists("queue", "message_id", inspector):
