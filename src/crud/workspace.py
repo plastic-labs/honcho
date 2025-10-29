@@ -132,9 +132,8 @@ async def update_workspace(
 
     if workspace.configuration is not None:
         # Merge configuration instead of replacing to preserve existing keys
-        current_config = honcho_workspace.configuration or {}
-        current_config.update(workspace.configuration)
-        honcho_workspace.configuration = current_config
+        base_config = (honcho_workspace.configuration or {}).copy()
+        honcho_workspace.configuration = {**base_config, **workspace.configuration}
 
     await db.commit()
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)

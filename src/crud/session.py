@@ -218,9 +218,8 @@ async def update_session(
 
     if session.configuration is not None:
         # Merge configuration instead of replacing to preserve existing keys
-        current_config = honcho_session.configuration or {}
-        current_config.update(session.configuration)
-        honcho_session.configuration = current_config
+        base_config = (honcho_session.configuration or {}).copy()
+        honcho_session.configuration = {**base_config, **session.configuration}
 
     await db.commit()
     logger.debug("Session %s updated successfully", session_name)

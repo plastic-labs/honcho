@@ -27,7 +27,7 @@ def get_summary_config(
         Tuple of (messages_per_short_summary, messages_per_long_summary)
 
     Raises:
-        ValueError: If resolved values are invalid (negative, zero, or short > long)
+        ValueError: If resolved values are invalid (negative, zero, or short >= long)
     """
     # Default to global settings
     short_summary = settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY
@@ -35,18 +35,17 @@ def get_summary_config(
 
     # Check workspace configuration
     if workspace is not None:
-        workspace_short = workspace.configuration.get("messages_per_short_summary")
-        workspace_long = workspace.configuration.get("messages_per_long_summary")
-
+        wconf = workspace.configuration or {}
+        workspace_short = wconf.get("messages_per_short_summary")
+        workspace_long = wconf.get("messages_per_long_summary")
         if workspace_short is not None:
             short_summary = workspace_short
         if workspace_long is not None:
             long_summary = workspace_long
-
     # Check session configuration (takes precedence)
-    session_short = session.configuration.get("messages_per_short_summary")
-    session_long = session.configuration.get("messages_per_long_summary")
-
+    sconf = session.configuration or {}
+    session_short = sconf.get("messages_per_short_summary")
+    session_long = sconf.get("messages_per_long_summary")
     if session_short is not None:
         short_summary = session_short
     if session_long is not None:

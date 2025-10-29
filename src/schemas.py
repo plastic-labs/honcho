@@ -49,7 +49,7 @@ class WorkspaceCreate(WorkspaceBase):
         short = self.messages_per_short_summary
         long = self.messages_per_long_summary
 
-        if short is not None and long is not None and short > long:
+        if short is not None and long is not None and short >= long:
             raise ValueError(
                 "messages_per_short_summary must be less than messages_per_long_summary"
             )
@@ -87,7 +87,7 @@ class WorkspaceUpdate(WorkspaceBase):
         short = self.messages_per_short_summary
         long = self.messages_per_long_summary
 
-        if short is not None and long is not None and short > long:
+        if short is not None and long is not None and short >= long:
             raise ValueError(
                 "messages_per_short_summary must be less than messages_per_long_summary"
             )
@@ -310,7 +310,7 @@ class SessionCreate(SessionBase):
         short = self.messages_per_short_summary
         long = self.messages_per_long_summary
 
-        if short is not None and long is not None and short > long:
+        if short is not None and long is not None and short >= long:
             raise ValueError(
                 "messages_per_short_summary must be less than messages_per_long_summary"
             )
@@ -351,7 +351,7 @@ class SessionUpdate(SessionBase):
         short = self.messages_per_short_summary
         long = self.messages_per_long_summary
 
-        if short is not None and long is not None and short > long:
+        if short is not None and long is not None and short >= long:
             raise ValueError(
                 "messages_per_short_summary must be less than messages_per_long_summary"
             )
