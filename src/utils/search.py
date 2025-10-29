@@ -8,13 +8,14 @@ of each item's rank in each list, then summing these reciprocal ranks.
 import re
 from typing import Any, TypeVar
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
+from src.models import session_peers_table
 from src.utils.filter import apply_filter
 
 T = TypeVar("T")
@@ -173,7 +174,9 @@ async def search(
     Args:
         db: Database session
         query: Search query to match against message content
-        filters: Optional filters to scope search
+        filters: Optional filters to scope search. Special filter 'peer_perspective' will search
+                across all messages from sessions that the peer is/was a member of, filtered
+                by the time window when they were actually in the session.
         limit: Maximum number of results to return
 
     Returns:
@@ -184,6 +187,28 @@ async def search(
     """
     # Base query conditions
     stmt = select(models.Message)
+
+    # Handle special peer_perspective filter
+    if filters and "peer_perspective" in filters:
+        peer_name = filters["peer_perspective"]
+        # Remove from filters dict so apply_filter doesn't try to handle it
+        filters = {k: v for k, v in filters.items() if k != "peer_perspective"}
+
+        # Join with session_peers_table to get messages from sessions the peer was in
+        # Only include messages created during the time window the peer was active
+        stmt = stmt.join(
+            session_peers_table,
+            and_(
+                models.Message.session_name == session_peers_table.c.session_name,
+                models.Message.workspace_name == session_peers_table.c.workspace_name,
+                models.Message.created_at >= session_peers_table.c.joined_at,
+                or_(
+                    session_peers_table.c.left_at.is_(None),
+                    models.Message.created_at <= session_peers_table.c.left_at,
+                ),
+            ),
+        ).where(session_peers_table.c.peer_name == peer_name)
+
     stmt = apply_filter(stmt, models.Message, filters)
 
     search_results: list[list[models.Message]] = []
