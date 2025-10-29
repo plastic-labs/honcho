@@ -173,7 +173,6 @@ async def process_representation_tasks_batch(
         observed=observed,
     )
 
-    '''
     reasoner = XRReasoner(
         representation_manager=representation_manager,
         ctx=messages,
@@ -199,6 +198,7 @@ async def process_representation_tasks_batch(
         formatted_history,
         speaker_peer_card,
     )
+    '''
 
     # Display final observations in a beautiful tree
     log_representation(final_observations)
