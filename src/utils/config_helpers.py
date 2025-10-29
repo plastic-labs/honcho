@@ -57,5 +57,9 @@ def get_summary_config(
         raise ValueError(f"Invalid messages_per_short_summary: {short_summary}")
     if long_summary <= 0:
         raise ValueError(f"Invalid messages_per_long_summary: {long_summary}")
+    if short_summary >= long_summary:
+        raise ValueError(
+            f"messages_per_short_summary ({short_summary}) must be < messages_per_long_summary ({long_summary})"
+        )
 
     return short_summary, long_summary
