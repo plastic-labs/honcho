@@ -53,7 +53,7 @@ def upgrade() -> None:
             connection.execute(
                 text(
                     f"""
-                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active) VALUES (:session_id, '__global_observations__', :workspace_name, true) ON CONFLICT DO NOTHING
+                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active, metadata, internal_metadata, configuration, created_at) VALUES (:session_id, '__global_observations__', :workspace_name, true, '{{}}', '{{}}', '{{}}', NOW()) ON CONFLICT DO NOTHING
                     """
                 ),
                 {"session_id": session_id, "workspace_name": workspace_name},
