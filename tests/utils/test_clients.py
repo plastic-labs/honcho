@@ -32,7 +32,6 @@ from src.utils.clients import (
     handle_streaming_response,
     honcho_llm_call,
     honcho_llm_call_inner,
-    with_langfuse,
 )
 
 
@@ -87,24 +86,6 @@ class TestLLMCallResponse:
         chunk = HonchoLLMCallStreamChunk(content="test")
         assert isinstance(chunk.finish_reasons, list)
         assert chunk.finish_reasons == []
-
-
-class TestLangfuseIntegration:
-    """Tests for Langfuse integration"""
-
-    @pytest.mark.asyncio
-    async def test_with_langfuse_decorator(self):
-        """Test Langfuse decorator functionality"""
-
-        @with_langfuse
-        async def test_func():
-            return "decorated"
-
-        # Mock the langfuse client
-        with patch("src.utils.clients.lf") as mock_lf:
-            result = await test_func()
-            assert result == "decorated"
-            mock_lf.start_as_current_generation.assert_called_once_with(name="LLM Call")
 
 
 @pytest.mark.asyncio

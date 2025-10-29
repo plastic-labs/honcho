@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any
@@ -80,7 +81,7 @@ class DreamScheduler:
         cls._instance = None
         cls._initialized = False
 
-    def schedule_dream(
+    async def schedule_dream(
         self,
         work_unit_key: str,
         workspace_name: str,
@@ -95,7 +96,7 @@ class DreamScheduler:
             return
 
         # Cancel any existing dream for this collection
-        self.cancel_dream(work_unit_key)
+        await self.cancel_dream(work_unit_key)
 
         task = asyncio.create_task(
             self._delayed_dream(
@@ -110,12 +111,14 @@ class DreamScheduler:
         self.pending_dreams[work_unit_key] = task
         task.add_done_callback(lambda t: self.pending_dreams.pop(work_unit_key, None))
 
-    def cancel_dream(self, work_unit_key: str) -> bool:
+    async def cancel_dream(self, work_unit_key: str) -> bool:
         """Cancel a pending dream. Returns True if a dream was cancelled."""
         if work_unit_key in self.pending_dreams:
             task = self.pending_dreams.pop(work_unit_key)
             task.cancel()
-            logger.debug(f"Cancelled pending dream for {work_unit_key}")
+            # Wait for the task to actually finish (including its done callback)
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
             return True
         return False
 
@@ -331,7 +334,7 @@ async def check_and_schedule_dream(
                 }
             )
 
-            dream_scheduler.schedule_dream(
+            await dream_scheduler.schedule_dream(
                 collection_work_unit_key,
                 collection.workspace_name,
                 current_document_count,
