@@ -141,10 +141,44 @@ def upgrade() -> None:
             )
         )
 
+    # Create missing indexes
+    if not index_exists("peers", "ix_peers_workspace_name", inspector):
+        op.create_index(
+            "ix_peers_workspace_name", "peers", ["workspace_name"], schema=schema
+        )
+
+    if not index_exists("collections", "ix_collections_workspace_name", inspector):
+        op.create_index(
+            "ix_collections_workspace_name",
+            "collections",
+            ["workspace_name"],
+            schema=schema,
+        )
+
+    if not index_exists("documents", "ix_documents_workspace_name", inspector):
+        op.create_index(
+            "ix_documents_workspace_name",
+            "documents",
+            ["workspace_name"],
+            schema=schema,
+        )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+
+    if index_exists("documents", "ix_documents_workspace_name", inspector):
+        op.drop_index(
+            "ix_documents_workspace_name", table_name="documents", schema=schema
+        )
+
+    if index_exists("peers", "ix_peers_workspace_name", inspector):
+        op.drop_index("ix_peers_workspace_name", table_name="peers", schema=schema)
+    if index_exists("collections", "ix_collections_workspace_name", inspector):
+        op.drop_index(
+            "ix_collections_workspace_name", table_name="collections", schema=schema
+        )
 
     # First, drop the FK constraint (we'll recreate it later if needed)
     if fk_exists("queue", "fk_queue_session_id"):

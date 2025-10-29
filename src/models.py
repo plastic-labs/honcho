@@ -145,7 +145,9 @@ class Peer(Base):
 class Session(Base):
     __tablename__: str = "sessions"
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
-    name: Mapped[str] = mapped_column(TEXT, index=True)
+    name: Mapped[str] = mapped_column(
+        TEXT,
+    )
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -156,7 +158,7 @@ class Session(Base):
     )
     messages = relationship("Message", back_populates="session")
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True, nullable=False
+        ForeignKey("workspaces.name"), nullable=False
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
@@ -319,7 +321,7 @@ class Collection(Base):
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+        ForeignKey("workspaces.name"),
     )
 
     __table_args__ = (
@@ -344,6 +346,7 @@ class Collection(Base):
         Index("idx_collections_observer", "observer"),
         Index("idx_collections_observed", "observed"),
         Index("ix_collections_created_at", "created_at"),
+        Index("ix_collections_workspace_name", "workspace_name"),
     )
 
 
@@ -362,9 +365,7 @@ class Document(Base):
 
     observer: Mapped[str] = mapped_column(TEXT)
     observed: Mapped[str] = mapped_column(TEXT)
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
-    )
+    workspace_name: Mapped[str] = mapped_column(ForeignKey("workspaces.name"))
     session_name: Mapped[str] = mapped_column(TEXT)
     collection = relationship("Collection", back_populates="documents")
 
@@ -410,6 +411,7 @@ class Document(Base):
         Index("idx_documents_observed", "observed"),
         Index("idx_documents_session_name", "session_name"),
         Index("ix_documents_created_at", "created_at"),
+        Index("ix_documents_workspace_name", "workspace_name"),
     )
 
 
