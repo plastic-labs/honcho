@@ -51,13 +51,25 @@ session_peers_table = Table(
         nullable=False,
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
-    Column("configuration", JSONB, default=dict, nullable=False),
-    Column("internal_metadata", JSONB, default=dict, nullable=False),
+    Column(
+        "configuration",
+        JSONB,
+        default=dict,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    ),
+    Column(
+        "internal_metadata",
+        JSONB,
+        default=dict,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    ),
     Column(
         "joined_at",
         DateTime(timezone=True),
         nullable=False,
-        default=func.now(),
+        server_default=func.now(),
     ),
     Column(
         "left_at",
@@ -85,13 +97,17 @@ class Workspace(Base):
     peers = relationship("Peer", back_populates="workspace")
     webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
-    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
-    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -106,20 +122,22 @@ class Workspace(Base):
 class Peer(Base):
     __tablename__: str = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    name: Mapped[str] = mapped_column(
-        TEXT,
+    name: Mapped[str] = mapped_column(TEXT)
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
-    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONB, default=dict
+        "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False
     )
-    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship(
@@ -145,22 +163,24 @@ class Peer(Base):
 class Session(Base):
     __tablename__: str = "sessions"
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
-    name: Mapped[str] = mapped_column(
-        TEXT,
+    name: Mapped[str] = mapped_column(TEXT)
+    is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
-    is_active: Mapped[bool] = mapped_column(default=True)
-    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONB, default=dict
+        "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
     messages = relationship("Message", back_populates="session")
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False
     )
-    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     peers = relationship(
         "Peer", secondary=session_peers_table, back_populates="sessions"
@@ -193,15 +213,17 @@ class Message(Base):
     # We have since assigned all of these messages to a default session.
     session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
     content: Mapped[str] = mapped_column(TEXT)
-    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONB, default=dict
+        "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
     session = relationship("Session", back_populates="messages")
     peer_name: Mapped[str] = mapped_column(TEXT)
@@ -271,7 +293,7 @@ class MessageEmbedding(Base):
     session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     peer_name: Mapped[str] = mapped_column(TEXT)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
 
     # Relationship to Message
@@ -311,11 +333,13 @@ class Collection(Base):
     observer: Mapped[str] = mapped_column(TEXT)
     observed: Mapped[str] = mapped_column(TEXT)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
-    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONB, default=dict
+        "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
@@ -355,12 +379,12 @@ class Document(Base):
     __tablename__: str = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONB, default=dict
+        "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     content: Mapped[str] = mapped_column(TEXT)
     embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
 
     observer: Mapped[str] = mapped_column(TEXT)
@@ -429,10 +453,12 @@ class QueueItem(Base):
 
     task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    processed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     error: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
 
     __table_args__ = (
@@ -453,7 +479,7 @@ class ActiveQueueSession(Base):
     work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
 
     last_updated: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -466,7 +492,7 @@ class WebhookEndpoint(Base):
     )
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
 
     workspace = relationship("Workspace", back_populates="webhook_endpoints")
