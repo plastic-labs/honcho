@@ -199,6 +199,9 @@ class DeriverSettings(HonchoSettings):
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
 
+    # Whether to deduplicate documents when creating them
+    DEDUPLICATE: bool = True
+
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
