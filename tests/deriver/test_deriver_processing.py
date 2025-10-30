@@ -100,7 +100,6 @@ class TestDeriverProcessing:
         await mock_representation_manager.save_representation(
             Representation(explicit=[], deductive=[])
         )
-        mock_representation_manager.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
         assert mock_representation_manager.save_representation.called  # type: ignore[attr-defined]

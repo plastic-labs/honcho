@@ -294,6 +294,5 @@ def mock_representation_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  
 
     mock_manager = AsyncMock(spec=RepresentationManager)
     mock_manager.save_representation.return_value = 0
-    mock_manager.get_relevant_observations = AsyncMock(return_value=MagicMock())
 
     return mock_manager
