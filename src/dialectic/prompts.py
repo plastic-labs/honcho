@@ -50,44 +50,79 @@ The user's known biographical information:
 If the user's name or nickname is known, exclusively refer to them by that name.
 """
 
-    recent_conversation_history_section = (
-        f"""
-<recent_conversation_history>
-{recent_conversation_history}
-</recent_conversation_history>
-"""
-        if recent_conversation_history
-        else ""
-    )
-
-    # Add tool instructions for agentic mode
-    tools_section = ""
+    # Handle agentic mode differently - no pre-loaded context
     if agentic:
         tools_section = """
 
 ## AVAILABLE TOOLS
 
-You have access to the following tool to gather additional context:
+You have access to the following tools to gather context as needed:
 
-**search_messages**: Search for relevant messages in the current session using semantic similarity. This tool returns the most relevant messages along with 3 messages before and after each result for context.
+**get_working_representation**: Retrieve the theory-of-mind model (working representation) for the user. This includes both current session conclusions and historical facts. Use this as your PRIMARY source of synthesized knowledge about the user.
+  - Parameters:
+    - include_semantic_query (optional): Filter observations relevant to a specific query
+    - session_scoped (optional): Only include session-specific conclusions
 
-Use this tool ONLY when the working representation and provided context are insufficient to answer the query. The tool is useful for finding specific conversation details, examples, or historical context that may not be captured in the synthesized conclusions.
+**search_observations**: Search the theory-of-mind observations (facts and conclusions) that have been derived about the user. Use this to find specific knowledge.
+  - Parameters:
+    - query (required): Search query
+    - level (optional): Filter by 'explicit', 'deductive', or 'all'
+    - top_k (optional, default 10): Number of results
 
-When to use the tool:
-- The query asks about specific conversation details not present in the working representation
-- You need concrete examples or quotes from the conversation
-- The working representation suggests relevant information exists but lacks details
+**search_messages**: Search for relevant messages using semantic similarity. Returns the top matches with surrounding context (3 messages before/after). Use this to find specific conversation details.
+  - Parameters:
+    - query (required): Search query
 
-When NOT to use the tool:
-- The working representation already contains sufficient information to answer the query
-- The query can be answered from the provided biographical information
-- You're asked about general patterns or traits already captured in the conclusions
+**get_messages_by_time**: Retrieve messages from a specific time period. Use this for temporal questions.
+  - Parameters:
+    - time_range (required): e.g., "last week", "yesterday", "3 days ago"
+    - peer_filter (optional): Filter to specific peer
+    - limit (optional, default 20): Max messages to return
+
+**get_session_info**: Get information about the current session including participants, their observation settings, and session metadata.
+  - Parameters:
+    - include_stats (optional): Include message count statistics
+
+## TOOL USAGE STRATEGY
+
+1. **Start with get_working_representation** - This is the synthesized theory-of-mind model and should be your primary context source
+2. **Search for specifics** - Use search_observations or search_messages to find specific details not in the representation
+3. **Temporal queries** - Use get_messages_by_time for "when" questions
+4. **Context understanding** - Use get_session_info to understand who's involved and session structure
+
+You should retrieve only what you need to answer the query effectively. Don't over-fetch.
 """
 
-    return c(
-        f"""
-You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.{tools_section}
+        input_structure_section = """
+## INPUT STRUCTURE
 
+You receive:
+- **Query**: The specific question or request from the application about this user
+- **Tools**: Access to retrieve context dynamically as needed
+
+## WORKING REPRESENTATION STRUCTURE
+
+When you retrieve the working representation, each conclusion contains:
+- **Conclusion**: The derived insight
+- **Premises**: Supporting evidence/reasoning
+- **Type**: Either Explicit or Deductive
+- **Temporal Data**: When conclusions were made"""
+
+        recent_conversation_history_section = ""  # Empty in agentic mode
+    else:
+        tools_section = ""
+
+        recent_conversation_history_section = (
+            f"""
+<recent_conversation_history>
+{recent_conversation_history}
+</recent_conversation_history>
+"""
+            if recent_conversation_history
+            else ""
+        )
+
+        input_structure_section = """
 ## INPUT STRUCTURE
 
 You receive three key inputs:
@@ -99,7 +134,13 @@ Each conclusion contains:
 - **Conclusion**: The derived insight
 - **Premises**: Supporting evidence/reasoning
 - **Type**: Either Explicit or Deductive
-- **Temporal Data**: When conclusions were made
+- **Temporal Data**: When conclusions were made"""
+
+    return c(
+        f"""
+You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.{tools_section}
+
+{input_structure_section}
 
 ## CONCLUSION TYPE DEFINITIONS
 
@@ -160,9 +201,7 @@ Provide a natural language response that:
 
 <query>{query}</query>
 
-{recent_conversation_history_section}
-
-<working_representation>{working_representation}</working_representation>
+{"" if agentic else f"{recent_conversation_history_section}<working_representation>{working_representation}</working_representation>"}
 """
     )
 

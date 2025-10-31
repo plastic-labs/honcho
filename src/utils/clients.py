@@ -134,6 +134,9 @@ async def honcho_llm_call_agentic(
     max_tokens: int,
     db: AsyncSession,
     workspace_name: str,
+    session_name: str | None = None,
+    observer: str | None = None,
+    observed: str | None = None,
     track_name: str | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
@@ -154,6 +157,9 @@ async def honcho_llm_call_agentic(
         max_tokens: Maximum tokens for response
         db: Database session for tool execution
         workspace_name: Workspace context
+        session_name: Optional session context for tools
+        observer: Optional observer peer name for tools
+        observed: Optional observed peer name for tools
         track_name: Optional name for tracking
         thinking_budget_tokens: Anthropic thinking budget
         enable_retry: Enable retry logic
@@ -164,6 +170,10 @@ async def honcho_llm_call_agentic(
     Returns:
         Final text response from the model
     """
+    # Validate that prompt is non-empty
+    if not prompt or not prompt.strip():
+        raise ValueError("Prompt cannot be empty for agentic LLM calls")
+
     # Build conversation history (Anthropic format)
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
@@ -171,18 +181,60 @@ async def honcho_llm_call_agentic(
 
     while tool_calls_made < max_tool_calls:
         # Make LLM call with tools
-        response = await honcho_llm_call(
-            provider=provider,
-            model=model,
-            prompt=messages[0]["content"] if len(messages) == 1 else "",
-            max_tokens=max_tokens,
-            track_name=track_name,
-            thinking_budget_tokens=thinking_budget_tokens,
-            tools=AVAILABLE_TOOLS,
-            enable_retry=enable_retry,
-            retry_attempts=retry_attempts,
-            stream=False,
-        )
+        # For the first call, pass the full prompt. For subsequent calls after tool use,
+        # we'll use the messages array directly with Anthropic client.
+        if len(messages) == 1:
+            response = await honcho_llm_call(
+                provider=provider,
+                model=model,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                track_name=track_name,
+                thinking_budget_tokens=thinking_budget_tokens,
+                tools=AVAILABLE_TOOLS,
+                enable_retry=enable_retry,
+                retry_attempts=retry_attempts,
+                stream=False,
+            )
+        else:
+            # For follow-up calls after tool use, call Anthropic directly with messages array
+            client = CLIENTS.get(provider)
+            if not isinstance(client, AsyncAnthropic):
+                raise ValueError(
+                    "Agentic mode only supports Anthropic provider currently"
+                )
+
+            anthropic_params: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+                "tools": AVAILABLE_TOOLS,
+            }
+
+            anthropic_response = await client.messages.create(**anthropic_params)  # pyright: ignore
+
+            # Convert to our response format
+            text_content = ""
+            tool_calls_list = []
+
+            for block in anthropic_response.content:  # pyright: ignore
+                if block.type == "text":  # pyright: ignore
+                    text_content += block.text  # pyright: ignore
+                elif block.type == "tool_use":  # pyright: ignore
+                    tool_calls_list.append(  # pyright: ignore
+                        ToolCall(
+                            id=block.id,  # pyright: ignore
+                            name=block.name,  # pyright: ignore
+                            input=block.input,  # pyright: ignore
+                        )
+                    )
+
+            response: HonchoLLMCallResponse[str] = HonchoLLMCallResponse(
+                content=text_content,  # pyright: ignore
+                output_tokens=anthropic_response.usage.output_tokens,  # pyright: ignore
+                finish_reasons=[anthropic_response.stop_reason or "unknown"],  # pyright: ignore
+                tool_calls=tool_calls_list if tool_calls_list else None,  # pyright: ignore
+            )
 
         # Check if the model wants to use tools
         if response.tool_calls:
@@ -210,6 +262,9 @@ async def honcho_llm_call_agentic(
                 parameters=tool_call.input,
                 db=db,
                 workspace_name=workspace_name,
+                session_name=session_name,
+                observer=observer,
+                observed=observed,
             )
 
             logger.debug(f"Tool result: {tool_result}")
@@ -253,53 +308,7 @@ async def honcho_llm_call_agentic(
                 }
             )
 
-            client = CLIENTS.get(provider)
-            if not isinstance(client, AsyncAnthropic):
-                raise ValueError(
-                    "Agentic mode only supports Anthropic provider currently"
-                )
-
-            # Make the follow-up call with full conversation history
-            # Note: We disable thinking for follow-up calls because Anthropic requires
-            # assistant messages with tool_use to start with thinking blocks, which
-            # complicates the conversation reconstruction. The first call uses thinking.
-            anthropic_params: dict[str, Any] = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": messages,
-                "tools": AVAILABLE_TOOLS,
-            }
-            # Disable thinking for follow-up calls after tool use
-            # if thinking_budget_tokens:
-            #     anthropic_params["thinking"] = {
-            #         "type": "enabled",
-            #         "budget_tokens": thinking_budget_tokens,
-            #     }
-
-            anthropic_response = await client.messages.create(**anthropic_params)  # pyright: ignore
-
-            # Check if model is done or wants to use more tools
-
-            text_blocks: list[str] = []
-            has_more_tool_calls = False
-
-            for block in anthropic_response.content:  # pyright: ignore
-                if isinstance(block, TextBlock):
-                    text_blocks.append(block.text)
-                elif block.type == "tool_use":  # pyright: ignore
-                    has_more_tool_calls = True
-
-            if not has_more_tool_calls:
-                # Model is done, return the text response
-                return "\n".join(text_blocks)
-
-            # If model wants more tools but we've hit the limit, return what we have
-            if tool_calls_made >= max_tool_calls:
-                logger.warning(
-                    f"Max tool calls ({max_tool_calls}) reached, returning partial response"
-                )
-                return "\n".join(text_blocks) or "No response from model"
-
+            # Continue the loop - the next iteration will make the follow-up call with the updated messages array
         else:
             # No tool calls, return the response
             return response.content

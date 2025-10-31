@@ -55,6 +55,7 @@ async def dialectic_call(
     agentic: bool = False,
     db: AsyncSession | None = None,
     workspace_name: str | None = None,
+    session_name: str | None = None,
     metric_prefix: str | None = None,
 ):
     """
@@ -95,9 +96,7 @@ async def dialectic_call(
     if agentic:
         # Validate required parameters for agentic mode
         if db is None or workspace_name is None:
-            raise ValueError(
-                "db, workspace_name, and session_name are required for agentic mode"
-            )
+            raise ValueError("db and workspace_name are required for agentic mode")
 
         response_content = await honcho_llm_call_agentic(
             provider=settings.DIALECTIC.PROVIDER,
@@ -106,13 +105,16 @@ async def dialectic_call(
             max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
             db=db,
             workspace_name=workspace_name,
+            session_name=session_name,
+            observer=observer,
+            observed=observed,
             track_name="Dialectic Call (Agentic)",
             thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
             if settings.DIALECTIC.PROVIDER == "anthropic"
             else None,
             enable_retry=True,
             retry_attempts=3,
-            max_tool_calls=1,
+            max_tool_calls=3,  # Increased from 1 to allow multiple tool uses
             metric_prefix=metric_prefix,
         )
         return response_content
@@ -223,18 +225,13 @@ async def chat(
 
     dialectic_chat_uuid = str(uuid.uuid4())
 
-    context_window_size = (
-        settings.DIALECTIC.CONTEXT_WINDOW_SIZE - 750
-    )  # this is a hardcoded (accurate, slightly conservative) estimate of system prompt
-
-    context_window_size -= estimate_tokens(query)
-
     if lf:
         lf.update_current_trace(
             metadata={
                 "query_generation_model": settings.DIALECTIC.QUERY_GENERATION_MODEL,
                 "query_generation_provider": settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
                 "dialectic_model": settings.DIALECTIC.MODEL,
+                "agentic_mode": agentic,
             }
         )
     accumulate_metric(
@@ -244,6 +241,64 @@ async def chat(
         "blob",
     )
     start_time = time.perf_counter()
+
+    # AGENTIC MODE: Skip all context gathering, let the agent use tools
+    if agentic:
+        if stream:
+            raise ValueError("Streaming is not supported in agentic mode")
+
+        dialectic_call_start_time = time.perf_counter()
+
+        # For agentic mode, pass minimal context and let tools do the work
+        async with tracked_db("chat.agentic_dialectic") as db:
+            response = await dialectic_call(
+                query=query,
+                working_representation="",  # Empty - agent will retrieve via tools
+                recent_conversation_history=None,  # Empty - agent will retrieve via tools
+                peer_card=None,  # Could optionally still provide this
+                observed_peer_card=None,
+                observer=observer,
+                observed=observed,
+                agentic=True,
+                db=db,
+                workspace_name=workspace_name,
+                session_name=session_name,  # Pass session_name for tool context
+                metric_prefix=f"dialectic_chat_{dialectic_chat_uuid}",
+            )
+
+        dialectic_call_duration = (
+            time.perf_counter() - dialectic_call_start_time
+        ) * 1000
+        elapsed = (time.perf_counter() - start_time) * 1000
+
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "response",
+            response,
+            "blob",
+        )
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "dialectic_call",
+            dialectic_call_duration,
+            "ms",
+        )
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "total_duration",
+            elapsed,
+            "ms",
+        )
+
+        log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
+        return response
+
+    # NON-AGENTIC MODE: Pre-load all context (original behavior)
+    context_window_size = (
+        settings.DIALECTIC.CONTEXT_WINDOW_SIZE - 750
+    )  # this is a hardcoded (accurate, slightly conservative) estimate of system prompt
+
+    context_window_size -= estimate_tokens(query)
 
     # 1. Working representation (short-term) -----------------------------------
     working_rep_start_time = time.perf_counter()
@@ -360,10 +415,6 @@ async def chat(
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = time.perf_counter()
 
-    # Validate incompatible modes
-    if stream and agentic:
-        raise ValueError("Streaming is not supported in agentic mode")
-
     if stream:
         elapsed = (time.perf_counter() - start_time) * 1000
         accumulate_metric(
@@ -389,32 +440,15 @@ async def chat(
             observed=observed,
         )
 
-    # For agentic mode, we need to pass a db session
-    if agentic:
-        async with tracked_db("chat.agentic_dialectic") as db:
-            response = await dialectic_call(
-                query,
-                working_representation_str,
-                recent_history,
-                peer_card,
-                observed_peer_card,
-                observer=observer,
-                observed=observed,
-                agentic=True,
-                db=db,
-                workspace_name=workspace_name,
-                metric_prefix=f"dialectic_chat_{dialectic_chat_uuid}",
-            )
-    else:
-        response = await dialectic_call(
-            query,
-            working_representation_str,
-            recent_history,
-            peer_card,
-            observed_peer_card,
-            observer=observer,
-            observed=observed,
-        )
+    response = await dialectic_call(
+        query,
+        working_representation_str,
+        recent_history,
+        peer_card,
+        observed_peer_card,
+        observer=observer,
+        observed=observed,
+    )
     dialectic_call_duration = (time.perf_counter() - dialectic_call_start_time) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
