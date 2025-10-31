@@ -10,6 +10,9 @@ This script:
 5. Waits for the deriver queue to be empty
 6. Executes the question and judges the response using an LLM
 
+Each individual question has a 5-minute timeout. If a question takes longer than 5 minutes,
+it will be marked as failed and the test runner will move on to the next question.
+
 ## To use
 
 0. Set up env:
@@ -49,7 +52,9 @@ Optional arguments:
 
 ## Other notes
 - Judge is Claude Sonnet 4
-- If processing lots of data, set timeout very high or all will be lost
+- Each individual question has a 5-minute timeout (hardcoded)
+- The --timeout argument controls how long to wait for the deriver queue to empty (default: 10 minutes)
+- If processing lots of data, set --timeout very high to avoid deriver queue timeout issues
 """
 
 import argparse
@@ -444,6 +449,49 @@ Evaluate whether the actual response correctly answers the question based on the
                 "passed": is_correct,
                 "reasoning": f"Fallback string matching due to error: {'Match found' if is_correct else 'No match found'}",
             }
+
+    async def execute_question_with_timeout(
+        self, question_data: dict[str, Any], honcho_url: str, timeout_seconds: int = 300
+    ) -> TestResult:
+        """
+        Execute a single longmemeval question with a timeout.
+
+        Args:
+            question_data: Dictionary containing question data
+            honcho_url: URL of the Honcho instance to use
+            timeout_seconds: Maximum time allowed for question execution (default: 300 seconds / 5 minutes)
+
+        Returns:
+            Test execution results
+        """
+        try:
+            return await asyncio.wait_for(
+                self.execute_question(question_data, honcho_url),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            question_id = question_data["question_id"]
+            question_type = question_data["question_type"]
+            workspace_id = f"{question_id}_{question_type}"
+
+            output_lines: list[str] = [
+                f"\033[1mExecuting question {question_id} ({question_type})\033[0m",
+                f"Question timed out after {timeout_seconds} seconds",
+            ]
+
+            return TestResult(
+                question_id=question_id,
+                question_type=question_type,
+                workspace_id=workspace_id,
+                sessions_created=[],
+                query_executed=None,
+                passed=False,
+                error=f"Question execution timed out after {timeout_seconds} seconds",
+                start_time=0.0,
+                end_time=0.0,
+                duration_seconds=float(timeout_seconds),
+                output_lines=output_lines,
+            )
 
     async def execute_question(
         self, question_data: dict[str, Any], honcho_url: str
@@ -917,9 +965,12 @@ Evaluate whether the actual response correctly answers the question based on the
             print(f"{'=' * 60}")
 
             # Run questions in current batch concurrently, distributing via round-robin
+            # Each question has a 5-minute timeout
             batch_results: list[TestResult] = await asyncio.gather(
                 *[
-                    self.execute_question(q, self.get_honcho_url_for_index(i + idx))
+                    self.execute_question_with_timeout(
+                        q, self.get_honcho_url_for_index(i + idx), timeout_seconds=300
+                    )
                     for idx, q in enumerate(batch)
                 ]
             )
