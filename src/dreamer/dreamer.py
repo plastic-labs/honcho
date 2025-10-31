@@ -120,9 +120,7 @@ async def _consolidate_cluster(
     logger.info("consolidated representation:\n%s", consolidated_representation)
 
     # TODO: less hacky preservation of times_derived
-    total_times_derived = sum(
-        doc.internal_metadata.get("times_derived", 1) for doc in cluster
-    )
+    total_times_derived = sum(doc.times_derived for doc in cluster)
 
     new_documents = [
         *consolidated_representation.explicit,
@@ -143,10 +141,8 @@ async def _consolidate_cluster(
         # NOTE: other kinds of observations here in the future
 
         metadata = schemas.DocumentMetadata(
-            times_derived=total_times_derived,
             message_ids=obs.message_ids,
             message_created_at=format_datetime_utc(obs.created_at),
-            level=level,
             premises=premises,
         )
 
@@ -156,6 +152,8 @@ async def _consolidate_cluster(
             schemas.DocumentCreate(
                 content=content,
                 session_name=obs.session_name,
+                level=level,
+                times_derived=total_times_derived,
                 metadata=metadata,
                 embedding=embedding,
             )

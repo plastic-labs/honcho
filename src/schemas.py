@@ -288,19 +288,11 @@ class DocumentBase(BaseModel):
 
 
 class DocumentMetadata(BaseModel):
-    times_derived: int | None = Field(
-        default=None,
-        ge=1,
-        description="The number of times that a semantic duplicate document to this one has been derived",
-    )
     message_ids: list[tuple[int, int]] = Field(
         description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
     )
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
-    )
-    level: Literal["explicit", "deductive"] = Field(
-        description="The level of the document (explicit or deductive)"
     )
     premises: list[str] | None = Field(
         default=None,
@@ -312,6 +304,15 @@ class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     session_name: str = Field(
         description="The session from which the document was derived"
+    )
+    level: Literal["explicit", "deductive"] = Field(
+        default="explicit",
+        description="The level of the document (explicit or deductive)",
+    )
+    times_derived: int = Field(
+        default=1,
+        ge=1,
+        description="The number of times that a semantic duplicate document to this one has been derived",
     )
     metadata: DocumentMetadata = Field()
     embedding: list[float] = Field()
