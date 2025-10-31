@@ -10,6 +10,7 @@ def dialectic_prompt(
     *,
     observer: str,
     observed: str,
+    agentic: bool = False,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
@@ -20,6 +21,7 @@ def dialectic_prompt(
         recent_conversation_history: Recent conversation history
         peer_card: Known biographical information about the user
         observed_peer_card: Known biographical information about the target, if applicable
+        agentic: Whether to generate prompt for agentic mode with tools
 
     Returns:
         Formatted prompt string for the dialectic model
@@ -58,9 +60,33 @@ If the user's name or nickname is known, exclusively refer to them by that name.
         else ""
     )
 
+    # Add tool instructions for agentic mode
+    tools_section = ""
+    if agentic:
+        tools_section = """
+
+## AVAILABLE TOOLS
+
+You have access to the following tool to gather additional context:
+
+**search_messages**: Search for relevant messages in the current session using semantic similarity. This tool returns the most relevant messages along with 3 messages before and after each result for context.
+
+Use this tool ONLY when the working representation and provided context are insufficient to answer the query. The tool is useful for finding specific conversation details, examples, or historical context that may not be captured in the synthesized conclusions.
+
+When to use the tool:
+- The query asks about specific conversation details not present in the working representation
+- You need concrete examples or quotes from the conversation
+- The working representation suggests relevant information exists but lacks details
+
+When NOT to use the tool:
+- The working representation already contains sufficient information to answer the query
+- The query can be answered from the provided biographical information
+- You're asked about general patterns or traits already captured in the conclusions
+"""
+
     return c(
         f"""
-You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.
+You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.{tools_section}
 
 ## INPUT STRUCTURE
 

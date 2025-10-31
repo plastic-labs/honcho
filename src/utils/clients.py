@@ -5,7 +5,7 @@ from functools import wraps
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
-from anthropic.types import TextBlock
+from anthropic.types import TextBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
 from google import genai
 from google.genai.types import GenerateContentResponse
@@ -14,12 +14,15 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
+from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import settings
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.langfuse_client import get_langfuse_client
+from src.utils.logging import accumulate_metric
 from src.utils.representation import PromptRepresentation
+from src.utils.tools import AVAILABLE_TOOLS, execute_tool
 from src.utils.types import SupportedProviders
 
 logger = logging.getLogger(__name__)
@@ -76,6 +79,21 @@ for provider_name, provider_value in SELECTED_PROVIDERS:
         raise ValueError(f"Missing client for {provider_name}: {provider_value}")
 
 
+class ToolCall(BaseModel):
+    """
+    Represents a tool call from the LLM.
+
+    Args:
+        id: Unique identifier for this tool call
+        name: Name of the tool to call
+        input: Parameters for the tool call
+    """
+
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
     Response object for LLM calls.
@@ -85,11 +103,13 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
                 the parsed object of that type. Otherwise, it will be a string.
         output_tokens: Number of tokens generated in the response.
         finish_reasons: List of finish reasons for the response.
+        tool_calls: Optional list of tool calls requested by the model.
     """
 
     content: T
     output_tokens: int
     finish_reasons: list[str]
+    tool_calls: list[ToolCall] | None = None
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -107,6 +127,187 @@ class HonchoLLMCallStreamChunk(BaseModel):
     finish_reasons: list[str] = Field(default_factory=list)
 
 
+async def honcho_llm_call_agentic(
+    provider: SupportedProviders,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    db: AsyncSession,
+    workspace_name: str,
+    track_name: str | None = None,
+    thinking_budget_tokens: int | None = None,
+    enable_retry: bool = True,
+    retry_attempts: int = 3,
+    max_tool_calls: int = 1,
+    metric_prefix: str | None = None,
+) -> str:
+    """
+    Make an agentic LLM call that can use tools.
+
+    This function wraps honcho_llm_call to support multi-turn agentic behavior where
+    the model can request tool calls, which are executed, and then fed back to the model.
+
+    Args:
+        provider: LLM provider to use
+        model: Model name
+        prompt: Initial prompt
+        max_tokens: Maximum tokens for response
+        db: Database session for tool execution
+        workspace_name: Workspace context
+        track_name: Optional name for tracking
+        thinking_budget_tokens: Anthropic thinking budget
+        enable_retry: Enable retry logic
+        retry_attempts: Number of retry attempts
+        max_tool_calls: Maximum number of tool calls allowed (default: 1)
+        metric_prefix: Optional prefix for accumulate_metric logging (e.g., "dialectic_chat_{uuid}")
+
+    Returns:
+        Final text response from the model
+    """
+    # Build conversation history (Anthropic format)
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+
+    tool_calls_made = 0
+
+    while tool_calls_made < max_tool_calls:
+        # Make LLM call with tools
+        response = await honcho_llm_call(
+            provider=provider,
+            model=model,
+            prompt=messages[0]["content"] if len(messages) == 1 else "",
+            max_tokens=max_tokens,
+            track_name=track_name,
+            thinking_budget_tokens=thinking_budget_tokens,
+            tools=AVAILABLE_TOOLS,
+            enable_retry=enable_retry,
+            retry_attempts=retry_attempts,
+            stream=False,
+        )
+
+        # Check if the model wants to use tools
+        if response.tool_calls:
+            tool_call = response.tool_calls[0]  # Only handle first tool call
+            tool_calls_made += 1
+
+            # Log tool call to metrics
+            if metric_prefix:
+                accumulate_metric(
+                    metric_prefix,
+                    "tool_name",
+                    tool_call.name,
+                    "blob",
+                )
+                accumulate_metric(
+                    metric_prefix,
+                    "tool_input",
+                    str(tool_call.input),
+                    "blob",
+                )
+
+            # Execute the tool
+            tool_result = await execute_tool(
+                tool_name=tool_call.name,
+                parameters=tool_call.input,
+                db=db,
+                workspace_name=workspace_name,
+            )
+
+            logger.debug(f"Tool result: {tool_result}")
+
+            # Log tool result to metrics
+            if metric_prefix:
+                accumulate_metric(
+                    metric_prefix,
+                    "tool_result",
+                    tool_result,
+                    "blob",
+                )
+
+            # Build the next conversation turn
+            # Add assistant's response with tool use
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": tool_call.id,
+                            "name": tool_call.name,
+                            "input": tool_call.input,
+                        }
+                    ],
+                }
+            )
+
+            # Add tool result
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
+                            "content": tool_result,
+                        }
+                    ],
+                }
+            )
+
+            client = CLIENTS.get(provider)
+            if not isinstance(client, AsyncAnthropic):
+                raise ValueError(
+                    "Agentic mode only supports Anthropic provider currently"
+                )
+
+            # Make the follow-up call with full conversation history
+            # Note: We disable thinking for follow-up calls because Anthropic requires
+            # assistant messages with tool_use to start with thinking blocks, which
+            # complicates the conversation reconstruction. The first call uses thinking.
+            anthropic_params: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+                "tools": AVAILABLE_TOOLS,
+            }
+            # Disable thinking for follow-up calls after tool use
+            # if thinking_budget_tokens:
+            #     anthropic_params["thinking"] = {
+            #         "type": "enabled",
+            #         "budget_tokens": thinking_budget_tokens,
+            #     }
+
+            anthropic_response = await client.messages.create(**anthropic_params)  # pyright: ignore
+
+            # Check if model is done or wants to use more tools
+
+            text_blocks: list[str] = []
+            has_more_tool_calls = False
+
+            for block in anthropic_response.content:  # pyright: ignore
+                if isinstance(block, TextBlock):
+                    text_blocks.append(block.text)
+                elif block.type == "tool_use":  # pyright: ignore
+                    has_more_tool_calls = True
+
+            if not has_more_tool_calls:
+                # Model is done, return the text response
+                return "\n".join(text_blocks)
+
+            # If model wants more tools but we've hit the limit, return what we have
+            if tool_calls_made >= max_tool_calls:
+                logger.warning(
+                    f"Max tool calls ({max_tool_calls}) reached, returning partial response"
+                )
+                return "\n".join(text_blocks) or "No response from model"
+
+        else:
+            # No tool calls, return the response
+            return response.content
+
+    # Should not reach here, but just in case
+    return "Max tool calls reached without final response"
+
+
 @overload
 async def honcho_llm_call(
     provider: SupportedProviders,
@@ -122,6 +323,7 @@ async def honcho_llm_call(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions (Anthropic format)
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
@@ -142,6 +344,7 @@ async def honcho_llm_call(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions (Anthropic format)
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
@@ -162,6 +365,7 @@ async def honcho_llm_call(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions (Anthropic format)
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[True] = ...,
@@ -181,6 +385,7 @@ async def honcho_llm_call(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions (Anthropic format)
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: bool = False,
@@ -218,6 +423,7 @@ async def honcho_llm_call(
             reasoning_effort,
             verbosity,
             thinking_budget_tokens,
+            tools,
             True,
         )
     else:
@@ -232,6 +438,7 @@ async def honcho_llm_call(
             reasoning_effort,
             verbosity,
             thinking_budget_tokens,
+            tools,
             False,
         )
 
@@ -249,6 +456,7 @@ async def honcho_llm_call_inner(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions
     stream: Literal[False] = False,
 ) -> HonchoLLMCallResponse[M]: ...
 
@@ -266,6 +474,7 @@ async def honcho_llm_call_inner(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions
     stream: Literal[False] = False,
 ) -> HonchoLLMCallResponse[str]: ...
 
@@ -283,6 +492,7 @@ async def honcho_llm_call_inner(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions
     stream: Literal[True] = ...,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
@@ -299,6 +509,7 @@ async def honcho_llm_call_inner(
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
+    tools: list[dict[str, Any]] | None = None,  # Tool definitions
     stream: bool = False,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     # has already been validated by honcho_llm_call
@@ -346,14 +557,25 @@ async def honcho_llm_call_inner(
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+            if tools:
+                anthropic_params["tools"] = tools
             anthropic_response: AnthropicMessage = await client.messages.create(  # pyright: ignore
                 **anthropic_params
             )
-            # Extract text content from content blocks
+            # Extract text content and tool calls from content blocks
             text_blocks: list[str] = []
+            tool_calls: list[ToolCall] = []
             for block in anthropic_response.content:  # pyright: ignore
                 if isinstance(block, TextBlock):
                     text_blocks.append(block.text)
+                elif isinstance(block, ToolUseBlock):
+                    tool_calls.append(
+                        ToolCall(
+                            id=block.id,
+                            name=block.name,
+                            input=block.input,  # pyright: ignore
+                        )
+                    )
 
             # Safely extract usage and stop_reason
             usage = anthropic_response.usage  # pyright: ignore
@@ -363,6 +585,7 @@ async def honcho_llm_call_inner(
                 content="\n".join(text_blocks),
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
+                tool_calls=tool_calls if tool_calls else None,
             )
 
         case AsyncOpenAI():

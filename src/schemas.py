@@ -342,6 +342,10 @@ class DialecticOptions(BaseModel):
         str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
     ]
     stream: bool = False
+    agentic: bool = Field(
+        default=False,
+        description="Enable agentic mode with tool calling (requires session_id, no streaming support)",
+    )
 
 
 class DialecticResponse(BaseModel):

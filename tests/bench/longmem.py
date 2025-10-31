@@ -827,10 +827,14 @@ Evaluate whether the actual response correctly answers the question based on the
                     # Use the appropriate peer based on question type
                     if is_assistant_type:
                         # For assistant questions, use the assistant peer
-                        actual_response = await assistant_peer.chat(question_with_date)
+                        actual_response = await assistant_peer.chat(
+                            question_with_date, agentic=True
+                        )
                     else:
                         # For user questions, use the user peer (default behavior)
-                        actual_response = await user_peer.chat(question_with_date)
+                        actual_response = await user_peer.chat(
+                            question_with_date, agentic=True
+                        )
 
                 # Clean up workspace if requested
                 if self.cleanup_workspace:

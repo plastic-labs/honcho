@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
@@ -111,6 +111,7 @@ class AsyncPeer(BaseModel):
         stream: bool = False,
         target: str | AsyncPeer | None = None,
         session_id: str | None = None,
+        agentic: bool = False,
     ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
@@ -170,6 +171,7 @@ class AsyncPeer(BaseModel):
             stream=stream,
             target=str(target.id) if isinstance(target, AsyncPeer) else target,
             session_id=session_id,
+            extra_body={"agentic": agentic},
         )
         # "If the context provided doesn't help address the query, write absolutely NOTHING but "None""
         if response.content in ("", None, "None"):

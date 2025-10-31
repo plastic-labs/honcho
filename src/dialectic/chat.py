@@ -12,12 +12,17 @@ import uuid
 from collections.abc import AsyncIterator
 
 from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
 from src.utils import summarizer
-from src.utils.clients import HonchoLLMCallStreamChunk, honcho_llm_call
+from src.utils.clients import (
+    HonchoLLMCallStreamChunk,
+    honcho_llm_call,
+    honcho_llm_call_agentic,
+)
 from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
     accumulate_metric,
@@ -47,6 +52,10 @@ async def dialectic_call(
     *,
     observer: str,
     observed: str,
+    agentic: bool = False,
+    db: AsyncSession | None = None,
+    workspace_name: str | None = None,
+    metric_prefix: str | None = None,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -59,6 +68,10 @@ async def dialectic_call(
         peer_card: Known biographical information about the user
         observed: Name of the user/peer being queried about
         observed_peer_card: Known biographical information about the target, if applicable
+        agentic: Whether to use agentic mode with tool calling
+        db: Database session (required for agentic mode)
+        workspace_name: Workspace name (required for agentic mode)
+        metric_prefix: Optional prefix for accumulate_metric logging
 
     Returns:
         Model response
@@ -72,26 +85,51 @@ async def dialectic_call(
         observed_peer_card,
         observer=observer,
         observed=observed,
-    )
-
-    response = await honcho_llm_call(
-        provider=settings.DIALECTIC.PROVIDER,
-        model=settings.DIALECTIC.MODEL,
-        prompt=prompt,
-        max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-        track_name="Dialectic Call",
-        thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
-        if settings.DIALECTIC.PROVIDER == "anthropic"
-        else None,
-        enable_retry=True,
-        retry_attempts=3,
+        agentic=agentic,
     )
 
     logger.debug("=== DIALECTIC PROMPT ===")
     logger.debug(prompt)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    return response.content
+    if agentic:
+        # Validate required parameters for agentic mode
+        if db is None or workspace_name is None:
+            raise ValueError(
+                "db, workspace_name, and session_name are required for agentic mode"
+            )
+
+        response_content = await honcho_llm_call_agentic(
+            provider=settings.DIALECTIC.PROVIDER,
+            model=settings.DIALECTIC.MODEL,
+            prompt=prompt,
+            max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+            db=db,
+            workspace_name=workspace_name,
+            track_name="Dialectic Call (Agentic)",
+            thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
+            if settings.DIALECTIC.PROVIDER == "anthropic"
+            else None,
+            enable_retry=True,
+            retry_attempts=3,
+            max_tool_calls=1,
+            metric_prefix=metric_prefix,
+        )
+        return response_content
+    else:
+        response = await honcho_llm_call(
+            provider=settings.DIALECTIC.PROVIDER,
+            model=settings.DIALECTIC.MODEL,
+            prompt=prompt,
+            max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+            track_name="Dialectic Call",
+            thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
+            if settings.DIALECTIC.PROVIDER == "anthropic"
+            else None,
+            enable_retry=True,
+            retry_attempts=3,
+        )
+        return response.content
 
 
 async def dialectic_stream(
@@ -159,6 +197,7 @@ async def chat(
     observer: str,
     observed: str,
     stream: bool = False,
+    agentic: bool = False,
 ) -> str | AsyncIterator[HonchoLLMCallStreamChunk]:
     """
     Chat with the Dialectic API that builds on-demand user representations.
@@ -176,6 +215,7 @@ async def chat(
         session_name: Optional session name for scoping
         query: Input Dialectic Query
         stream: Whether to stream the response
+        agentic: Whether to use agentic mode with tool calling (no streaming support)
 
     Returns:
         Dialectic response (streaming or complete)
@@ -319,6 +359,11 @@ async def chat(
 
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = time.perf_counter()
+
+    # Validate incompatible modes
+    if stream and agentic:
+        raise ValueError("Streaming is not supported in agentic mode")
+
     if stream:
         elapsed = (time.perf_counter() - start_time) * 1000
         accumulate_metric(
@@ -344,15 +389,32 @@ async def chat(
             observed=observed,
         )
 
-    response = await dialectic_call(
-        query,
-        working_representation_str,
-        recent_history,
-        peer_card,
-        observed_peer_card,
-        observer=observer,
-        observed=observed,
-    )
+    # For agentic mode, we need to pass a db session
+    if agentic:
+        async with tracked_db("chat.agentic_dialectic") as db:
+            response = await dialectic_call(
+                query,
+                working_representation_str,
+                recent_history,
+                peer_card,
+                observed_peer_card,
+                observer=observer,
+                observed=observed,
+                agentic=True,
+                db=db,
+                workspace_name=workspace_name,
+                metric_prefix=f"dialectic_chat_{dialectic_chat_uuid}",
+            )
+    else:
+        response = await dialectic_call(
+            query,
+            working_representation_str,
+            recent_history,
+            peer_card,
+            observed_peer_card,
+            observer=observer,
+            observed=observed,
+        )
     dialectic_call_duration = (time.perf_counter() - dialectic_call_start_time) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",

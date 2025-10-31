@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
@@ -12,8 +12,8 @@ from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
-from .types import DialecticStreamResponse
 from .pagination import SyncPage
+from .types import DialecticStreamResponse
 
 if TYPE_CHECKING:
     from .session import Session
@@ -95,6 +95,7 @@ class Peer(BaseModel):
         stream: bool = False,
         target: str | Peer | None = None,
         session_id: str | None = None,
+        agentic: bool = False,
     ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
@@ -154,6 +155,7 @@ class Peer(BaseModel):
             stream=stream,
             target=str(target.id) if isinstance(target, Peer) else target,
             session_id=session_id,
+            extra_body={"agentic": agentic},
         )
         if response.content in ("", None, "None"):
             return None

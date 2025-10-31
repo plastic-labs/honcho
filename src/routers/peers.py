@@ -177,6 +177,7 @@ async def chat(
             # if target is given, that's the observed peer. otherwise, observer==observed
             # and it's answered from the omniscient Honcho perspective
             observed=options.target if options.target is not None else peer_id,
+            agentic=options.agentic,
         )
 
         if prometheus.METRICS_ENABLED:
@@ -195,6 +196,7 @@ async def chat(
                 stream=options.stream,
                 observer=peer_id,
                 observed=options.target if options.target is not None else peer_id,
+                agentic=options.agentic,
             )
 
             if prometheus.METRICS_ENABLED:
