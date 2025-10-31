@@ -1,18 +1,20 @@
 """Configuration resolution utilities for hierarchical settings."""
 
 import logging
+from typing import Any
 
 from src import models
 from src.config import settings
+from src.schemas import ResolvedSessionConfiguration
 
 logger = logging.getLogger(__name__)
 
 
-def get_summary_config(
+def get_configuration(
     session: models.Session, workspace: models.Workspace | None = None
-) -> tuple[int, int]:
+) -> ResolvedSessionConfiguration:
     """
-    Resolve summary configuration with hierarchical fallback.
+    Resolve session configuration with hierarchical fallback.
 
     Resolution hierarchy:
     1. Session configuration
@@ -24,41 +26,25 @@ def get_summary_config(
         workspace: Optional workspace model (if not provided, only session and global config are used)
 
     Returns:
-        Tuple of (messages_per_short_summary, messages_per_long_summary)
-
-    Raises:
-        ValueError: If resolved values are invalid (negative, zero, or short >= long)
+        SessionConfiguration
     """
-    # Default to global settings
-    short_summary = settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY
-    long_summary = settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY
+    updates: dict[str, Any] = {}
 
-    # Check workspace configuration
+    # Add workspace configuration (only non-None values)
     if workspace is not None:
-        wconf = workspace.configuration or {}
-        workspace_short = wconf.get("messages_per_short_summary")
-        workspace_long = wconf.get("messages_per_long_summary")
-        if workspace_short is not None:
-            short_summary = workspace_short
-        if workspace_long is not None:
-            long_summary = workspace_long
-    # Check session configuration (takes precedence)
-    sconf = session.configuration or {}
-    session_short = sconf.get("messages_per_short_summary")
-    session_long = sconf.get("messages_per_long_summary")
-    if session_short is not None:
-        short_summary = session_short
-    if session_long is not None:
-        long_summary = session_long
-
-    # Validate resolved values
-    if short_summary <= 0:
-        raise ValueError(f"Invalid messages_per_short_summary: {short_summary}")
-    if long_summary <= 0:
-        raise ValueError(f"Invalid messages_per_long_summary: {long_summary}")
-    if short_summary >= long_summary:
-        raise ValueError(
-            f"messages_per_short_summary ({short_summary}) must be < messages_per_long_summary ({long_summary})"
+        updates.update(
+            {k: v for k, v in workspace.configuration.items() if v is not None}
         )
 
-    return short_summary, long_summary
+    # Add session configuration (overwrites workspace, only non-None values)
+    updates.update({k: v for k, v in session.configuration.items() if v is not None})
+
+    return ResolvedSessionConfiguration(
+        deriver_enabled=True,
+        peer_cards_enabled=settings.PEER_CARD.ENABLED,
+        summaries_enabled=settings.SUMMARY.ENABLED,
+        dreams_enabled=settings.DREAM.ENABLED,
+        messages_per_short_summary=settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY,
+        messages_per_long_summary=settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY,
+        **updates,
+    )

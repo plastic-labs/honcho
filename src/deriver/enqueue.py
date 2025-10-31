@@ -10,7 +10,7 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import get_affected_dream_keys, get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
-from src.utils.config_helpers import get_summary_config
+from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import create_payload
 from src.utils.work_unit import get_work_unit_key
 
@@ -97,11 +97,7 @@ async def handle_session(
     workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
 
     # Resolve summary configuration with hierarchical fallback
-    messages_per_short_summary, messages_per_long_summary = get_summary_config(
-        session, workspace
-    )
-
-    deriver_disabled = bool(session.configuration.get("deriver_disabled"))
+    session_level_configuration = get_configuration(session, workspace)
 
     peers_with_configuration = await get_peers_with_configuration(
         db_session, workspace_name, session_name
@@ -116,9 +112,10 @@ async def handle_session(
                 message,
                 peers_with_configuration,
                 session.id,
-                deriver_disabled=deriver_disabled,
-                messages_per_short_summary=messages_per_short_summary,
-                messages_per_long_summary=messages_per_long_summary,
+                deriver_enabled=session_level_configuration.deriver_enabled,
+                summaries_enabled=session_level_configuration.summaries_enabled,
+                messages_per_short_summary=session_level_configuration.messages_per_short_summary,
+                messages_per_long_summary=session_level_configuration.messages_per_long_summary,
             )
         )
     return queue_records
@@ -256,7 +253,8 @@ async def generate_queue_records(
     peers_with_configuration: dict[str, list[dict[str, Any]]],
     session_id: str,
     *,
-    deriver_disabled: bool,
+    deriver_enabled: bool,
+    summaries_enabled: bool,
     messages_per_short_summary: int,
     messages_per_long_summary: int,
 ) -> list[dict[str, Any]]:
@@ -266,7 +264,7 @@ async def generate_queue_records(
     Args:
         db_session: The database session
         message: The message payload
-        deriver_disabled: Whether deriver is disabled for the session
+        deriver_enabled: Whether deriver is enabled for the session
         peers_with_configuration: Dictionary of peer configurations
         session_id: Session ID
         messages_per_short_summary: Number of messages per short summary
@@ -290,7 +288,7 @@ async def generate_queue_records(
 
     records: list[dict[str, Any]] = []
 
-    if settings.SUMMARY.ENABLED and (
+    if summaries_enabled and (
         message_seq_in_session % messages_per_short_summary == 0
         or message_seq_in_session % messages_per_long_summary == 0
     ):
@@ -302,7 +300,7 @@ async def generate_queue_records(
             )
         )
 
-    if deriver_disabled:
+    if deriver_enabled is False:
         return records
 
     if get_effective_observe_me(observed, peers_with_configuration):

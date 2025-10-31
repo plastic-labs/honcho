@@ -45,7 +45,7 @@ async def get_or_create_workspace(
     honcho_workspace = models.Workspace(
         name=workspace.name,
         h_metadata=workspace.metadata,
-        configuration=workspace.configuration,
+        configuration=workspace.configuration.model_dump(exclude_none=True),
     )
     try:
         db.add(honcho_workspace)
@@ -133,7 +133,10 @@ async def update_workspace(
     if workspace.configuration is not None:
         # Merge configuration instead of replacing to preserve existing keys
         base_config = (honcho_workspace.configuration or {}).copy()
-        honcho_workspace.configuration = {**base_config, **workspace.configuration}
+        honcho_workspace.configuration = {
+            **base_config,
+            **workspace.configuration.model_dump(exclude_none=True),
+        }
 
     await db.commit()
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
