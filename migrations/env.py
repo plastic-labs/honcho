@@ -2,9 +2,10 @@ import logging
 import sys
 from logging.config import fileConfig
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy import engine_from_config, text
 
 from src.config import settings
 
@@ -59,7 +60,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = get_url()
+    url = ensure_session_pooler(get_url())
 
     context.configure(
         url=url,
@@ -72,6 +73,51 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.execute(f"SET search_path TO {target_metadata.schema}")
         context.run_migrations()
+
+
+def ensure_session_pooler(connection_uri: str) -> str:
+    """
+    Ensure a PostgreSQL connection URI uses the session pooler port (5432).
+
+    Converts transaction pooler port (6543) to session pooler port (5432).
+    Leaves other ports unchanged.
+
+    Args:
+        connection_uri: PostgreSQL connection URI
+
+    Returns:
+        Connection URI with session pooler port (5432)
+
+    Examples:
+        >>> ensure_session_pooler("postgresql://user:pass@host:6543/db")
+        'postgresql://user:pass@host:5432/db'
+
+        >>> ensure_session_pooler("postgresql://user:pass@host:5432/db")
+        'postgresql://user:pass@host:5432/db'
+
+        >>> ensure_session_pooler("postgresql+psycopg://user:pass@host.supabase.co:6543/postgres")
+        'postgresql+psycopg://user:pass@host.supabase.co:5432/postgres'
+    """
+    parsed = urlparse(connection_uri)
+
+    # Get current port, default to 5432 if not specified
+    current_port = parsed.port or 5432
+
+    # If using transaction pooler port (6543), switch to session pooler (5432)
+    if current_port == 6543:
+        # Replace the port in the netloc
+        if parsed.port:
+            # If port is explicitly in the URL, replace it
+            new_netloc = parsed.netloc.replace(f":{current_port}", ":5432")
+        else:
+            # If port not in URL but somehow detected, add it
+            new_netloc = f"{parsed.netloc}:5432"
+
+        # Reconstruct the URL with new port
+        new_parsed = parsed._replace(netloc=new_netloc)
+        return urlunparse(new_parsed)
+
+    return connection_uri
 
 
 def run_migrations_online() -> None:
@@ -87,14 +133,17 @@ def run_migrations_online() -> None:
         configuration = {}
 
     url = get_url()
-    configuration["sqlalchemy.url"] = url
+    validated_url = ensure_session_pooler(url)
+    configuration["sqlalchemy.url"] = validated_url
 
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",
-        echo=False,
-        poolclass=pool.NullPool,
-        connect_args={"prepare_threshold": None},
+        echo=True,
+        connect_args={
+            "prepare_threshold": None,
+            "options": "-c statement_timeout=300000",  # 5 minutes in milliseconds
+        },
     )
 
     with connectable.connect() as connection:
