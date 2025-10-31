@@ -326,3 +326,22 @@ New observations:
         )
 
         return response.content
+
+    @staticmethod
+    def base_prompt_render(prompt_type: str) -> str:
+        # Initialize Prompt Template
+        base_prompt_template = load_prompt_template(
+            settings.DERIVER.PROMPTS_BASE_PATH / ExplicitReasoner.REASONING_TYPE, f"{prompt_type}.jinja")
+        
+        # Render Prompt
+        if base_prompt_template:
+            return base_prompt_template.render(
+                prompt_type=prompt_type,
+                peer_id="",
+                peer_card=None,
+                message_created_at=datetime.datetime.now(datetime.timezone.utc),
+                working_representation=Representation(),
+                history="",
+                new_turns=[],
+            )
+        return ""

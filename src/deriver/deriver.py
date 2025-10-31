@@ -24,14 +24,8 @@ from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import estimate_tokens
 from src.utils.tracing import with_sentry_transaction
 
-from .reasoner.xr import XRReasoner
-from .reasoner.explicit import ExplicitReasoner
-
-from .prompts import (
-    critical_analysis_prompt,
-    estimate_base_prompt_tokens,
-    peer_card_prompt,
-)
+from src.deriver.reasoner.explicit import ExplicitReasoner
+from src.deriver.reasoner.xr import XRReasoner
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -74,134 +68,142 @@ async def process_representation_tasks_batch(
     # Start overall timing
     overall_start = time.perf_counter()
 
-    # Time context preparation
-    context_prep_start = time.perf_counter()
+    # Run Reasoner Operations
+    res_ops = [XRReasoner]
+    for res_op in res_ops:
+        # Time Reasoner Operation
+        res_op_start = time.perf_counter()
 
-    # Use get_session_context_formatted with configurable token limit
+        # Time Context Preparation
+        ctx_pr_start = time.perf_counter()
 
-    working_representation = await crud.get_working_representation(
-        latest_message.workspace_name,
-        observer=observer,
-        observed=observed,
-        # include_semantic_query=latest_message.content,
-        # include_most_derived=False,
-    )
-
-    if settings.PEER_CARD.ENABLED:
-        async with tracked_db("deriver.get_peer_card") as db:
-            speaker_peer_card: list[str] | None = await crud.get_peer_card(
-                db,
-                latest_message.workspace_name,
-                observer=observer,
-                observed=observed,
-            )
-    else:
-        speaker_peer_card = None
-
-    # Estimate tokens for deriver input
-    peer_card_tokens = estimate_tokens(speaker_peer_card)
-    working_rep_tokens = estimate_tokens(
-        str(working_representation) if not working_representation.is_empty() else None
-    )
-    base_prompt_tokens = estimate_base_prompt_tokens()
-
-    # Estimate tokens for new conversation turns
-    new_turns = [
-        format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
-        for m in messages
-    ]
-    new_turns_tokens = estimate_tokens(new_turns)
-
-    estimated_input_tokens = (
-        peer_card_tokens + working_rep_tokens + base_prompt_tokens + new_turns_tokens
-    )
-
-    # Calculate available tokens for context
-    safety_buffer = 500
-    available_context_tokens = max(
-        0,
-        settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
-    )
-
-    logger.debug(
-        "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
-        + "New turns: %d, Total estimated: %d, Available for context: %d",
-        peer_card_tokens,
-        working_rep_tokens,
-        base_prompt_tokens,
-        new_turns_tokens,
-        estimated_input_tokens,
-        available_context_tokens,
-    )
-
-    async with tracked_db("deriver.get_session_context_formatted") as db:
-        formatted_history = await summarizer.get_session_context_formatted(
-            db,
+        working_representation = await crud.get_working_representation(
             latest_message.workspace_name,
-            latest_message.session_name,
-            token_limit=available_context_tokens,
-            cutoff=earliest_message.id,
-            include_summary=True,
+            observer=observer,
+            observed=observed,
+            # include_semantic_query=latest_message.content,
+            # include_most_derived=False,
         )
 
-    session_context_tokens = estimate_tokens(formatted_history)
+        if settings.PEER_CARD.ENABLED:
+            async with tracked_db("deriver.get_peer_card") as db:
+                speaker_peer_card: list[str] | None = await crud.get_peer_card(
+                    db,
+                    latest_message.workspace_name,
+                    observer=observer,
+                    observed=observed,
+                )
+        else:
+            speaker_peer_card = None
 
-    # got working representation and peer card, log timing
-    context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
-    accumulate_metric(
-        f"deriver_{latest_message.id}_{observer}",
-        "context_preparation",
-        context_prep_duration,
-        "ms",
-    )
+        # Estimate Tokens
+        peer_card_tokens = estimate_tokens(speaker_peer_card)
+        work_repr_tokens = estimate_tokens(
+            str(working_representation) if not working_representation.is_empty() else None
+        )
+        sys_prompt_tokens = estimate_tokens(res_op.base_prompt_render('system'))
+        usr_prompt_tokens = estimate_tokens(res_op.base_prompt_render('user'))
 
-    logger.debug(
-        "Using working representation with %s explicit, %s deductive observations",
-        len(working_representation.explicit),
-        len(working_representation.deductive),
-    )
+        # Estimate Tokens for New Turns
+        new_turns = [
+            format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
+            for m in messages
+        ]
+        new_turns_tokens = estimate_tokens(new_turns)
 
-    # instantiate representation manager from collection
-    # if the sender is also the target, we're handling a global representation task.
-    # otherwise, we're handling a directional representation task where the sender is
-    # being observed by the target.
+        # Estimate Total Tokens for Reasoner Input
+        estimated_input_tokens = (
+            peer_card_tokens + work_repr_tokens + \
+            sys_prompt_tokens + usr_prompt_tokens + \
+            new_turns_tokens
+        )
 
-    # Use the representation manager directly
-    representation_manager = RepresentationManager(
-        workspace_name=latest_message.workspace_name,
-        observer=observer,
-        observed=observed,
-    )
+        # Calculate Available Tokens for Context
+        safety_buffer = 500
+        available_context_tokens = max(
+            0,
+            settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+        )
 
-    reasoner = XRReasoner(
-        representation_manager=representation_manager,
-        ctx=messages,
-        observed=observed,
-        observer=observer,
-        estimated_input_tokens=estimated_input_tokens + session_context_tokens,
-    )
-    final_observations = await reasoner.reason(
-        working_representation,
-        formatted_history,
-        speaker_peer_card,
-    )
-    '''
-    reasoner = ExplicitReasoner(
-        representation_manager=representation_manager,
-        ctx=messages,
-        observed=observed,
-        observer=observer,
-        estimated_input_tokens=estimated_input_tokens + session_context_tokens,
-    )
-    final_observations = await reasoner.reason(
-        working_representation,
-        formatted_history,
-        speaker_peer_card,
-    )
-    '''
+        logger.debug(
+            "Token estimation - Peer card: %d, Working rep: %d, Sys prompt: %d, Usr prompt: %d, "
+            + "New turns: %d, Total estimated: %d, Available for context: %d",
+            peer_card_tokens,
+            work_repr_tokens,
+            sys_prompt_tokens,
+            usr_prompt_tokens,
+            new_turns_tokens,
+            estimated_input_tokens,
+            available_context_tokens,
+        )
 
-    # Display final observations in a beautiful tree
-    log_representation(final_observations)
+        # Get Session Context
+        async with tracked_db("deriver.get_session_context_formatted") as db:
+            formatted_history = await summarizer.get_session_context_formatted(
+                db,
+                latest_message.workspace_name,
+                latest_message.session_name,
+                token_limit=available_context_tokens,
+                cutoff=earliest_message.id,
+                include_summary=True,
+            )
+
+        # Estimate Tokens for Session Context
+        session_context_tokens = estimate_tokens(formatted_history)
+
+        # Log Timing
+        ctx_pr_duration = (time.perf_counter() - ctx_pr_start) * 1000
+        accumulate_metric(
+            f"deriver_{latest_message.id}_{observer}",
+            "context_preparation",
+            ctx_pr_duration,
+            "ms",
+        )
+
+        logger.debug(
+            "Working Representation Counts:\n"
+            + f"Explicit: {len(working_representation.explicit)}\n"
+            + f"Implicit: {len(working_representation.implicit)}\n"
+            + f"Deductive: {len(working_representation.deductive)}\n"
+        )
+
+        # Utilize Representation Manager
+        representation_manager = RepresentationManager(
+            workspace_name=latest_message.workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+
+        # instantiate representation manager from collection
+        # if the sender is also the target, we're handling a global representation task.
+        # otherwise, we're handling a directional representation task where the sender is
+        # being observed by the target.
+
+        reasoner = res_op(
+            representation_manager=representation_manager,
+            ctx=messages,
+            observed=observed,
+            observer=observer,
+            estimated_input_tokens=estimated_input_tokens,
+        )
+
+        final_observations = await reasoner.reason(
+            working_representation,
+            formatted_history,
+            speaker_peer_card,
+        )
+
+        # Log Final Observations
+        log_representation(final_observations)
+
+        # Calculate and Log Reasoning Timing
+        rsr_duration = (time.perf_counter() - res_op_start) * 1000
+        accumulate_metric(
+            f"deriver_{latest_message.id}_{observer}",
+            "reasoning",
+            rsr_duration,
+            "ms",
+        )
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -212,9 +214,11 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    total_observations = len(final_observations.explicit) + len(
-        final_observations.deductive
-    )
+    # Compute and Log Total Observations
+    total_observations = \
+        len(final_observations.explicit) + \
+        len(final_observations.implicit) + \
+        len(final_observations.deductive)
 
     accumulate_metric(
         f"deriver_{latest_message.id}_{observer}",

@@ -227,8 +227,8 @@ class DeriverSettings(HonchoSettings):
     # Mapping of reasoning types to their specific prompt subdirectories
     PROMPTS_PATHS: dict[str, str] = Field(
         default_factory=lambda: {
-            "xr": "xr",
-            # "explicit": "explicit",
+            # "xr": "xr",
+            "explicit": "explicit",
             # "explicit": "explicit",
             # "deductive": "deductive",
         },
@@ -281,6 +281,11 @@ class DialecticSettings(HonchoSettings):
     CONTEXT_WINDOW_SIZE: Annotated[
         int, Field(default=100_000, gt=10_000, le=200_000)
     ] = 100_000
+
+    PROMPTS_PATH: Path = Field(
+        default=Path("prompts/dialectic"),
+        description="Path to the dialectic prompt template."
+    )
 
 
 class SummarySettings(HonchoSettings):

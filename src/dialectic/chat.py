@@ -25,8 +25,7 @@ from src.utils.logging import (
 )
 from src.utils.representation import Representation
 from src.utils.tokens import estimate_tokens
-
-from .prompts import dialectic_prompt
+from src.utils.files import load_prompt_template
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -37,6 +36,14 @@ load_dotenv()
 # Create langfuse client
 lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
+# Load Dialectic Prompt Template
+dialectic_prompt = {}
+dialectic_prompt['system'] = \
+    load_prompt_template(
+        settings.DIALECTIC.PROMPTS_PATH, "system.jinja")
+dialectic_prompt['user'] = \
+    load_prompt_template(
+        settings.DIALECTIC.PROMPTS_PATH, "user.jinja") 
 
 async def dialectic_call(
     query: str,
@@ -63,21 +70,39 @@ async def dialectic_call(
     Returns:
         Model response
     """
-    # Generate the prompt and log it
-    prompt = dialectic_prompt(
-        query,
-        working_representation,
-        recent_conversation_history,
-        peer_card,
-        observed_peer_card,
+    # Preprocess Biographical Information
+    observer_peer_card = chr(10).join(peer_card) \
+        if peer_card else "(none)"
+    observed_peer_card = chr(10).join(observed_peer_card) \
+        if observed_peer_card else "(none)"
+
+    # Render System Prompt Template
+    sys_prompt = dialectic_prompt['system'].render(
+        query=query,
+        working_representation=working_representation,
+        recent_conversation_history=recent_conversation_history,
+        peer_card=peer_card,
+        observed_peer_card=observed_peer_card,
         observer=observer,
         observed=observed,
-    )
+    ) if dialectic_prompt['system'] else None
+
+    # Render User Prompt Template
+    usr_prompt = dialectic_prompt['user'].render(
+        query=query,
+        working_representation=working_representation,
+        recent_conversation_history=recent_conversation_history,
+        peer_card=peer_card,
+        observer_peer_card=observer_peer_card,
+        observed_peer_card=observed_peer_card,
+        observer=observer,
+        observed=observed,
+    ) if dialectic_prompt['user'] else ''
 
     response = await honcho_llm_call(
         provider=settings.DIALECTIC.PROVIDER,
         model=settings.DIALECTIC.MODEL,
-        prompt=prompt,
+        prompt=usr_prompt,
         max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
         track_name="Dialectic Call",
         thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
@@ -86,10 +111,6 @@ async def dialectic_call(
         enable_retry=True,
         retry_attempts=3,
     )
-
-    logger.debug("=== DIALECTIC PROMPT ===")
-    logger.debug(prompt)
-    logger.debug("=== END DIALECTIC PROMPT ===")
 
     return response.content
 
@@ -119,16 +140,34 @@ async def dialectic_stream(
     Returns:
         Streaming model response
     """
-    # Generate the prompt and log it
-    prompt = dialectic_prompt(
-        query,
-        working_representation,
-        recent_conversation_history,
-        peer_card,
-        observed_peer_card,
+    # Preprocess Biographical Information
+    observer_peer_card = chr(10).join(peer_card) \
+        if peer_card else "(none)"
+    observed_peer_card = chr(10).join(observed_peer_card) \
+        if observed_peer_card else "(none)"
+    
+    # Render System Prompt Template
+    sys_prompt = dialectic_prompt['system'].render(
+        query=query,
+        working_representation=working_representation,
+        recent_conversation_history=recent_conversation_history,
+        peer_card=peer_card,
+        observed_peer_card=observed_peer_card,
         observer=observer,
         observed=observed,
-    )
+    ) if dialectic_prompt['system'] else None
+
+    # Render User Prompt Template
+    usr_prompt = dialectic_prompt['user'].render(
+        query=query,
+        working_representation=working_representation,
+        recent_conversation_history=recent_conversation_history,
+        peer_card=usr_prompt,
+        observer_peer_card=observer_peer_card,
+        observed_peer_card=observed_peer_card,
+        observer=observer,
+        observed=observed,
+    ) if dialectic_prompt['user'] else ''
 
     response = await honcho_llm_call(
         provider=settings.DIALECTIC.PROVIDER,
