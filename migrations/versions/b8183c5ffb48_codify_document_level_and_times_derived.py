@@ -153,12 +153,12 @@ def downgrade() -> None:
                 WITH batch AS (
                     SELECT id
                     FROM {schema}.documents
-                    WHERE internal_metadata->>'level' IS NULL
+                    WHERE (internal_metadata IS NULL OR NOT (internal_metadata ? 'level'))
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
                 SET internal_metadata = jsonb_set(
-                    d.internal_metadata,
+                    COALESCE(d.internal_metadata, '{{}}'::jsonb),
                     '{{level}}',
                     to_jsonb(d.level)
                 )
@@ -180,12 +180,12 @@ def downgrade() -> None:
                 WITH batch AS (
                     SELECT id
                     FROM {schema}.documents
-                    WHERE internal_metadata->>'times_derived' IS NULL
+                    WHERE (internal_metadata IS NULL OR NOT (internal_metadata ? 'times_derived'))
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
                 SET internal_metadata = jsonb_set(
-                    d.internal_metadata,
+                    COALESCE(d.internal_metadata, '{{}}'::jsonb),
                     '{{times_derived}}',
                     to_jsonb(d.times_derived)
                 )
