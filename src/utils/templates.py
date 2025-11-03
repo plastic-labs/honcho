@@ -5,10 +5,14 @@ This module provides a centralized template manager for rendering prompt templat
 used across the application (deriver, dreamer, dialectic).
 """
 
+import logging
 from functools import lru_cache
 from typing import Any
 
 from jinja2 import Environment, PackageLoader, select_autoescape
+from jinja2.exceptions import TemplateNotFound, TemplateSyntaxError
+
+logger = logging.getLogger(__name__)
 
 
 class TemplateManager:
@@ -49,10 +53,20 @@ class TemplateManager:
         Returns:
             Rendered template string with leading/trailing whitespace stripped
         """
-        template = self.env.get_template(template_name)
-        rendered = template.render(**context)
-        # Strip leading/trailing whitespace to match cleandoc behavior
-        return rendered.strip()
+        try:
+            template = self.env.get_template(template_name)
+            rendered = template.render(**context)
+            # Strip leading/trailing whitespace to match cleandoc behavior
+            return rendered.strip()
+        except TemplateNotFound as e:
+            logger.exception(f"Template {template_name} not found")
+            raise e
+        except TemplateSyntaxError as e:
+            logger.exception(f"Template syntax error in {template_name}")
+            raise e
+        except Exception as e:
+            logger.exception(f"Error rendering template {template_name}")
+            raise e
 
 
 @lru_cache(maxsize=1)
