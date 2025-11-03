@@ -220,6 +220,10 @@ class DeriverSettings(HonchoSettings):
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
+    # Template paths for prompt templates
+    CRITICAL_ANALYSIS_TEMPLATE: str = "deriver/critical_analysis.jinja"
+    PEER_CARD_TEMPLATE: str = "deriver/peer_card.jinja"
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
@@ -262,6 +266,10 @@ class DialecticSettings(HonchoSettings):
     CONTEXT_WINDOW_SIZE: Annotated[
         int, Field(default=100_000, gt=10_000, le=200_000)
     ] = 100_000
+
+    # Template paths for prompt templates
+    DIALECTIC_TEMPLATE: str = "dialectic/dialectic.jinja"
+    QUERY_GENERATION_TEMPLATE: str = "dialectic/query_generation.jinja"
 
 
 class SummarySettings(HonchoSettings):
@@ -322,6 +330,9 @@ class DreamSettings(HonchoSettings):
     PROVIDER: SupportedProviders = "openai"
     MODEL: str = "gpt-4o-mini-2024-07-18"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+
+    # Template path for prompt template
+    CONSOLIDATION_TEMPLATE: str = "dreamer/consolidation.jinja"
 
 
 class AppSettings(HonchoSettings):
