@@ -71,6 +71,10 @@ WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 4096
 MAX_INPUT_TOKENS = 23000
 
+# Template paths for deriver prompts
+CRITICAL_ANALYSIS_TEMPLATE = "deriver/critical_analysis.jinja"
+PEER_CARD_TEMPLATE = "deriver/peer_card.jinja"
+
 # Peer card settings
 [peer_card]
 ENABLED = true
@@ -90,6 +94,10 @@ SEMANTIC_SEARCH_TOP_K = 10
 SEMANTIC_SEARCH_MAX_DISTANCE = 0.85
 THINKING_BUDGET_TOKENS = 1024
 CONTEXT_WINDOW_SIZE = 100000
+
+# Template paths for dialectic prompts
+DIALECTIC_TEMPLATE = "dialectic/dialectic.jinja"
+QUERY_GENERATION_TEMPLATE = "dialectic/query_generation.jinja"
 
 # Summary settings
 [summary]
@@ -119,3 +127,17 @@ URL = "redis://localhost:6379/0"
 NAMESPACE="honcho"
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5
+
+# Dream settings (consolidation)
+[dream]
+ENABLED = true
+DOCUMENT_THRESHOLD = 50
+IDLE_TIMEOUT_MINUTES = 60
+MIN_HOURS_BETWEEN_DREAMS = 8
+ENABLED_TYPES = ["consolidate"]
+PROVIDER = "openai"
+MODEL = "gpt-4o-mini-2024-07-18"
+MAX_OUTPUT_TOKENS = 2000
+
+# Template path for dream consolidation prompt
+CONSOLIDATION_TEMPLATE = "dreamer/consolidation.jinja"

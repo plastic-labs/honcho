@@ -1,6 +1,6 @@
-from inspect import cleandoc as c
-
+from src.config import settings
 from src.utils.representation import Representation
+from src.utils.templates import render_template
 
 
 def consolidation_prompt(
@@ -17,10 +17,7 @@ def consolidation_prompt(
     """
     representation_as_json = representation.model_dump_json(indent=2)
 
-    return c(
-        f"""
-You are an agent that consolidates observations about an entity. You will be presented with a list of EXPLICIT and DEDUCTIVE observations. **Reduce** the number of observations, if possible, by combining similar observations. **ONLY** include information that is **GIVEN**. Create the highest-quality observations with the given information. Observations must always be maximally concise.
-
-{representation_as_json}
-"""
+    return render_template(
+        settings.DREAM.CONSOLIDATION_TEMPLATE,
+        {"representation_as_json": representation_as_json},
     )
