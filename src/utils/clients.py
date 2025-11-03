@@ -1,7 +1,6 @@
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
-from functools import wraps
+from collections.abc import AsyncIterator
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
@@ -18,7 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import settings
 from src.utils.json_parser import validate_and_repair_json
-from src.utils.langfuse_client import get_langfuse_client
+from src.utils.logging import conditional_observe
 from src.utils.representation import PromptRepresentation
 from src.utils.types import SupportedProviders
 
@@ -26,8 +25,6 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
-
-lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 CLIENTS: dict[
     SupportedProviders,
@@ -168,6 +165,7 @@ async def honcho_llm_call(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
+@conditional_observe(name="LLM Call")
 async def honcho_llm_call(
     provider: SupportedProviders,
     model: str,
@@ -190,10 +188,6 @@ async def honcho_llm_call(
         raise ValueError(f"Missing client for {provider}")
 
     decorated = honcho_llm_call_inner
-
-    # apply langfuse if enabled
-    if settings.LANGFUSE_PUBLIC_KEY:
-        decorated = with_langfuse(decorated)
 
     # apply tracking
     if track_name:
@@ -781,15 +775,3 @@ async def handle_streaming_response(
                         is_done=True,
                         finish_reasons=[chunk.choices[0].finish_reason],
                     )
-
-
-def with_langfuse(func: Callable[..., Any]) -> Callable[..., Any]:
-    @wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        if lf:
-            with lf.start_as_current_generation(name="LLM Call"):
-                return await func(*args, **kwargs)
-        else:
-            return await func(*args, **kwargs)
-
-    return wrapper

@@ -32,7 +32,7 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
             # Generate work unit keys for dreams that might be affected by this message
             dream_keys: list[str] = get_affected_dream_keys(message)
             for dream_key in dream_keys:
-                if dream_scheduler.cancel_dream(dream_key):
+                if await dream_scheduler.cancel_dream(dream_key):
                     cancelled_dreams.add(dream_key)
 
         if cancelled_dreams:

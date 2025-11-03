@@ -7,13 +7,11 @@ from rich.console import Console
 from sqlalchemy import select
 
 from src import models
-from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
 from src.models import Message
 from src.utils import summarizer
-from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import log_performance_metrics
 from src.utils.queue_payload import (
     DreamPayload,
@@ -26,8 +24,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=True)
-
-lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 
 async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
@@ -80,39 +76,16 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 message_public_id = message.public_id
 
         with sentry_sdk.start_transaction(name="process_summary_task", op="deriver"):
-            if lf:
-                with lf.start_as_current_span(
-                    name="summary_processing",
-                    input={
-                        "workspace_name": validated.workspace_name,
-                        "session_name": validated.session_name,
-                        "message_id": validated.message_id,
-                    },
-                    metadata={
-                        "summary_model": settings.SUMMARY.MODEL,
-                    },
-                ):
-                    await summarizer.summarize_if_needed(
-                        validated.workspace_name,
-                        validated.session_name,
-                        validated.message_id,
-                        validated.message_seq_in_session,
-                        message_public_id,
-                    )
-                    log_performance_metrics(
-                        "summary", f"{validated.workspace_name}_{validated.message_id}"
-                    )
-            else:
-                await summarizer.summarize_if_needed(
-                    validated.workspace_name,
-                    validated.session_name,
-                    validated.message_id,
-                    validated.message_seq_in_session,
-                    message_public_id,
-                )
-                log_performance_metrics(
-                    "summary", f"{validated.workspace_name}_{validated.message_id}"
-                )
+            await summarizer.summarize_if_needed(
+                validated.workspace_name,
+                validated.session_name,
+                validated.message_id,
+                validated.message_seq_in_session,
+                message_public_id,
+            )
+            log_performance_metrics(
+                "summary", f"{validated.workspace_name}_{validated.message_id}"
+            )
 
     elif task_type == "dream":
         with sentry_sdk.start_transaction(name="process_dream_task", op="deriver"):
@@ -162,28 +135,6 @@ async def process_representation_batch(
         len(messages),
     )
 
-    if lf:
-        with lf.start_as_current_span(
-            name="representation_processing",
-            input={
-                "payloads": [
-                    {
-                        "message_id": msg.id,
-                        "observer": observer,
-                        "observed": observed,
-                        "session_name": msg.session_name,
-                    }
-                    for msg in messages
-                ]
-            },
-            metadata={
-                "critical_analysis_model": settings.DERIVER.MODEL,
-            },
-        ):
-            await process_representation_tasks_batch(
-                messages, observer=observer, observed=observed
-            )
-    else:
-        await process_representation_tasks_batch(
-            messages, observer=observer, observed=observed
-        )
+    await process_representation_tasks_batch(
+        messages, observer=observer, observed=observed
+    )
