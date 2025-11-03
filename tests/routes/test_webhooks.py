@@ -96,13 +96,6 @@ async def test_list_webhook_endpoints_with_data(
 
 
 @pytest.mark.asyncio
-async def test_list_webhook_endpoints_missing_workspace(client: TestClient):
-    response = client.get("/v2/workspaces/nonexistent-workspace/webhooks")
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Workspace nonexistent-workspace not found"}
-
-
-@pytest.mark.asyncio
 async def test_delete_webhook_endpoint(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

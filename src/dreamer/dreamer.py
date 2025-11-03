@@ -11,6 +11,7 @@ from src.dreamer.prompts import consolidation_prompt
 from src.embedding_client import embedding_client
 from src.utils.clients import honcho_llm_call
 from src.utils.formatting import format_datetime_utc
+from src.utils.logging import conditional_observe
 from src.utils.queue_payload import DreamPayload
 from src.utils.representation import (
     ExplicitObservation,
@@ -179,6 +180,7 @@ async def _consolidate_cluster(
     )
 
 
+@conditional_observe(name="[Dream] Consolidate Call")
 async def consolidate_call(
     representation: Representation,
 ) -> Representation:

@@ -84,7 +84,7 @@ async def _get_webhook_urls(db: AsyncSession, workspace_name: str) -> list[str]:
     Get all webhook endpoint URLs for a workspace.
     """
     try:
-        endpoints = await list_webhook_endpoints(db, workspace_name)
+        endpoints = await list_webhook_endpoints(workspace_name)
         result = await db.execute(endpoints)
         return [endpoint.url for endpoint in result.scalars().all()]
     except Exception:

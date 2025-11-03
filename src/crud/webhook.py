@@ -63,7 +63,7 @@ async def get_or_create_webhook_endpoint(
 
 
 async def list_webhook_endpoints(
-    db: AsyncSession, workspace_name: str
+    workspace_name: str,
 ) -> Select[tuple[models.WebhookEndpoint]]:
     """
     List all webhook endpoints, optionally filtered by workspace.
@@ -75,9 +75,6 @@ async def list_webhook_endpoints(
     Returns:
         List of webhook endpoints
     """
-    # Verify workspace exists
-    await get_workspace(db, workspace_name)
-
     return select(models.WebhookEndpoint).where(
         models.WebhookEndpoint.workspace_name == workspace_name
     )

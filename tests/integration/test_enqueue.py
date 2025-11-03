@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.deriver import enqueue
+from src.deriver.enqueue import generate_queue_records
 from src.models import Peer, QueueItem, Workspace
 
 
@@ -1379,3 +1380,146 @@ class TestAdvancedEnqueueEdgeCases:
         assert len(actual_payloads) == len(expected_payloads)
         for expected in expected_payloads:
             assert expected in actual_payloads
+
+
+@pytest.mark.asyncio
+class TestGenerateQueueRecordsSeqInSession:
+    """Unit tests for generate_queue_records function focusing on seq_in_session handling"""
+
+    async def test_generate_queue_records_uses_seq_from_payload_not_crud(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """
+        Test that generate_queue_records uses seq_in_session from payload
+        instead of making a CRUD call to get_message_seq_in_session.
+        """
+
+        test_workspace, test_peer = sample_data
+
+        # Create a test session
+        test_session = models.Session(
+            workspace_name=test_workspace.name, name=str(generate_nanoid())
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create a message payload with seq_in_session included
+        message_payload = {
+            "message_id": 12345,
+            "peer_name": test_peer.name,
+            "workspace_name": test_workspace.name,
+            "session_name": test_session.name,
+            "content": "Test message",
+            "seq_in_session": 20,  # Multiple of MESSAGES_PER_SHORT_SUMMARY to trigger summary creation
+            "created_at": datetime.now(timezone.utc),  # Required by create_payload
+        }
+
+        # Mock the CRUD function to track if it's called
+        # Also enable summary generation in settings
+        with (
+            patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
+            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", new=True),
+        ):
+            mock_crud.return_value = 200
+            mock_db_session = AsyncMock()
+
+            peers_config: dict[str, list[Any]] = {
+                test_peer.name: [
+                    {"observe_me": True},
+                    {"observe_others": True},
+                ]
+            }
+            records = await generate_queue_records(
+                db_session=mock_db_session,
+                message=message_payload,
+                peers_with_configuration=peers_config,
+                session_id=test_session.id,
+                deriver_disabled=False,
+            )
+
+            mock_crud.assert_not_called()
+
+            assert len(records) > 0
+
+            summary_records = [r for r in records if r["task_type"] == "summary"]
+            assert len(summary_records) > 0, "Expected summary records to be created"
+            for record in summary_records:
+                assert (
+                    record["payload"]["message_seq_in_session"]
+                    != mock_crud.return_value
+                )
+                assert record["payload"]["message_seq_in_session"] == 20
+
+    async def test_generate_queue_records_falls_back_to_crud_when_seq_missing(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """
+        Test that generate_queue_records falls back to CRUD call
+        when seq_in_session is missing from payload.
+
+        This is the fallback behavior for backward compatibility.
+        """
+
+        test_workspace, test_peer = sample_data
+
+        # Create a test session
+        test_session = models.Session(
+            workspace_name=test_workspace.name, name=str(generate_nanoid())
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create a message payload WITHOUT seq_in_session
+        message_payload = {
+            "message_id": 12345,
+            "peer_name": test_peer.name,
+            "workspace_name": test_workspace.name,
+            "session_name": test_session.name,
+            "content": "Test message",
+            "created_at": datetime.now(timezone.utc),
+            # seq_in_session is MISSING
+        }
+
+        # Mock the CRUD function and enable summary generation in settings
+        with (
+            patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
+            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", True),
+        ):
+            mock_crud.return_value = (
+                60  # Multiple of MESSAGES_PER_LONG_SUMMARY to trigger summary creation
+            )
+
+            mock_db_session = AsyncMock()
+
+            peers_config: dict[str, list[Any]] = {
+                test_peer.name: [
+                    {"observe_me": True},
+                    {"observe_others": True},
+                ]
+            }
+            records = await generate_queue_records(
+                db_session=mock_db_session,
+                message=message_payload,
+                peers_with_configuration=peers_config,
+                session_id=test_session.id,
+                deriver_disabled=False,
+            )
+
+            # The CRUD function SHOULD have been called as fallback
+            mock_crud.assert_called_once_with(
+                mock_db_session,
+                workspace_name=test_workspace.name,
+                session_name=test_session.name,
+                message_id=12345,
+            )
+
+            # Verify that records were created with the fallback value
+            summary_records = [r for r in records if r["task_type"] == "summary"]
+            assert len(summary_records) > 0, "Expected summary records to be created"
+            for record in summary_records:
+                # Should use the value from CRUD fallback (60)
+                assert record["payload"]["message_seq_in_session"] == 60

@@ -61,7 +61,7 @@ async def list_webhook_endpoints(
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
-    stmt = await crud.list_webhook_endpoints(db, workspace_id)
+    stmt = await crud.list_webhook_endpoints(workspace_id)
     return await apaginate(db, stmt)
 
 
