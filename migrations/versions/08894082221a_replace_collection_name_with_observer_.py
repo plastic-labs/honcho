@@ -53,7 +53,7 @@ def upgrade() -> None:
             connection.execute(
                 text(
                     f"""
-                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active) VALUES (:session_id, '__global_observations__', :workspace_name, true) ON CONFLICT DO NOTHING
+                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active, metadata, internal_metadata, configuration, created_at) VALUES (:session_id, '__global_observations__', :workspace_name, true, '{{}}', '{{}}', '{{}}', NOW()) ON CONFLICT DO NOTHING
                     """
                 ),
                 {"session_id": session_id, "workspace_name": workspace_name},
@@ -446,7 +446,10 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 17: Drop the name column from collections
+    # Step 17: Drop the name_length check constraint before dropping the name column from collections
+    if constraint_exists("collections", "name_length", "check", inspector):
+        op.drop_constraint("name_length", "collections", schema=schema)
+
     if column_exists("collections", "name", inspector):
         op.drop_column("collections", "name", schema=schema)
 

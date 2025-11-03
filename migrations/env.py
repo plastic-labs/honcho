@@ -1,4 +1,4 @@
-import logging
+import logging  # noqa: I001
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -11,6 +11,10 @@ from src.config import settings
 
 # Import your models
 from src.db import Base
+
+# Import all models so they register with Base.metadata
+import src.models  # noqa: F401
+
 
 # Set up logging more verbosely
 logging.basicConfig()
@@ -166,6 +170,13 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema=target_metadata.schema,
+            include_schemas=True,
+            include_object=lambda obj, name, type_, reflected, compare_to: (
+                # Only include objects from our target schema
+                getattr(obj, "schema", None) == target_metadata.schema
+                if hasattr(obj, "schema")
+                else True
+            ),
         )
 
         with context.begin_transaction():

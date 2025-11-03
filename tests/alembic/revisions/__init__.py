@@ -2,6 +2,7 @@
 
 from . import (
     test_05486ce795d5_make_session_name_required_on_messages,
+    test_066e87ca5b07_align_schema_with_declarative_models,
     test_08894082221a_replace_collection_name_with_observer_,
     test_20f89a421aff_rename_metamessage_type_to_label,
     test_66e63cf2cf77_add_indexes_to_documents_table,
@@ -19,6 +20,7 @@ from . import (
 
 __all__ = [
     "test_05486ce795d5_make_session_name_required_on_messages",
+    "test_066e87ca5b07_align_schema_with_declarative_models",
     "test_08894082221a_replace_collection_name_with_observer_",
     "test_20f89a421aff_rename_metamessage_type_to_label",
     "test_556a16564f50_add_user_id_and_app_id_to_tables",
