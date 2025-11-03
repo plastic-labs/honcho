@@ -1420,7 +1420,7 @@ class TestGenerateQueueRecordsSeqInSession:
         # Also enable summary generation in settings
         with (
             patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
-            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", True),
+            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", new=True),
         ):
             mock_crud.return_value = 200
             mock_db_session = AsyncMock()
@@ -1429,7 +1429,6 @@ class TestGenerateQueueRecordsSeqInSession:
                 test_peer.name: [
                     {"observe_me": True},
                     {"observe_others": True},
-                    True,
                 ]
             }
             records = await generate_queue_records(
@@ -1500,7 +1499,6 @@ class TestGenerateQueueRecordsSeqInSession:
                 test_peer.name: [
                     {"observe_me": True},
                     {"observe_others": True},
-                    True,
                 ]
             }
             records = await generate_queue_records(
