@@ -108,13 +108,25 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
 
     # Step 2: Add CHECK constraint without validation (instant)
     # Note: op.create_check_constraint() doesn't support NOT VALID, so use raw SQL
+
+    # Get the identifier preparer for safe quoting
+    dialect = conn.dialect
+    preparer = dialect.identifier_preparer
+
+    quoted_schema = preparer.quote(schema)
+    quoted_table = preparer.quote(table_name)
+    quoted_constraint = preparer.quote(constraint_name)
+    quoted_column = preparer.quote(column_name)
+
+    # Step 2: Add CHECK constraint without validation (instant)
+    # Note: op.create_check_constraint() doesn't support NOT VALID, so use raw SQL
     if not constraint_exists(table_name, constraint_name, "check"):
         conn.execute(
             sa.text(
                 f"""
-                ALTER TABLE {schema}.{table_name}
-                ADD CONSTRAINT {constraint_name}
-                CHECK ({column_name} IS NOT NULL)
+                ALTER TABLE {quoted_schema}.{quoted_table}
+                ADD CONSTRAINT {quoted_constraint}
+                CHECK ({quoted_column} IS NOT NULL)
                 NOT VALID
                 """
             )
@@ -123,7 +135,10 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
     # Step 3: Validate constraint (scans but allows concurrent operations)
     conn.execute(
         sa.text(
-            f"ALTER TABLE {schema}.{table_name} VALIDATE CONSTRAINT {constraint_name}"
+            f"""
+            ALTER TABLE {quoted_schema}.{quoted_table}
+            VALIDATE CONSTRAINT {quoted_constraint}
+            """
         )
     )
 

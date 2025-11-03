@@ -30,11 +30,11 @@ schema = get_schema()
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
     """
     The application code has been previously updated to ensure none of the following columns have NULL values but the actual DB schema is out of sync with our SQLAlchemy model definitions.
     This migration fixes this by making the columns non-nullable using a non-blocking approach to minimize lock duration.
     """
+    conn = op.get_bind()
 
     # Make peers.workspace_name non-nullable
     if column_exists("peers", "workspace_name"):
@@ -120,6 +120,18 @@ def upgrade() -> None:
             "uq_documents_public_id", "documents", type_="unique", schema=schema
         )
 
+    # Drop unnecessary index on active queue
+    if index_exists(
+        "active_queue_sessions",
+        f"ix_{schema}_active_queue_sessions_work_unit_key",
+        inspector,
+    ):
+        op.drop_index(
+            f"ix_{schema}_active_queue_sessions_work_unit_key",
+            table_name="active_queue_sessions",
+            schema=schema,
+        )
+
     # Add FK constraint on queue.session_id to sessions.id
     if not fk_exists("queue", "fk_queue_session_id"):
         # Add constraint without validation (fast, doesn't scan)
@@ -163,10 +175,38 @@ def upgrade() -> None:
             schema=schema,
         )
 
+    if not fk_exists("session_peers", "fk_session_peers_workspace_name", inspector):
+        # Add constraint without validation (fast, doesn't scan)
+        conn.execute(
+            sa.text(
+                f"""
+                ALTER TABLE {schema}.session_peers
+                ADD CONSTRAINT fk_session_peers_workspace_name
+                FOREIGN KEY (workspace_name)
+                REFERENCES {schema}.workspaces(name)
+                NOT VALID
+                """
+            )
+        )
+        # Validate constraint (scans but allows concurrent reads)
+        conn.execute(
+            sa.text(
+                f"ALTER TABLE {schema}.session_peers VALIDATE CONSTRAINT fk_session_peers_workspace_name"
+            )
+        )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+
+    if fk_exists("session_peers", "fk_session_peers_workspace_name", inspector):
+        op.drop_constraint(
+            "fk_session_peers_workspace_name",
+            table_name="session_peers",
+            type_="foreignkey",
+            schema=schema,
+        )
 
     if index_exists("documents", "ix_documents_workspace_name", inspector):
         op.drop_index(
@@ -186,6 +226,18 @@ def downgrade() -> None:
             "fk_queue_session_id",
             "queue",
             type_="foreignkey",
+            schema=schema,
+        )
+
+    if not index_exists(
+        "active_queue_sessions",
+        f"ix_{schema}_active_queue_sessions_work_unit_key",
+        inspector,
+    ):
+        op.create_index(
+            f"ix_{schema}_active_queue_sessions_work_unit_key",
+            table_name="active_queue_sessions",
+            columns=["work_unit_key"],
             schema=schema,
         )
 

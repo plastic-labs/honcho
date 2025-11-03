@@ -122,7 +122,7 @@ class Workspace(Base):
 class Peer(Base):
     __tablename__: str = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    name: Mapped[str] = mapped_column(TEXT)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -211,7 +211,7 @@ class Message(Base):
     )
     # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
     # We have since assigned all of these messages to a default session.
-    session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
+    session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -220,7 +220,7 @@ class Message(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -476,7 +476,7 @@ class ActiveQueueSession(Base):
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
 
-    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
+    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True)
 
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
