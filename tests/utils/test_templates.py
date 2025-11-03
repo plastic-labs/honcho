@@ -1,5 +1,6 @@
 """Tests for the Jinja2 template rendering system."""
 
+import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -74,10 +75,11 @@ class TestDeriverPrompts:
     def test_critical_analysis_prompt_basic(self):
         """Test critical_analysis_prompt renders with minimal inputs."""
         representation = Representation()
+        created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
         result = critical_analysis_prompt(
             peer_id="test_user",
             peer_card=None,
-            message_created_at=datetime.now(timezone.utc),
+            message_created_at=created_at,
             working_representation=representation,
             history="Previous context here",
             new_turns=["User: Hello", "Assistant: Hi there"],
@@ -88,9 +90,11 @@ class TestDeriverPrompts:
         assert "TARGET USER TO ANALYZE" in result
         assert "EXPLICIT REASONING" in result
         assert "DEDUCTIVE REASONING" in result
-        assert "Previous context here" in result
-        assert "User: Hello" in result
-        assert "Hi there" in result
+        assert "2025-01-01 00:00:00+00:00" in result
+        assert "<history>\nPrevious context here\n</history>" in result
+        assert "<new_turns>\nUser: Hello\nAssistant: Hi there\n</new_turns>" in result
+        assert "<peer_card>" not in result
+        assert "<current_context>" not in result
 
     def test_critical_analysis_prompt_with_peer_card(self):
         """Test critical_analysis_prompt with peer card data."""
@@ -99,7 +103,7 @@ class TestDeriverPrompts:
             explicit=[
                 ExplicitObservation(
                     content="Alice likes programming",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
                     message_ids=[(1, 1)],
                     session_name="test",
                 )
@@ -116,18 +120,22 @@ class TestDeriverPrompts:
         )
 
         # Verify peer card is included
-        assert "Name: Alice" in result
-        assert "Age: 30" in result
-        assert "Location: NYC" in result
+        peer_card_block = (
+            "<peer_card>\nName: Alice\nAge: 30\nLocation: NYC\n</peer_card>"
+        )
+        assert peer_card_block in result
         assert "known biographical information" in result
+        assert "<current_context>" in result
 
     def test_critical_analysis_prompt_with_working_representation(self):
         """Test critical_analysis_prompt includes working representation."""
+        explicit_created_at = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+        deductive_created_at = datetime(2025, 1, 1, 12, 5, tzinfo=timezone.utc)
         representation = Representation(
             explicit=[
                 ExplicitObservation(
                     content="User enjoys hiking",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=explicit_created_at,
                     message_ids=[(1, 1)],
                     session_name="test",
                 )
@@ -136,7 +144,7 @@ class TestDeriverPrompts:
                 DeductiveObservation(
                     conclusion="User is physically active",
                     premises=["User enjoys hiking"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=deductive_created_at,
                     message_ids=[(1, 1)],
                     session_name="test",
                 )
@@ -153,8 +161,17 @@ class TestDeriverPrompts:
         )
 
         # Should include current understanding section
-        assert "Current understanding" in result or "current_context" in result
-        assert "User enjoys hiking" in result
+        assert "<current_context>" in result
+        assert (
+            "EXPLICIT:\n\n1. [2025-01-01 12:00:00+00:00] User enjoys hiking" in result
+        )
+        assert (
+            "DEDUCTIVE:\n\n1. [2025-01-01 12:05:00+00:00] User is physically active"
+            in result
+        )
+        assert "    - User enjoys hiking" in result
+        assert "</current_context>" in result
+        assert "<peer_card>" not in result
 
     def test_critical_analysis_prompt_empty_representation(self):
         """Test critical_analysis_prompt with empty representation."""
@@ -173,7 +190,7 @@ class TestDeriverPrompts:
         assert "new_user" in result
         assert "First message" in result
         # Empty representation should not show current understanding
-        assert result  # Just verify it renders
+        assert "<current_context>" not in result
 
     def test_peer_card_prompt_create_new(self):
         """Test peer_card_prompt when creating a new card."""
@@ -184,10 +201,16 @@ class TestDeriverPrompts:
 
         # Verify prompt structure
         assert "biographical card" in result
-        assert "User does not have a card" in result
-        assert "User is 25 years old" in result
-        assert "User lives in Boston" in result
-        assert "software engineer" in result
+        assert (
+            "User does not have a card. Create one with any key observations." in result
+        )
+        observations_block = (
+            "New observations:\n\n"
+            "User is 25 years old\n"
+            "User lives in Boston\n"
+            "User is a software engineer\n"
+        )
+        assert observations_block in result
 
     def test_peer_card_prompt_update_existing(self):
         """Test peer_card_prompt when updating an existing card."""
@@ -199,14 +222,21 @@ class TestDeriverPrompts:
         )
 
         # Verify old card is included
-        assert "Current user biographical card" in result
-        assert "Name: Bob" in result
-        assert "Age: 30" in result
-        assert "Location: NYC" in result
+        existing_card_block = (
+            "Current user biographical card:\n"
+            "Name: Bob\n"
+            "Age: 30\n"
+            "Location: NYC\n"
+        )
+        assert existing_card_block in result
 
         # Verify new observations are included
-        assert "moved to San Francisco" in result
-        assert "now 31 years old" in result
+        observations_block = (
+            "New observations:\n\n"
+            "Bob moved to San Francisco\n"
+            "Bob is now 31 years old\n"
+        )
+        assert observations_block in result
 
     def test_peer_card_prompt_examples_included(self):
         """Test peer_card_prompt includes example format."""
@@ -237,12 +267,24 @@ class TestDialecticPrompts:
 
         # Should be a global query format
         assert "What are the user's hobbies?" in result
-        assert "User enjoys painting and photography" in result
-        assert "painted a landscape today" in result
-        assert "Name: Alice" in result
+        assert "<query>What are the user's hobbies?</query>" in result
+        assert (
+            "<working_representation>User enjoys painting and photography</working_representation>"
+            in result
+        )
+        assert (
+            "<recent_conversation_history>\n"
+            "User: I painted a landscape today\n"
+            "</recent_conversation_history>"
+        ) in result
+        assert "The query is about user alice." in result
+        assert (
+            "The user's known biographical information:\n" "Name: Alice\n" "Age: 28\n"
+        ) in result
 
         # Should NOT have directional language
-        assert "understanding of" not in result or "alice" in result.lower()
+        assert "alice's understanding of" not in result
+        assert "The target's known biographical information" not in result
 
     def test_dialectic_prompt_different_observer_observed(self):
         """Test dialectic_prompt for directional query."""
@@ -257,10 +299,17 @@ class TestDialecticPrompts:
         )
 
         # Should have directional query format
-        assert "alice" in result
-        assert "bob" in result
-        assert "understanding of" in result
-        assert "Alice thinks Bob is helpful" in result
+        assert "alice's understanding of bob" in result.lower()
+        assert (
+            "<working_representation>Alice thinks Bob is helpful</working_representation>"
+            in result
+        )
+        assert (
+            "The user's known biographical information:\n" "Name: Alice\n"
+        ) in result
+        assert (
+            "The target's known biographical information:\n" "Name: Bob\n"
+        ) in result
 
     def test_dialectic_prompt_without_conversation_history(self):
         """Test dialectic_prompt without recent conversation history."""
@@ -276,9 +325,12 @@ class TestDialecticPrompts:
 
         # Should still render without conversation history section
         assert "What does the user like?" in result
-        assert "User likes coffee" in result
+        assert (
+            "<working_representation>User likes coffee</working_representation>"
+            in result
+        )
         # Should not have empty recent_conversation_history section
-        assert result  # Just verify it renders
+        assert "<recent_conversation_history>" not in result
 
     def test_dialectic_prompt_core_content(self):
         """Test dialectic_prompt includes core instructional content."""
@@ -294,10 +346,13 @@ class TestDialecticPrompts:
 
         # Verify core sections are present
         assert "context synthesis agent" in result
-        assert "EXPLICIT" in result or "Explicit" in result
-        assert "DEDUCTIVE" in result or "Deductive" in result
-        assert "working_representation" in result
-        assert "Test representation" in result
+        assert "## INPUT STRUCTURE" in result
+        assert "## OUTPUT FORMAT" in result
+        assert (
+            "<working_representation>Test representation</working_representation>"
+            in result
+        )
+        assert "<query>Test query</query>" in result
 
     def test_query_generation_prompt_basic(self):
         """Test query_generation_prompt renders correctly."""
@@ -308,9 +363,9 @@ class TestDialecticPrompts:
 
         # Verify core content
         assert "john" in result
-        assert "How does the user handle criticism?" in result
-        assert "query expansion" in result or "search queries" in result
-        assert "semantic" in result
+        assert "query expansion agent" in result
+        assert "<query>How does the user handle criticism?</query>" in result
+        assert "semantic search over an embedding store" in result
 
     def test_query_generation_prompt_json_format(self):
         """Test query_generation_prompt mentions JSON output format."""
@@ -321,7 +376,8 @@ class TestDialecticPrompts:
 
         # Should mention JSON format
         assert "queries" in result
-        assert "JSON" in result or "json" in result
+        assert "Respond with 3-5 search queries as a JSON object" in result
+        assert "<query>What are user's interests?</query>" in result
 
 
 class TestDreamerPrompts:
@@ -333,7 +389,7 @@ class TestDreamerPrompts:
             explicit=[
                 ExplicitObservation(
                     content="User is interested in AI",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
                     message_ids=[(1, 1)],
                     session_name="test",
                 )
@@ -342,7 +398,7 @@ class TestDreamerPrompts:
                 DeductiveObservation(
                     conclusion="User works in technology",
                     premises=["User is interested in AI"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime(2025, 1, 1, 12, 5, tzinfo=timezone.utc),
                     message_ids=[(1, 1)],
                     session_name="test",
                 )
@@ -356,8 +412,11 @@ class TestDreamerPrompts:
         assert "EXPLICIT" in result
         assert "DEDUCTIVE" in result
         # Should contain JSON representation
-        assert "User is interested in AI" in result
-        assert "User works in technology" in result
+        json_block = result[result.index("{") :]
+        data = json.loads(json_block)
+        assert data["explicit"][0]["content"] == "User is interested in AI"
+        assert data["deductive"][0]["conclusion"] == "User works in technology"
+        assert data["deductive"][0]["premises"] == ["User is interested in AI"]
 
     def test_consolidation_prompt_with_empty_representation(self):
         """Test consolidation_prompt with empty representation."""
@@ -368,7 +427,9 @@ class TestDreamerPrompts:
         # Should still render
         assert "consolidates observations" in result
         # Should contain empty structure
-        assert result
+        json_block = result[result.index("{") :]
+        data = json.loads(json_block)
+        assert data == {"explicit": [], "deductive": []}
 
 
 class TestPromptConsistency:
