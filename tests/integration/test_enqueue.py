@@ -1412,12 +1412,17 @@ class TestGenerateQueueRecordsSeqInSession:
             "workspace_name": test_workspace.name,
             "session_name": test_session.name,
             "content": "Test message",
-            "seq_in_session": 42,  # This should be used, not queried
+            "seq_in_session": 20,  # Multiple of MESSAGES_PER_SHORT_SUMMARY to trigger summary creation
             "created_at": datetime.now(timezone.utc),  # Required by create_payload
         }
 
         # Mock the CRUD function to track if it's called
-        with patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud:
+        # Also enable summary generation in settings
+        with (
+            patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
+            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", True),
+        ):
+            mock_crud.return_value = 200
             mock_db_session = AsyncMock()
 
             peers_config: dict[str, list[Any]] = {
@@ -1440,8 +1445,13 @@ class TestGenerateQueueRecordsSeqInSession:
             assert len(records) > 0
 
             summary_records = [r for r in records if r["task_type"] == "summary"]
+            assert len(summary_records) > 0, "Expected summary records to be created"
             for record in summary_records:
-                assert record["payload"]["message_seq_in_session"] == 42
+                assert (
+                    record["payload"]["message_seq_in_session"]
+                    != mock_crud.return_value
+                )
+                assert record["payload"]["message_seq_in_session"] == 20
 
     async def test_generate_queue_records_falls_back_to_crud_when_seq_missing(
         self,
@@ -1475,9 +1485,14 @@ class TestGenerateQueueRecordsSeqInSession:
             # seq_in_session is MISSING
         }
 
-        # Mock the CRUD function
-        with patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud:
-            mock_crud.return_value = 50  # This should be used as fallback
+        # Mock the CRUD function and enable summary generation in settings
+        with (
+            patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
+            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", True),
+        ):
+            mock_crud.return_value = (
+                60  # Multiple of MESSAGES_PER_LONG_SUMMARY to trigger summary creation
+            )
 
             mock_db_session = AsyncMock()
 
@@ -1506,6 +1521,7 @@ class TestGenerateQueueRecordsSeqInSession:
 
             # Verify that records were created with the fallback value
             summary_records = [r for r in records if r["task_type"] == "summary"]
+            assert len(summary_records) > 0, "Expected summary records to be created"
             for record in summary_records:
-                # Should use the value from CRUD fallback (50)
-                assert record["payload"]["message_seq_in_session"] == 50
+                # Should use the value from CRUD fallback (60)
+                assert record["payload"]["message_seq_in_session"] == 60
