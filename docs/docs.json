@@ -19,7 +19,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.4.1",
+        "version": "v2.4.2",
         "api": {
           "openapi": [
             "openapi.documented.yml"
