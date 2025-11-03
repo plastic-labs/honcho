@@ -90,9 +90,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 validated.message_seq_in_session,
                 message_public_id,
             )
-            log_performance_metrics(
-                "summary", f"{validated.workspace_name}_{validated.message_id}"
-            )
+            log_performance_metrics("summary", f"{workspace_name}_{message_id}")
 
     elif task_type == "dream":
         with sentry_sdk.start_transaction(name="process_dream_task", op="deriver"):
