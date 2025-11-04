@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Langfuse tracing to have readable waterfalls
 - Alembic Migrations to match models.py
-- message_in_seq report in webhook
+- message_in_seq correctly included in webhook payload
 
 ### Changed
 
