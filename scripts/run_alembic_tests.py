@@ -61,12 +61,26 @@ def main():
     repo_root = Path(__file__).parent.parent
     migrations_dir = repo_root / "migrations" / "versions"
     tests_dir = repo_root / "tests" / "alembic" / "revisions"
+    alembic_tests_dir = repo_root / "tests" / "alembic"
 
     # Collect revision IDs to test
     revision_ids: set[str] = set()
+    run_full_suite = False
 
     for filepath in changed_files:
         filepath = Path(filepath).resolve()
+
+        # Check if file is under tests/alembic (including subdirectories)
+        # If it's not a revision-specific test file, run full suite
+        if (
+            filepath.parent == alembic_tests_dir
+            or alembic_tests_dir in filepath.parents
+        ) and not (filepath.parent == tests_dir and filepath.name.startswith("test_")):
+            run_full_suite = True
+            print(
+                f"Infrastructure file changed: {filepath.name} -> will run full test suite"
+            )
+            continue
 
         # Case 1: Test file changed - extract its revision ID
         if filepath.parent == tests_dir and filepath.name.startswith("test_"):
@@ -86,28 +100,38 @@ def main():
                     f"Migration changed: {filepath.name} -> testing revision {revision_id}"
                 )
 
-    if not revision_ids:
+    if run_full_suite:
+        # Run full test suite without -k filter
+        print("\nRunning full alembic test suite due to infrastructure file changes\n")
+        cmd = [
+            "uv",
+            "run",
+            "pytest",
+            "tests/alembic/test_pipeline.py",
+        ]
+    elif revision_ids:
+        # Build a -k expression to filter tests by revision ID
+        # pytest -k "rev1 or rev2 or rev3"
+        k_expression = " or ".join(sorted(revision_ids))
+
+        print(
+            f"\nRunning tests for {len(revision_ids)} revision(s): {', '.join(sorted(revision_ids))}"
+        )
+        print()
+
+        # Run pytest on test_pipeline.py with -k filter
+        cmd = [
+            "uv",
+            "run",
+            "pytest",
+            "tests/alembic/test_pipeline.py",
+            "-k",
+            k_expression,
+        ]
+    else:
         print("No alembic tests to run")
         sys.exit(0)
 
-    # Build a -k expression to filter tests by revision ID
-    # pytest -k "rev1 or rev2 or rev3"
-    k_expression = " or ".join(sorted(revision_ids))
-
-    print(
-        f"\nRunning tests for {len(revision_ids)} revision(s): {', '.join(sorted(revision_ids))}"
-    )
-    print()
-
-    # Run pytest on test_pipeline.py with -k filter
-    cmd = [
-        "uv",
-        "run",
-        "pytest",
-        "tests/alembic/test_pipeline.py",
-        "-k",
-        k_expression,
-    ]
     result = subprocess.run(cmd, cwd=repo_root)
 
     sys.exit(result.returncode)
