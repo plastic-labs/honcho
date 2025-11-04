@@ -74,11 +74,11 @@ repos:
       # Run Alembic tests only when migrations change
       - id: pytest-alembic
         name: pytest (alembic migrations)
-        entry: uv run pytest tests/alembic/
+        entry: uv run python scripts/run_alembic_tests.py
         language: system
-        files: ^(migrations/.*\.py|tests/alembic/.*\.py)$
+        files: ^(migrations/versions/.*\.py|tests/alembic/revisions/.*\.py)$
         stages: [pre-push]
-        pass_filenames: false
+        pass_filenames: true
         require_serial: true
 
       # Ensure each alembic migration revision has a corresponding test file
