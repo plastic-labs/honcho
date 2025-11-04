@@ -1,7 +1,7 @@
 """codify workspace_name and message_id in queue table
 
 Revision ID: ec8f94139b02
-Revises: bb6fb3a7a643
+Revises: e9b705f9adf9
 Create Date: 2025-10-28 17:39:51.778665
 
 """
@@ -15,7 +15,7 @@ from migrations.utils import column_exists, fk_exists, get_schema, index_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "ec8f94139b02"
-down_revision: str | None = "bb6fb3a7a643"
+down_revision: str | None = "e9b705f9adf9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
