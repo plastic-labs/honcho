@@ -26,14 +26,24 @@ schema = get_schema()
 def upgrade() -> None:
     # Step 1: Drop rows where workspace_name is NULL in payload
     # This removes invalid/corrupted queue items
-    op.execute(
-        sa.text(
-            f"""
-            DELETE FROM "{schema}".queue
-            WHERE payload->>'workspace_name' IS NULL
-            """
+    conn = op.get_bind()
+    batch_size = 10000
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                DELETE FROM "{schema}".queue
+                WHERE id IN (
+                    SELECT id FROM "{schema}".queue
+                    WHERE payload->>'workspace_name' IS NULL
+                    LIMIT :batch_size
+                )
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 2: Add workspace_name column (nullable initially for backfill)
     op.add_column(
@@ -50,7 +60,6 @@ def upgrade() -> None:
     )
 
     # Step 4: Backfill workspace_name from payload in batches
-    conn = op.get_bind()
     batch_size = 5000
     while True:
         result = conn.execute(
