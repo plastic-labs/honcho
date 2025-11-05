@@ -3,27 +3,20 @@
   "theme": "mint",
   "name": "Honcho",
   "colors": {
-    "primary": "#86BCF2",
+    "primary": "#66AAFF",
     "dark": "#151E27",
-    "light": "#B5D9FD"
+    "light": "#86BCF2"
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude"
-    ]
+    "options": ["copy", "view", "chatgpt", "claude"]
   },
   "navigation": {
     "versions": [
       {
         "version": "v2.4.2",
         "api": {
-          "openapi": [
-            "openapi.documented.yml"
-          ]
+          "openapi": ["openapi.documented.yml"]
         },
         "tabs": [
           {
@@ -41,10 +34,19 @@
                 "group": "Core Concepts",
                 "pages": [
                   "v2/documentation/core-concepts/architecture",
-                  "v2/documentation/core-concepts/glossary",
-                  "v2/documentation/core-concepts/features",
+                  "v2/documentation/core-concepts/features/storing-data",
+                  "v2/documentation/core-concepts/features/dialectic-endpoint",
+                  "v2/documentation/core-concepts/features/get-context",
+                  "v2/documentation/core-concepts/features/search",
+                  "v2/documentation/core-concepts/features/working-rep",
+                  "v2/documentation/core-concepts/features/streaming-response",
+                  "v2/documentation/core-concepts/features/using-filters",
+                  "v2/documentation/core-concepts/features/file-uploads",
+                  "v2/documentation/core-concepts/features/queue-status",
+                  "v2/documentation/core-concepts/features/local-vs-global",
                   "v2/documentation/core-concepts/configuration",
-                  "v2/documentation/core-concepts/summarizer"
+                  "v2/documentation/core-concepts/summarizer",
+                  "v2/documentation/core-concepts/glossary"
                 ]
               },
               {
@@ -61,54 +63,21 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": [
-                  "v2/guides/overview",
-                  "v2/guides/mcp"
-                ]
+                "pages": ["v2/guides/overview", "v2/guides/mcp"]
               },
               {
                 "group": "Application Interfaces",
-                "pages": [
-                  "v2/guides/discord",
-                  "v2/guides/telegram"
-                ]
-              },
-              {
-                "group": "Design Patterns",
-                "pages": [
-                  "v2/guides/dialectic-endpoint",
-                  "v2/guides/get-context",
-                  "v2/guides/search",
-                  "v2/guides/working-rep",
-                  "v2/guides/streaming-response",
-                  "v2/guides/using-filters",
-                  "v2/guides/file-uploads"
-                ]
+                "pages": ["v2/guides/discord", "v2/guides/telegram"]
               }
             ]
           },
-          {
-            "tab": "Contributing",
-            "groups": [
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v2/contributing/guidelines",
-                  "v2/contributing/self-hosting",
-                  "v2/contributing/configuration",
-                  "v2/contributing/license"
-                ]
-              }
-            ]
-          },
+
           {
             "tab": "API Reference",
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": [
-                  "v2/api-reference/introduction"
-                ]
+                "pages": ["v2/api-reference/introduction"]
               },
               {
                 "group": "workspaces",
@@ -192,15 +161,27 @@
                 ]
               }
             ]
+          },
+          {
+            "tab": "Contributing",
+            "groups": [
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/configuration",
+                  "v2/contributing/license"
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": [
-            "openapi.json"
-          ]
+          "openapi": ["openapi.json"]
         },
         "tabs": [
           {
@@ -230,23 +211,15 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": [
-                  "v1/guides/overview",
-                  "v1/guides/streaming-response"
-                ]
+                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
               },
               {
                 "group": "Application Interfaces",
-                "pages": [
-                  "v1/guides/discord",
-                  "v1/guides/honcho-mcp"
-                ]
+                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
               },
               {
                 "group": "Personal Memory",
-                "pages": [
-                  "v1/guides/dialectic-endpoint"
-                ]
+                "pages": ["v1/guides/dialectic-endpoint"]
               }
             ]
           },
@@ -255,9 +228,7 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": [
-                  "v1/api-reference/introduction"
-                ]
+                "pages": ["v1/api-reference/introduction"]
               },
               {
                 "group": "apps",
@@ -305,9 +276,7 @@
               },
               {
                 "group": "keys",
-                "pages": [
-                  "v1/api-reference/endpoint/keys/create-key"
-                ]
+                "pages": ["v1/api-reference/endpoint/keys/create-key"]
               },
               {
                 "group": "metamessages",
@@ -360,9 +329,9 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Managed Platform",
+          "anchor": "Dashboard",
           "href": "https://app.honcho.dev",
-          "icon": "book-open-cover"
+          "icon": "table-columns"
         },
         {
           "anchor": "Community",

@@ -1,0 +1,132 @@
+---
+title: Queue Status
+description: Learn how to check the status of the Deriver
+icon: lines-leaning
+---
+
+Whenever `Messages` are stored in Honcho, a background process called the
+[Deriver](/docs/v2/documentation/core-concepts/architecture#reasoning-layer) is
+triggered to reason about the conversation and generate insights.
+
+The Deriver is an asynchronous process and, depending on load may not immediately
+generated insights for the latest message you've sent. To help with this, Honcho
+provides several utilities to check the status of the Deriver.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+honcho = Honcho()
+
+status = honcho.get_deriver_status()
+honcho.poll_deriver_status()
+```
+
+```typescript typescript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({});
+
+const status = await honcho.getDeriverStatus();
+await honcho.pollDeriverStatus();
+```
+</CodeGroup>
+
+Output types
+
+<CodeGroup>
+```python Python
+class DeriverStatus(BaseModel):
+    completed_work_units: int
+    """Completed work units"""
+
+    in_progress_work_units: int
+    """Work units currently being processed"""
+
+    pending_work_units: int
+    """Work units waiting to be processed"""
+
+    total_work_units: int
+    """Total work units"""
+
+    sessions: Optional[Dict[str, Sessions]] = None
+    """Per-session status when not filtered by session"""
+```
+```typescript TypeScript
+Promise<{
+    totalWorkUnits: number
+    completedWorkUnits: number
+    inProgressWorkUnits: number
+    pendingWorkUnits: number
+    sessions?: Record<string, DeriverStatus.Sessions>
+  }>
+
+```
+</CodeGroup>
+
+Whenever a `Message` is sent it will generate several tasks. These could
+be tasks such as generating insights, cleaning up a representation, summarizing
+a conversation etc. These tasks are defined based on who is sending the
+message, what `Session` the message is in, and potentially who is observing the
+message. We call the combination of these parameters a `work_unit`
+
+This has a few different implications.
+
+- tasks within the same work_unit are processed sequentially, but multiple
+work_units will be processed in parallel
+- If local representations are turned in a Session then a `Message` will
+  generate an additional work unit for every `Peer` that has `observe_others=True`
+
+The `get_deriver_status` and `poll_deriver_status` methods can take additional
+parameters to scope the status to a specific work unit
+
+<CodeGroup>
+```python Python
+def get_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+        session_id: str | None = None,
+    ) -> DeriverStatus:
+```
+```typescript TypeScript
+
+export const DeriverStatusOptionsSchema = z.object({
+  observerId: z.string().optional(),
+  senderId: z.string().optional(),
+  sessionId: z.string().optional(),
+  timeoutMs: z
+    .number()
+    .positive('Timeout must be a positive number')
+    .optional(),
+})
+
+```
+</CodeGroup>
+
+Additionally, there are deriver status and polling deriver status methods
+available on the `Session` objects in each of the SDKs.
+
+Below are the function signatures for the session level deriver status method
+
+<CodeGroup>
+```python python
+@validate_call
+    def get_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+    ) -> DeriverStatus:
+```
+
+```typescript TypeScript
+async getDeriverStatus(
+    options?: Omit<DeriverStatusOptions, 'sessionId'>
+  ): Promise<{
+    totalWorkUnits: number
+    completedWorkUnits: number
+    inProgressWorkUnits: number
+    pendingWorkUnits: number
+    sessions?: Record<string, DeriverStatus.Sessions>
+  }>
+```
+</CodeGroup>
