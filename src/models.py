@@ -325,6 +325,9 @@ class MessageEmbedding(Base):
     )
 
 
+DocumentLevel = Literal["explicit", "deductive"]
+
+
 @final
 class Collection(Base):
     __tablename__: str = "collections"
@@ -382,6 +385,12 @@ class Document(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     content: Mapped[str] = mapped_column(TEXT)
+    level: Mapped[DocumentLevel] = mapped_column(
+        TEXT, nullable=False, server_default="explicit"
+    )
+    times_derived: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
     embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -397,6 +406,7 @@ class Document(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        CheckConstraint("level IN ('explicit', 'deductive')", name="level_valid"),
         # Composite foreign key constraint for collections
         ForeignKeyConstraint(
             ["observer", "observed", "workspace_name"],

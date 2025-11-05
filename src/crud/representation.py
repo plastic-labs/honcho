@@ -145,7 +145,6 @@ class RepresentationManager:
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
                 message_ids=[message_id_range],
-                level=obs_level,
                 premises=obs_premises,
                 message_created_at=format_datetime_utc(message_created_at),
             )
@@ -154,6 +153,7 @@ class RepresentationManager:
                 schemas.DocumentCreate(
                     content=obs_content,
                     session_name=session_name,
+                    level=obs_level,
                     metadata=metadata,
                     embedding=embedding,
                 )
@@ -397,7 +397,7 @@ class RepresentationManager:
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
             )
-            .order_by(models.Document.internal_metadata["times_derived"].desc())
+            .order_by(models.Document.times_derived.desc())
         )
 
         result = await db.execute(stmt)
@@ -454,7 +454,7 @@ class RepresentationManager:
         conditions: list[dict[str, Any]] = []
 
         if level:
-            conditions.append({"internal_metadata": {"level": level}})
+            conditions.append({"level": level})
 
         if not conditions:
             return {}

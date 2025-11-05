@@ -95,17 +95,18 @@ class TestDocumentValidations:
     def test_valid_document_create(self):
         metadata = DocumentMetadata(
             message_ids=[(1, 1)],
-            level="explicit",
             premises=[],
             message_created_at="2021-01-01T00:00:00Z",
         )
         doc = DocumentCreate(
             content="test content",
             session_name="test",
+            level="explicit",
             metadata=metadata,
             embedding=[0.1, 0.2, 0.3],
         )
         assert doc.content == "test content"
+        assert doc.level == "explicit"
         assert doc.metadata == metadata
 
     def test_document_content_too_short(self):
@@ -113,9 +114,9 @@ class TestDocumentValidations:
             DocumentCreate(
                 content="",
                 session_name="test",
+                level="explicit",
                 metadata=DocumentMetadata(
                     message_ids=[(1, 1)],
-                    level="explicit",
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
                 ),
@@ -129,9 +130,9 @@ class TestDocumentValidations:
             DocumentCreate(
                 content="a" * 100001,
                 session_name="test",
+                level="explicit",
                 metadata=DocumentMetadata(
                     message_ids=[(1, 1)],
-                    level="explicit",
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
                 ),
