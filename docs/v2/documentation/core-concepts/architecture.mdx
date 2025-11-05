@@ -36,8 +36,8 @@ Honcho has a hierarchical data model centered around the entities below.
 ```
 
 A `Workspaces` has `Peers` & `Sessions`
-A `Peer` can be in multiple `Sessions` and a can send `Messages` in a `Session`.
-A `Session` can have many `Peers` and has `Messages` sent by `Peers`.
+A `Peer` can be in multiple `Sessions` and can send `Messages` in a `Session`.
+A `Session` can have many `Peers` and stores `Messages` sent by its `Peers`.
 
 ### <Icon icon="building" /> Workspaces
 
@@ -131,9 +131,9 @@ useful for an LLM to consume. There may be too many tokens that need to be
 compacted, key facts about what happened may be hard to piece together because
 they involve messages from across different sessions, etc.
 
-To solve this problem, Honcho has a reasoning layer that is always processing
-data that comes into Honcho to have the must informationaly dense and useful
-data that we can expose to agents. Currently, Honcho does the following tasks in
+To solve this problem, Honcho has a reasoning layer that continually processes
+incoming data to form the most informationally dense and useful representations of `Peers`
+that we can then expose to agents. Honcho does the following tasks in
 the reasoning engine.
 
 - **Fact Derivation**
@@ -142,15 +142,14 @@ the reasoning engine.
 - **Dreaming**
 
 
-So Honcho will reason about each `Message` it
+Honcho will reason about each `Message` it
 ingests to generate new facts and insights that are spelled out and easy to
 consume in an LLM prompt.
 
-We refer to this module of Honcho as the `Deriver`, because it constantly is
+We refer to this module of Honcho as the `Deriver`, because it's constantly
 deriving new insights from messages. The sum total of all these generated
-insights are what we refer to as a `Representation`, all the data related who
+insights are what we refer to as a `Representation`, all the data related to who
 and what a `Peer` is.
-
 
 Depending on the configuration of a `Peer` or `Session`, the deriver will behave
 differently and update different representations.

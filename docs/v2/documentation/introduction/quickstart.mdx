@@ -249,11 +249,11 @@ const honcho = new Honcho({
 });
 
 // Get your Peers
-const alice = await client.peer("alice")
-const bob = await client.peer("bob")
+const alice = await honcho.peer("alice")
+const bob = await honcho.peer("bob")
 
 // Make a Session and add your peers
-const session = await client.session("session_1")
+const session = await honcho.session("session_1")
 await session.addPeers([alice, bob])
 
 // Add messages sent by your Peers
@@ -303,7 +303,7 @@ behavior and can be toggled off via [the configuration](/v2/documentation/core-c
   <Card title="Start Building" icon="brain" href="https://app.honcho.dev">
     Sign up for Managed Honcho and get started building agents now.
   </Card>
-  <Card title="Guides" icon="book" href="/v2/documentation/guides/overview">
+  <Card title="Guides" icon="book" href="/v2/guides/overview">
     Check out spellbooks to see different examples apps built with Honcho
     </Card>
 </CardGroup>

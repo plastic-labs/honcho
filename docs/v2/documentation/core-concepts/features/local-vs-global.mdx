@@ -1,6 +1,6 @@
 ---
 title: Local vs Global Representations
-description: Use Honcho that model directional relationships of Peers
+description: Model directional relationships between Peers in Honcho
 icon: location-pin
 ---
 
@@ -10,7 +10,7 @@ how one `Peer` thinks about another `Peer`.
 
 There are many use cases where you don't want every agent or human to know
 everything about another user such as games or multi-agent workflows. To
-illustrate further the following examples shows 2 conversations.
+illustrate this, the following examples shows 2 conversations.
 
 Conversation #1 (With Bob and Alice)
 ```
@@ -51,8 +51,8 @@ form a representation Alice based only on what they observe Alice do.
 This feature is illustrated in the graphic below:
 <img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
 
-We can enable local representation for a peer by setting `observe_others=True`.
-This is show in the [Configure
+We can enable local representation for a `Peer` by setting `observe_others=True`.
+This is shown in the [Configure
 Reasoning](/v2/documentation/core-concepts/configuration) page.
 
 Now if we used Bob's local representation of Alice then Bob would only get
