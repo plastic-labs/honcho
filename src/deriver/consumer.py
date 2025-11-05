@@ -56,7 +56,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
 
         # Use workspace_name and message_id from QueueItem columns
-        message_id = queue_item.message_id
+        message_id = queue_item.message_id or validated.message_id
 
         if message_id is None:
             raise ValueError("Summary tasks require a message_id")

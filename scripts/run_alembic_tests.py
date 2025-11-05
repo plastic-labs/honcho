@@ -12,7 +12,7 @@ This script determines which specific alembic tests to run based on:
 The alembic test system uses a parameterized test in test_pipeline.py that runs
 for each revision. We filter these tests using pytest's -k flag with the revision IDs.
 
-Usage: python scripts/run_alembic_tests_selective.py <file1> <file2> ...
+Usage: python scripts/run_alembic_tests.py <file1> <file2> ...
 """
 
 import re

@@ -76,7 +76,7 @@ repos:
         name: pytest (alembic migrations)
         entry: uv run python scripts/run_alembic_tests.py
         language: system
-        files: ^(migrations/versions/.*\.py|tests/alembic/revisions/.*\.py)$
+        files: ^(migrations/versions/.*\.py|tests/alembic/.*\.py)$
         stages: [pre-push]
         pass_filenames: true
         require_serial: true

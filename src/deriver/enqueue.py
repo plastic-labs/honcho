@@ -165,9 +165,9 @@ def create_representation_record(
     message_id = message.get("message_id")
 
     if not isinstance(workspace_name, str):
-        raise ValueError("workspace_name is required and must be a string")
+        raise TypeError("workspace_name is required and must be a string")
     if not isinstance(message_id, int):
-        raise ValueError("message_id is required and must be an integer")
+        raise TypeError("message_id is required and must be an integer")
 
     processed_payload = create_payload(
         message=message,
