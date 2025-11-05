@@ -14,7 +14,7 @@ from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
-from src.utils.logging import accumulate_metric
+from src.utils.logging import accumulate_metric, conditional_observe
 
 from .. import crud, models
 
@@ -79,6 +79,7 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
+@conditional_observe(name="Create Short Summary")
 async def create_short_summary(
     messages: list[models.Message],
     input_tokens: int,
@@ -129,6 +130,7 @@ Produce as thorough a summary as possible in {output_words} words or less.
     )
 
 
+@conditional_observe(name="Create Long Summary")
 async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,

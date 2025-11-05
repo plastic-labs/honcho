@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.4.0"
+version = "2.4.2"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -81,10 +81,19 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "--strict-markers --cov=src/ --cov=sdks/python/src/honcho --cov-report=term-missing"
+addopts = "--strict-markers --cov=src/ --cov=sdks/python/src/honcho --cov-report=term-missing --ignore=tests/alembic"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
 
 [tool.basedpyright]
 # BasedPyright currently seems like the best type checker option, much faster

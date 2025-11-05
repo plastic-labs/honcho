@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.4.2] - 2025-11-03
+
+### Fixed
+
+- Langfuse tracing to have readable waterfalls
+- Alembic Migrations to match models.py
+- message_in_seq correctly included in webhook payload
+
+### Changed
+
+- Alembic to always use a session pooler
+- Statement timeout during alembic operations to 5 min
+
+## [2.4.1] - 2025-10-24
+
+### Added
+
+- Alembic migration validation test suite
+
+### Fixed
+
+- Alembic migrations to batch changes
+- Batch message creation sequence number
+
+### Changed
+
+- Logging infrastructure to remove noisy messages
+- Sentry integration is centralized
+
 ## [2.4.0] - 2025-10-09
 
 ### Added

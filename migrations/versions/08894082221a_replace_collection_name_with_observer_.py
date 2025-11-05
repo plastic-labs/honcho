@@ -22,6 +22,9 @@ down_revision: str | None = "564ba40505c5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Batch size for bulk operations
+BATCH_SIZE = 10000
+
 
 def upgrade() -> None:
     """Replace collections.name and documents.collection_name with observer and observed fields."""
@@ -50,21 +53,32 @@ def upgrade() -> None:
             connection.execute(
                 text(
                     f"""
-                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active) VALUES (:session_id, '__global_observations__', :workspace_name, true) ON CONFLICT DO NOTHING
+                        INSERT INTO {schema}.sessions (id, name, workspace_name, is_active, metadata, internal_metadata, configuration, created_at) VALUES (:session_id, '__global_observations__', :workspace_name, true, '{{}}', '{{}}', '{{}}', NOW()) ON CONFLICT DO NOTHING
                     """
                 ),
                 {"session_id": session_id, "workspace_name": workspace_name},
             )
-        # Update all documents with NULL session_name
-        connection.execute(
-            text(
-                f"""
-                UPDATE {schema}.documents
-                SET session_name = '__global_observations__'
-                WHERE session_name IS NULL
-            """
-            ),
-        )
+        # Update all documents with NULL session_name in batches
+        while True:
+            result = connection.execute(
+                text(
+                    f"""
+                    WITH batch AS (
+                        SELECT id
+                        FROM {schema}.documents
+                        WHERE session_name IS NULL
+                        LIMIT :batch_size
+                    )
+                    UPDATE {schema}.documents d
+                    SET session_name = '__global_observations__'
+                    FROM batch
+                    WHERE d.id = batch.id
+                    """
+                ),
+                {"batch_size": BATCH_SIZE},
+            )
+            if result.rowcount == 0:
+                break
 
     op.alter_column("documents", "session_name", nullable=False, schema=schema)
 
@@ -84,29 +98,119 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 2: Populate collections observer and observed from existing name field
+    # Step 2a: Identify collections that should be deleted (in memory)
+    # These are user-created collections that are not used in the system:
+    # - name = 'global_representation'
+    # - name starts with peer_name + "_" (pattern: observer_observed)
+    # - name ends with "_" + peer_name (pattern: observed_observer)
+    collections_to_delete = connection.execute(
+        text(
+            f"""
+            SELECT id, name, peer_name, workspace_name
+            FROM {schema}.collections
+            WHERE name != 'global_representation'
+                AND name NOT LIKE peer_name || '_%'
+                AND name NOT LIKE '%_' || peer_name
+        """
+        )
+    ).fetchall()
+
+    # Step 2b: Delete documents that reference collections marked for deletion (in batches)
+    if collections_to_delete:
+        collection_ids = [row.id for row in collections_to_delete]
+
+        # Delete in smaller chunks of actual documents to avoid locking issues
+        while True:
+            result = connection.execute(
+                text(
+                    f"""
+                    WITH to_delete AS (
+                        SELECT d.id
+                        FROM {schema}.documents d
+                        JOIN {schema}.collections c
+                            ON d.collection_name = c.name
+                            AND d.peer_name = c.peer_name
+                            AND d.workspace_name = c.workspace_name
+                        WHERE c.id = ANY(:collection_ids)
+                        LIMIT :batch_size
+                    )
+                    DELETE FROM {schema}.documents
+                    WHERE id IN (SELECT id FROM to_delete)
+                    """
+                ),
+                {"collection_ids": collection_ids, "batch_size": BATCH_SIZE},
+            )
+
+            if result.rowcount == 0:
+                break  # No more rows to delete
+
+    # Step 2c: Delete the collections identified in step 2a (in batches)
+    if collections_to_delete:
+        for i in range(0, len(collections_to_delete), BATCH_SIZE):
+            batch = collections_to_delete[i : i + BATCH_SIZE]
+            collection_ids = [row.id for row in batch]
+
+            connection.execute(
+                text(
+                    f"""
+                    DELETE FROM {schema}.collections
+                    WHERE id = ANY(:collection_ids)
+                """
+                ),
+                {"collection_ids": collection_ids},
+            )
+
+    # Step 2d: Populate collections observer and observed from existing name field in batches
     # The logic is:
     # - observer = peer_name (the exact peer ID)
     # - If name is "global_representation", observed = peer_name (self-observation)
     # - If name starts with peer_name + "_", extract the observed part (pattern: observer_observed)
     # - If name ends with "_" + peer_name, extract the first part (pattern: observed_observer)
-    # - Otherwise (legacy edge cases), observed = name itself
-    connection.execute(
-        text(
-            f"""
-            UPDATE {schema}.collections
-            SET
-                observer = peer_name,
-                observed = CASE
-                    WHEN name = 'global_representation' THEN peer_name
-                    WHEN name LIKE peer_name || '_%' THEN substring(name from length(peer_name) + 2)
-                    WHEN name LIKE '%_' || peer_name THEN substring(name from 1 for length(name) - length(peer_name) - 1)
-                    ELSE name
-                END
-            WHERE observer IS NULL OR observed IS NULL
-        """
+    # - Any legacy edge cases will have been deleted in step 2a.
+
+    # Create temporary index to speed up batching
+    if not index_exists("collections", "idx_temp_collections_null_observer"):
+        op.create_index(
+            "idx_temp_collections_null_observer",
+            "collections",
+            ["id"],
+            postgresql_where=text("observer IS NULL OR observed IS NULL"),
+            schema=schema,
         )
-    )
+
+    while True:
+        result = connection.execute(
+            text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.collections
+                    WHERE observer IS NULL OR observed IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.collections c
+                SET
+                    observer = c.peer_name,
+                    observed = CASE
+                        WHEN c.name = 'global_representation' THEN c.peer_name
+                        WHEN c.name LIKE c.peer_name || '_%' THEN substring(c.name from length(c.peer_name) + 2)
+                        WHEN c.name LIKE '%_' || c.peer_name THEN substring(c.name from 1 for length(c.name) - length(c.peer_name) - 1)
+                        ELSE c.peer_name
+                    END
+                FROM batch
+                WHERE c.id = batch.id
+            """
+            ),
+            {"batch_size": BATCH_SIZE},
+        )
+        if result.rowcount == 0:
+            break
+
+    # Drop temporary index after batching is complete
+    if index_exists("collections", "idx_temp_collections_null_observer", inspector):
+        op.drop_index(
+            "idx_temp_collections_null_observer", "collections", schema=schema
+        )
 
     # Step 3: Make collections observer and observed NOT NULL
     op.alter_column("collections", "observer", nullable=False, schema=schema)
@@ -130,14 +234,24 @@ def upgrade() -> None:
 
     # Step 5: Populate documents observer and observed from collections table
     # Join to the already-populated collections table to get authoritative values
-    # Process in batches of 1000 to reduce query size
-    batch_size = 1000
+    # Process in batches to reduce query size
+
+    # Create temporary index to speed up batching
+    if not index_exists("documents", "idx_temp_docs_null_observer"):
+        op.create_index(
+            "idx_temp_docs_null_observer",
+            "documents",
+            ["id"],
+            postgresql_where=text("observer IS NULL OR observed IS NULL"),
+            schema=schema,
+        )
+
     while True:
         result = connection.execute(
             text(
                 f"""
                 WITH batch AS (
-                    SELECT d.ctid
+                    SELECT d.id
                     FROM {schema}.documents d
                     WHERE d.observer IS NULL OR d.observed IS NULL
                     LIMIT :batch_size
@@ -147,16 +261,20 @@ def upgrade() -> None:
                     observer = c.observer,
                     observed = c.observed
                 FROM {schema}.collections c, batch
-                WHERE d.ctid = batch.ctid
+                WHERE d.id = batch.id
                     AND d.collection_name = c.name
                     AND d.peer_name = c.peer_name
                     AND d.workspace_name = c.workspace_name
             """
             ),
-            {"batch_size": batch_size},
+            {"batch_size": BATCH_SIZE},
         )
         if result.rowcount == 0:
             break
+
+    # Drop temporary index after batching is complete
+    if index_exists("documents", "idx_temp_docs_null_observer", inspector):
+        op.drop_index("idx_temp_docs_null_observer", "documents", schema=schema)
 
     # Step 6: Make documents observer and observed NOT NULL
     op.alter_column("documents", "observer", nullable=False, schema=schema)
@@ -224,10 +342,10 @@ def upgrade() -> None:
 
     # Step 10: Add composite foreign key constraint for observer peer on collections
     if not fk_exists(
-        "collections", "collections_observer_workspace_name_fkey", inspector
+        "collections", "fk_collections_observer_workspace_name_peers", inspector
     ):
         op.create_foreign_key(
-            "collections_observer_workspace_name_fkey",
+            "fk_collections_observer_workspace_name_peers",
             "collections",
             "peers",
             ["observer", "workspace_name"],
@@ -238,10 +356,10 @@ def upgrade() -> None:
 
     # Step 11: Add composite foreign key constraint for observed peer on collections
     if not fk_exists(
-        "collections", "collections_observed_workspace_name_fkey", inspector
+        "collections", "fk_collections_observed_workspace_name_peers", inspector
     ):
         op.create_foreign_key(
-            "collections_observed_workspace_name_fkey",
+            "fk_collections_observed_workspace_name_peers",
             "collections",
             "peers",
             ["observed", "workspace_name"],
@@ -252,10 +370,12 @@ def upgrade() -> None:
 
     # Step 12: Add composite foreign key constraint from documents to collections using observer/observed
     if not fk_exists(
-        "documents", "documents_observer_observed_workspace_name_fkey", inspector
+        "documents",
+        "fk_documents_observer_observed_workspace_name_collections",
+        inspector,
     ):
         op.create_foreign_key(
-            "documents_observer_observed_workspace_name_fkey",
+            "fk_documents_observer_observed_workspace_name_collections",
             "documents",
             "collections",
             ["observer", "observed", "workspace_name"],
@@ -265,9 +385,11 @@ def upgrade() -> None:
         )
 
     # Step 13: Add composite foreign key constraint for observer peer on documents
-    if not fk_exists("documents", "documents_observer_workspace_name_fkey", inspector):
+    if not fk_exists(
+        "documents", "fk_documents_observer_workspace_name_peers", inspector
+    ):
         op.create_foreign_key(
-            "documents_observer_workspace_name_fkey",
+            "fk_documents_observer_workspace_name_peers",
             "documents",
             "peers",
             ["observer", "workspace_name"],
@@ -277,9 +399,11 @@ def upgrade() -> None:
         )
 
     # Step 14: Add composite foreign key constraint for observed peer on documents
-    if not fk_exists("documents", "documents_observed_workspace_name_fkey", inspector):
+    if not fk_exists(
+        "documents", "fk_documents_observed_workspace_name_peers", inspector
+    ):
         op.create_foreign_key(
-            "documents_observed_workspace_name_fkey",
+            "fk_documents_observed_workspace_name_peers",
             "documents",
             "peers",
             ["observed", "workspace_name"],
@@ -322,7 +446,10 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 17: Drop the name column from collections
+    # Step 17: Drop the name_length check constraint before dropping the name column from collections
+    if constraint_exists("collections", "name_length", "check", inspector):
+        op.drop_constraint("name_length", "collections", schema=schema)
+
     if column_exists("collections", "name", inspector):
         op.drop_column("collections", "name", schema=schema)
 
@@ -392,12 +519,10 @@ def downgrade() -> None:
     # Make peer_name NOT NULL
     op.alter_column("collections", "peer_name", nullable=False, schema=schema)
 
-    # Recreate the foreign key constraint for peer_name
-    if not fk_exists(
-        "collections", "collections_peer_name_workspace_name_fkey", inspector
-    ):
+    # Recreate the legacy foreign key constraint for peer_name
+    if not fk_exists("collections", "fk_collections_peer_name_peers", inspector):
         op.create_foreign_key(
-            "collections_peer_name_workspace_name_fkey",
+            "fk_collections_peer_name_peers",
             "collections",
             "peers",
             ["peer_name", "workspace_name"],
@@ -415,24 +540,36 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Step 5: Populate documents collection_name from observer and observed
-    connection.execute(
-        text(
-            f"""
-            UPDATE {schema}.documents
-            SET collection_name = CASE
-                WHEN observer = observed THEN 'global_representation'
-                ELSE observer || '_' || observed
-            END
-            WHERE collection_name IS NULL
-        """
+    # Step 5: Populate documents collection_name from observer and observed in batches
+    while True:
+        result = connection.execute(
+            text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.documents
+                    WHERE collection_name IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.documents d
+                SET collection_name = CASE
+                    WHEN d.observer = d.observed THEN 'global_representation'
+                    ELSE d.observer || '_' || d.observed
+                END
+                FROM batch
+                WHERE d.id = batch.id
+                AND d.collection_name IS NULL
+            """
+            ),
+            {"batch_size": BATCH_SIZE},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 6: Make documents collection_name NOT NULL
     op.alter_column("documents", "collection_name", nullable=False, schema=schema)
 
-    # Step 6a: Restore peer_name column to documents (set to observed value)
+    # Step 6a: Restore peer_name column to documents (set to observer value)
     if not column_exists("documents", "peer_name", inspector):
         op.add_column(
             "documents",
@@ -440,24 +577,38 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Populate peer_name with observed value
-    connection.execute(
-        text(
-            f"""
-            UPDATE {schema}.documents
-            SET peer_name = observed
-            WHERE peer_name IS NULL
-        """
+    # Populate peer_name with observed value in batches
+    while True:
+        result = connection.execute(
+            text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.documents
+                    WHERE peer_name IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.documents d
+                SET peer_name = d.observed
+                FROM batch
+                WHERE d.id = batch.id
+                AND d.peer_name IS NULL
+            """
+            ),
+            {"batch_size": BATCH_SIZE},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Make peer_name NOT NULL
     op.alter_column("documents", "peer_name", nullable=False, schema=schema)
 
     # Recreate the foreign key constraint for peer_name on documents
-    if not fk_exists("documents", "documents_peer_name_workspace_name_fkey", inspector):
+    if not fk_exists(
+        "documents", "fk_documents_peer_name_workspace_name_peers", inspector
+    ):
         op.create_foreign_key(
-            "documents_peer_name_workspace_name_fkey",
+            "fk_documents_peer_name_workspace_name_peers",
             "documents",
             "peers",
             ["peer_name", "workspace_name"],
@@ -478,26 +629,28 @@ def downgrade() -> None:
     # CONSTRAINTS AND INDEXES
     # Step 8: Drop new foreign key constraints from documents
     if fk_exists(
-        "documents", "documents_observer_observed_workspace_name_fkey", inspector
+        "documents",
+        "fk_documents_observer_observed_workspace_name_collections",
+        inspector,
     ):
         op.drop_constraint(
-            "documents_observer_observed_workspace_name_fkey",
+            "fk_documents_observer_observed_workspace_name_collections",
             "documents",
             type_="foreignkey",
             schema=schema,
         )
 
-    if fk_exists("documents", "documents_observer_workspace_name_fkey", inspector):
+    if fk_exists("documents", "fk_documents_observer_workspace_name_peers", inspector):
         op.drop_constraint(
-            "documents_observer_workspace_name_fkey",
+            "fk_documents_observer_workspace_name_peers",
             "documents",
             type_="foreignkey",
             schema=schema,
         )
 
-    if fk_exists("documents", "documents_observed_workspace_name_fkey", inspector):
+    if fk_exists("documents", "fk_documents_observed_workspace_name_peers", inspector):
         op.drop_constraint(
-            "documents_observed_workspace_name_fkey",
+            "fk_documents_observed_workspace_name_peers",
             "documents",
             type_="foreignkey",
             schema=schema,
@@ -525,14 +678,14 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Step 11: Recreate the old foreign key constraint from documents to collections
+    # Step 11: Recreate the legacy foreign key constraint from documents to collections
     if not fk_exists(
         "documents",
-        "documents_collection_name_peer_name_workspace_name_fkey",
+        "fk_documents_collection_name_collections",
         inspector,
     ):
         op.create_foreign_key(
-            "documents_collection_name_peer_name_workspace_name_fkey",
+            "fk_documents_collection_name_collections",
             "documents",
             "collections",
             ["collection_name", "peer_name", "workspace_name"],
@@ -542,17 +695,21 @@ def downgrade() -> None:
         )
 
     # Step 12: Drop foreign key constraints from collections
-    if fk_exists("collections", "collections_observer_workspace_name_fkey", inspector):
+    if fk_exists(
+        "collections", "fk_collections_observer_workspace_name_peers", inspector
+    ):
         op.drop_constraint(
-            "collections_observer_workspace_name_fkey",
+            "fk_collections_observer_workspace_name_peers",
             "collections",
             type_="foreignkey",
             schema=schema,
         )
 
-    if fk_exists("collections", "collections_observed_workspace_name_fkey", inspector):
+    if fk_exists(
+        "collections", "fk_collections_observed_workspace_name_peers", inspector
+    ):
         op.drop_constraint(
-            "collections_observed_workspace_name_fkey",
+            "fk_collections_observed_workspace_name_peers",
             "collections",
             type_="foreignkey",
             schema=schema,

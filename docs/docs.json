@@ -14,9 +14,9 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.4.0",
+        "version": "v2.4.2",
         "api": {
-          "openapi": ["openapi.documented.json"]
+          "openapi": ["openapi.documented.yml"]
         },
         "tabs": [
           {
@@ -132,7 +132,6 @@
                   "v2/api-reference/endpoint/messages/create-messages-with-file"
                 ]
               },
-
               {
                 "group": "webhooks",
                 "pages": [

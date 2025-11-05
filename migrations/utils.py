@@ -71,3 +71,89 @@ def constraint_exists(
     else:
         raise ValueError(f"Invalid constraint type: {type}")
     return any(constraint["name"] == constraint_name for constraint in constraints)
+
+
+def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
+    """
+    Make a column non-nullable using a non-blocking approach to minimize lock duration.
+
+    WARNING: Only use this if you can guarantee that:
+        1. No NULL values currently exist in the column
+        2. The application code is already writing non-NULL values to this column or
+        3. The column has never accepted NULLs in practice
+
+    This uses a 4-step process to avoid long exclusive locks:
+    1. Add CHECK constraint with NOT VALID (instant, no scan)
+    2. Validate the constraint (scans but allows concurrent read/writes to the table)
+    3. Set column NOT NULL (fast since we've validated the constraint)
+    4. Drop the redundant CHECK constraint
+
+    Args:
+        table_name: The name of the table
+        column_name: The name of the column to make non-nullable
+    """
+    schema = get_schema()
+    conn = op.get_bind()
+    constraint_name = f"{table_name}_{column_name}_not_null"
+
+    # Step 1: Check if the column is already non-nullable
+    inspector = sa.inspect(op.get_bind())
+    columns = inspector.get_columns(table_name, schema=schema)
+    column_info = next((col for col in columns if col["name"] == column_name), None)
+    if column_info is None:
+        raise ValueError(f"Column {table_name}.{column_name} does not exist")
+    if not column_info["nullable"]:
+        print(f"Column {table_name}.{column_name} is already non-nullable, skipping...")
+        return
+
+    # Step 2: Add CHECK constraint without validation (instant)
+    # Note: op.create_check_constraint() doesn't support NOT VALID, so use raw SQL
+
+    # Get the identifier preparer for safe quoting
+    dialect = conn.dialect
+    preparer = dialect.identifier_preparer
+
+    quoted_schema = preparer.quote(schema)
+    quoted_table = preparer.quote(table_name)
+    quoted_constraint = preparer.quote(constraint_name)
+    quoted_column = preparer.quote(column_name)
+
+    # Step 2: Add CHECK constraint without validation (instant)
+    # Note: op.create_check_constraint() doesn't support NOT VALID, so use raw SQL
+    if not constraint_exists(table_name, constraint_name, "check"):
+        conn.execute(
+            sa.text(
+                f"""
+                ALTER TABLE {quoted_schema}.{quoted_table}
+                ADD CONSTRAINT {quoted_constraint}
+                CHECK ({quoted_column} IS NOT NULL)
+                NOT VALID
+                """
+            )
+        )
+
+    # Step 3: Validate constraint (scans but allows concurrent operations)
+    conn.execute(
+        sa.text(
+            f"""
+            ALTER TABLE {quoted_schema}.{quoted_table}
+            VALIDATE CONSTRAINT {quoted_constraint}
+            """
+        )
+    )
+
+    # Step 4: Set NOT NULL (fast with validated constraint)
+    op.alter_column(
+        table_name,
+        column_name,
+        nullable=False,
+        schema=schema,
+    )
+
+    # Step 5: Drop the redundant CHECK constraint
+    op.drop_constraint(
+        constraint_name,
+        table_name,
+        type_="check",
+        schema=schema,
+    )
