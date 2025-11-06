@@ -36,6 +36,14 @@ def prepare_codify_workspace_name_and_message_id_in(
     verifier.assert_column_exists("queue", "workspace_name", exists=False)
     verifier.assert_column_exists("queue", "message_id", exists=False)
 
+    # Verify foreign key constraints don't exist yet
+    verifier.assert_constraint_exists(
+        "queue", "fk_queue_workspace_name", "foreign_key", exists=False
+    )
+    verifier.assert_constraint_exists(
+        "queue", "fk_queue_message_id", "foreign_key", exists=False
+    )
+
     # Verify indexes don't exist yet
     verifier.assert_indexes_not_exist(_INDEXES)
 
@@ -217,8 +225,9 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
     # Verify all indexes were created
     verifier.assert_indexes_exist(_INDEXES)
 
-    # Verify foreign key constraint exists
+    # Verify foreign key constraints exist
     verifier.assert_constraint_exists("queue", "fk_queue_workspace_name", "foreign_key")
+    verifier.assert_constraint_exists("queue", "fk_queue_message_id", "foreign_key")
 
     conn = verifier.conn
     schema = verifier.schema

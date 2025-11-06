@@ -469,7 +469,9 @@ class QueueItem(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False
     )
-    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    message_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("messages.id"), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_queue_created_at", "created_at"),

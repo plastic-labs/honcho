@@ -711,7 +711,6 @@ class TestQueueProcessing:
         token_counts = [500, 600]
         messages = [
             models.Message(
-                id=999,
                 session_name=session.name,
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
@@ -720,7 +719,6 @@ class TestQueueProcessing:
                 seq_in_session=1,
             ),
             models.Message(
-                id=1000,
                 session_name=session.name,
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
@@ -729,6 +727,15 @@ class TestQueueProcessing:
                 seq_in_session=2,
             ),
         ]
+
+        # Save messages to database first
+        for message in messages:
+            db_session.add(message)
+        await db_session.commit()
+
+        # Refresh to get the actual IDs
+        for message in messages:
+            await db_session.refresh(message)
 
         # Create payloads and queue items
         queue_items: list[models.QueueItem] = []

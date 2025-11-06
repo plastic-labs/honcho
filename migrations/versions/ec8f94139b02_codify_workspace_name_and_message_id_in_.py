@@ -127,6 +127,17 @@ def upgrade() -> None:
         referent_schema=schema,
     )
 
+    # Step 7b: Add foreign key constraint on message_id -> messages.id
+    op.create_foreign_key(
+        "fk_queue_message_id",
+        "queue",
+        "messages",
+        ["message_id"],
+        ["id"],
+        source_schema=schema,
+        referent_schema=schema,
+    )
+
     # Step 8: Add index on workspace_name (for FK performance and filtering)
     op.create_index(
         op.f("ix_queue_workspace_name"),
@@ -191,7 +202,10 @@ def downgrade() -> None:
             op.f("ix_queue_workspace_name"), table_name="queue", schema=schema
         )
 
-    # Drop foreign key constraint
+    # Drop foreign key constraints
+    if fk_exists("queue", "fk_queue_message_id", inspector):
+        op.drop_constraint("fk_queue_message_id", "queue", schema=schema)
+
     if fk_exists("queue", "fk_queue_workspace_name", inspector):
         op.drop_constraint("fk_queue_workspace_name", "queue", schema=schema)
 
