@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.cache.client import cache
+from src.cache.client import cache, get_cache_namespace
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
@@ -16,13 +16,13 @@ from src.utils.filter import apply_filter
 logger = getLogger(__name__)
 
 PEER_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:peer:{peer_name}"
-PEER_LOCK_PREFIX = f"{settings.CACHE.NAMESPACE}:lock"
+PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     """Generate cache key for peer."""
     return (
-        settings.CACHE.NAMESPACE
+        get_cache_namespace()
         + ":"
         + PEER_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -116,7 +116,7 @@ async def get_or_create_peers(
 @cache(
     key=PEER_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=settings.CACHE.NAMESPACE,
+    prefix=get_cache_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(

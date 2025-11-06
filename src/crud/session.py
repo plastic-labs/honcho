@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
-from src.cache.client import cache
+from src.cache.client import cache, get_cache_namespace
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -25,13 +25,13 @@ from .workspace import get_or_create_workspace
 logger = getLogger(__name__)
 
 SESSION_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:session:{session_name}"
-SESSION_LOCK_PREFIX = f"{settings.CACHE.NAMESPACE}:lock"
+SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
     """Generate cache key for session."""
     return (
-        settings.CACHE.NAMESPACE
+        get_cache_namespace()
         + ":"
         + SESSION_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -43,7 +43,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
 @cache(
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=settings.CACHE.NAMESPACE,
+    prefix=get_cache_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(

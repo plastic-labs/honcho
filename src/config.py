@@ -291,7 +291,7 @@ class MetricsSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
-    NAMESPACE: str = "honcho"
+    NAMESPACE: str | None = None
 
 
 class CacheSettings(HonchoSettings):
@@ -299,7 +299,7 @@ class CacheSettings(HonchoSettings):
 
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0?suppress=false"
-    NAMESPACE: str = "honcho"
+    NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
     )
@@ -372,6 +372,15 @@ class AppSettings(HonchoSettings):
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {v}")
         return log_level
+
+    @model_validator(mode="after")
+    def propagate_namespace(self) -> "AppSettings":
+        """Propagate top-level NAMESPACE to nested settings if not explicitly set."""
+        if self.CACHE.NAMESPACE is None:
+            self.CACHE.NAMESPACE = self.NAMESPACE
+        if self.METRICS.NAMESPACE is None:
+            self.METRICS.NAMESPACE = self.NAMESPACE
+        return self
 
 
 # Create a single global instance of the settings

@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.cache.client import cache
+from src.cache.client import cache, get_cache_namespace
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
@@ -15,13 +15,13 @@ from src.utils.filter import apply_filter
 logger = getLogger(__name__)
 
 WORKSPACE_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}"
-WORKSPACE_LOCK_PREFIX = f"{settings.CACHE.NAMESPACE}:lock"
+WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
 
 
 def workspace_cache_key(workspace_name: str) -> str:
     """Generate cache key for workspace."""
     return (
-        settings.CACHE.NAMESPACE
+        get_cache_namespace()
         + ":"
         + WORKSPACE_CACHE_KEY_TEMPLATE.format(workspace_name=workspace_name)
     )
@@ -30,7 +30,7 @@ def workspace_cache_key(workspace_name: str) -> str:
 @cache(
     key=WORKSPACE_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=settings.CACHE.NAMESPACE,
+    prefix=get_cache_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(
@@ -294,7 +294,8 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         await db.commit()
 
         cache_key = workspace_cache_key(workspace_name)
-        await cache.delete_match(cache_key)
+        workspace_pattern = f"{cache_key}*"
+        await cache.delete_match(workspace_pattern)
 
         logger.debug("Workspace %s deleted", workspace_name)
     except Exception:

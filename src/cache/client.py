@@ -26,6 +26,10 @@ def is_cache_enabled() -> bool:
     return settings.CACHE.ENABLED
 
 
+def get_cache_namespace() -> str:
+    return settings.CACHE.NAMESPACE or settings.NAMESPACE
+
+
 async def init_cache() -> None:
     """Initialize and verify cache connection if enabled."""
     async with _cache_lock:
@@ -41,7 +45,7 @@ async def init_cache() -> None:
         # Setup cache with Redis backend
         try:
             cache.setup(  # pyright: ignore[reportUnknownMemberType]
-                settings_url=settings.CACHE.URL,
+                settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
             )
 
