@@ -466,17 +466,14 @@ class QueueItem(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-
-    __table_args__ = (
-        Index("ix_queue_created_at", "created_at"),
-        Index("ix_queue_session_id", "session_id"),
-    )
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False
     )
     message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
+        Index("ix_queue_created_at", "created_at"),
+        Index("ix_queue_session_id", "session_id"),
         Index(
             "ix_queue_workspace_name",
             "workspace_name",
