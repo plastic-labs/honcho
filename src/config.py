@@ -375,7 +375,11 @@ class AppSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":
-        """Propagate top-level NAMESPACE to nested settings if not explicitly set."""
+        """Propagate top-level NAMESPACE to nested settings if not explicitly set.
+
+        After this validator runs, CACHE.NAMESPACE and METRICS.NAMESPACE are guaranteed
+        to exist.
+        """
         if self.CACHE.NAMESPACE is None:
             self.CACHE.NAMESPACE = self.NAMESPACE
         if self.METRICS.NAMESPACE is None:

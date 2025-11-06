@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import cast
 
 import sentry_sdk
 from cashews import cache
@@ -27,7 +28,8 @@ def is_cache_enabled() -> bool:
 
 
 def get_cache_namespace() -> str:
-    return settings.CACHE.NAMESPACE or settings.NAMESPACE
+    # CACHE.NAMESPACE is guaranteed to be non-None by AppSettings.propagate_namespace validator
+    return cast(str, settings.CACHE.NAMESPACE)
 
 
 async def init_cache() -> None:
