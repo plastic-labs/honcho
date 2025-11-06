@@ -11,17 +11,10 @@ class BasePayload(BaseModel):
 
 
 class RepresentationPayload(BasePayload):
-    """Payload for representation tasks.
-
-    Note: workspace_name and message_id are optional for backward compatibility
-    during migration. New queue items should not include these fields as they
-    are now stored in dedicated columns on the queue table.
-    """
+    """Payload for representation tasks."""
 
     task_type: Literal["representation"] = "representation"
-    workspace_name: str | None = None  # Migrated to column
     session_name: str
-    message_id: int | None = None  # Migrated to column
     content: str
     observer: str
     observed: str
@@ -35,46 +28,27 @@ class RepresentationPayloads(BasePayload):
 
 
 class SummaryPayload(BasePayload):
-    """Payload for summary tasks.
-
-    Note: workspace_name and message_id are optional for backward compatibility
-    during migration. New queue items should not include these fields as they
-    are now stored in dedicated columns on the queue table.
-    """
+    """Payload for summary tasks."""
 
     task_type: Literal["summary"] = "summary"
-    workspace_name: str | None = None  # Migrated to column
     session_name: str
-    message_id: int | None = None  # Migrated to column
     message_seq_in_session: int
     # Optional for backward compatibility with older queue items
     message_public_id: str | None = None
 
 
 class WebhookPayload(BasePayload):
-    """Payload for webhook delivery tasks.
-
-    Note: workspace_name is optional for backward compatibility during migration.
-    New queue items should not include this field as it is now stored in a
-    dedicated column on the queue table.
-    """
+    """Payload for webhook delivery tasks."""
 
     task_type: Literal["webhook"] = "webhook"
-    workspace_name: str | None = None  # Migrated to column
     event_type: str
     data: dict[str, Any]
 
 
 class DreamPayload(BasePayload):
-    """Payload for dream tasks.
-
-    Note: workspace_name is optional for backward compatibility during migration.
-    New queue items should not include this field as it is now stored in a
-    dedicated column on the queue table.
-    """
+    """Payload for dream tasks."""
 
     task_type: Literal["dream"] = "dream"
-    workspace_name: str | None = None  # Migrated to column
     dream_type: Literal["consolidate"] = "consolidate"
     observer: str
     observed: str

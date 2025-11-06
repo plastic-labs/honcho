@@ -59,7 +59,7 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # Step 4: Backfill workspace_name from payload in batches
+    # Step 4: Backfill workspace_name and message_id from payload in batches
     batch_size = 5000
     while True:
         result = conn.execute(
@@ -69,14 +69,21 @@ def upgrade() -> None:
                     SELECT id
                     FROM "{schema}".queue
                     WHERE workspace_name IS NULL
-                    ORDER BY id
+                       OR (message_id IS NULL AND payload ? 'message_id' AND payload->>'message_id' IS NOT NULL)
                     LIMIT :batch_size
                 )
                 UPDATE "{schema}".queue q
-                SET workspace_name = q.payload->>'workspace_name'
+                SET
+                    workspace_name = COALESCE(q.workspace_name, q.payload->>'workspace_name'),
+                    message_id = COALESCE(
+                        q.message_id,
+                        CASE
+                            WHEN q.payload ? 'message_id' AND q.payload->>'message_id' IS NOT NULL
+                            THEN (q.payload->>'message_id')::bigint
+                        END
+                    )
                 FROM batch
                 WHERE q.id = batch.id
-                AND q.workspace_name IS NULL
                 """
             ),
             {"batch_size": batch_size},
@@ -84,7 +91,7 @@ def upgrade() -> None:
         if result.rowcount == 0:
             break
 
-    # Step 5: Backfill message_id from payload in batches (only where it exists)
+    # Step 5: Remove workspace_name and message_id from JSONB payloads in batches
     while True:
         result = conn.execute(
             sa.text(
@@ -92,38 +99,11 @@ def upgrade() -> None:
                 WITH batch AS (
                     SELECT id
                     FROM "{schema}".queue
-                    WHERE message_id IS NULL
-                      AND payload ? 'message_id'
-                      AND payload->>'message_id' IS NOT NULL
-                    ORDER BY id
+                    WHERE payload ? 'workspace_name' OR payload ? 'message_id'
                     LIMIT :batch_size
                 )
                 UPDATE "{schema}".queue q
-                SET message_id = (q.payload->>'message_id')::bigint
-                FROM batch
-                WHERE q.id = batch.id
-                AND q.message_id IS NULL
-                """
-            ),
-            {"batch_size": batch_size},
-        )
-        if result.rowcount == 0:
-            break
-
-    # Step 6: Remove workspace_name from JSONB payloads in batches
-    while True:
-        result = conn.execute(
-            sa.text(
-                f"""
-                WITH batch AS (
-                    SELECT id
-                    FROM "{schema}".queue
-                    WHERE payload ? 'workspace_name'
-                    ORDER BY id
-                    LIMIT :batch_size
-                )
-                UPDATE "{schema}".queue q
-                SET payload = q.payload - 'workspace_name'
+                SET payload = q.payload - 'workspace_name' - 'message_id'
                 FROM batch
                 WHERE q.id = batch.id
                 """
@@ -133,33 +113,10 @@ def upgrade() -> None:
         if result.rowcount == 0:
             break
 
-    # Step 7: Remove message_id from JSONB payloads in batches
-    while True:
-        result = conn.execute(
-            sa.text(
-                f"""
-                WITH batch AS (
-                    SELECT id
-                    FROM "{schema}".queue
-                    WHERE payload ? 'message_id'
-                    ORDER BY id
-                    LIMIT :batch_size
-                )
-                UPDATE "{schema}".queue q
-                SET payload = q.payload - 'message_id'
-                FROM batch
-                WHERE q.id = batch.id
-                """
-            ),
-            {"batch_size": batch_size},
-        )
-        if result.rowcount == 0:
-            break
-
-    # Step 8: Make workspace_name non-nullable
+    # Step 6: Make workspace_name non-nullable
     op.alter_column("queue", "workspace_name", nullable=False, schema=schema)
 
-    # Step 9: Add foreign key constraint on workspace_name -> workspaces.name
+    # Step 7: Add foreign key constraint on workspace_name -> workspaces.name
     op.create_foreign_key(
         "fk_queue_workspace_name",
         "queue",
@@ -170,7 +127,7 @@ def upgrade() -> None:
         referent_schema=schema,
     )
 
-    # Step 10: Add index on workspace_name (for FK performance and filtering)
+    # Step 8: Add index on workspace_name (for FK performance and filtering)
     op.create_index(
         op.f("ix_queue_workspace_name"),
         "queue",
@@ -179,7 +136,7 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # Step 11: Add partial index on message_id WHERE message_id IS NOT NULL
+    # Step 9: Add partial index on message_id WHERE message_id IS NOT NULL
     # This optimizes JOINs with the messages table
     op.create_index(
         "ix_queue_message_id_not_null",
@@ -190,7 +147,7 @@ def upgrade() -> None:
         postgresql_where=sa.text("message_id IS NOT NULL"),
     )
 
-    # Step 12: Add composite index on (workspace_name, processed)
+    # Step 10: Add composite index on (workspace_name, processed)
     # This optimizes queries that filter unprocessed items by workspace
     op.create_index(
         "ix_queue_workspace_name_processed",
@@ -200,7 +157,7 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # Step 13: Add composite index on (work_unit_key, processed, id)
+    # Step 11: Add composite index on (work_unit_key, processed, id)
     # This is critical for the hot path: "get next unprocessed item for this work unit"
     # Covers: WHERE work_unit_key = ? AND NOT processed ORDER BY id
     op.create_index(
@@ -242,7 +199,9 @@ def downgrade() -> None:
     conn = op.get_bind()
     batch_size = 5000
 
-    if column_exists("queue", "workspace_name", inspector):
+    if column_exists("queue", "workspace_name", inspector) or column_exists(
+        "queue", "message_id", inspector
+    ):
         while True:
             result = conn.execute(
                 sa.text(
@@ -250,37 +209,18 @@ def downgrade() -> None:
                     WITH batch AS (
                         SELECT id
                         FROM "{schema}".queue
-                        WHERE workspace_name IS NOT NULL
-                          AND NOT (payload ? 'workspace_name')
-                        ORDER BY id
+                        WHERE (workspace_name IS NOT NULL AND NOT (payload ? 'workspace_name'))
+                           OR (message_id IS NOT NULL AND NOT (payload ? 'message_id'))
                         LIMIT :batch_size
                     )
                     UPDATE "{schema}".queue q
-                    SET payload = jsonb_set(q.payload, '{{workspace_name}}', to_jsonb(q.workspace_name))
-                    FROM batch
-                    WHERE q.id = batch.id
-                    """
-                ),
-                {"batch_size": batch_size},
-            )
-            if result.rowcount == 0:
-                break
-
-    if column_exists("queue", "message_id", inspector):
-        while True:
-            result = conn.execute(
-                sa.text(
-                    f"""
-                    WITH batch AS (
-                        SELECT id
-                        FROM "{schema}".queue
-                        WHERE message_id IS NOT NULL
-                          AND NOT (payload ? 'message_id')
-                        ORDER BY id
-                        LIMIT :batch_size
-                    )
-                    UPDATE "{schema}".queue q
-                    SET payload = jsonb_set(q.payload, '{{message_id}}', to_jsonb(q.message_id))
+                    SET payload = q.payload
+                        || CASE WHEN q.workspace_name IS NOT NULL AND NOT (q.payload ? 'workspace_name')
+                                THEN jsonb_build_object('workspace_name', q.workspace_name)
+                                ELSE '{{}}'::jsonb END
+                        || CASE WHEN q.message_id IS NOT NULL AND NOT (q.payload ? 'message_id')
+                                THEN jsonb_build_object('message_id', q.message_id)
+                                ELSE '{{}}'::jsonb END
                     FROM batch
                     WHERE q.id = batch.id
                     """

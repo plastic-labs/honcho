@@ -26,7 +26,7 @@ async def deliver_webhook(
             webhook_urls = await _get_webhook_urls(db, workspace_name)
             if not webhook_urls:
                 logger.debug(
-                    f"No webhook endpoints for workspace {payload.workspace_name}, skipping."
+                    f"No webhook endpoints for workspace {workspace_name}, skipping."
                 )
                 return
 
@@ -74,7 +74,7 @@ async def deliver_webhook(
                     )
 
         except httpx.RequestError:
-            logger.exception(f"Error sending webhook for {payload.workspace_name}.")
+            logger.exception(f"Error sending webhook for {workspace_name}.")
         except Exception:
             logger.exception("Unexpected error delivering webhook.")
 

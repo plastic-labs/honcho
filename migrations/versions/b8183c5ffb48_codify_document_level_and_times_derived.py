@@ -48,8 +48,8 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 3: Populate level from internal_metadata in batches
-    # Default to 'explicit' if not present in metadata
+    # Step 3: Populate level and times_derived from internal_metadata in batches
+    # Default to 'explicit' for level and 1 for times_derived if not present in metadata
     batch_size = 5000
     while True:
         result = connection.execute(
@@ -58,14 +58,19 @@ def upgrade() -> None:
                 WITH batch AS (
                     SELECT id
                     FROM {schema}.documents
-                    WHERE level IS NULL
+                    WHERE level IS NULL OR times_derived IS NULL
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
-                SET level = COALESCE(
-                    d.internal_metadata->>'level',
-                    'explicit'
-                )
+                SET
+                    level = COALESCE(
+                        d.internal_metadata->>'level',
+                        'explicit'
+                    ),
+                    times_derived = COALESCE(
+                        (d.internal_metadata->>'times_derived')::integer,
+                        1
+                    )
                 FROM batch
                 WHERE d.id = batch.id
             """
@@ -75,34 +80,7 @@ def upgrade() -> None:
         if result.rowcount == 0:
             break
 
-    # Step 4: Populate times_derived from internal_metadata in batches
-    # Default to 1 if not present in metadata
-    batch_size = 5000
-    while True:
-        result = connection.execute(
-            text(
-                f"""
-                WITH batch AS (
-                    SELECT id
-                    FROM {schema}.documents
-                    WHERE times_derived IS NULL
-                    LIMIT :batch_size
-                )
-                UPDATE {schema}.documents d
-                SET times_derived = COALESCE(
-                    (d.internal_metadata->>'times_derived')::integer,
-                    1
-                )
-                FROM batch
-                WHERE d.id = batch.id
-            """
-            ),
-            {"batch_size": batch_size},
-        )
-        if result.rowcount == 0:
-            break
-
-    # Step 5: Make level NOT NULL with server default
+    # Step 4: Make level NOT NULL with server default
     op.alter_column(
         "documents",
         "level",
@@ -111,7 +89,7 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # Step 6: Make times_derived NOT NULL with server default
+    # Step 5: Make times_derived NOT NULL with server default
     op.alter_column(
         "documents",
         "times_derived",
@@ -120,7 +98,7 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # Step 7: Add CHECK constraint for level
+    # Step 6: Add CHECK constraint for level
     if not constraint_exists("documents", "level_valid", "check", inspector):
         op.create_check_constraint(
             "level_valid",
@@ -144,7 +122,7 @@ def downgrade() -> None:
             schema=schema,
         )
 
-    # Step 2: Copy level back to internal_metadata in batches (optional, for safety)
+    # Step 2: Copy level and times_derived back to internal_metadata in batches (optional, for safety)
     batch_size = 5000
     while True:
         result = connection.execute(
@@ -153,39 +131,18 @@ def downgrade() -> None:
                 WITH batch AS (
                     SELECT id
                     FROM {schema}.documents
-                    WHERE (internal_metadata IS NULL OR NOT (internal_metadata ? 'level'))
+                    WHERE internal_metadata IS NULL
+                       OR NOT (internal_metadata ? 'level')
+                       OR NOT (internal_metadata ? 'times_derived')
                     LIMIT :batch_size
                 )
                 UPDATE {schema}.documents d
                 SET internal_metadata = jsonb_set(
-                    COALESCE(d.internal_metadata, '{{}}'::jsonb),
-                    '{{level}}',
-                    to_jsonb(d.level)
-                )
-                FROM batch
-                WHERE d.id = batch.id
-            """
-            ),
-            {"batch_size": batch_size},
-        )
-        if result.rowcount == 0:
-            break
-
-    # Step 3: Copy times_derived back to internal_metadata in batches (optional, for safety)
-    batch_size = 5000
-    while True:
-        result = connection.execute(
-            text(
-                f"""
-                WITH batch AS (
-                    SELECT id
-                    FROM {schema}.documents
-                    WHERE (internal_metadata IS NULL OR NOT (internal_metadata ? 'times_derived'))
-                    LIMIT :batch_size
-                )
-                UPDATE {schema}.documents d
-                SET internal_metadata = jsonb_set(
-                    COALESCE(d.internal_metadata, '{{}}'::jsonb),
+                    jsonb_set(
+                        COALESCE(d.internal_metadata, '{{}}'::jsonb),
+                        '{{level}}',
+                        to_jsonb(d.level)
+                    ),
                     '{{times_derived}}',
                     to_jsonb(d.times_derived)
                 )
@@ -198,10 +155,10 @@ def downgrade() -> None:
         if result.rowcount == 0:
             break
 
-    # Step 4: Drop the level column
+    # Step 3: Drop the level column
     if column_exists("documents", "level", inspector):
         op.drop_column("documents", "level", schema=schema)
 
-    # Step 5: Drop the times_derived column
+    # Step 4: Drop the times_derived column
     if column_exists("documents", "times_derived", inspector):
         op.drop_column("documents", "times_derived", schema=schema)

@@ -1,6 +1,6 @@
 import datetime
 from logging import getLogger
-from typing import Any, Literal, final
+from typing import Any, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -25,6 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
 from typing_extensions import override
+
+from src.utils.types import DocumentLevel, TaskType
 
 from .db import Base
 
@@ -325,9 +327,6 @@ class MessageEmbedding(Base):
     )
 
 
-DocumentLevel = Literal["explicit", "deductive"]
-
-
 @final
 class Collection(Base):
     __tablename__: str = "collections"
@@ -447,9 +446,6 @@ class Document(Base):
         Index("ix_documents_created_at", "created_at"),
         Index("ix_documents_workspace_name", "workspace_name"),
     )
-
-
-TaskType = Literal["webhook", "summary", "representation", "dream"]
 
 
 @final

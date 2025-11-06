@@ -33,7 +33,7 @@ async def process_dream(
         payload: The dream task payload containing workspace, peer, and dream type information
     """
     logger.info(
-        f"Processing dream task: {payload.dream_type} for {payload.workspace_name}/{payload.observer}/{payload.observed}"
+        f"Processing dream task: {payload.dream_type} for {workspace_name}/{payload.observer}/{payload.observed}"
     )
 
     try:
@@ -66,7 +66,7 @@ async def _process_consolidate_dream(
     logger.info(
         f"""
 (っ- ‸ - ς)ᶻ z 𐰁 ᶻ z 𐰁 ᶻ z 𐰁\n
-DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{payload.observed}\n
+DREAM: consolidating documents for {workspace_name}/{payload.observer}/{payload.observed}\n
 𐰁 z ᶻ 𐰁 z ᶻ 𐰁 z ᶻ(っ- ‸ - ς)"""
     )
 
