@@ -396,13 +396,18 @@ cp config.toml.example config.toml
 
 Then modify the values as needed. The TOML file is organized into sections:
 
-- `[app]` - Application-level settings (log level, host, port, embedding settings)
+- `[app]` - Application-level settings (log level, session limits, embedding settings, metrics)
 - `[db]` - Database connection and pool settings
 - `[auth]` - Authentication configuration
+- `[cache]` - Redis cache configuration
 - `[llm]` - LLM provider API keys and general settings
 - `[dialectic]` - Dialectic API configuration (provider, model, search settings)
 - `[deriver]` - Background worker settings and theory of mind configuration
+- `[peer_card]` - Peer card generation settings
 - `[summary]` - Session summarization settings
+- `[dream]` - Dream processing configuration
+- `[webhook]` - Webhook configuration
+- `[metrics]` - Metrics collection settings
 - `[sentry]` - Error tracking and monitoring settings
 
 ### Using Environment Variables
