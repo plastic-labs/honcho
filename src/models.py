@@ -1,6 +1,6 @@
 import datetime
 from logging import getLogger
-from typing import Any, Literal, final
+from typing import Any, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -25,6 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
 from typing_extensions import override
+
+from src.utils.types import DocumentLevel, TaskType
 
 from .db import Base
 
@@ -382,6 +384,12 @@ class Document(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     content: Mapped[str] = mapped_column(TEXT)
+    level: Mapped[DocumentLevel] = mapped_column(
+        TEXT, nullable=False, server_default="explicit"
+    )
+    times_derived: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
     embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -397,6 +405,7 @@ class Document(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        CheckConstraint("level IN ('explicit', 'deductive')", name="level_valid"),
         # Composite foreign key constraint for collections
         ForeignKeyConstraint(
             ["observer", "observed", "workspace_name"],
@@ -439,9 +448,6 @@ class Document(Base):
     )
 
 
-TaskType = Literal["webhook", "summary", "representation", "dream"]
-
-
 @final
 class QueueItem(Base):
     __tablename__: str = "queue"
@@ -460,14 +466,36 @@ class QueueItem(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+    message_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("messages.id"), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_queue_created_at", "created_at"),
         Index("ix_queue_session_id", "session_id"),
+        Index(
+            "ix_queue_workspace_name",
+            "workspace_name",
+        ),
+        Index(
+            "ix_queue_message_id_not_null",
+            "message_id",
+            postgresql_where=text("message_id IS NOT NULL"),
+        ),
+        Index("ix_queue_workspace_name_processed", "workspace_name", "processed"),
+        Index(
+            "ix_queue_work_unit_key_processed_id",
+            "work_unit_key",
+            "processed",
+            "id",
+        ),
     )
 
     def __repr__(self) -> str:
-        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed})"
+        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
 
 
 @final

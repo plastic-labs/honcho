@@ -13,9 +13,11 @@ from . import (
     test_917195d9b5e9_add_messageembedding_table,
     test_a1b2c3d4e5f6_initial_schema,
     test_b765d82110bd_change_metamessages_to_user_level_with_,
+    test_b8183c5ffb48_codify_document_level_and_times_derived,
     test_bb6fb3a7a643_add_message_seq_in_session_column,
     test_c3828084f472_add_indexes_for_messages_and_,
     test_d429de0e5338_adopt_peer_paradigm,
+    test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
 )
 
 __all__ = [
@@ -31,7 +33,9 @@ __all__ = [
     "test_917195d9b5e9_add_messageembedding_table",
     "test_a1b2c3d4e5f6_initial_schema",
     "test_b765d82110bd_change_metamessages_to_user_level_with_",
+    "test_b8183c5ffb48_codify_document_level_and_times_derived",
     "test_bb6fb3a7a643_add_message_seq_in_session_column",
     "test_c3828084f472_add_indexes_for_messages_and_",
     "test_d429de0e5338_adopt_peer_paradigm",
+    "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
 ]
