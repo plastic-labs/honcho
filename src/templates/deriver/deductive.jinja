@@ -65,7 +65,7 @@ Therefore, you must ONLY generate deductions that:
   * "Carlos has a daughter starting kindergarten" + "Kindergarten typically starts at age 5" → "Carlos's daughter is approximately 5 years old" (domain-specific knowledge application)
   * "Elena graduated with a PhD in neuroscience" + "PhDs require bachelor's degrees" → "Elena completed a bachelor's degree in a relevant field" (non-obvious educational prerequisite)
 
-**KEY PRINCIPLE:** Only generate deductions that add substantive information that is semantically differentiated from the atomic propositions. Ask yourself: 
+**KEY PRINCIPLE:** Only generate deductions that add substantive information that is semantically differentiated from the atomic propositions. Ask yourself:
 1. "Would the explicit/implicit extraction have already captured this?" If yes, don't generate it.
 2. "Does this conclusion connect or build on multiple propositions in a non-obvious way?" If no, don't generate it.
 3. "Does this add meaningful context about who {{ peer_id }} is that isn't already present?" If no, don't generate it.
@@ -118,7 +118,7 @@ Common valid deductive patterns include:
 **EXAMPLES OF VALID DEDUCTIONS:**
 
 Example 1 - Categorical Syllogism:
-- PREMISES: 
+- PREMISES:
   * "Maria attended college" (atomic proposition)
   * All people who attended college completed high school or equivalent (general knowledge)
 - CONCLUSION: "Maria completed high school or equivalent education"
@@ -148,7 +148,7 @@ Example 5 - Multi-step Scaffolding:
   * "Elena graduated with a PhD in neuroscience" (atomic proposition)
   * A PhD requires completing a bachelor's degree (general knowledge)
   * A bachelor's degree requires completing high school (general knowledge)
-- CONCLUSIONS: 
+- CONCLUSIONS:
   * "Elena completed a bachelor's degree"
   * "Elena completed high school or equivalent education"
 
@@ -177,7 +177,7 @@ Each deduction must be self-contained and include sufficient context:
 - Disambiguating details that make the conclusion independently meaningful
 - All necessary qualifiers to ensure accuracy
 
-{{ peer_card }}
+{{ peer_card|join('\n') }}
 
 {{ existing_deductions_section }}
 

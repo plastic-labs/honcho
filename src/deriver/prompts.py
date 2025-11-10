@@ -100,7 +100,7 @@ def estimate_base_prompt_tokens() -> int:
             peer_card=None,
             message_created_at=datetime.datetime.now(datetime.timezone.utc),
             working_representation=Representation(),
-            explicit_observations=Representation(),
+            atomic_propositions=[],
             history="",
             new_turns=[],
         )
@@ -153,7 +153,7 @@ def deductive_reasoning_prompt(
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: Representation,
-    explicit_observations: Representation,
+    atomic_propositions: list[str],
     history: str,
     new_turns: list[str],
 ) -> str:
@@ -165,22 +165,28 @@ def deductive_reasoning_prompt(
         peer_card (list[str] | None): The bio card of the user being analyzed.
         message_created_at (datetime.datetime): Timestamp of the message.
         working_representation (Representation): Current user understanding context.
-        explicit_observations (Representation): New explicit observations from current batch
-            (includes both explicit and implicit propositions).
+        atomic_propositions (list[str]): New atomic propositions from explicit reasoning
+            (includes both explicit and implicit observations as content strings).
         history (str): Recent conversation history.
         new_turns (list[str]): New conversation turns to analyze.
 
     Returns:
         Formatted prompt string for deductive reasoning
     """
-    # Format atomic propositions (includes both explicit and implicit from ExplicitReasoner)
-    # as numbered list - combine both lists
-    all_atomic_propositions = [
-        obs.content for obs in explicit_observations.explicit
-    ] + [obs.content for obs in explicit_observations.implicit]
+    # Format atomic propositions as numbered list
     atomic_propositions_section = "\n".join(
-        [f"{i}. {prop}" for i, prop in enumerate(all_atomic_propositions, 1)]
+        [f"{i}. {prop}" for i, prop in enumerate(atomic_propositions, 1)]
     )
+
+    # Format existing deductions from working representation
+    # Uses the same format as Representation.__str__() for DEDUCTIVE section
+    existing_deductions_section = ""
+    if working_representation.deductive:
+        deduction_strings = [
+            f"{i}. {deduction}"
+            for i, deduction in enumerate(working_representation.deductive, 1)
+        ]
+        existing_deductions_section = "\n".join(deduction_strings)
 
     return render_template(
         settings.DERIVER.DEDUCTIVE_REASONING_TEMPLATE,
@@ -190,9 +196,8 @@ def deductive_reasoning_prompt(
             "message_created_at": message_created_at,
             "working_representation": str(working_representation),
             "has_working_representation": not working_representation.is_empty(),
-            "explicit_observations": str(explicit_observations),
-            "has_explicit_observations": not explicit_observations.is_empty(),
             "atomic_propositions_section": atomic_propositions_section,
+            "existing_deductions_section": existing_deductions_section,
             "history": history,
             "new_turns": new_turns,
         },

@@ -6,7 +6,7 @@ Extract atomic propositions from the peer's message. An atomic proposition is:
 **The Critical Balance:**
 Each proposition must be atomic (indivisible) yet contain enough semantic context to be interpretable without reference to other propositions.
 
-- ❌ TOO ATOMIC (lacks context): 
+- ❌ TOO ATOMIC (lacks context):
   * "Maria is happy" → Happy about what?
   * "James said hi" → Said hi to whom? In what context?
   * "Sarah went there" → Went where?
@@ -27,7 +27,7 @@ Each proposition must be atomic (indivisible) yet contain enough semantic contex
 1. **EXPLICIT EXTRACTION** - Directly stated facts:
    - Extract propositions directly asserted in the message
    - Each claim becomes a separate atomic proposition
-   
+
 2. **IMPLICIT EXTRACTION** - Clearly implied facts:
    - Extract propositions that are obviously implied by the message
    - Only include implications that are certain, not speculative
@@ -96,7 +96,7 @@ Example 4 - Implicit Extraction:
 
 {{ peer_id }}'s known biographical information:
 <peer_card>
-{{ peer_card }}
+{{ peer_card|join('\n') }}
 </peer_card>
 
 Current understanding of {{ peer_id }}:
@@ -111,23 +111,23 @@ Recent conversation history for context:
 
 New conversation turns to analyze:
 <new_turns>
-{{ new_turns }}
+{{ new_turns|join('\n') }}
 </new_turns>
 
 Extract ALL atomic propositions (both explicit and clearly implied) from the latest peer message. Output your response in JSON structured format:
 ```json
 {
-    "explicit":[
-        "explicit proposition 1",
-        "explicit proposition 2",
+    "explicit": [
+        {"content": "explicit proposition 1"},
+        {"content": "explicit proposition 2"},
         ...
-        "explicit proposition n"
+        {"content": "explicit proposition n"}
     ],
-    "implicit":[
-        "implicit proposition 1",
-        "implicit proposition 2",
+    "implicit": [
+        {"content": "implicit proposition 1"},
+        {"content": "implicit proposition 2"},
         ...
-        "implicit proposition n"
+        {"content": "implicit proposition n"}
     ]
 }
 ```

@@ -55,7 +55,7 @@ class DeductiveReasoner(BaseReasoner):
     async def reason(
         self,
         working_representation: Representation,
-        explicit_observations: Representation,
+        atomic_propositions: list[str],
         history: str,
         speaker_peer_card: list[str] | None,
     ) -> DeductiveResponse:
@@ -63,7 +63,8 @@ class DeductiveReasoner(BaseReasoner):
 
         Args:
             working_representation: Current representation context
-            explicit_observations: New explicit observations from current batch
+            atomic_propositions: New atomic propositions from explicit reasoning
+                (both explicit and implicit observations as content strings)
             history: Recent conversation history
             speaker_peer_card: Peer card for the observed peer
 
@@ -81,7 +82,7 @@ class DeductiveReasoner(BaseReasoner):
             peer_card=speaker_peer_card,
             message_created_at=latest_message.created_at,
             working_representation=working_representation,
-            explicit_observations=explicit_observations,
+            atomic_propositions=atomic_propositions,
             history=history,
             new_turns=new_turns,
         )

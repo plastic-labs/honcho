@@ -331,10 +331,15 @@ class CertaintyReasoner:
             latest_message.created_at,
         )
 
-        # Step 2: Deductive reasoning (receives explicit observations)
+        # Step 2: Deductive reasoning (receives atomic propositions)
+        # Extract atomic propositions from explicit and implicit observations
+        atomic_propositions = [
+            obs.content for obs in explicit_observations.explicit
+        ] + [obs.content for obs in explicit_observations.implicit]
+
         deductive_response = await self.deductive_reasoner.reason(
             working_representation=working_representation,
-            explicit_observations=explicit_observations,
+            atomic_propositions=atomic_propositions,
             history=history,
             speaker_peer_card=speaker_peer_card,
         )
@@ -357,7 +362,7 @@ class CertaintyReasoner:
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
         accumulate_metric(
             f"deriver_{latest_message.id}_{self.observer}",
-            "critical_analysis_duration",
+            "reasoning_duration",
             analysis_duration_ms,
             "ms",
         )
