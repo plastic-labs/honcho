@@ -177,9 +177,14 @@ Each deduction must be self-contained and include sufficient context:
 - Disambiguating details that make the conclusion independently meaningful
 - All necessary qualifiers to ensure accuracy
 
+{% if peer_card %}
 {{ peer_card|join('\n') }}
+{% endif %}
 
+{% if existing_deductions_section %}
+Existing deductions ....
 {{ existing_deductions_section }}
+{% endif %}
 
 Atomic propositions to use as premises:
 <atomic_propositions>

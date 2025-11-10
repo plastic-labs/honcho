@@ -94,15 +94,19 @@ Example 4 - Implicit Extraction:
 - [ ] Absolute dates/times when temporal info present
 - [ ] Both explicit and obvious implicit facts extracted
 
+{% if peer_card %}
 {{ peer_id }}'s known biographical information:
 <peer_card>
 {{ peer_card|join('\n') }}
 </peer_card>
+{% endif %}
 
+{% if has_working_representation %}
 Current understanding of {{ peer_id }}:
 <current_context>
 {{ working_representation }}
 </current_context>
+{% endif %}
 
 Recent conversation history for context:
 <history>
