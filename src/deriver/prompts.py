@@ -76,13 +76,15 @@ def peer_card_prompt(
 
 @cache
 def estimate_base_prompt_tokens() -> int:
-    """Estimate base prompt tokens by calling critical_analysis_prompt with empty values.
+    """Estimate base prompt tokens for explicit and deductive reasoning prompts.
 
-    This value is cached since it only changes on redeploys when the prompt template changes.
+    This value is cached since it only changes on redeploys when prompt templates change.
+    Returns the combined token estimate for both reasoning passes.
     """
 
     try:
-        base_prompt = critical_analysis_prompt(
+        # Estimate explicit reasoning prompt tokens
+        explicit_prompt = explicit_reasoning_prompt(
             peer_id="",
             peer_card=None,
             message_created_at=datetime.datetime.now(datetime.timezone.utc),
@@ -90,7 +92,108 @@ def estimate_base_prompt_tokens() -> int:
             history="",
             new_turns=[],
         )
-        return estimate_tokens(base_prompt)
+        explicit_tokens = estimate_tokens(explicit_prompt)
+
+        # Estimate deductive reasoning prompt tokens
+        deductive_prompt = deductive_reasoning_prompt(
+            peer_id="",
+            peer_card=None,
+            message_created_at=datetime.datetime.now(datetime.timezone.utc),
+            working_representation=Representation(),
+            explicit_observations=Representation(),
+            history="",
+            new_turns=[],
+        )
+        deductive_tokens = estimate_tokens(deductive_prompt)
+
+        return explicit_tokens + deductive_tokens
     except Exception:
         # Return a conservative estimate if estimation fails
-        return 500
+        return 1000  # Increased from 500 since we have two prompts now
+
+
+def explicit_reasoning_prompt(
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime.datetime,
+    working_representation: Representation,
+    history: str,
+    new_turns: list[str],
+) -> str:
+    """
+    Generate the explicit reasoning prompt for the deriver.
+
+    Args:
+        peer_id (str): The ID of the user being analyzed.
+        peer_card (list[str] | None): The bio card of the user being analyzed.
+        message_created_at (datetime.datetime): Timestamp of the message.
+        working_representation (Representation): Current user understanding context.
+        history (str): Recent conversation history.
+        new_turns (list[str]): New conversation turns to analyze.
+
+    Returns:
+        Formatted prompt string for explicit reasoning
+    """
+    return render_template(
+        settings.DERIVER.EXPLICIT_REASONING_TEMPLATE,
+        {
+            "peer_id": peer_id,
+            "peer_card": peer_card,
+            "message_created_at": message_created_at,
+            "working_representation": str(working_representation),
+            "has_working_representation": not working_representation.is_empty(),
+            "history": history,
+            "new_turns": new_turns,
+        },
+    )
+
+
+def deductive_reasoning_prompt(
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime.datetime,
+    working_representation: Representation,
+    explicit_observations: Representation,
+    history: str,
+    new_turns: list[str],
+) -> str:
+    """
+    Generate the deductive reasoning prompt for the deriver.
+
+    Args:
+        peer_id (str): The ID of the user being analyzed.
+        peer_card (list[str] | None): The bio card of the user being analyzed.
+        message_created_at (datetime.datetime): Timestamp of the message.
+        working_representation (Representation): Current user understanding context.
+        explicit_observations (Representation): New explicit observations from current batch
+            (includes both explicit and implicit propositions).
+        history (str): Recent conversation history.
+        new_turns (list[str]): New conversation turns to analyze.
+
+    Returns:
+        Formatted prompt string for deductive reasoning
+    """
+    # Format atomic propositions (includes both explicit and implicit from ExplicitReasoner)
+    # as numbered list - combine both lists
+    all_atomic_propositions = [
+        obs.content for obs in explicit_observations.explicit
+    ] + [obs.content for obs in explicit_observations.implicit]
+    atomic_propositions_section = "\n".join(
+        [f"{i}. {prop}" for i, prop in enumerate(all_atomic_propositions, 1)]
+    )
+
+    return render_template(
+        settings.DERIVER.DEDUCTIVE_REASONING_TEMPLATE,
+        {
+            "peer_id": peer_id,
+            "peer_card": peer_card,
+            "message_created_at": message_created_at,
+            "working_representation": str(working_representation),
+            "has_working_representation": not working_representation.is_empty(),
+            "explicit_observations": str(explicit_observations),
+            "has_explicit_observations": not explicit_observations.is_empty(),
+            "atomic_propositions_section": atomic_propositions_section,
+            "history": history,
+            "new_turns": new_turns,
+        },
+    )

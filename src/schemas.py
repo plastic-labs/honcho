@@ -305,9 +305,9 @@ class DocumentCreate(DocumentBase):
     session_name: str = Field(
         description="The session from which the document was derived"
     )
-    level: Literal["explicit", "deductive"] = Field(
+    level: Literal["explicit", "implicit", "deductive"] = Field(
         default="explicit",
-        description="The level of the document (explicit or deductive)",
+        description="The level of the document (explicit, implicit, or deductive)",
     )
     times_derived: int = Field(
         default=1,

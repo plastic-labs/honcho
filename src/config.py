@@ -223,6 +223,8 @@ class DeriverSettings(HonchoSettings):
     # Template paths for prompt templates
     CRITICAL_ANALYSIS_TEMPLATE: str = "deriver/critical_analysis.jinja"
     PEER_CARD_TEMPLATE: str = "deriver/peer_card.jinja"
+    EXPLICIT_REASONING_TEMPLATE: str = "deriver/explicit.jinja"
+    DEDUCTIVE_REASONING_TEMPLATE: str = "deriver/deductive.jinja"
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):

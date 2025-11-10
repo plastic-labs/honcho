@@ -1,10 +1,9 @@
-import datetime
 import logging
 import time
 
 import sentry_sdk
 
-from src import crud, exceptions, prometheus
+from src import crud
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
@@ -19,61 +18,19 @@ from src.utils.logging import (
     # log_representation,
 )
 from src.utils.peer_card import PeerCardQuery
-from src.utils.representation import PromptRepresentation, Representation
+from src.utils.representation import Representation
 from src.utils.tokens import estimate_tokens
 from src.utils.tracing import with_sentry_transaction
 
 from .prompts import (
-    critical_analysis_prompt,
     estimate_base_prompt_tokens,
     peer_card_prompt,
 )
+from .reasoners.deductive import DeductiveReasoner
+from .reasoners.explicit import ExplicitReasoner
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-
-@conditional_observe(name="Critical Analysis Call")
-async def critical_analysis_call(
-    peer_id: str,
-    peer_card: list[str] | None,
-    message_created_at: datetime.datetime,
-    working_representation: Representation,
-    history: str,
-    new_turns: list[str],
-    estimated_input_tokens: int,
-) -> PromptRepresentation:
-    prompt = critical_analysis_prompt(
-        peer_id=peer_id,
-        peer_card=peer_card,
-        message_created_at=message_created_at,
-        working_representation=working_representation,
-        history=history,
-        new_turns=new_turns,
-    )
-
-    response = await honcho_llm_call(
-        provider=settings.DERIVER.PROVIDER,
-        model=settings.DERIVER.MODEL,
-        prompt=prompt,
-        max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
-        or settings.LLM.DEFAULT_MAX_TOKENS,
-        track_name="Critical Analysis Call",
-        response_model=PromptRepresentation,
-        json_mode=True,
-        stop_seqs=["   \n", "\n\n\n\n"],
-        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
-        reasoning_effort="minimal",
-        verbosity="medium",
-        enable_retry=True,
-        retry_attempts=3,
-    )
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="representation",
-    ).inc(response.output_tokens + estimated_input_tokens)
-
-    return response.content
 
 
 @conditional_observe(name="Peer Card Call")
@@ -223,8 +180,9 @@ async def process_representation_tasks_batch(
     )
 
     logger.debug(
-        "Using working representation with %s explicit, %s deductive observations",
+        "Using working representation with %s explicit, %s implicit, %s deductive observations",
         len(working_representation.explicit),
+        len(working_representation.implicit),
         len(working_representation.deductive),
     )
 
@@ -267,8 +225,10 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    total_observations = len(final_observations.explicit) + len(
-        final_observations.deductive
+    total_observations = (
+        len(final_observations.explicit)
+        + len(final_observations.implicit)
+        + len(final_observations.deductive)
     )
 
     accumulate_metric(
@@ -288,6 +248,8 @@ class CertaintyReasoner:
     ctx: list[Message]
     observer: str
     observed: str
+    explicit_reasoner: ExplicitReasoner
+    deductive_reasoner: DeductiveReasoner
 
     def __init__(
         self,
@@ -304,6 +266,22 @@ class CertaintyReasoner:
         self.observer = observer
         self.estimated_input_tokens: int = estimated_input_tokens
 
+        # Instantiate the explicit and deductive reasoners
+        self.explicit_reasoner = ExplicitReasoner(
+            representation_manager=representation_manager,
+            ctx=ctx,
+            observed=observed,
+            observer=observer,
+            estimated_input_tokens=estimated_input_tokens,
+        )
+        self.deductive_reasoner = DeductiveReasoner(
+            representation_manager=representation_manager,
+            ctx=ctx,
+            observed=observed,
+            observer=observer,
+            estimated_input_tokens=estimated_input_tokens,
+        )
+
     @conditional_observe(name="Deriver")
     @sentry_sdk.trace
     async def reason(
@@ -313,11 +291,14 @@ class CertaintyReasoner:
         speaker_peer_card: list[str] | None,
     ) -> Representation:
         """
-        Single-pass reasoning function that critically analyzes and derives insights.
-        Performs one analysis pass and returns the final observations.
+        Two-pass reasoning function that performs explicit then deductive reasoning.
+
+        First extracts explicit observations from messages, then performs deductive
+        reasoning building on those explicit observations.
 
         Returns:
-            Representation: Final observations
+            Representation: Final observations combining explicit and deductive
+                reasoning
         """
         analysis_start = time.perf_counter()
 
@@ -330,34 +311,47 @@ class CertaintyReasoner:
         ]
 
         logger.debug(
-            "CRITICAL ANALYSIS: message_created_at='%s', new_turns_count=%s",
+            "REASONING: message_created_at='%s', new_turns_count=%s",
             latest_message.created_at,
             len(new_turns),
         )
 
-        try:
-            reasoning_response = await critical_analysis_call(
-                peer_id=self.observed,
-                peer_card=speaker_peer_card,
-                message_created_at=latest_message.created_at,
-                working_representation=working_representation,
-                history=history,
-                new_turns=new_turns,
-                estimated_input_tokens=self.estimated_input_tokens,
-            )
-        except Exception as e:
-            raise exceptions.LLMError(
-                speaker_peer_card=speaker_peer_card,
-                working_representation=working_representation,
-                history=history,
-                new_turns=new_turns,
-            ) from e
+        # Step 1: Explicit reasoning
+        explicit_response = await self.explicit_reasoner.reason(
+            working_representation=working_representation,
+            history=history,
+            speaker_peer_card=speaker_peer_card,
+        )
 
-        reasoning_response = Representation.from_prompt_representation(
-            reasoning_response,
+        # Convert to Representation with metadata
+        explicit_observations = Representation.from_explicit_response(
+            explicit_response,
             (earliest_message.id, latest_message.id),
             latest_message.session_name,
             latest_message.created_at,
+        )
+
+        # Step 2: Deductive reasoning (receives explicit observations)
+        deductive_response = await self.deductive_reasoner.reason(
+            working_representation=working_representation,
+            explicit_observations=explicit_observations,
+            history=history,
+            speaker_peer_card=speaker_peer_card,
+        )
+
+        # Convert to Representation with metadata
+        deductive_observations = Representation.from_deductive_response(
+            deductive_response,
+            (earliest_message.id, latest_message.id),
+            latest_message.session_name,
+            latest_message.created_at,
+        )
+
+        # Combine explicit, implicit, and deductive observations
+        reasoning_response = Representation(
+            explicit=explicit_observations.explicit,
+            implicit=explicit_observations.implicit,
+            deductive=deductive_observations.deductive,
         )
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000

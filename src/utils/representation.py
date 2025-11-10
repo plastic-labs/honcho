@@ -18,6 +18,10 @@ class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
 
 
+class ImplicitObservationBase(BaseModel):
+    content: str = Field(description="The implicit observation")
+
+
 class DeductiveObservationBase(BaseModel):
     premises: list[str] = Field(
         description="Supporting premises or evidence for this conclusion",
@@ -37,6 +41,32 @@ class PromptRepresentation(BaseModel):
     )
     deductive: list[DeductiveObservationBase] = Field(
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
+        default_factory=list,
+    )
+    implicit: list[ImplicitObservationBase] = Field(
+        description="Facts CLEARLY IMPLIED by the user's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
+        default_factory=list,
+    )
+
+
+class ExplicitResponse(BaseModel):
+    """Response model for explicit reasoning containing explicit and implicit observations."""
+
+    explicit: list[ExplicitObservationBase] = Field(
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference.",
+        default_factory=list,
+    )
+    implicit: list[ImplicitObservationBase] = Field(
+        description="Facts clearly implied by the user's message - certain implications, not speculative.",
+        default_factory=list,
+    )
+
+
+class DeductiveResponse(BaseModel):
+    """Response model for deductive reasoning containing only deductive observations."""
+
+    deductions: list[DeductiveObservationBase] = Field(
+        description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities.",
         default_factory=list,
     )
 
@@ -59,6 +89,32 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
         Two observations are equal if all their fields match.
         """
         if not isinstance(other, ExplicitObservation):
+            return False
+        return (
+            self.content == other.content
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
+
+
+class ImplicitObservation(ImplicitObservationBase, ObservationMetadata):
+    """Implicit observation with content and metadata."""
+
+    def __str__(self) -> str:
+        return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
+
+    def __hash__(self) -> int:
+        """
+        Make ImplicitObservation hashable for use in sets.
+        """
+        return hash((self.content, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for ImplicitObservation objects.
+        Two observations are equal if all their fields match.
+        """
+        if not isinstance(other, ImplicitObservation):
             return False
         return (
             self.content == other.content
@@ -121,6 +177,11 @@ class Representation(BaseModel):
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']",
         default_factory=list,
     )
+    implicit: list[ImplicitObservation] = Field(
+        description="Facts CLEARLY IMPLIED by the user's message - atomic propositions derived through obvious implication. Example: ['Maria attended college' (from 'I graduated from college')]",
+        default_factory=list,
+    )
+
     deductive: list[DeductiveObservation] = Field(
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
         default_factory=list,
@@ -130,7 +191,11 @@ class Representation(BaseModel):
         """
         Check if the representation is empty.
         """
-        return len(self.explicit) == 0 and len(self.deductive) == 0
+        return (
+            len(self.explicit) == 0
+            and len(self.deductive) == 0
+            and len(self.implicit) == 0
+        )
 
     def diff_representation(self, other: "Representation") -> "Representation":
         """
@@ -140,6 +205,7 @@ class Representation(BaseModel):
         diff = Representation()
         diff.explicit = [o for o in other.explicit if o not in self.explicit]
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
+        diff.implicit = [o for o in other.implicit if o not in self.implicit]
         return diff
 
     def merge_representation(
@@ -156,13 +222,15 @@ class Representation(BaseModel):
         # removing duplicates by going list->set->list
         self.explicit = list(set(self.explicit + other.explicit))
         self.deductive = list(set(self.deductive + other.deductive))
+        self.implicit = list(set(self.implicit + other.implicit))
         # sort by created_at
         self.explicit.sort(key=lambda x: x.created_at)
         self.deductive.sort(key=lambda x: x.created_at)
-
+        self.implicit.sort(key=lambda x: x.created_at)
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
+            self.implicit = self.implicit[-max_observations:]
 
     def __str__(self) -> str:
         """
@@ -176,6 +244,8 @@ class Representation(BaseModel):
             1. [2025-01-01 12:00:00] The user has a dog named Rover
             2. [2025-01-01 12:01:00] The user's dog is 5 years old
             3. [2025-01-01 12:05:00] The user is 25 years old
+            IMPLICIT:
+            1. [2025-01-01 12:02:00] The user is 20 years older than their dog
             DEDUCTIVE:
             1. [2025-01-01 12:01:00] Rover is 5 years old
                 - The user has a dog named Rover
@@ -273,6 +343,18 @@ class Representation(BaseModel):
                 for doc in documents
                 if doc.level == "explicit"
             ],
+            implicit=[
+                ImplicitObservation(
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    content=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
+                )
+                for doc in documents
+                if doc.level == "implicit"
+            ],
             deductive=[
                 DeductiveObservation(
                     created_at=_safe_datetime_from_metadata(
@@ -296,6 +378,11 @@ class Representation(BaseModel):
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
+        """Convert PromptRepresentation to Representation.
+
+        Used by vLLM client and legacy tests. New code should use
+        from_explicit_response() or from_deductive_response().
+        """
         return cls(
             explicit=[
                 ExplicitObservation(
@@ -306,6 +393,15 @@ class Representation(BaseModel):
                 )
                 for e in prompt_representation.explicit
             ],
+            implicit=[
+                ImplicitObservation(
+                    content=i.content,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                )
+                for i in prompt_representation.implicit
+            ],
             deductive=[
                 DeductiveObservation(
                     conclusion=d.conclusion,
@@ -315,6 +411,81 @@ class Representation(BaseModel):
                     premises=d.premises,
                 )
                 for d in prompt_representation.deductive
+            ],
+        )
+
+    @classmethod
+    def from_explicit_response(
+        cls,
+        explicit_response: "ExplicitResponse",
+        message_ids: tuple[int, int],
+        session_name: str,
+        created_at: datetime,
+    ) -> "Representation":
+        """Convert ExplicitResponse to Representation with metadata.
+
+        Args:
+            explicit_response: Response from ExplicitReasoner
+            message_ids: Message ID range to link with observations
+            session_name: Session name for the observations
+            created_at: Timestamp for the observations
+
+        Returns:
+            Representation containing explicit and implicit observations
+        """
+        return cls(
+            explicit=[
+                ExplicitObservation(
+                    content=e.content,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                )
+                for e in explicit_response.explicit
+            ],
+            implicit=[
+                ImplicitObservation(
+                    content=i.content,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                )
+                for i in explicit_response.implicit
+            ],
+            deductive=[],
+        )
+
+    @classmethod
+    def from_deductive_response(
+        cls,
+        deductive_response: "DeductiveResponse",
+        message_ids: tuple[int, int],
+        session_name: str,
+        created_at: datetime,
+    ) -> "Representation":
+        """Convert DeductiveResponse to Representation with metadata.
+
+        Args:
+            deductive_response: Response from DeductiveReasoner
+            message_ids: Message ID range to link with observations
+            session_name: Session name for the observations
+            created_at: Timestamp for the observations
+
+        Returns:
+            Representation containing deductive observations
+        """
+        return cls(
+            explicit=[],
+            implicit=[],
+            deductive=[
+                DeductiveObservation(
+                    conclusion=d.conclusion,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                    premises=d.premises,
+                )
+                for d in deductive_response.deductions
             ],
         )
 
