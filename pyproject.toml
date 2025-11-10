@@ -35,9 +35,11 @@ dependencies = [
     "json-repair>=0.49.0",
     "redis>=6.0.0",
     "cashews[redis]>=7.4.3",
+    "jinja2>=3.1.6",
 ]
-[tool.uv]
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
