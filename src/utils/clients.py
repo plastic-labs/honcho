@@ -208,53 +208,92 @@ async def honcho_llm_call(
     Raises:
         ValueError: If provider is not configured
     """
-    # Extract provider/model from settings, with backup support
-    attempt = _current_attempt.get()
+    # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
+    _current_attempt.set(1)
 
-    # Use backup if: (1) we're retrying, (2) backup is configured, (3) backup client exists
-    use_backup = (
-        attempt > 0
-        and llm_settings.BACKUP_PROVIDER is not None
-        and llm_settings.BACKUP_MODEL is not None
-        and llm_settings.BACKUP_PROVIDER in CLIENTS
-    )
-
-    if (
-        use_backup
-        and llm_settings.BACKUP_PROVIDER is not None
-        and llm_settings.BACKUP_MODEL is not None
+    async def _call_with_provider_selection() -> (
+        HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
     ):
-        provider = llm_settings.BACKUP_PROVIDER
-        model = llm_settings.BACKUP_MODEL
-        logger.info(
-            f"Retry attempt {attempt}: switching from "
-            + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
-            + f"backup {provider}/{model}"
-        )
+        """
+        Inner function that selects provider/model based on current attempt.
+        This function is retried, so provider selection happens on each attempt.
+        """
+        attempt = _current_attempt.get()
 
-        # Filter out incompatible parameters when using backup
-        if provider != "anthropic" and thinking_budget_tokens:
-            logger.warning(
-                f"thinking_budget_tokens not supported by {provider}, ignoring"
+        # Use backup on final retry attempt (when attempt == retry_attempts)
+        if (
+            attempt == retry_attempts
+            and llm_settings.BACKUP_PROVIDER is not None
+            and llm_settings.BACKUP_MODEL is not None
+            and llm_settings.BACKUP_PROVIDER in CLIENTS
+        ):
+            provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
+            model: str = llm_settings.BACKUP_MODEL
+            logger.info(
+                f"Final retry attempt {attempt}: switching from "
+                + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
+                + f"backup {provider}/{model}"
             )
-            thinking_budget_tokens = None
 
-        if model and "gpt-5" not in model and (reasoning_effort or verbosity):
-            logger.warning(
-                "reasoning_effort/verbosity only supported by GPT-5 models, ignoring"
+            # Filter out incompatible parameters when using backup
+            thinking_budget = thinking_budget_tokens
+            gpt5_reasoning_effort = reasoning_effort
+            gpt5_verbosity = verbosity
+
+            if provider != "anthropic" and thinking_budget:
+                logger.warning(
+                    f"thinking_budget_tokens not supported by {provider}, ignoring"
+                )
+                thinking_budget = None
+
+            if "gpt-5" not in model and (gpt5_reasoning_effort or gpt5_verbosity):
+                logger.warning(
+                    "reasoning_effort/verbosity only supported by GPT-5 models, ignoring"
+                )
+                gpt5_reasoning_effort = None
+                gpt5_verbosity = None
+        else:
+            provider = llm_settings.PROVIDER
+            model = llm_settings.MODEL
+            thinking_budget = thinking_budget_tokens
+            gpt5_reasoning_effort = reasoning_effort
+            gpt5_verbosity = verbosity
+
+        # Validate client exists
+        client = CLIENTS.get(provider)
+        if not client:
+            raise ValueError(f"Missing client for {provider}")
+
+        if stream:
+            return await honcho_llm_call_inner(
+                provider,
+                model,
+                prompt,
+                max_tokens,
+                response_model,
+                json_mode,
+                stop_seqs,
+                gpt5_reasoning_effort,
+                gpt5_verbosity,
+                thinking_budget,
+                True,  # type: ignore[arg-type]
             )
-            reasoning_effort = None
-            verbosity = None
-    else:
-        provider = llm_settings.PROVIDER
-        model = llm_settings.MODEL
+        else:
+            return await honcho_llm_call_inner(
+                provider,
+                model,
+                prompt,
+                max_tokens,
+                response_model,
+                json_mode,
+                stop_seqs,
+                gpt5_reasoning_effort,
+                gpt5_verbosity,
+                thinking_budget,
+                False,  # type: ignore[arg-type]
+            )
 
-    # Validate client exists
-    client = CLIENTS.get(provider)
-    if not client:
-        raise ValueError(f"Missing client for {provider}")
-
-    decorated = honcho_llm_call_inner
+    decorated = _call_with_provider_selection
 
     # apply tracking
     if track_name:
@@ -279,37 +318,7 @@ async def honcho_llm_call(
             before_sleep=before_retry_callback,
         )(decorated)
 
-    # Reset attempt counter at start
-    _current_attempt.set(0)
-
-    if stream:
-        return await decorated(
-            provider,
-            model,
-            prompt,
-            max_tokens,
-            response_model,
-            json_mode,
-            stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
-            True,
-        )
-    else:
-        return await decorated(
-            provider,
-            model,
-            prompt,
-            max_tokens,
-            response_model,
-            json_mode,
-            stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
-            False,
-        )
+    return await decorated()
 
 
 @overload
