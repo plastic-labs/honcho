@@ -42,6 +42,30 @@ def downgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
 
+    # Normalize any rows with values outside the legacy domain before recreating constraint
+    # This ensures downgrade succeeds even if new values like 'implicit' were added after upgrade
+    batch_size = 5000
+    while True:
+        result = connection.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM {schema}.documents
+                    WHERE level NOT IN ('explicit', 'deductive')
+                    LIMIT :batch_size
+                )
+                UPDATE {schema}.documents d
+                SET level = 'explicit'
+                FROM batch
+                WHERE d.id = batch.id
+                """
+            ),
+            {"batch_size": batch_size},
+        )
+        if result.rowcount == 0:
+            break
+
     # Recreate CHECK constraint for level
     if not constraint_exists("documents", "level_valid", "check", inspector):
         op.create_check_constraint(
