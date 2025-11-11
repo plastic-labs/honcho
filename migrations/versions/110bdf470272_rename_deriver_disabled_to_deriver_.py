@@ -30,41 +30,42 @@ def upgrade() -> None:
     - deriver_disabled: false -> deriver_enabled: true
     - Remove deriver_disabled key from configuration
     """
-    # Update sessions table
-    # Set deriver_enabled to false where deriver_disabled is true
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE "{schema}".sessions
-            SET configuration = configuration - 'deriver_disabled' || jsonb_build_object('deriver_enabled', false)
-            WHERE configuration ? 'deriver_disabled'
-              AND (configuration->>'deriver_disabled')::boolean = true
-            """
-        )
-    )
+    # Update sessions table in batches
+    # Combine all cases in one pass: set deriver_enabled based on deriver_disabled value,
+    # or just remove deriver_disabled if it's null or other value
+    bind = op.get_bind()
+    batch_size = 5000
 
-    # Set deriver_enabled to true where deriver_disabled is false
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE "{schema}".sessions
-            SET configuration = configuration - 'deriver_disabled' || jsonb_build_object('deriver_enabled', true)
-            WHERE configuration ? 'deriver_disabled'
-              AND (configuration->>'deriver_disabled')::boolean = false
-            """
+    while True:
+        result = bind.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM "{schema}".sessions
+                    WHERE configuration ? 'deriver_disabled'
+                    ORDER BY id
+                    LIMIT :batch_size
+                )
+                UPDATE "{schema}".sessions s
+                SET configuration = CASE
+                    WHEN s.configuration->>'deriver_disabled' = 'true' THEN
+                        s.configuration - 'deriver_disabled' || jsonb_build_object('deriver_enabled', false)
+                    WHEN s.configuration->>'deriver_disabled' = 'false' THEN
+                        s.configuration - 'deriver_disabled' || jsonb_build_object('deriver_enabled', true)
+                    ELSE
+                        s.configuration - 'deriver_disabled'
+                END
+                FROM batch b
+                WHERE s.id = b.id
+                  AND s.configuration ? 'deriver_disabled'
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
-
-    # Remove any remaining deriver_disabled keys (for null or other values)
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE "{schema}".sessions
-            SET configuration = configuration - 'deriver_disabled'
-            WHERE configuration ? 'deriver_disabled'
-            """
-        )
-    )
+        if result.rowcount == 0:
+            break
+        result.close()
 
 
 def downgrade() -> None:
@@ -75,38 +76,39 @@ def downgrade() -> None:
     - deriver_enabled: true  -> deriver_disabled: false
     - Remove deriver_enabled key from configuration
     """
-    # Update sessions table
-    # Set deriver_disabled to true where deriver_enabled is false
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE "{schema}".sessions
-            SET configuration = configuration - 'deriver_enabled' || jsonb_build_object('deriver_disabled', true)
-            WHERE configuration ? 'deriver_enabled'
-              AND (configuration->>'deriver_enabled')::boolean = false
-            """
-        )
-    )
+    # Update sessions table in batches
+    # Combine all cases in one pass: set deriver_disabled based on deriver_enabled value,
+    # or just remove deriver_enabled if it's null or other value
+    bind = op.get_bind()
+    batch_size = 5000
 
-    # Set deriver_disabled to false where deriver_enabled is true
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE "{schema}".sessions
-            SET configuration = configuration - 'deriver_enabled' || jsonb_build_object('deriver_disabled', false)
-            WHERE configuration ? 'deriver_enabled'
-              AND (configuration->>'deriver_enabled')::boolean = true
-            """
+    while True:
+        result = bind.execute(
+            sa.text(
+                f"""
+                WITH batch AS (
+                    SELECT id
+                    FROM "{schema}".sessions
+                    WHERE configuration ? 'deriver_enabled'
+                    ORDER BY id
+                    LIMIT :batch_size
+                )
+                UPDATE "{schema}".sessions s
+                SET configuration = CASE
+                    WHEN s.configuration->>'deriver_enabled' = 'false' THEN
+                        s.configuration - 'deriver_enabled' || jsonb_build_object('deriver_disabled', true)
+                    WHEN s.configuration->>'deriver_enabled' = 'true' THEN
+                        s.configuration - 'deriver_enabled' || jsonb_build_object('deriver_disabled', false)
+                    ELSE
+                        s.configuration - 'deriver_enabled'
+                END
+                FROM batch b
+                WHERE s.id = b.id
+                  AND s.configuration ? 'deriver_enabled'
+                """
+            ),
+            {"batch_size": batch_size},
         )
-    )
-
-    # Remove any remaining deriver_enabled keys (for null or other values)
-    op.execute(
-        sa.text(
-            f"""
-            UPDATE "{schema}".sessions
-            SET configuration = configuration - 'deriver_enabled'
-            WHERE configuration ? 'deriver_enabled'
-            """
-        )
-    )
+        if result.rowcount == 0:
+            break
+        result.close()
