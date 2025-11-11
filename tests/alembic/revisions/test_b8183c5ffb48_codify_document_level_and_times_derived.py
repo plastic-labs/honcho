@@ -26,6 +26,9 @@ def prepare_codify_document_level_and_times_derived(
     verifier.assert_column_exists("documents", "level", exists=False)
     verifier.assert_column_exists("documents", "times_derived", exists=False)
 
+    # Verify CHECK constraint doesn't exist yet
+    verifier.assert_constraint_exists("documents", "level_valid", "check", exists=False)
+
     conn = verifier.conn
     schema = verifier.schema
 
@@ -187,6 +190,9 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
     # Verify columns were added with correct nullability
     verifier.assert_column_exists("documents", "level", nullable=False)
     verifier.assert_column_exists("documents", "times_derived", nullable=False)
+
+    # Verify CHECK constraint exists
+    verifier.assert_constraint_exists("documents", "level_valid", "check")
 
     conn = verifier.conn
     schema = verifier.schema

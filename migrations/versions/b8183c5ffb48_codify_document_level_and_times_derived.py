@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import text
 
-from migrations.utils import column_exists, get_schema
+from migrations.utils import column_exists, constraint_exists, get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "b8183c5ffb48"
@@ -98,11 +98,29 @@ def upgrade() -> None:
         schema=schema,
     )
 
+    # Step 6: Add CHECK constraint for level
+    if not constraint_exists("documents", "level_valid", "check", inspector):
+        op.create_check_constraint(
+            "level_valid",
+            "documents",
+            "level IN ('explicit', 'deductive')",
+            schema=schema,
+        )
+
 
 def downgrade() -> None:
     """Restore level and times_derived to internal_metadata."""
     connection = op.get_bind()
     inspector = sa.inspect(connection)
+
+    # Step 1: Drop CHECK constraint for level
+    if constraint_exists("documents", "level_valid", "check", inspector):
+        op.drop_constraint(
+            "level_valid",
+            "documents",
+            type_="check",
+            schema=schema,
+        )
 
     # Step 2: Copy level and times_derived back to internal_metadata in batches (optional, for safety)
     batch_size = 5000
