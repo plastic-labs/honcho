@@ -317,7 +317,7 @@ class CertaintyReasoner:
         )
 
         # Step 1: Explicit reasoning
-        explicit_response = await self.explicit_reasoner.reason(
+        explicit_response, explicit_prompt = await self.explicit_reasoner.reason(
             working_representation=working_representation,
             history=history,
             speaker_peer_card=speaker_peer_card,
@@ -337,7 +337,7 @@ class CertaintyReasoner:
             obs.content for obs in explicit_observations.explicit
         ] + [obs.content for obs in explicit_observations.implicit]
 
-        deductive_response = await self.deductive_reasoner.reason(
+        deductive_response, deductive_prompt = await self.deductive_reasoner.reason(
             working_representation=working_representation,
             atomic_propositions=atomic_propositions,
             history=history,
@@ -357,6 +357,27 @@ class CertaintyReasoner:
             explicit=explicit_observations.explicit,
             implicit=explicit_observations.implicit,
             deductive=deductive_observations.deductive,
+        )
+
+        # Save trace if local metrics collection is enabled
+        from src.utils.logging import save_reasoning_trace
+
+        save_reasoning_trace(
+            provider=settings.DERIVER.PROVIDER,
+            model=settings.DERIVER.MODEL,
+            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+            or settings.LLM.DEFAULT_MAX_TOKENS,
+            peer_id=self.observed,
+            peer_card=speaker_peer_card,
+            message_created_at=latest_message.created_at,
+            working_representation=working_representation,
+            history=history,
+            new_turns=new_turns,
+            explicit_prompt=explicit_prompt,
+            explicit_response=explicit_response.model_dump(),
+            deductive_prompt=deductive_prompt,
+            deductive_response=deductive_response.model_dump(),
+            atomic_propositions=atomic_propositions,
         )
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000

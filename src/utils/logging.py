@@ -6,7 +6,7 @@ and a conditional observe decorator that only applies when Langfuse is configure
 
 import datetime
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar, overload
+from typing import Any, ParamSpec, TypeVar, overload
 
 from fastapi import Request
 from langfuse import observe  # pyright: ignore
@@ -249,3 +249,88 @@ def get_route_template(request: Request) -> str:
     if route and getattr(route, "path", None):
         return normalize_template_path(route.path)
     return "unknown"
+
+
+def save_reasoning_trace(
+    provider: str,
+    model: str,
+    max_tokens: int,
+    peer_id: str,
+    peer_card: list[str] | None,
+    message_created_at: datetime.datetime,
+    working_representation: Representation,
+    history: str,
+    new_turns: list[str],
+    explicit_prompt: str,
+    explicit_response: dict[str, Any],
+    deductive_prompt: str,
+    deductive_response: dict[str, Any],
+    atomic_propositions: list[str],
+) -> None:
+    """
+    Save the reasoning trace (explicit + deductive calls) to trace.jsonl file.
+    Uses JSONL format (one JSON object per line) for efficient appending.
+    Only writes if COLLECT_METRICS_LOCAL is enabled.
+
+    Args:
+        provider: LLM provider name
+        model: Model name
+        max_tokens: Max tokens setting
+        peer_id: ID of peer being analyzed
+        peer_card: Peer card information
+        message_created_at: Timestamp of message
+        working_representation: Current representation context
+        history: Conversation history
+        new_turns: New conversation turns
+        explicit_prompt: Prompt for explicit reasoning
+        explicit_response: Response from explicit reasoning (as dict)
+        deductive_prompt: Prompt for deductive reasoning
+        deductive_response: Response from deductive reasoning (as dict)
+        atomic_propositions: Atomic propositions passed to deductive reasoner
+    """
+    if not COLLECT_METRICS_LOCAL:
+        return
+
+    import fcntl
+    import json
+    from pathlib import Path
+
+    trace_file = Path("trace.jsonl")
+
+    trace_data = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "provider": provider,
+        "model": model,
+        "max_tokens": max_tokens,
+        "peer_id": peer_id,
+        "peer_card": peer_card,
+        "message_created_at": message_created_at.isoformat(),
+        "working_representation": {
+            "explicit": [obs.content for obs in working_representation.explicit],
+            "implicit": [obs.content for obs in working_representation.implicit],
+            "deductive": [
+                {
+                    "conclusion": obs.conclusion,
+                    "premises": obs.premises,
+                }
+                for obs in working_representation.deductive
+            ],
+        },
+        "history": history,
+        "new_turns": new_turns,
+        "explicit_call": {
+            "prompt": explicit_prompt,
+            "response": explicit_response,
+        },
+        "deductive_call": {
+            "prompt": deductive_prompt,
+            "response": deductive_response,
+            "atomic_propositions": atomic_propositions,
+        },
+    }
+
+    # Use file locking to handle concurrent writes from multiple processes
+    with open(trace_file, "a") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        f.write(json.dumps(trace_data) + "\n")
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)

@@ -58,7 +58,7 @@ class DeductiveReasoner(BaseReasoner):
         atomic_propositions: list[str],
         history: str,
         speaker_peer_card: list[str] | None,
-    ) -> DeductiveResponse:
+    ) -> tuple[DeductiveResponse, str]:
         """Process input through deductive reasoning.
 
         Args:
@@ -69,7 +69,7 @@ class DeductiveReasoner(BaseReasoner):
             speaker_peer_card: Peer card for the observed peer
 
         Returns:
-            DeductiveResponse containing only deductive observations
+            Tuple of (DeductiveResponse, prompt string)
         """
         latest_message = self.ctx[-1]
         new_turns = [
@@ -109,7 +109,7 @@ class DeductiveReasoner(BaseReasoner):
                 task_type="deductive_reasoning",
             ).inc(response.output_tokens + self.estimated_input_tokens)
 
-            return response.content
+            return response.content, prompt
         except Exception as e:
             raise exceptions.LLMError(
                 speaker_peer_card=speaker_peer_card,

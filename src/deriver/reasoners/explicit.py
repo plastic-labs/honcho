@@ -57,7 +57,7 @@ class ExplicitReasoner(BaseReasoner):
         working_representation: Representation,
         history: str,
         speaker_peer_card: list[str] | None,
-    ) -> ExplicitResponse:
+    ) -> tuple[ExplicitResponse, str]:
         """Process input through explicit reasoning.
 
         Args:
@@ -66,7 +66,7 @@ class ExplicitReasoner(BaseReasoner):
             speaker_peer_card: Peer card for the observed peer
 
         Returns:
-            ExplicitResponse containing only explicit observations
+            Tuple of (ExplicitResponse, prompt string)
         """
         latest_message = self.ctx[-1]
         new_turns = [
@@ -105,7 +105,7 @@ class ExplicitReasoner(BaseReasoner):
                 task_type="explicit_reasoning",
             ).inc(response.output_tokens + self.estimated_input_tokens)
 
-            return response.content
+            return response.content, prompt
         except Exception as e:
             raise exceptions.LLMError(
                 speaker_peer_card=speaker_peer_card,
