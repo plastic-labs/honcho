@@ -260,6 +260,11 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation}")
         parts.append("")
 
+        parts.append("IMPLICIT:\n")
+        for i, observation in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {observation}")
+        parts.append("")
+
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
             parts.append(f"{i}. {observation}")
@@ -291,6 +296,11 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation.content}")
         parts.append("")
 
+        parts.append("IMPLICIT:\n")
+        for i, observation in enumerate(self.implicit, 1):
+            parts.append(f"{i}. {observation.content}")
+        parts.append("")
+
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
             parts.append(f"{i}. {observation.str_no_timestamps()}")
@@ -312,6 +322,12 @@ class Representation(BaseModel):
         # Add explicit observations
         parts.append("## Explicit Observations\n")
         for i, obs in enumerate(self.explicit, 1):
+            parts.append(f"{i}. {obs}")
+        parts.append("")
+
+        # Add implicit observations
+        parts.append("## Implicit Observations\n")
+        for i, obs in enumerate(self.implicit, 1):
             parts.append(f"{i}. {obs}")
         parts.append("")
 
