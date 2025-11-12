@@ -60,10 +60,12 @@ class Session(BaseModel):
     )
     metadata: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached metadata for this session. May be stale. Use get_metadata() for fresh data.",
     )
     configuration: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached configuration for this session. May be stale. Use get_config() for fresh data.",
     )
     _client: HonchoCore = PrivateAttr()
@@ -121,8 +123,8 @@ class Session(BaseModel):
                 metadata=metadata if metadata is not None else omit,
             )
             # Update cached values with API response
-            self.metadata = session_data.metadata
-            self.configuration = session_data.configuration
+            object.__setattr__(self, "metadata", session_data.metadata)
+            object.__setattr__(self, "configuration", session_data.configuration)
 
     def add_peers(
         self,
@@ -382,8 +384,9 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.metadata = session_data.metadata or {}
-        return self.metadata
+        metadata = session_data.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     def delete(self) -> None:
         """
@@ -426,7 +429,7 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        self.metadata = metadata
+        object.__setattr__(self, "metadata", metadata)
 
     def get_config(self) -> dict[str, object]:
         """
@@ -444,8 +447,9 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.configuration = session_data.configuration or {}
-        return self.configuration
+        configuration = session_data.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
 
     @validate_call
     def set_config(
@@ -470,7 +474,17 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             configuration=configuration,
         )
-        self.configuration = configuration
+        object.__setattr__(self, "configuration", configuration)
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this session.
+
+        Makes API calls to retrieve the latest metadata and configuration
+        associated with this session and updates the cached attributes.
+        """
+        self.get_metadata()
+        self.get_config()
 
     @validate_call
     def get_context(

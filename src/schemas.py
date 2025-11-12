@@ -19,6 +19,80 @@ from src.utils.representation import Representation
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
+class ResolvedSessionConfiguration(BaseModel):
+    """
+    Like a SessionConfiguration, but with all fields resolved.
+    """
+
+    deriver_enabled: bool
+    peer_cards_enabled: bool
+    summaries_enabled: bool
+    dreams_enabled: bool
+    messages_per_short_summary: int
+    messages_per_long_summary: int
+
+
+class SessionConfiguration(BaseModel):
+    """
+    The set of options that can be in a session DB-level configuration dictionary.
+
+    All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
+    """
+
+    model_config = ConfigDict(extra="allow")  # pyright: ignore
+
+    deriver_enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable deriver functionality.",
+    )
+    peer_cards_enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable peer card functionality. If deriver is disabled, peer cards will also be disabled and this setting will be ignored.",
+    )
+    summaries_enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable summary functionality.",
+    )
+    dreams_enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored.",
+    )
+
+    messages_per_short_summary: int | None = Field(
+        default=None,
+        ge=10,
+        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
+    )
+    messages_per_long_summary: int | None = Field(
+        default=None,
+        ge=20,
+        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
+    )
+
+    @model_validator(mode="after")
+    def validate_summary_thresholds(self) -> Self:
+        """Validate that short summary threshold <= long summary threshold."""
+        short = self.messages_per_short_summary
+        long = self.messages_per_long_summary
+
+        if short is not None and long is not None and short >= long:
+            raise ValueError(
+                "messages_per_short_summary must be less than messages_per_long_summary"
+            )
+
+        return self
+
+
+class WorkspaceConfiguration(SessionConfiguration):
+    """
+    The set of options that can be in a workspace DB-level configuration dictionary.
+
+    All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
+    """
+
+    pass
+
+
 class WorkspaceBase(BaseModel):
     pass
 
@@ -29,7 +103,9 @@ class WorkspaceCreate(WorkspaceBase):
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: dict[str, Any] = {}
-    configuration: dict[str, Any] = {}
+    configuration: WorkspaceConfiguration = Field(
+        default_factory=WorkspaceConfiguration
+    )
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -40,7 +116,7 @@ class WorkspaceGet(WorkspaceBase):
 
 class WorkspaceUpdate(WorkspaceBase):
     metadata: dict[str, Any] | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: WorkspaceConfiguration | None = None
 
 
 class Workspace(WorkspaceBase):
@@ -229,7 +305,7 @@ class SessionCreate(SessionBase):
     ]
     metadata: dict[str, Any] | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
-    configuration: dict[str, Any] | None = None
+    configuration: SessionConfiguration | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -240,7 +316,7 @@ class SessionGet(SessionBase):
 
 class SessionUpdate(SessionBase):
     metadata: dict[str, Any] | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: SessionConfiguration | None = None
 
 
 class Session(SessionBase):
@@ -314,19 +390,11 @@ class DocumentBase(BaseModel):
 
 
 class DocumentMetadata(BaseModel):
-    times_derived: int | None = Field(
-        default=None,
-        ge=1,
-        description="The number of times that a semantic duplicate document to this one has been derived",
-    )
     message_ids: list[tuple[int, int]] = Field(
         description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
     )
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
-    )
-    level: Literal["explicit", "deductive"] = Field(
-        description="The level of the document (explicit or deductive)"
     )
     premises: list[str] | None = Field(
         default=None,
@@ -338,6 +406,15 @@ class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     session_name: str = Field(
         description="The session from which the document was derived"
+    )
+    level: Literal["explicit", "deductive"] = Field(
+        default="explicit",
+        description="The level of the document (explicit or deductive)",
+    )
+    times_derived: int = Field(
+        default=1,
+        ge=1,
+        description="The number of times that a semantic duplicate document to this one has been derived",
     )
     metadata: DocumentMetadata = Field()
     embedding: list[float] = Field()

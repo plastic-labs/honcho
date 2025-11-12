@@ -43,10 +43,12 @@ class Peer(BaseModel):
     )
     metadata: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
     )
     configuration: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
     )
     _client: HonchoCore = PrivateAttr()
@@ -106,8 +108,8 @@ class Peer(BaseModel):
                 metadata=metadata if metadata is not None else omit,
             )
             # Update cached values with API response
-            self.metadata = peer_data.metadata
-            self.configuration = peer_data.configuration
+            object.__setattr__(self, "metadata", peer_data.metadata)
+            object.__setattr__(self, "configuration", peer_data.configuration)
 
     def chat(
         self,
@@ -262,8 +264,9 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.metadata = peer.metadata or {}
-        return self.metadata
+        metadata = peer.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     def set_metadata(
@@ -288,7 +291,7 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        self.metadata = metadata
+        object.__setattr__(self, "metadata", metadata)
 
     def get_config(self) -> dict[str, object]:
         """
@@ -305,8 +308,9 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.configuration = peer.configuration or {}
-        return self.configuration
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
 
     @validate_call
     def set_config(
@@ -333,7 +337,7 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
-        self.configuration = config
+        object.__setattr__(self, "configuration", config)
 
     def get_peer_config(self) -> dict[str, object]:
         """
@@ -364,6 +368,16 @@ class Peer(BaseModel):
             config: A dictionary of configuration to associate with this peer
         """
         return self.set_config(config)
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this peer.
+
+        Makes API calls to retrieve the latest metadata and configuration
+        associated with this peer and updates the cached attributes.
+        """
+        self.get_metadata()
+        self.get_config()
 
     @validate_call
     def search(

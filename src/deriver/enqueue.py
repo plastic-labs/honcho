@@ -10,8 +10,9 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import get_affected_dream_keys, get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
+from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import create_payload
-from src.utils.work_unit import get_work_unit_key
+from src.utils.work_unit import construct_work_unit_key
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
             # Generate work unit keys for dreams that might be affected by this message
             dream_keys: list[str] = get_affected_dream_keys(message)
             for dream_key in dream_keys:
-                if dream_scheduler.cancel_dream(dream_key):
+                if await dream_scheduler.cancel_dream(dream_key):
                     cancelled_dreams.add(dream_key)
 
         if cancelled_dreams:
@@ -92,7 +93,11 @@ async def handle_session(
         workspace_name=workspace_name,
     )
 
-    deriver_disabled = bool(session.configuration.get("deriver_disabled"))
+    # Fetch workspace for configuration resolution
+    workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
+
+    # Resolve summary configuration with hierarchical fallback
+    session_level_configuration = get_configuration(session, workspace)
 
     peers_with_configuration = await get_peers_with_configuration(
         db_session, workspace_name, session_name
@@ -107,7 +112,10 @@ async def handle_session(
                 message,
                 peers_with_configuration,
                 session.id,
-                deriver_disabled=deriver_disabled,
+                deriver_enabled=session_level_configuration.deriver_enabled,
+                summaries_enabled=session_level_configuration.summaries_enabled,
+                messages_per_short_summary=session_level_configuration.messages_per_short_summary,
+                messages_per_long_summary=session_level_configuration.messages_per_long_summary,
             )
         )
     return queue_records
@@ -159,8 +167,16 @@ def create_representation_record(
         session_id: Optional session ID
 
     Returns:
-        Queue record dictionary
+        Queue record dictionary with workspace_name and message_id as separate fields
     """
+    workspace_name = message.get("workspace_name")
+    message_id = message.get("message_id")
+
+    if not isinstance(workspace_name, str):
+        raise TypeError("workspace_name is required and must be a string")
+    if not isinstance(message_id, int):
+        raise TypeError("message_id is required and must be an integer")
+
     processed_payload = create_payload(
         message=message,
         task_type="representation",
@@ -168,10 +184,12 @@ def create_representation_record(
         observed=observed,
     )
     return {
-        "work_unit_key": get_work_unit_key(processed_payload),
+        "work_unit_key": construct_work_unit_key(workspace_name, processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "representation",
+        "workspace_name": workspace_name,
+        "message_id": message_id,
     }
 
 
@@ -185,23 +203,32 @@ def create_summary_record(
 
     Args:
         message: The message payload
-        observed: Name of the sender
-        observer: Name of the target
         session_id: Session ID
+        message_seq_in_session: The sequence number of the message in the session
 
     Returns:
-        Queue record dictionary
+        Queue record dictionary with workspace_name and message_id as separate fields
     """
+    workspace_name = message.get("workspace_name")
+    message_id = message.get("message_id")
+
+    if not isinstance(workspace_name, str):
+        raise ValueError("workspace_name is required and must be a string")
+    if not isinstance(message_id, int):
+        raise ValueError("message_id is required and must be an integer")
+
     processed_payload = create_payload(
         message=message,
         task_type="summary",
         message_seq_in_session=message_seq_in_session,
     )
     return {
-        "work_unit_key": get_work_unit_key(processed_payload),
+        "work_unit_key": construct_work_unit_key(workspace_name, processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "summary",
+        "workspace_name": workspace_name,
+        "message_id": message_id,
     }
 
 
@@ -245,7 +272,10 @@ async def generate_queue_records(
     peers_with_configuration: dict[str, list[dict[str, Any]]],
     session_id: str,
     *,
-    deriver_disabled: bool,
+    deriver_enabled: bool,
+    summaries_enabled: bool,
+    messages_per_short_summary: int,
+    messages_per_long_summary: int,
 ) -> list[dict[str, Any]]:
     """
     Process a single message and generate queue records based on configurations.
@@ -253,10 +283,11 @@ async def generate_queue_records(
     Args:
         db_session: The database session
         message: The message payload
-        deriver_disabled: Whether deriver is disabled for the session
+        deriver_enabled: Whether deriver is enabled for the session
         peers_with_configuration: Dictionary of peer configurations
         session_id: Session ID
-        message_seq_map: Optional pre-fetched mapping of message_id to sequence number
+        messages_per_short_summary: Number of messages per short summary
+        messages_per_long_summary: Number of messages per long summary
 
     Returns:
         List of queue records for this message
@@ -276,9 +307,9 @@ async def generate_queue_records(
 
     records: list[dict[str, Any]] = []
 
-    if settings.SUMMARY.ENABLED and (
-        message_seq_in_session % settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY == 0
-        or message_seq_in_session % settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY == 0
+    if summaries_enabled and (
+        message_seq_in_session % messages_per_short_summary == 0
+        or message_seq_in_session % messages_per_long_summary == 0
     ):
         records.append(
             create_summary_record(
@@ -288,7 +319,7 @@ async def generate_queue_records(
             )
         )
 
-    if deriver_disabled:
+    if deriver_enabled is False:
         return records
 
     if get_effective_observe_me(observed, peers_with_configuration):

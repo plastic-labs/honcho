@@ -1,7 +1,11 @@
 import type HonchoCore from '@honcho-ai/core'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
-import { Representation, type RepresentationOptions } from './representation'
+import {
+  Representation,
+  type RepresentationData,
+  type RepresentationOptions,
+} from './representation'
 import { Session } from './session'
 import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
 import {
@@ -11,6 +15,7 @@ import {
   LimitSchema,
   MessageContentSchema,
   MessageMetadataSchema,
+  PeerWorkingRepParamsSchema,
   SearchQuerySchema,
   type MessageCreate as ValidatedMessageCreate,
 } from './validation'
@@ -42,7 +47,7 @@ export class Peer {
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  metadata?: Record<string, unknown> | null
+  public metadata?: Record<string, unknown> | null
   /**
    * Cached configuration for this peer. May be stale if the peer
    * was not recently fetched from the API.
@@ -50,7 +55,7 @@ export class Peer {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  configuration?: Record<string, unknown> | null
+  public configuration?: Record<string, unknown> | null
 
   /**
    * Initialize a new Peer. **Do not call this directly, use the client.peer() method instead.**
@@ -361,6 +366,16 @@ export class Peer {
   }
 
   /**
+   * Refresh cached metadata and configuration for this peer.
+   *
+   * Makes API calls to retrieve the latest metadata and configuration
+   * associated with this peer and updates the cached properties.
+   */
+  async refresh(): Promise<void> {
+    await Promise.all([this.getMetadata(), this.getConfig()])
+  }
+
+  /**
    * Search for messages in the workspace with this peer as author.
    *
    * Makes an API call to search endpoint.
@@ -470,20 +485,38 @@ export class Peer {
     target?: string | Peer,
     options?: RepresentationOptions
   ): Promise<Representation> {
-    const data = await this._client.workspaces.peers.workingRepresentation(
+    const workingRepParams = PeerWorkingRepParamsSchema.parse({
+      session,
+      target,
+      options,
+    })
+    const sessionId = workingRepParams.session
+      ? typeof workingRepParams.session === 'string'
+        ? workingRepParams.session
+        : workingRepParams.session.id
+      : undefined
+    const targetId = workingRepParams.target
+      ? typeof workingRepParams.target === 'string'
+        ? workingRepParams.target
+        : workingRepParams.target.id
+      : undefined
+
+    const response = await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
       this.id,
       {
-        session_id: typeof session === 'string' ? session : session?.id,
-        target: typeof target === 'string' ? target : target?.id,
-        search_query: options?.searchQuery,
-        search_top_k: options?.searchTopK,
-        search_max_distance: options?.searchMaxDistance,
-        include_most_derived: options?.includeMostDerived,
-        max_observations: options?.maxObservations,
+        session_id: sessionId,
+        target: targetId,
+        search_query: workingRepParams.options?.searchQuery,
+        search_top_k: workingRepParams.options?.searchTopK,
+        search_max_distance: workingRepParams.options?.searchMaxDistance,
+        include_most_derived: workingRepParams.options?.includeMostDerived,
+        max_observations: workingRepParams.options?.maxObservations,
       }
     )
-    return Representation.fromData(data as any)
+    const data = (response as { representation: RepresentationData })
+      .representation
+    return Representation.fromData(data)
   }
 
   /**

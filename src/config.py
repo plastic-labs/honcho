@@ -50,6 +50,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DB": "db",
         "AUTH": "auth",
         "SENTRY": "sentry",
+        "CACHE": "cache",
         "LLM": "llm",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
@@ -203,7 +204,7 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    # Maximum number of observations to store in working representation
+    # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=50, gt=0, le=500)
@@ -290,7 +291,22 @@ class MetricsSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
-    NAMESPACE: str = "honcho"
+    NAMESPACE: str | None = None
+
+
+class CacheSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    URL: str = "redis://localhost:6379/0?suppress=false"
+    NAMESPACE: str | None = None
+    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
+        300  # how long to keep items in cache
+    )
+
+    DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
+        5  # how long to hold a lock on a resource when fetching DB after cache miss
+    )
 
 
 class DreamSettings(HonchoSettings):
@@ -334,6 +350,8 @@ class AppSettings(HonchoSettings):
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
 
+    NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
@@ -345,6 +363,7 @@ class AppSettings(HonchoSettings):
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")
@@ -353,6 +372,19 @@ class AppSettings(HonchoSettings):
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {v}")
         return log_level
+
+    @model_validator(mode="after")
+    def propagate_namespace(self) -> "AppSettings":
+        """Propagate top-level NAMESPACE to nested settings if not explicitly set.
+
+        After this validator runs, CACHE.NAMESPACE and METRICS.NAMESPACE are guaranteed
+        to exist.
+        """
+        if self.CACHE.NAMESPACE is None:
+            self.CACHE.NAMESPACE = self.NAMESPACE
+        if self.METRICS.NAMESPACE is None:
+            self.METRICS.NAMESPACE = self.NAMESPACE
+        return self
 
 
 # Create a single global instance of the settings

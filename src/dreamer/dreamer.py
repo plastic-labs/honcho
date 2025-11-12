@@ -11,6 +11,7 @@ from src.dreamer.prompts import consolidation_prompt
 from src.embedding_client import embedding_client
 from src.utils.clients import honcho_llm_call
 from src.utils.formatting import format_datetime_utc
+from src.utils.logging import conditional_observe
 from src.utils.queue_payload import DreamPayload
 from src.utils.representation import (
     ExplicitObservation,
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 @sentry_sdk.trace
 async def process_dream(
     payload: DreamPayload,
+    workspace_name: str,
 ) -> None:
     """
     Process a dream task by performing collection maintenance operations.
@@ -31,12 +33,12 @@ async def process_dream(
         payload: The dream task payload containing workspace, peer, and dream type information
     """
     logger.info(
-        f"Processing dream task: {payload.dream_type} for {payload.workspace_name}/{payload.observer}/{payload.observed}"
+        f"Processing dream task: {payload.dream_type} for {workspace_name}/{payload.observer}/{payload.observed}"
     )
 
     try:
         if payload.dream_type == "consolidate":
-            await _process_consolidate_dream(payload)
+            await _process_consolidate_dream(payload, workspace_name)
         ## TODO other dream types
 
     except Exception as e:
@@ -49,7 +51,9 @@ async def process_dream(
         # Don't re-raise - we want to mark the dream task as processed even if it fails
 
 
-async def _process_consolidate_dream(payload: DreamPayload) -> None:
+async def _process_consolidate_dream(
+    payload: DreamPayload, workspace_name: str
+) -> None:
     """
     Process a consolidation dream task.
 
@@ -62,14 +66,14 @@ async def _process_consolidate_dream(payload: DreamPayload) -> None:
     logger.info(
         f"""
 (っ- ‸ - ς)ᶻ z 𐰁 ᶻ z 𐰁 ᶻ z 𐰁\n
-DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{payload.observed}\n
+DREAM: consolidating documents for {workspace_name}/{payload.observer}/{payload.observed}\n
 𐰁 z ᶻ 𐰁 z ᶻ 𐰁 z ᶻ(っ- ‸ - ς)"""
     )
 
     # get all documents in the collection
     async with tracked_db("dream_consolidate") as db:
         documents = await crud.get_all_documents(
-            payload.workspace_name,
+            workspace_name,
             observer=payload.observer,
             observed=payload.observed,
         )
@@ -89,7 +93,7 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{
         for cluster in clusters:
             await _consolidate_cluster(
                 cluster,
-                payload.workspace_name,
+                workspace_name,
                 db,
                 observer=payload.observer,
                 observed=payload.observed,
@@ -119,9 +123,7 @@ async def _consolidate_cluster(
     logger.info("consolidated representation:\n%s", consolidated_representation)
 
     # TODO: less hacky preservation of times_derived
-    total_times_derived = sum(
-        doc.internal_metadata.get("times_derived", 1) for doc in cluster
-    )
+    total_times_derived = sum(doc.times_derived for doc in cluster)
 
     new_documents = [
         *consolidated_representation.explicit,
@@ -142,10 +144,8 @@ async def _consolidate_cluster(
         # NOTE: other kinds of observations here in the future
 
         metadata = schemas.DocumentMetadata(
-            times_derived=total_times_derived,
             message_ids=obs.message_ids,
             message_created_at=format_datetime_utc(obs.created_at),
-            level=level,
             premises=premises,
         )
 
@@ -155,6 +155,8 @@ async def _consolidate_cluster(
             schemas.DocumentCreate(
                 content=content,
                 session_name=obs.session_name,
+                level=level,
+                times_derived=total_times_derived,
                 metadata=metadata,
                 embedding=embedding,
             )
@@ -178,6 +180,7 @@ async def _consolidate_cluster(
     )
 
 
+@conditional_observe(name="[Dream] Consolidate Call")
 async def consolidate_call(
     representation: Representation,
 ) -> Representation:

@@ -1,15 +1,34 @@
 from logging import getLogger
 from typing import Any
 
+from cashews import NOT_NONE
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.cache.client import cache, get_cache_namespace
+from src.config import settings
+from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
+
+PEER_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:peer:{peer_name}"
+PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+
+
+def peer_cache_key(workspace_name: str, peer_name: str) -> str:
+    """Generate cache key for peer."""
+    return (
+        get_cache_namespace()
+        + ":"
+        + PEER_CACHE_KEY_TEMPLATE.format(
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
+    )
 
 
 async def get_or_create_peers(
@@ -35,6 +54,8 @@ async def get_or_create_peers(
     Raises:
         ConflictException: If we fail to get or create the peers
     """
+
+    await get_or_create_workspace(db, schemas.WorkspaceCreate(name=workspace_name))
     peer_names = [p.name for p in peers]
     stmt = (
         select(models.Peer)
@@ -75,8 +96,6 @@ async def get_or_create_peers(
     try:
         db.add_all(new_peers)
         await db.commit()
-        # Return combined list of existing and new peers
-        return existing_peers + new_peers
     except IntegrityError:
         await db.rollback()
         if _retry:
@@ -84,6 +103,37 @@ async def get_or_create_peers(
                 f"Unable to create or get peers: {peer_names}"
             ) from None
         return await get_or_create_peers(db, workspace_name, peers, _retry=True)
+
+    # Invalidate cache for all updated/created peers - read-through pattern
+    for peer_obj in existing_peers + new_peers:
+        cache_key = peer_cache_key(workspace_name, peer_obj.name)
+        await cache.delete(cache_key)
+
+    # Return combined list of existing and new peers
+    return existing_peers + new_peers
+
+
+@cache(
+    key=PEER_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    prefix=get_cache_namespace(),
+    condition=NOT_NONE,
+)
+@cache.locked(
+    key=PEER_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+    prefix=PEER_LOCK_PREFIX,
+)
+async def _fetch_peer(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+) -> models.Peer | None:
+    return await db.scalar(
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == peer_name)
+    )
 
 
 async def get_peer(
@@ -105,21 +155,16 @@ async def get_peer(
     Raises:
         ResourceNotFoundException: If the peer does not exist
     """
-    # Try to get the existing peer
-    stmt = (
-        select(models.Peer)
-        .where(models.Peer.workspace_name == workspace_name)
-        .where(models.Peer.name == peer.name)
-    )
-    result = await db.execute(stmt)
-    existing_peer = result.scalar_one_or_none()
+    existing_peer = await _fetch_peer(db, workspace_name, peer.name)
+    if existing_peer is None:
+        raise ResourceNotFoundException(
+            f"Peer {peer.name} not found in workspace {workspace_name}"
+        )
 
-    if existing_peer is not None:
-        return existing_peer
+    # Merge cached object into session (cached objects are detached)
+    existing_peer = await db.merge(existing_peer, load=False)
 
-    raise ResourceNotFoundException(
-        f"Peer {peer.name} not found in workspace {workspace_name}"
-    )
+    return existing_peer
 
 
 async def get_peers(
@@ -166,7 +211,13 @@ async def update_peer(
         honcho_peer.configuration = peer.configuration
 
     await db.commit()
-    logger.debug(f"Peer {peer_name} updated successfully")
+    await db.refresh(honcho_peer)
+
+    # Invalidate cache - read-through pattern
+    cache_key = peer_cache_key(workspace_name, honcho_peer.name)
+    await cache.delete(cache_key)
+
+    logger.debug("Peer %s updated successfully", peer_name)
     return honcho_peer
 
 

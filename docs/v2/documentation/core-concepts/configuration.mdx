@@ -1,5 +1,5 @@
 ---
-title: 'Configuration'
+title: 'Configure Reasoning'
 description: 'Customizing how Honcho handles peers and sessions'
 icon: 'wrench'
 ---
@@ -53,7 +53,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 ### Session Configuration
 
-By default, all sessions have the deriver enabled, much like peers. You may create a session that escapes the deriver's watchful eye by setting the `deriver_disabled` flag to `true`. You can update the flag by calling `get_or_create` on the session with a new configuration.
+By default, all sessions have the deriver enabled, much like peers. You may create a session that escapes the deriver's watchful eye by setting the `deriver_enabled` flag to `False`. You can update the flag by calling `get_or_create` on the session with a new configuration.
 
 <CodeGroup>
 ```python Python
@@ -63,7 +63,7 @@ from honcho import Honcho
 honcho = Honcho()
 
 # Create session with configuration
-session = honcho.session("my-session", config={"deriver_disabled": True})
+session = honcho.session("my-session", config={"deriver_enabled": False})
 ```
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
@@ -73,7 +73,7 @@ import { Honcho } from "@honcho-ai/sdk";
     const honcho = new Honcho({});
 
     // Create session with configuration
-    const session = await honcho.session("my-session", { config: { deriver_disabled: true } });
+    const session = await honcho.session("my-session", { config: { deriver_enabled: false } });
 })();
 ```
 </CodeGroup>

@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.utils.work_unit import get_work_unit_key
+from src.utils.work_unit import construct_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -157,9 +157,10 @@ class TestDeriverStatusEndpoint:
             queue_item = models.QueueItem(
                 session_id=session.id,
                 task_type="representation",
-                work_unit_key=get_work_unit_key(payload),
+                work_unit_key=construct_work_unit_key(workspace.name, payload),
                 payload=payload,
                 processed=False,
+                workspace_name=workspace.name,
             )
             queue_items.append(queue_item)
         db_session.add_all(queue_items)
@@ -231,9 +232,10 @@ class TestDeriverStatusEndpoint:
                 queue_item = models.QueueItem(
                     session_id=session.id,
                     task_type="representation",
-                    work_unit_key=get_work_unit_key(payload),
+                    work_unit_key=construct_work_unit_key(workspace.name, payload),
                     payload=payload,
                     processed=False,
+                    workspace_name=workspace.name,
                 )
                 queue_items.append(queue_item)
             db_session.add_all(queue_items)
@@ -292,9 +294,10 @@ class TestDeriverStatusEndpoint:
         queue_item = models.QueueItem(
             session_id=session.id,
             task_type="representation",
-            work_unit_key=get_work_unit_key(payload),
+            work_unit_key=construct_work_unit_key(workspace.name, payload),
             payload=payload,
             processed=False,
+            workspace_name=workspace.name,
         )
         db_session.add(queue_item)
         await db_session.commit()

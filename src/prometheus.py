@@ -5,6 +5,7 @@ This module defines all Prometheus metrics for all Honcho processes and exposes 
 """
 
 import logging
+from typing import cast
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -28,7 +29,8 @@ class NamespacedCounter(Counter):
 
     def labels(self, **kwargs: str) -> "NamespacedCounter":
         """Override labels to automatically appends namespace label"""
-        kwargs["namespace"] = settings.METRICS.NAMESPACE
+        # METRICS.NAMESPACE is guaranteed to be non-None by AppSettings.propagate_namespace validator
+        kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)
 
 

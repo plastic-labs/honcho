@@ -7,7 +7,11 @@ import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/mess
 import type { Uploadable } from '@honcho-ai/core/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import { Representation, type RepresentationOptions } from './representation'
+import {
+  Representation,
+  type RepresentationData,
+  type RepresentationOptions,
+} from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
 import type { Observation, ObservationQueryParams } from './types'
 import {
@@ -122,7 +126,7 @@ export class Session {
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  metadata?: Record<string, unknown> | null
+  public metadata?: Record<string, unknown> | null
   /**
    * Cached configuration for this session. May be stale if the session
    * was not recently fetched from the API.
@@ -130,7 +134,7 @@ export class Session {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  configuration?: Record<string, unknown> | null
+  public configuration?: Record<string, unknown> | null
 
   /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
@@ -500,6 +504,16 @@ export class Session {
       configuration,
     })
     this.configuration = configuration
+  }
+
+  /**
+   * Refresh cached metadata and configuration for this session.
+   *
+   * Makes API calls to retrieve the latest metadata and configuration
+   * associated with this session and updates the cached properties.
+   */
+  async refresh(): Promise<void> {
+    await Promise.all([this.getMetadata(), this.getConfig()])
   }
 
   /**
@@ -1013,7 +1027,7 @@ export class Session {
         : workingRepParams.target.id
       : undefined
 
-    const data = await this._client.workspaces.peers.workingRepresentation(
+    const response = await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
       peerId,
       {
@@ -1026,7 +1040,14 @@ export class Session {
         max_observations: workingRepParams.options?.maxObservations,
       }
     )
-    return Representation.fromData(data as any)
+    const maybe = response as
+      | RepresentationData
+      | { representation?: RepresentationData | null }
+      | null
+    const rep = (maybe && 'representation' in (maybe as any)
+      ? (maybe as any).representation
+      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    return Representation.fromData(rep as RepresentationData)
   }
 
   /**

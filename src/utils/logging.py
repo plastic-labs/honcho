@@ -6,9 +6,10 @@ and a conditional observe decorator that only applies when Langfuse is configure
 
 import datetime
 from collections.abc import Callable
-from typing import Any
+from typing import ParamSpec, TypeVar, overload
 
 from fastapi import Request
+from langfuse import observe  # pyright: ignore
 from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
@@ -27,25 +28,56 @@ console = Console(markup=True)
 
 COLLECT_METRICS_LOCAL = settings.COLLECT_METRICS_LOCAL
 
+P = ParamSpec("P")
+R = TypeVar("R")
 
-def conditional_observe(func: Callable[..., Any]) -> Callable[..., Any]:
+
+@overload
+def conditional_observe(
+    func: Callable[P, R],
+) -> Callable[P, R]: ...
+
+
+@overload
+def conditional_observe(
+    *,
+    name: str,
+) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+
+def conditional_observe(
+    func: Callable[P, R] | None = None,
+    *,
+    name: str | None = None,
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Conditionally apply the @observe decorator only when LANGFUSE_PUBLIC_KEY is present.
 
+    Can be used in two ways:
+    1. As a decorator: @conditional_observe
+    2. As a decorator factory: @conditional_observe(name="...")
+
     Args:
-        func: The function to potentially decorate
+        func: The function to potentially decorate (when used as @conditional_observe)
+        name: Optional name for the observation (when used as @conditional_observe(name="..."))
 
     Returns:
         The decorated function if Langfuse is configured, otherwise the original function
     """
-    if settings.LANGFUSE_PUBLIC_KEY:
-        # Import here to avoid circular imports and only import when needed
-        from langfuse import observe  # pyright: ignore
 
-        return observe()(func)
+    def decorator(f: Callable[P, R]) -> Callable[P, R]:
+        if settings.LANGFUSE_PUBLIC_KEY:
+            observe_name = name if name is not None else f.__name__
+            return observe(name=observe_name)(f)
+        else:
+            return f
+
+    if func is not None:
+        # Used as @conditional_observe (without parentheses)
+        return decorator(func)
     else:
-        # Return the function unchanged if Langfuse is not configured
-        return func
+        # Used as @conditional_observe(name="...") (with parentheses and keyword args)
+        return decorator
 
 
 # dict[task_name, list[tuple[metric_name, metric_value, metric_unit]]]

@@ -146,6 +146,8 @@ async def create_documents(
                     observer=observer,
                     observed=observed,
                     content=doc.content,
+                    level=doc.level,
+                    times_derived=doc.times_derived,
                     internal_metadata=metadata_dict,
                     embedding=doc.embedding,
                     session_name=doc.session_name,

@@ -1,7 +1,7 @@
 import asyncio
-from collections.abc import Callable, Generator
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.utils.queue_payload import create_payload
-from src.utils.work_unit import get_work_unit_key
+from src.utils.work_unit import construct_work_unit_key
+
+QueuePayload: TypeAlias = dict[str, Any]
+QueuePayloadEntry: TypeAlias = QueuePayload | tuple[QueuePayload, int | None]
 
 
 @pytest.fixture
@@ -155,18 +158,29 @@ def create_queue_payload() -> Callable[..., Any]:
 @pytest.fixture
 async def add_queue_items(
     db_session: AsyncSession,
-) -> Callable[[list[dict[str, Any]], str], Any]:
+) -> Callable[
+    [Sequence[QueuePayloadEntry], str, str], Awaitable[list[models.QueueItem]]
+]:
     """Helper function to add queue items to the database"""
 
     async def _add_items(
-        payloads: list[dict[str, Any]], session_id: str
+        payloads: Sequence[QueuePayloadEntry],
+        session_id: str,
+        workspace_name: str,
     ) -> list[models.QueueItem]:
         """Add queue items to the database and return them"""
         queue_items: list[models.QueueItem] = []
-        for payload in payloads:
+        for payload_entry in payloads:
+            payload: QueuePayload
+            message_id: int | None
+            if isinstance(payload_entry, tuple):
+                payload, message_id = payload_entry
+            else:
+                payload = payload_entry
+                message_id = cast(int | None, payload.get("message_id"))
             # Generate work_unit_key from the payload
-            task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(payload)
+            task_type = cast(str, payload.get("task_type", "unknown"))
+            work_unit_key = construct_work_unit_key(workspace_name, payload)
 
             queue_item = models.QueueItem(
                 session_id=session_id,
@@ -174,6 +188,8 @@ async def add_queue_items(
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
+                workspace_name=workspace_name,
+                message_id=message_id,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -203,7 +219,7 @@ async def sample_queue_items(
     messages = sample_messages
 
     # Create various types of queue payloads
-    payloads: list[dict[str, Any]] = []
+    payloads: list[tuple[dict[str, Any], int]] = []
 
     # Create representation payloads for each message
     for message in messages:
@@ -214,7 +230,7 @@ async def sample_queue_items(
             observer=message.peer_name,
             observed=message.peer_name,
         )
-        payloads.append(payload1)
+        payloads.append((payload1, message.id))
 
         # Representation for observer peer
         payload2 = create_queue_payload(
@@ -223,7 +239,7 @@ async def sample_queue_items(
             observer=peer2.name,  # peer2 observes others
             observed=message.peer_name,
         )
-        payloads.append(payload2)
+        payloads.append((payload2, message.id))
 
     # Create summary payloads for session
     for i, message in enumerate(messages):
@@ -232,10 +248,10 @@ async def sample_queue_items(
             task_type="summary",
             message_seq_in_session=i + 1,
         )
-        payloads.append(payload)
+        payloads.append((payload, message.id))
 
     # Add all payloads as queue items
-    queue_items = await add_queue_items(payloads, session.id)
+    queue_items = await add_queue_items(payloads, session.id, session.workspace_name)
 
     return queue_items
 
