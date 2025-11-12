@@ -203,23 +203,18 @@ async def search(
 
         # Join with session_peers_table to get messages from sessions the peer was in
         # Only include messages created during the time window the peer was active
-        stmt = (
-            stmt.join(
-                session_peers_table,
-                and_(
-                    models.Message.session_name == session_peers_table.c.session_name,
-                    models.Message.workspace_name
-                    == session_peers_table.c.workspace_name,
-                    models.Message.created_at >= session_peers_table.c.joined_at,
-                    or_(
-                        session_peers_table.c.left_at.is_(None),
-                        models.Message.created_at <= session_peers_table.c.left_at,
-                    ),
+        stmt = stmt.join(
+            session_peers_table,
+            and_(
+                models.Message.session_name == session_peers_table.c.session_name,
+                models.Message.workspace_name == session_peers_table.c.workspace_name,
+                models.Message.created_at >= session_peers_table.c.joined_at,
+                or_(
+                    session_peers_table.c.left_at.is_(None),
+                    models.Message.created_at <= session_peers_table.c.left_at,
                 ),
-            )
-            .where(session_peers_table.c.peer_name == peer_name)
-            .distinct()
-        )
+            ),
+        ).where(session_peers_table.c.peer_name == peer_name)
 
     stmt = apply_filter(stmt, models.Message, filters)
 
