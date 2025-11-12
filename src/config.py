@@ -204,7 +204,7 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    # Maximum number of observations to store in working representation
+    # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=50, gt=0, le=500)

@@ -9,8 +9,10 @@ from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
+from src.schemas import ResolvedSessionConfiguration
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
+from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import (
     accumulate_metric,
@@ -154,16 +156,25 @@ async def process_representation_tasks_batch(
         # include_most_derived=False,
     )
 
-    if settings.PEER_CARD.ENABLED:
-        async with tracked_db("deriver.get_peer_card") as db:
-            speaker_peer_card: list[str] | None = await crud.get_peer_card(
+    async with tracked_db("deriver.get_peer_card") as db:
+        session_level_configuration = get_configuration(
+            await crud.get_session(
+                db, latest_message.session_name, latest_message.workspace_name
+            ),
+            await crud.get_workspace(db, workspace_name=latest_message.workspace_name),
+        )
+        if session_level_configuration.peer_cards_enabled is False:
+            speaker_peer_card = None
+        else:
+            speaker_peer_card = await crud.get_peer_card(
                 db,
                 latest_message.workspace_name,
                 observer=observer,
                 observed=observed,
             )
-    else:
-        speaker_peer_card = None
+
+    if session_level_configuration.deriver_enabled is False:
+        return
 
     # Estimate tokens for deriver input
     peer_card_tokens = estimate_tokens(speaker_peer_card)
@@ -246,6 +257,7 @@ async def process_representation_tasks_batch(
         observed=observed,
         observer=observer,
         estimated_input_tokens=estimated_input_tokens + session_context_tokens,
+        session_level_configuration=session_level_configuration,
     )
 
     # Run single-pass reasoning
@@ -288,6 +300,7 @@ class CertaintyReasoner:
     ctx: list[Message]
     observer: str
     observed: str
+    session_level_configuration: ResolvedSessionConfiguration
 
     def __init__(
         self,
@@ -297,12 +310,14 @@ class CertaintyReasoner:
         observed: str,
         observer: str,
         estimated_input_tokens: int,
+        session_level_configuration: ResolvedSessionConfiguration,
     ) -> None:
         self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
         self.estimated_input_tokens: int = estimated_input_tokens
+        self.session_level_configuration = session_level_configuration
 
     @conditional_observe(name="Deriver")
     @sentry_sdk.trace
@@ -378,17 +393,10 @@ class CertaintyReasoner:
                 (earliest_message.id, latest_message.id),
                 latest_message.session_name,
                 latest_message.created_at,
+                self.session_level_configuration,
             )
 
-        # not currently deduplicating at the save_representation step, so this isn't useful
-        # accumulate_metric(
-        #     f"deriver_{latest_payload.message_id}_{latest_payload.observer}",
-        #     "new_observation_count",
-        #     new_observations_saved,
-        #     "count",
-        # )
-
-        if settings.PEER_CARD.ENABLED:
+        if self.session_level_configuration.peer_cards_enabled:
             update_peer_card_start = time.perf_counter()
             if not new_observations.is_empty():
                 await self._update_peer_card(speaker_peer_card, new_observations)

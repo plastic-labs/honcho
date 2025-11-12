@@ -145,7 +145,9 @@ async def get_or_create_session(
             workspace_name=workspace_name,
             name=session.name,
             h_metadata=session.metadata or {},
-            configuration=session.configuration or {},
+            configuration=session.configuration.model_dump(exclude_none=True)
+            if session.configuration
+            else {},
         )
         try:
             db.add(honcho_session)
@@ -166,7 +168,9 @@ async def get_or_create_session(
         if session.metadata is not None:
             honcho_session.h_metadata = session.metadata
         if session.configuration is not None:
-            honcho_session.configuration = session.configuration
+            honcho_session.configuration = session.configuration.model_dump(
+                exclude_none=True
+            )
 
     # Add all peers to session
     if session.peer_names:
@@ -255,7 +259,12 @@ async def update_session(
         honcho_session.h_metadata = session.metadata
 
     if session.configuration is not None:
-        honcho_session.configuration = session.configuration
+        # Merge configuration instead of replacing to preserve existing keys
+        base_config = (honcho_session.configuration or {}).copy()
+        honcho_session.configuration = {
+            **base_config,
+            **session.configuration.model_dump(exclude_none=True),
+        }
 
     await db.commit()
     await db.refresh(honcho_session)

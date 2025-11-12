@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.deriver.deriver import process_representation_tasks_batch
@@ -109,6 +110,8 @@ class TestDeriverProcessing:
 
     async def test_representation_batch_uses_earliest_cutoff(
         self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Ensure batching history cutoff uses the earliest payload in the batch."""
@@ -135,50 +138,40 @@ class TestDeriverProcessing:
             ),
         )
 
-        # Avoid DB access for collection and peer card
-        monkeypatch.setattr(
-            "src.crud.get_or_create_collection",
-            AsyncMock(return_value=type("Collection", (), {"name": "dummy"})()),
-        )
-        monkeypatch.setattr(
-            "src.crud.get_peer_card",
-            AsyncMock(return_value=[]),
-        )
-        # Short-circuit tracked_db context manager
-        from contextlib import asynccontextmanager
-
-        @asynccontextmanager
-        async def _no_db(_label: str):
-            yield object()
-
-        monkeypatch.setattr("src.deriver.deriver.tracked_db", _no_db)
-
         # Avoid executing the full reasoning pipeline; we only care about cutoff behavior.
         monkeypatch.setattr(
             "src.deriver.deriver.CertaintyReasoner.reason",
             AsyncMock(return_value=Representation(explicit=[], deductive=[])),
         )
 
-        # Create test messages with different IDs (earlier message has lower ID)
+        # Use the real session and workspace from fixtures
+        session, peers = sample_session_with_peers
+        alice = peers[0]
+
+        # Create test messages with different IDs in the database
         now = datetime.now(timezone.utc)
         messages: list[models.Message] = []
         for i in range(8):
-            message_id = 100 + i  # 100, 101, 102, ..., 107
-            messages.append(
-                models.Message(
-                    id=message_id,
-                    workspace_name="test_workspace",
-                    session_name="test_session",
-                    peer_name="alice",
-                    content=f"message {message_id}",
-                    seq_in_session=i + 1,
-                    token_count=0,
-                    created_at=now - timedelta(minutes=7 - i),
-                )
+            message = models.Message(
+                workspace_name=session.workspace_name,
+                session_name=session.name,
+                peer_name=alice.name,
+                content=f"message {i}",
+                seq_in_session=i + 1,
+                token_count=10,
+                created_at=now - timedelta(minutes=7 - i),
             )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Refresh messages to get their IDs
+        for message in messages:
+            await db_session.refresh(message)
 
         await process_representation_tasks_batch(
-            observer="alice", observed="alice", messages=messages
+            observer=alice.name, observed=alice.name, messages=messages
         )
 
         # Verify that the earliest message ID was used as the cutoff
