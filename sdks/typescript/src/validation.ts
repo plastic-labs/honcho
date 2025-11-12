@@ -257,6 +257,17 @@ export const WorkingRepParamsSchema = z.object({
 })
 
 /**
+ * Schema for peer working representation parameters.
+ */
+export const PeerWorkingRepParamsSchema = z.object({
+  session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  options: RepresentationOptionsSchema.extend({
+    searchQuery: SearchQuerySchema.optional(),
+  }).optional(),
+})
+
+/**
  * Schema for peer addition to session.
  */
 export const PeerAdditionSchema = z.union([
@@ -301,6 +312,11 @@ export const MessageAdditionSchema = z.union([
 export const WorkspaceMetadataSchema = z.record(z.string(), z.unknown())
 
 /**
+ * Schema for workspace configuration.
+ */
+export const WorkspaceConfigSchema = z.record(z.string(), z.unknown())
+
+/**
  * Schema for limit.
  */
 export const LimitSchema = z
@@ -325,8 +341,10 @@ export type ContextParams = z.infer<typeof ContextParamsSchema>
 export type DeriverStatusOptions = z.infer<typeof DeriverStatusOptionsSchema>
 export type FileUpload = z.infer<typeof FileUploadSchema>
 export type WorkingRepParams = z.infer<typeof WorkingRepParamsSchema>
+export type PeerWorkingRepParams = z.infer<typeof PeerWorkingRepParamsSchema>
 export type PeerAddition = z.infer<typeof PeerAdditionSchema>
 export type PeerRemoval = z.infer<typeof PeerRemovalSchema>
 export type MessageAddition = z.infer<typeof MessageAdditionSchema>
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export type Limit = z.infer<typeof LimitSchema>

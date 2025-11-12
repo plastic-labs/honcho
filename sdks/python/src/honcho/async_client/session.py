@@ -57,10 +57,12 @@ class AsyncSession(BaseModel):
     )
     metadata: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached metadata for this session. May be stale. Use get_metadata() for fresh data.",
     )
     configuration: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached configuration for this session. May be stale. Use get_config() for fresh data.",
     )
     _client: AsyncHonchoCore = PrivateAttr()
@@ -172,6 +174,9 @@ class AsyncSession(BaseModel):
                 - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
                 - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
+
+        Returns:
+            The peers that were added to the session
         """
         if not isinstance(peers, list):
             peers = [peers]
@@ -418,8 +423,9 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.metadata = session.metadata or {}
-        return self.metadata
+        metadata = session.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     async def set_metadata(
@@ -444,7 +450,7 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        self.metadata = metadata
+        object.__setattr__(self, "metadata", metadata)
 
     async def get_config(self) -> dict[str, object]:
         """
@@ -462,8 +468,9 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.configuration = session.configuration or {}
-        return self.configuration
+        configuration = session.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
 
     @validate_call
     async def set_config(
@@ -488,7 +495,16 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             configuration=configuration,
         )
-        self.configuration = configuration
+        object.__setattr__(self, "configuration", configuration)
+
+    async def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this session.
+
+        Makes async API calls to retrieve the latest metadata and configuration
+        associated with this session and updates the cached attributes.
+        """
+        await asyncio.gather(self.get_metadata(), self.get_config())
 
     @validate_call
     async def get_context(
@@ -510,6 +526,32 @@ class AsyncSession(BaseModel):
             None,
             description="A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.",
         ),
+        limit_to_session: bool = Field(
+            False,
+            description="Whether to limit the representation to this session only. If True, only observations from this session will be included.",
+        ),
+        search_top_k: int | None = Field(
+            None,
+            ge=1,
+            le=100,
+            description="Number of semantically relevant facts to return when searching with `last_user_message`.",
+        ),
+        search_max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=1.0,
+            description="Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.",
+        ),
+        include_most_derived: bool | None = Field(
+            None,
+            description="Whether to include the most derived observations in the representation.",
+        ),
+        max_observations: int | None = Field(
+            None,
+            ge=1,
+            le=100,
+            description="Maximum number of observations to include in the representation.",
+        ),
     ) -> SessionContext:
         """
         Get optimized context for this session within a token limit.
@@ -526,6 +568,11 @@ class AsyncSession(BaseModel):
             peer_target: A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.
             last_user_message: The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
             peer_perspective: A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.
+            limit_to_session: Whether to limit the representation to this session only. If True, only observations from this session will be included.
+            search_top_k: Number of semantically relevant facts to return when searching with `last_user_message`.
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.
+            include_most_derived: Whether to include the most derived observations in the representation.
+            max_observations: Maximum number of observations to include in the representation.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -562,6 +609,15 @@ class AsyncSession(BaseModel):
             else omit,
             peer_target=peer_target if peer_target is not None else omit,
             peer_perspective=peer_perspective if peer_perspective is not None else omit,
+            limit_to_session=limit_to_session,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
 
         # Convert the honcho_core summary to our Summary if it exists

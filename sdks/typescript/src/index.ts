@@ -35,5 +35,6 @@ export type {
   SessionConfig,
   SessionMetadata,
   WorkingRepParams,
+  WorkspaceConfig,
   WorkspaceMetadata,
 } from './validation'

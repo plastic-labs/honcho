@@ -36,6 +36,8 @@ class AsyncHoncho(BaseModel):
         workspace_id: Workspace ID for scoping operations
         metadata: Cached metadata for this workspace. May be stale if not recently
             fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this workspace. May be stale if not
+            recently fetched. Call get_config() for fresh data.
         core: Access to the underlying honcho_core client for advanced usage
     """
 
@@ -48,7 +50,13 @@ class AsyncHoncho(BaseModel):
     )
     metadata: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached metadata for this workspace. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached configuration for this workspace. May be stale. Use get_config() for fresh data.",
     )
     _client: AsyncHonchoCore = PrivateAttr()
 
@@ -317,8 +325,9 @@ class AsyncHoncho(BaseModel):
             dictionary if no metadata is set
         """
         workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
-        self.metadata = workspace.metadata or {}
-        return self.metadata
+        metadata = workspace.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     async def set_metadata(
@@ -337,7 +346,56 @@ class AsyncHoncho(BaseModel):
                       Keys must be strings, values can be any JSON-serializable type
         """
         await self._client.workspaces.update(self.workspace_id, metadata=metadata)
-        self.metadata = metadata
+        object.__setattr__(self, "metadata", metadata)
+
+    async def get_config(self) -> dict[str, object]:
+        """
+        Get configuration for the current workspace.
+
+        Makes an async API call to retrieve configuration associated with the current workspace.
+        Configuration includes settings that control workspace behavior.
+        This method also updates the cached configuration attribute.
+
+        Returns:
+            A dictionary containing the workspace's configuration. Returns an empty
+            dictionary if no configuration is set
+        """
+        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        configuration = workspace.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
+
+    @validate_call
+    async def set_config(
+        self,
+        configuration: dict[str, object] = Field(
+            ..., description="Configuration dictionary"
+        ),
+    ) -> None:
+        """
+        Set configuration for the current workspace.
+
+        Makes an async API call to update the configuration associated with the current workspace.
+        This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
+
+        Args:
+            configuration: A dictionary of configuration to associate with the workspace.
+                          Keys must be strings, values can be any JSON-serializable type
+        """
+        await self._client.workspaces.update(
+            self.workspace_id, configuration=configuration
+        )
+        object.__setattr__(self, "configuration", configuration)
+
+    async def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for the current workspace.
+
+        Makes async API calls to retrieve the latest metadata and configuration
+        associated with the current workspace and updates the cached attributes.
+        """
+        await asyncio.gather(self.get_metadata(), self.get_config())
 
     async def get_workspaces(
         self, filters: dict[str, object] | None = None

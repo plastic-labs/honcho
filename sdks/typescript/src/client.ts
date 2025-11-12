@@ -28,6 +28,8 @@ import {
   SessionIdSchema,
   type SessionMetadata,
   SessionMetadataSchema,
+  type WorkspaceConfig,
+  WorkspaceConfigSchema,
   type WorkspaceMetadata,
   WorkspaceMetadataSchema,
 } from './validation'
@@ -69,7 +71,15 @@ export class Honcho {
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  metadata?: Record<string, unknown>
+  public metadata?: Record<string, unknown>
+  /**
+   * Cached configuration for this workspace. May be stale if the workspace
+   * was not recently fetched from the API.
+   *
+   * Call getConfig() to get the latest configuration from the server,
+   * which will also update this cached value.
+   */
+  public configuration?: Record<string, unknown>
 
   /**
    * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
@@ -334,6 +344,52 @@ export class Honcho {
       metadata: validatedMetadata,
     })
     this.metadata = validatedMetadata
+  }
+
+  /**
+   * Get configuration for the current workspace.
+   *
+   * Makes an API call to retrieve configuration associated with the current workspace.
+   * Configuration includes settings that control workspace behavior.
+   * This method also updates the cached configuration property.
+   *
+   * @returns Promise resolving to a dictionary containing the workspace's configuration.
+   *          Returns an empty dictionary if no configuration is set
+   */
+  async getConfig(): Promise<Record<string, unknown>> {
+    const workspace = await this._client.workspaces.getOrCreate({
+      id: this.workspaceId,
+    })
+    this.configuration = workspace.configuration || {}
+    return this.configuration
+  }
+
+  /**
+   * Set configuration for the current workspace.
+   *
+   * Makes an API call to update the configuration associated with the current workspace.
+   * This will overwrite any existing configuration with the provided values.
+   * This method also updates the cached configuration property.
+   *
+   * @param configuration - A dictionary of configuration to associate with the workspace.
+   *                        Keys must be strings, values can be any JSON-serializable type
+   */
+  async setConfig(configuration: WorkspaceConfig): Promise<void> {
+    const validatedConfig = WorkspaceConfigSchema.parse(configuration)
+    await this._client.workspaces.update(this.workspaceId, {
+      configuration: validatedConfig,
+    })
+    this.configuration = validatedConfig
+  }
+
+  /**
+   * Refresh cached metadata and configuration for the current workspace.
+   *
+   * Makes API calls to retrieve the latest metadata and configuration
+   * associated with the current workspace and updates the cached properties.
+   */
+  async refresh(): Promise<void> {
+    await Promise.all([this.getMetadata(), this.getConfig()])
   }
 
   /**

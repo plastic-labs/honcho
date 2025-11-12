@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
@@ -43,10 +44,12 @@ class AsyncPeer(BaseModel):
     )
     metadata: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
     )
     configuration: dict[str, object] | None = Field(
         None,
+        frozen=True,
         description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
     )
     _client: AsyncHonchoCore = PrivateAttr()
@@ -286,8 +289,9 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.metadata = peer.metadata or {}
-        return self.metadata
+        metadata = peer.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     async def set_metadata(
@@ -312,7 +316,7 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        self.metadata = metadata
+        object.__setattr__(self, "metadata", metadata)
 
     async def get_config(self) -> dict[str, object]:
         """
@@ -329,8 +333,9 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        self.configuration = peer.configuration or {}
-        return self.configuration
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
 
     @validate_call
     async def set_config(
@@ -357,7 +362,7 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
-        self.configuration = config
+        object.__setattr__(self, "configuration", config)
 
     async def get_peer_config(self) -> dict[str, object]:
         """
@@ -388,6 +393,15 @@ class AsyncPeer(BaseModel):
             config: A dictionary of configuration to associate with this peer
         """
         return await self.set_config(config)
+
+    async def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this peer.
+
+        Makes async API calls to retrieve the latest metadata and configuration
+        associated with this peer and updates the cached attributes.
+        """
+        await asyncio.gather(self.get_metadata(), self.get_config())
 
     @validate_call
     async def search(
