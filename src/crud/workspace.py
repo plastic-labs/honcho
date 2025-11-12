@@ -1,15 +1,50 @@
 from logging import getLogger
 from typing import Any
 
+from cashews import NOT_NONE
 from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.cache.client import cache, get_cache_namespace
+from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
+
+WORKSPACE_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}"
+WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+
+
+def workspace_cache_key(workspace_name: str) -> str:
+    """Generate cache key for workspace."""
+    return (
+        get_cache_namespace()
+        + ":"
+        + WORKSPACE_CACHE_KEY_TEMPLATE.format(workspace_name=workspace_name)
+    )
+
+
+@cache(
+    key=WORKSPACE_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    prefix=get_cache_namespace(),
+    condition=NOT_NONE,
+)
+@cache.locked(
+    key=WORKSPACE_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
+    prefix=WORKSPACE_LOCK_PREFIX,
+)
+async def _fetch_workspace(
+    db: AsyncSession, workspace_name: str
+) -> models.Workspace | None:
+    """Fetch a workspace from the database."""
+    return await db.scalar(
+        select(models.Workspace).where(models.Workspace.name == workspace_name)
+    )
 
 
 async def get_or_create_workspace(
@@ -31,14 +66,17 @@ async def get_or_create_workspace(
     Raises:
         ConflictException: If we fail to get or create the workspace
     """
-    # Try to get the existing workspace
-    stmt = select(models.Workspace).where(models.Workspace.name == workspace.name)
-    result = await db.execute(stmt)
-    existing_workspace = result.scalar_one_or_none()
 
+    if not workspace.name:
+        raise ValueError("Workspace name must be provided")
+
+    # Check if workspace already exists
+    existing_workspace = await _fetch_workspace(db, workspace.name)
     if existing_workspace is not None:
         # Workspace already exists
         logger.debug("Found existing workspace: %s", workspace.name)
+        # Merge cached object into session (cached objects are detached)
+        existing_workspace = await db.merge(existing_workspace, load=False)
         return existing_workspace
 
     # Workspace doesn't exist, create a new one
@@ -50,7 +88,14 @@ async def get_or_create_workspace(
     try:
         db.add(honcho_workspace)
         await db.commit()
+        await db.refresh(honcho_workspace)
+
         logger.debug("Workspace created successfully: %s", workspace.name)
+
+        cache_key = workspace_cache_key(workspace.name)
+        await cache.set(
+            cache_key, honcho_workspace, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+        )
         return honcho_workspace
     except IntegrityError:
         await db.rollback()
@@ -94,15 +139,15 @@ async def get_workspace(
     Raises:
         ResourceNotFoundException: If the workspace does not exist
     """
-    # Try to get the existing peer
-    stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
-    result = await db.execute(stmt)
-    existing_workspace = result.scalar_one_or_none()
+    existing_workspace = await _fetch_workspace(db, workspace_name)
 
-    if existing_workspace is not None:
-        return existing_workspace
+    if existing_workspace is None:
+        raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
-    raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
+    # Merge cached object into session (cached objects are detached)
+    existing_workspace = await db.merge(existing_workspace, load=False)
+
+    return existing_workspace
 
 
 async def update_workspace(
@@ -134,6 +179,12 @@ async def update_workspace(
         honcho_workspace.configuration = workspace.configuration
 
     await db.commit()
+    await db.refresh(honcho_workspace)
+
+    # Invalidate cache
+    cache_key = workspace_cache_key(workspace_name)
+    await cache.delete(cache_key)
+
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace
 
@@ -241,10 +292,18 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         )
         await db.delete(honcho_workspace)
         await db.commit()
+
+        cache_key = workspace_cache_key(workspace_name)
+        workspace_pattern = f"{cache_key}*"
+        await cache.delete_match(workspace_pattern)
+
         logger.debug("Workspace %s deleted", workspace_name)
-    except Exception as e:
-        logger.error("Failed to delete workspace %s: %s", workspace_name, e)
+    except Exception:
+        logger.exception(
+            "Failed to delete workspace %s",
+            workspace_name,
+        )
         await db.rollback()
-        raise e
+        raise
 
     return workspace_snapshot

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any
@@ -11,7 +12,7 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.utils.queue_payload import create_dream_payload
-from src.utils.work_unit import get_work_unit_key, parse_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 logger = getLogger(__name__)
 
@@ -47,13 +48,13 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
         return []
 
     # Generate dream work unit key for this peer's collection
-    dream_key = get_work_unit_key(
+    dream_key = construct_work_unit_key(
+        workspace_name,
         {
             "task_type": "dream",
-            "workspace_name": workspace_name,
             "observer": peer_name,
             "observed": peer_name,
-        }
+        },
     )
 
     return [dream_key]
@@ -80,7 +81,7 @@ class DreamScheduler:
         cls._instance = None
         cls._initialized = False
 
-    def schedule_dream(
+    async def schedule_dream(
         self,
         work_unit_key: str,
         workspace_name: str,
@@ -95,7 +96,7 @@ class DreamScheduler:
             return
 
         # Cancel any existing dream for this collection
-        self.cancel_dream(work_unit_key)
+        await self.cancel_dream(work_unit_key)
 
         task = asyncio.create_task(
             self._delayed_dream(
@@ -110,12 +111,14 @@ class DreamScheduler:
         self.pending_dreams[work_unit_key] = task
         task.add_done_callback(lambda t: self.pending_dreams.pop(work_unit_key, None))
 
-    def cancel_dream(self, work_unit_key: str) -> bool:
+    async def cancel_dream(self, work_unit_key: str) -> bool:
         """Cancel a pending dream. Returns True if a dream was cancelled."""
         if work_unit_key in self.pending_dreams:
             task = self.pending_dreams.pop(work_unit_key)
             task.cancel()
-            logger.debug(f"Cancelled pending dream for {work_unit_key}")
+            # Wait for the task to actually finish (including its done callback)
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
             return True
         return False
 
@@ -190,7 +193,6 @@ class DreamScheduler:
     ) -> None:
         """Execute the dream by enqueueing it and updating collection metadata."""
         dream_payload = create_dream_payload(
-            workspace_name=workspace_name,
             dream_type="consolidate",
             observer=observer,
             observed=observed,
@@ -202,6 +204,8 @@ class DreamScheduler:
                 "payload": dream_payload,
                 "session_id": None,
                 "task_type": "dream",
+                "workspace_name": workspace_name,
+                "message_id": None,  # Dreams don't have a message_id
             }
 
             await db.execute(insert(models.QueueItem), [dream_record])
@@ -322,16 +326,16 @@ async def check_and_schedule_dream(
 
         dream_scheduler = get_dream_scheduler()
         if dream_scheduler:
-            collection_work_unit_key = get_work_unit_key(
+            collection_work_unit_key = construct_work_unit_key(
+                collection.workspace_name,
                 {
                     "task_type": "dream",
-                    "workspace_name": collection.workspace_name,
                     "observer": collection.observer,
                     "observed": collection.observed,
-                }
+                },
             )
 
-            dream_scheduler.schedule_dream(
+            await dream_scheduler.schedule_dream(
                 collection_work_unit_key,
                 collection.workspace_name,
                 current_document_count,

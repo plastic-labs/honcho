@@ -271,7 +271,7 @@ class Representation(BaseModel):
                     session_name=doc.session_name,
                 )
                 for doc in documents
-                if doc.internal_metadata.get("level") == "explicit"
+                if doc.level == "explicit"
             ],
             deductive=[
                 DeductiveObservation(
@@ -284,7 +284,7 @@ class Representation(BaseModel):
                     premises=doc.internal_metadata.get("premises", []),
                 )
                 for doc in documents
-                if doc.internal_metadata.get("level") == "deductive"
+                if doc.level == "deductive"
             ],
         )
 

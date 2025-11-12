@@ -15,16 +15,18 @@ from src.utils.queue_payload import WebhookPayload
 logger = logging.getLogger(__name__)
 
 
-async def deliver_webhook(db: AsyncSession, payload: WebhookPayload) -> None:
+async def deliver_webhook(
+    db: AsyncSession, payload: WebhookPayload, workspace_name: str
+) -> None:
     """
     Deliver a single webhook event to its configured endpoints.
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            webhook_urls = await _get_webhook_urls(db, payload.workspace_name)
+            webhook_urls = await _get_webhook_urls(db, workspace_name)
             if not webhook_urls:
                 logger.debug(
-                    f"No webhook endpoints for workspace {payload.workspace_name}, skipping."
+                    f"No webhook endpoints for workspace {workspace_name}, skipping."
                 )
                 return
 
@@ -72,7 +74,7 @@ async def deliver_webhook(db: AsyncSession, payload: WebhookPayload) -> None:
                     )
 
         except httpx.RequestError:
-            logger.exception(f"Error sending webhook for {payload.workspace_name}.")
+            logger.exception(f"Error sending webhook for {workspace_name}.")
         except Exception:
             logger.exception("Unexpected error delivering webhook.")
 
@@ -82,7 +84,7 @@ async def _get_webhook_urls(db: AsyncSession, workspace_name: str) -> list[str]:
     Get all webhook endpoint URLs for a workspace.
     """
     try:
-        endpoints = await list_webhook_endpoints(db, workspace_name)
+        endpoints = await list_webhook_endpoints(workspace_name)
         result = await db.execute(endpoints)
         return [endpoint.url for endpoint in result.scalars().all()]
     except Exception:

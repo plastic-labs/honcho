@@ -18,9 +18,9 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.utils import summarizer
 from src.utils.clients import HonchoLLMCallStreamChunk, honcho_llm_call
-from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
     accumulate_metric,
+    conditional_observe,
     log_performance_metrics,
 )
 from src.utils.representation import Representation
@@ -33,9 +33,6 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-
-# Create langfuse client
-lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 
 async def dialectic_call(
@@ -151,6 +148,7 @@ async def dialectic_stream(
     return response
 
 
+@conditional_observe(name="Dialectic")
 async def chat(
     workspace_name: str,
     session_name: str | None,
@@ -189,14 +187,6 @@ async def chat(
 
     context_window_size -= estimate_tokens(query)
 
-    if lf:
-        lf.update_current_trace(
-            metadata={
-                "query_generation_model": settings.DIALECTIC.QUERY_GENERATION_MODEL,
-                "query_generation_provider": settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
-                "dialectic_model": settings.DIALECTIC.MODEL,
-            }
-        )
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
         "query",

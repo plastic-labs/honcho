@@ -15,7 +15,7 @@ MAX_EMBEDDING_TOKENS = 8192
 MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
-
+NAMESPACE="honcho"
 
 # Database settings
 [db]
@@ -111,3 +111,11 @@ MAX_WORKSPACE_LIMIT = 10
 [metrics]
 ENABLED = false
 NAMESPACE = "honcho"
+
+# Cache settings
+[cache]
+ENABLED = false
+URL = "redis://localhost:6379/0"
+NAMESPACE="honcho"
+DEFAULT_TTL_SECONDS = 300
+DEFAULT_LOCK_TTL_SECONDS = 5

@@ -27,7 +27,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v2.4.1 (Current)">
+        <Update label="v2.4.2 (Current)">
+        ### Fixed
+
+        - Langfuse tracing to have readable waterfalls
+        - Alembic Migrations to match models.py
+        - message_in_seq correctly included in webhook payload
+
+
+        ### Changed
+
+        - Alembic to always use a session pooler
+        - Statement timeout during alembic operations to 5 min
+        </Update>
+
+        <Update label="v2.4.1">
         ### Added
 
         - Alembic migration validation test suite
