@@ -33,7 +33,10 @@ async def process_dream(
         payload: The dream task payload containing workspace, peer, and dream type information
     """
     logger.info(
-        f"Processing dream task: {payload.dream_type} for {workspace_name}/{payload.observer}/{payload.observed}"
+        f"""
+(っ- ‸ - ς)ᶻ z 𐰁 ᶻ z 𐰁 ᶻ z 𐰁\n
+DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{payload.observed}\n
+𐰁 z ᶻ 𐰁 z ᶻ 𐰁 z ᶻ(っ- ‸ - ς)"""
     )
 
     try:
@@ -63,30 +66,23 @@ async def _process_consolidate_dream(
     TODO: need to determine a way to do this on a subset of documents since
     collections will grow very large.
     """
-    logger.info(
-        f"""
-(っ- ‸ - ς)ᶻ z 𐰁 ᶻ z 𐰁 ᶻ z 𐰁\n
-DREAM: consolidating documents for {workspace_name}/{payload.observer}/{payload.observed}\n
-𐰁 z ᶻ 𐰁 z ᶻ 𐰁 z ᶻ(っ- ‸ - ς)"""
-    )
 
-    # get all documents in the collection
+    # grab 100 recent documents in the collection
+    # in the future, we can perform clustering on documents by semantic similarity and do
+    # multiple clusters at once. for now, can just sample documents and do what we can.
     async with tracked_db("dream_consolidate") as db:
         documents = await crud.get_all_documents(
             workspace_name,
             observer=payload.observer,
             observed=payload.observed,
+            limit=100,
         )
 
         result = await db.execute(documents)
         documents = result.scalars().all()
 
-        logger.info("found %d documents to consolidate", len(documents))
+        logger.info("consolidating %d documents", len(documents))
 
-        # TODO: create clusters of documents based on cosine similarity
-        # clusters = await create_document_clusters(documents)
-
-        # logger.info("created %d clusters", len(clusters))
         clusters = [documents]
 
         # for each cluster, call llm to consolidate the representation if possible

@@ -395,7 +395,7 @@ class Session(BaseModel):
         Makes an API call to permanently delete this session and all related data including:
         - Messages
         - Message embeddings
-        - Documents
+        - Observations
         - Session-Peer associations
         - Background processing queue items
 

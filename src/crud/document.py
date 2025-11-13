@@ -23,6 +23,7 @@ async def get_all_documents(
     observed: str,
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
+    limit: int | None = None,
 ) -> Select[tuple[models.Document]]:
     """
     Get all documents in a collection.
@@ -45,6 +46,45 @@ async def get_all_documents(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
+    )
+
+    # Apply additional filters if provided
+    stmt = apply_filter(stmt, models.Document, filters)
+
+    # Order by created_at (newest first by default)
+    if reverse:
+        stmt = stmt.order_by(models.Document.created_at.asc())
+    else:
+        stmt = stmt.order_by(models.Document.created_at.desc())
+
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    return stmt
+
+
+def get_documents_with_filters(
+    workspace_name: str,
+    *,
+    filters: dict[str, Any] | None = None,
+    reverse: bool = False,
+) -> Select[tuple[models.Document]]:
+    """
+    Get all documents using custom filters.
+
+    Returns a Select query for pagination support via apaginate().
+    Results are ordered by created_at timestamp.
+
+    Args:
+        workspace_name: Name of the workspace
+        filters: Optional filters to apply
+        reverse: Whether to reverse the order (oldest first)
+
+    Returns:
+        Select query for documents
+    """
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name
     )
 
     # Apply additional filters if provided
@@ -210,4 +250,37 @@ async def delete_document(
     if result.rowcount == 0:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to the specified collection/session"
+        )
+
+
+async def delete_document_by_session(
+    db: AsyncSession,
+    workspace_name: str,
+    document_id: str,
+    session_name: str,
+) -> None:
+    """
+    Delete a single document by ID, workspace, and session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        document_id: ID of the document to delete
+        session_name: Name of the session (for authorization)
+
+    Raises:
+        ResourceNotFoundException: If document not found or doesn't belong to the session
+    """
+    stmt = delete(models.Document).where(
+        models.Document.id == document_id,
+        models.Document.workspace_name == workspace_name,
+        models.Document.session_name == session_name,
+    )
+
+    result = await db.execute(stmt)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise ResourceNotFoundException(
+            f"Document {document_id} not found or does not belong to session {session_name}"
         )

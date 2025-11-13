@@ -277,6 +277,42 @@ async def update_session(
     return honcho_session
 
 
+async def _batch_delete_matching(
+    db: AsyncSession,
+    model: Any,
+    filter_conditions: list[Any],
+    batch_size: int = 5000,
+) -> int:
+    """
+    Delete records in batches that match the given filter conditions.
+
+    Args:
+        db: Database session
+        model: SQLAlchemy model class
+        filter_conditions: List of SQLAlchemy filter conditions
+        batch_size: Number of records to delete per batch
+
+    Returns:
+        Total number of records deleted
+    """
+    total_deleted = 0
+    primary_key_column = model.__table__.primary_key.columns.values()[0]
+
+    while True:
+        subquery = (
+            select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
+        )
+        delete_stmt = delete(model).where(primary_key_column.in_(subquery))
+        delete_result = await db.execute(delete_stmt)
+        batch_deleted = delete_result.rowcount or 0
+        total_deleted += batch_deleted
+
+        if batch_deleted == 0:
+            break
+
+    return total_deleted
+
+
 async def delete_session(
     db: AsyncSession, workspace_name: str, session_name: str
 ) -> bool:
@@ -286,9 +322,9 @@ async def delete_session(
     This performs cascading deletes for all session-related data including:
     - Active queue sessions
     - Queue items
-    - Message embeddings
-    - Documents (theory-of-mind data)
-    - Messages
+    - Message embeddings (batched)
+    - Documents (theory-of-mind data, batched)
+    - Messages (batched)
     - Session peer associations
     - The session itself
 
@@ -328,28 +364,37 @@ async def delete_session(
             )
         )
 
-        # Delete MessageEmbedding entries
-        await db.execute(
-            delete(models.MessageEmbedding).where(
+        # Delete MessageEmbedding entries in batches
+        await _batch_delete_matching(
+            db,
+            models.MessageEmbedding,
+            [
                 models.MessageEmbedding.session_name == session_name,
                 models.MessageEmbedding.workspace_name == workspace_name,
-            )
+            ],
+            batch_size=5000,
         )
 
-        # Delete Document entries associated with this session
-        await db.execute(
-            delete(models.Document).where(
+        # Delete Document entries associated with this session in batches
+        await _batch_delete_matching(
+            db,
+            models.Document,
+            [
                 models.Document.session_name == session_name,
                 models.Document.workspace_name == workspace_name,
-            )
+            ],
+            batch_size=5000,
         )
 
-        # Delete Message entries
-        await db.execute(
-            delete(models.Message).where(
+        # Delete Message entries in batches
+        await _batch_delete_matching(
+            db,
+            models.Message,
+            [
                 models.Message.session_name == session_name,
                 models.Message.workspace_name == workspace_name,
-            )
+            ],
+            batch_size=5000,
         )
 
         # Delete SessionPeer associations
