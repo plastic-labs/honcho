@@ -71,7 +71,7 @@ async def create_messages_for_session(
                 "peer_name": message.peer_name,
                 "created_at": message.created_at,
                 "message_public_id": message.public_id,
-                "message_seq_in_session": message.seq_in_session,
+                "seq_in_session": message.seq_in_session,
             }
             for message in created_messages
         ]
@@ -135,7 +135,7 @@ async def create_messages_with_file(
             "peer_name": message.peer_name,
             "created_at": message.created_at,
             "message_public_id": message.public_id,
-            "message_seq_in_session": message.seq_in_session,
+            "seq_in_session": message.seq_in_session,
         }
         for message in created_messages
     ]

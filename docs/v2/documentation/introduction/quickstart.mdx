@@ -62,7 +62,7 @@ The Honcho client is the main entry point for interacting with Honcho's API. By 
 from honcho import Honcho
 
 # Initialize client (uses demo environment and default workspace)
-client = Honcho()
+honcho = Honcho()
 
 ```
 
@@ -70,7 +70,7 @@ client = Honcho()
 import { Honcho } from '@honcho-ai/sdk';
 
 // Initialize client (uses demo environment and default workspace)
-const client = new Honcho({});
+const honcho = new Honcho({});
 
 ```
 </CodeGroup>
@@ -83,7 +83,7 @@ import os
 from honcho import Honcho
 
 # Production environment with API key
-client = Honcho(
+honcho = Honcho(
     api_key=os.environ["HONCHO_API_KEY"],
     environment="production",
     # Create a workspace, otherwise set to "default"
@@ -95,7 +95,7 @@ client = Honcho(
 import { Honcho } from '@honcho-ai/sdk';
 
 // Production environment with API key
-const client = new Honcho({
+const honcho = new Honcho({
     apiKey: process.env.HONCHO_API_KEY!,
     environment: "production",
     // Create a workspace, otherwise set to "default"
@@ -110,13 +110,13 @@ Peers represent individual users, AI agents, or any conversational entity in you
 
 <CodeGroup>
 ```python Python
-alice = client.peer("alice")
-bob = client.peer("bob")
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
 ```
 
 ```typescript TypeScript
-const alice = await client.peer("alice")
-const bob = await client.peer("bob")
+const alice = await honcho.peer("alice")
+const bob = await honcho.peer("bob")
 ```
 </CodeGroup>
 
@@ -126,12 +126,12 @@ Sessions are independent conversations that can include multiple peers:
 
 <CodeGroup>
 ```python Python
-session = client.session("session_1")
+session = honcho.session("session_1")
 session.add_peers([alice, bob])
 ```
 
 ```typescript TypeScript
-const session = await client.session("session_1")
+const session = await honcho.session("session_1")
 await session.addPeers([alice, bob])
 ```
 </CodeGroup>
@@ -171,7 +171,7 @@ Now ask Honcho what it's learned - this is where the magic happens:
 <CodeGroup>
 ```python Python
 # Ask what Bob is like
-response = alice.chat("Tell me about Bob's interests and habits")
+response = bob.chat("Tell me about Bob's interests and habits")
 print(response)
 
 # Returns rich context like:
@@ -182,36 +182,128 @@ print(response)
 ```
 
 ```typescript TypeScript
-(async () => {
-    // Ask what Bob is like
-    const response = await alice.chat("Tell me about Bob's interests and habits");
-    console.log(response);
+bob.chat("Tell me about Bob's interests and habits").then((response) => {
+  console.log(response);
+  // Returns rich context like:
+  // "Bob is health-conscious and has been working on getting back in shape.
+  // He regularly goes to the gym, particularly in the evenings, and finds
+  // exercise helps him relax. He's encouraging about fitness and willing
+  // to share advice about workout routines."
+})
+```
+</CodeGroup>
 
-    // Returns rich context like:
-    // "Bob is health-conscious and has been working on getting back in shape.
-    // He regularly goes to the gym, particularly in the evenings, and finds
-    // exercise helps him relax. He's encouraging about fitness and willing
-    // to share advice about workout routines."
-})();
+## 7. Putting it all together
+
+    <CodeGroup>
+```python Python
+import os
+from honcho import Honcho
+
+# Create your client
+honcho = Honcho(
+    api_key=os.environ["HONCHO_API_KEY"],
+    environment="production",
+    # Create a workspace, otherwise set to "default"
+    # workspaceId="your-workspace-id"
+)
+
+# Get your Peers
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
+
+# Make a Session and add your Peers
+session = honcho.session("session_1")
+session.add_peers([alice, bob])
+
+# Add messages sent by your Peers
+session.add_messages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
+
+# Get insights about your Peers
+response = bob.chat("Tell me about Bob's interests and habits")
+print(response)
+
+# Returns rich context like:
+# "Bob is health-conscious and has been working on getting back in shape.
+# He regularly goes to the gym, particularly in the evenings, and finds
+# exercise helps him relax. He's encouraging about fitness and willing
+# to share advice about workout routines."
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Create your client
+const honcho = new Honcho({
+    apiKey: process.env.HONCHO_API_KEY!,
+    environment: "production",
+    // Create a workspace, otherwise set to "default"
+    // workspace: "your-workspace-id"
+});
+
+// Get your Peers
+const alice = await honcho.peer("alice")
+const bob = await honcho.peer("bob")
+
+// Make a Session and add your peers
+const session = await honcho.session("session_1")
+await session.addPeers([alice, bob])
+
+// Add messages sent by your Peers
+await session.addMessages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
+
+// Get insights about your peers
+bob.chat("Tell me about Bob's interests and habits").then((response) => {
+  console.log(response);
+  // Returns rich context like:
+  // "Bob is health-conscious and has been working on getting back in shape.
+  // He regularly goes to the gym, particularly in the evenings, and finds
+  // exercise helps him relax. He's encouraging about fitness and willing
+  // to share advice about workout routines."
+})
 ```
 </CodeGroup>
 
 ## What Just Happened?
 
-Honcho automatically built rich psychological profiles from just a few messages:
+You just got through building a simple conversation between two people, Alice
+and Bob. We:
 
-- **Theory of Mind Processing**: Understanding personality, preferences, and patterns
-- **Ambient Learning**: No surveys or explicit training - just natural conversation
-- **Rich Context**: Far more detailed than simple conversation history
+1. Set up our connection to Honcho.
+2. Setup who the participants of our conversation are, these are called `Peers`.
+3. Made a `Session` and added our `Peers` to it.
+4. Sent messages from our `Peers`
+5. Chat with Honcho to get insights about one of the `Peers` in the conversation
 
-The response isn't just retrieving stored text - it's synthesizing insights about Bob's personality, habits, and communication style.
+As soon as you save a message in Honcho, it will start to reason about it to
+pull out insights and develop a profile of the user. This is the default
+behavior and can be toggled off via [the configuration](/v2/documentation/core-concepts/configuration).
 
 ## Next Steps
 
-This covers the core concepts: **peers**, **sessions**, **messages**, and **dialectic queries**.
-
-- For production use, [sign up for the managed platform](https://app.honcho.dev) or get an [overview here](../reference/platform).
-- For detailed API reference, check out our [SDK documentation](../reference/sdk).
-- For more examples, explore our [guides](../guides/overview).
-
----
+<CardGroup cols={3}>
+  <Card title="Architecture" icon="rocket"
+    href="/v2/documentation/core-concepts/architecture">
+    Learn about the data primitives in Honcho and how they work together
+  </Card>
+  <Card title="Start Building" icon="brain" href="https://app.honcho.dev">
+    Sign up for Managed Honcho and get started building agents now.
+  </Card>
+  <Card title="Guides" icon="book" href="/v2/guides/overview">
+    Check out spellbooks to see different examples apps built with Honcho
+    </Card>
+</CardGroup>

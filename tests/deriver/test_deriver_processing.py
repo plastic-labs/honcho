@@ -9,6 +9,7 @@ import pytest
 from src import models
 from src.deriver.deriver import process_representation_tasks_batch
 from src.utils.representation import Representation
+from src.utils.work_unit import construct_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -32,14 +33,12 @@ class TestDeriverProcessing:
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ):
         """Test that work unit keys are generated correctly"""
-        from src.utils.work_unit import get_work_unit_key
 
         session, peers = sample_session_with_peers
         peer1, peer2, _ = peers
 
         # Create a payload for representation task
         representation_payload = {
-            "workspace_name": "workspace1",
             "session_name": session.name,
             "observer": peer2.name,
             "observed": peer1.name,
@@ -47,22 +46,25 @@ class TestDeriverProcessing:
         }
 
         # Generate work unit key for representation
-        work_unit_key = get_work_unit_key(representation_payload)
-        expected_key = (
-            f"representation:workspace1:{session.name}:{peer2.name}:{peer1.name}"
+        work_unit_key = construct_work_unit_key(
+            session.workspace_name, representation_payload
         )
+        expected_key = f"representation:{session.workspace_name}:{session.name}:{peer2.name}:{peer1.name}"
         assert work_unit_key == expected_key
 
         # Create a payload for summary task
         summary_payload = {
-            "workspace_name": "workspace1",
             "session_name": session.name,
             "task_type": "summary",
         }
 
         # Generate work unit key for summary
-        summary_work_unit_key = get_work_unit_key(summary_payload)
-        expected_summary_key = f"summary:workspace1:{session.name}:None:None"
+        summary_work_unit_key = construct_work_unit_key(
+            session.workspace_name, summary_payload
+        )
+        expected_summary_key = (
+            f"summary:{session.workspace_name}:{session.name}:None:None"
+        )
         assert summary_work_unit_key == expected_summary_key
 
     async def test_mock_queue_manager(
@@ -100,7 +102,6 @@ class TestDeriverProcessing:
         await mock_representation_manager.save_representation(
             Representation(explicit=[], deductive=[])
         )
-        mock_representation_manager.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
         assert mock_representation_manager.save_representation.called  # type: ignore[attr-defined]

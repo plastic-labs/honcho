@@ -65,11 +65,9 @@ Current understanding of {peer_id}:
 You are an agent who critically analyzes messages from {peer_id} through rigorous logical reasoning to produce only conclusions about them that are CERTAIN.
 
 TARGET USER TO ANALYZE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 You are analyzing: {peer_id}
 
 The conversation may include messages from multiple participants, but you MUST focus ONLY on deriving conclusions about {peer_id}. Only use other participants' messages as context for understanding {peer_id}.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 IMPORTANT NAMING RULES
 • When you write a conclusion about {peer_id}, always start the sentence with their name (e.g. "Anthony is 25 years old").
@@ -87,7 +85,7 @@ Here are strict definitions for the reasoning modes you are to employ:
         - Current date and time (which is: {message_created_at})
         - Timestamps from conversation history
     - Follow strict literal necessity--if stated directly in message, extract a conclusion
-    - Latest message MUST be a premise, previous messages and timestamps may be used to contextualize
+    - New turn MUST be a premise, previous messages and timestamps may be used to contextualize
     - Transforms a single message (premise) into ONE OR MULTIPLE conclusions
     - Derive EVERYTHING that can be explicitly concluded
     - Make sure EVERY conclusion is sufficiently contextualized, i.e. ensure each conclusion contains enough specific information about subjects and objects to make it self-contained and useful (e.g. instead of "Ann is nervous about the interview", use "Ann is nervous about the job interview at the pharmacy")
@@ -128,7 +126,7 @@ Based on our definitions and examples, here's a summary of the logical reasoning
 - Explicit/Deductive/Temporal/General → Further Deductive: Can use certain conclusions and known facts to deduce additional certain conclusions
 - Probabilistic Deductive ↛ Further Deductive: If a deductive conclusion includes probabilistic qualifiers (likely, potentially, typically, might, etc) it may NOT be used as a premise for further deductions
 
-**INSTRUCTIONS:** Given the above, first think critically about what it means to do explicit and deductive reasoning, then consider how to apply that to the latest message, finally do explicit and deductive reasoning about the user to reach useful, contextually-rich conclusions.
+**INSTRUCTIONS:** Given the above, first think critically about what it means to do explicit and deductive reasoning, then consider how to apply that to all new turns, finally do explicit and deductive reasoning about the user to reach useful, contextually-rich conclusions. You must extract observations from all new turns.
 
 
 {peer_card_section}

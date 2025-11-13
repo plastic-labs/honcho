@@ -318,6 +318,7 @@ class TestWorkspaceCRUD:
             work_unit_key=f"representation:{test_workspace.name}:{session.name}:{test_peer.name}:{test_peer.name}",
             task_type="representation",
             payload={"test": "data"},
+            workspace_name=test_workspace.name,
         )
         db_session.add(queue_item)
         await db_session.flush()

@@ -222,8 +222,8 @@ class TestDocumentCreationWorkflow:
             observed=observed_peer.name,
             content="User likes dogs",
             session_name="test_session",
+            level="explicit",
             internal_metadata={
-                "level": "explicit",
                 "message_ids": [(1, 1)],
                 "session_name": "test_session",
             },
@@ -274,7 +274,9 @@ class TestDocumentCreationWorkflow:
             observed=observed_peer.name,
             content="Highly derived observation",
             session_name=session.name,
-            internal_metadata={"level": "explicit", "times_derived": 5},
+            level="explicit",
+            times_derived=5,
+            internal_metadata={},
             embedding=[0.1] * 1536,
         )
         db_session.add(highly_derived_doc)
@@ -286,7 +288,9 @@ class TestDocumentCreationWorkflow:
             observed=observed_peer.name,
             content="Less derived observation",
             session_name=session.name,
-            internal_metadata={"level": "explicit", "times_derived": 2},
+            level="explicit",
+            times_derived=2,
+            internal_metadata={},
             embedding=[0.2] * 1536,
         )
         db_session.add(less_derived_doc)
@@ -315,8 +319,8 @@ class TestDocumentCreationWorkflow:
             observer="test_peer",
             observed="test_peer",
             content="User said they like programming",
+            level="explicit",
             internal_metadata={
-                "level": "explicit",
                 "message_ids": [(1, 1)],
             },
             session_name="test_session",
@@ -329,8 +333,8 @@ class TestDocumentCreationWorkflow:
             observer="test_peer",
             observed="test_peer",
             content="User is likely a software developer",
+            level="deductive",
             internal_metadata={
-                "level": "deductive",
                 "message_ids": [(1, 1)],
                 "premises": ["User said they like programming"],
             },

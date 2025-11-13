@@ -1,5 +1,4 @@
 import logging
-from typing import Any
 
 import sentry_sdk
 from pydantic import ValidationError
@@ -26,8 +25,12 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 console = Console(markup=True)
 
 
-async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
+async def process_item(queue_item: models.QueueItem) -> None:
     """Process a single item from the queue."""
+    task_type = queue_item.task_type
+    queue_payload = queue_item.payload
+    workspace_name = queue_item.workspace_name
+
     if task_type == "webhook":
         try:
             validated = WebhookPayload(**queue_payload)
@@ -39,7 +42,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         async with tracked_db() as db:
-            await webhook_delivery.deliver_webhook(db, validated)
+            await webhook_delivery.deliver_webhook(db, validated, workspace_name)
 
     elif task_type == "summary":
         try:
@@ -52,17 +55,21 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
 
+        # Use workspace_name and message_id from QueueItem columns
+        message_id = queue_item.message_id
+
+        if message_id is None:
+            raise ValueError("Summary tasks require a message_id")
+
         message_public_id = validated.message_public_id
         if not message_public_id:
-            logger.debug(
-                "Fetching message public ID for message %s", validated.message_id
-            )
+            logger.debug("Fetching message public ID for message %s", message_id)
             async with tracked_db(operation_name="summary_fallback") as db:
                 stmt = (
                     select(models.Message)
-                    .where(models.Message.workspace_name == validated.workspace_name)
+                    .where(models.Message.workspace_name == workspace_name)
                     .where(models.Message.session_name == validated.session_name)
-                    .where(models.Message.id == validated.message_id)
+                    .where(models.Message.id == message_id)
                 )
                 result = await db.execute(stmt)
 
@@ -70,22 +77,20 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 if message is None:
                     logger.error(
                         "Failed to fetch message with ID %s for process_summary_task",
-                        validated.message_id,
+                        message_id,
                     )
                     return
                 message_public_id = message.public_id
 
         with sentry_sdk.start_transaction(name="process_summary_task", op="deriver"):
             await summarizer.summarize_if_needed(
-                validated.workspace_name,
+                workspace_name,
                 validated.session_name,
-                validated.message_id,
+                message_id,
                 validated.message_seq_in_session,
                 message_public_id,
             )
-            log_performance_metrics(
-                "summary", f"{validated.workspace_name}_{validated.message_id}"
-            )
+            log_performance_metrics("summary", f"{workspace_name}_{message_id}")
 
     elif task_type == "dream":
         with sentry_sdk.start_transaction(name="process_dream_task", op="deriver"):
@@ -98,7 +103,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                     queue_payload,
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_dream(validated)
+            await process_dream(validated, workspace_name)
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
@@ -109,29 +114,21 @@ async def process_representation_batch(
     observer: str | None,
     observed: str | None,
 ) -> None:
-    """Validate incoming queue payloads and dispatch to the appropriate handler.
-
-    This function centralizes payload validation using a simple mapping from
-    task type to Pydantic model. After validation, routes the request to
-    the correct processor without repeating type checks elsewhere.
-
+    """Prepares and processes a batch of messages for representation tasks.
     Args:
-        task_type: The type of task to process
-        queue_payloads: List of payload dictionaries to process
-        observed (optional): For representation tasks, the observed from work_unit_key
-                     to identify which messages should be focused on
-        observer (optional): For representation tasks, the observer from work_unit_key
-                     to identify which messages should be focused on
+        messages: List of messages to process
+        observer: The observer of the messages
+        observed: The observed of the messages
     """
     if not messages or not messages[0]:
-        logger.debug("process_representation_batch received no payloads")
+        logger.debug("process_representation_batch received no messages")
         return
 
     if observed is None or observer is None:
         raise ValueError("observed and observer are required for representation tasks")
 
     logger.debug(
-        "process_representation_batch received %s payloads",
+        "process_representation_batch received %s messages",
         len(messages),
     )
 
