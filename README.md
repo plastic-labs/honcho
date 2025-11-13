@@ -301,7 +301,7 @@ uv run fastapi dev src/main.py
 
 This is a development server that will reload whenever code is changed.
 
-**Start the background worker (deriver):**
+**Start a background worker (deriver):**
 
 In a separate terminal, run:
 
@@ -309,8 +309,7 @@ In a separate terminal, run:
 uv run python -m src.deriver
 ```
 
-The deriver processes messages asynchronously to generate theory-of-mind
-representations and session summaries.
+The deriver generates representation, summaries, peer cards, and manages dreaming tasks.
 
 ### Pre-commit Hooks
 
