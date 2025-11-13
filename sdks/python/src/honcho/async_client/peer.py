@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
-from typing import TYPE_CHECKING
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
@@ -16,6 +17,7 @@ from ..types import DialecticStreamResponse
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
+    from ..types import Representation
     from .session import AsyncSession
 
 
@@ -29,12 +31,26 @@ class AsyncPeer(BaseModel):
 
     Attributes:
         id: Unique identifier for this peer
-        _client: Reference to the parent AsyncHoncho client instance
+        workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this peer. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this peer. May be stale if not
+            recently fetched. Call get_config() for fresh data.
     """
 
     id: str = Field(..., min_length=1, description="Unique identifier for this peer")
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
+    )
+    metadata: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
     )
     _client: AsyncHonchoCore = PrivateAttr()
 
@@ -52,6 +68,9 @@ class AsyncPeer(BaseModel):
         client: AsyncHonchoCore = Field(
             ..., description="Reference to the parent AsyncHoncho client instance"
         ),
+        *,
+        metadata: dict[str, object] | None = None,
+        config: dict[str, object] | None = None,
     ) -> None:
         """
         Initialize a new AsyncPeer.
@@ -60,8 +79,15 @@ class AsyncPeer(BaseModel):
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent AsyncHoncho client instance
+            metadata: Optional metadata to initialize the cached value
+            config: Optional configuration to initialize the cached value
         """
-        super().__init__(id=peer_id, workspace_id=workspace_id)
+        super().__init__(
+            id=peer_id,
+            workspace_id=workspace_id,
+            metadata=metadata,
+            configuration=config,
+        )
         self._client = client
 
     @classmethod
@@ -92,17 +118,22 @@ class AsyncPeer(BaseModel):
         Returns:
             A new AsyncPeer instance
         """
-        peer = cls(peer_id, workspace_id, client)
-
         if config is not None or metadata is not None:
-            await client.workspaces.peers.get_or_create(
+            peer_data = await client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
                 configuration=config if config is not None else omit,
                 metadata=metadata if metadata is not None else omit,
             )
+            return cls(
+                peer_id,
+                workspace_id,
+                client,
+                metadata=peer_data.metadata,
+                config=peer_data.configuration,
+            )
 
-        return peer
+        return cls(peer_id, workspace_id, client)
 
     async def chat(
         self,
@@ -248,7 +279,7 @@ class AsyncPeer(BaseModel):
 
         Makes an async API call to retrieve metadata associated with this peer. Metadata
         can include custom attributes, settings, or any other key-value data
-        associated with the peer.
+        associated with the peer. This method also updates the cached metadata attribute.
 
         Returns:
             A dictionary containing the peer's metadata. Returns an empty dictionary
@@ -258,7 +289,9 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.metadata or {}
+        metadata = peer.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     async def set_metadata(
@@ -272,6 +305,7 @@ class AsyncPeer(BaseModel):
 
         Makes an async API call to update the metadata associated with this peer.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with this peer.
@@ -282,13 +316,15 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
+        object.__setattr__(self, "metadata", metadata)
 
-    async def get_peer_config(self) -> dict[str, object]:
+    async def get_config(self) -> dict[str, object]:
         """
         Get the current workspace-level configuration for this peer.
 
         Makes an API call to retrieve configuration associated with this peer.
         Configuration currently includes one optional flag, `observe_me`.
+        This method also updates the cached configuration attribute.
 
         Returns:
             A dictionary containing the peer's configuration
@@ -297,10 +333,12 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.configuration or {}
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
 
     @validate_call
-    async def set_peer_config(
+    async def set_config(
         self,
         config: dict[str, object] = Field(
             ..., description="Configuration dictionary to associate with this peer"
@@ -313,6 +351,7 @@ class AsyncPeer(BaseModel):
 
         Makes an API call to update the configuration associated with this peer.
         This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
 
         Args:
             config: A dictionary of configuration to associate with this peer.
@@ -323,6 +362,46 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
+        object.__setattr__(self, "configuration", config)
+
+    async def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`get_config` instead.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        return await self.get_config()
+
+    @validate_call
+    async def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`set_config` instead.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer
+        """
+        return await self.set_config(config)
+
+    async def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this peer.
+
+        Makes async API calls to retrieve the latest metadata and configuration
+        associated with this peer and updates the cached attributes.
+        """
+        await asyncio.gather(self.get_metadata(), self.get_config())
 
     @validate_call
     async def search(
@@ -390,6 +469,76 @@ class AsyncPeer(BaseModel):
 
         items: list[str] = response.peer_card
         return "\n".join(items)
+
+    async def working_rep(
+        self,
+        session: str | AsyncSession | None = None,
+        target: str | AsyncPeer | None = None,
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
+    ) -> "Representation":
+        """
+        Get a working representation for this peer.
+
+        Args:
+            session: Optional session to scope the representation to.
+            target: Optional target peer to get the representation of. If provided,
+            returns the representation of the target from the perspective of this peer.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
+
+        Returns:
+            A Representation object containing explicit and deductive observations
+
+        Example:
+            ```python
+            # Get global representation
+            rep = await peer.working_rep()
+            print(rep)
+
+            # Get representation scoped to a session
+            session_rep = await peer.working_rep(session='session-123')
+
+            # Get representation with semantic search
+            searched_rep = await peer.working_rep(
+                search_query='preferences',
+                search_top_k=10,
+                max_observations=50
+            )
+            ```
+        """
+        from ..types import Representation as _Representation
+
+        session_id = (
+            None
+            if session is None
+            else session
+            if isinstance(session, str)
+            else session.id
+        )
+
+        data = await self._client.workspaces.peers.working_representation(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            session_id=session_id,
+            target=str(target.id) if isinstance(target, AsyncPeer) else target,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
+        )
+        return _Representation.from_dict(data)  # type: ignore
 
     def __repr__(self) -> str:
         """

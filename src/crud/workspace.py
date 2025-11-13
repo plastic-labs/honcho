@@ -83,7 +83,7 @@ async def get_or_create_workspace(
     honcho_workspace = models.Workspace(
         name=workspace.name,
         h_metadata=workspace.metadata,
-        configuration=workspace.configuration,
+        configuration=workspace.configuration.model_dump(exclude_none=True),
     )
     try:
         db.add(honcho_workspace)
@@ -176,7 +176,12 @@ async def update_workspace(
         honcho_workspace.h_metadata = workspace.metadata
 
     if workspace.configuration is not None:
-        honcho_workspace.configuration = workspace.configuration
+        # Merge configuration instead of replacing to preserve existing keys
+        base_config = (honcho_workspace.configuration or {}).copy()
+        honcho_workspace.configuration = {
+            **base_config,
+            **workspace.configuration.model_dump(exclude_none=True),
+        }
 
     await db.commit()
     await db.refresh(honcho_workspace)

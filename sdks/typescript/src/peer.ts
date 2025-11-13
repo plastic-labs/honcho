@@ -1,6 +1,11 @@
 import type HonchoCore from '@honcho-ai/core'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
+import {
+  Representation,
+  type RepresentationData,
+  type RepresentationOptions,
+} from './representation'
 import { Session } from './session'
 import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
 import {
@@ -10,6 +15,7 @@ import {
   LimitSchema,
   MessageContentSchema,
   MessageMetadataSchema,
+  PeerWorkingRepParamsSchema,
   SearchQuerySchema,
   type MessageCreate as ValidatedMessageCreate,
 } from './validation'
@@ -34,6 +40,22 @@ export class Peer {
    * Reference to the parent Honcho client instance.
    */
   private _client: HonchoCore
+  /**
+   * Cached metadata for this peer. May be stale if the peer
+   * was not recently fetched from the API.
+   *
+   * Call getMetadata() to get the latest metadata from the server,
+   * which will also update this cached value.
+   */
+  public metadata?: Record<string, unknown> | null
+  /**
+   * Cached configuration for this peer. May be stale if the peer
+   * was not recently fetched from the API.
+   *
+   * Call getConfig() to get the latest configuration from the server,
+   * which will also update this cached value.
+   */
+  public configuration?: Record<string, unknown> | null
 
   /**
    * Initialize a new Peer. **Do not call this directly, use the client.peer() method instead.**
@@ -41,11 +63,21 @@ export class Peer {
    * @param id - Unique identifier for this peer within the workspace
    * @param workspaceId - Workspace ID for scoping operations
    * @param client - Reference to the parent Honcho client instance
+   * @param metadata - Optional metadata to initialize the cached value
+   * @param configuration - Optional configuration to initialize the cached value
    */
-  constructor(id: string, workspaceId: string, client: HonchoCore) {
+  constructor(
+    id: string,
+    workspaceId: string,
+    client: HonchoCore,
+    metadata?: Record<string, unknown> | null,
+    configuration?: Record<string, unknown> | null
+  ) {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
+    this.metadata = metadata
+    this.configuration = configuration
   }
 
   /**
@@ -245,7 +277,7 @@ export class Peer {
    *
    * Makes an API call to retrieve metadata associated with this peer. Metadata
    * can include custom attributes, settings, or any other key-value data
-   * associated with the peer.
+   * associated with the peer. This method also updates the cached metadata property.
    *
    * @returns Promise resolving to a dictionary containing the peer's metadata.
    *          Returns an empty dictionary if no metadata is set
@@ -255,7 +287,8 @@ export class Peer {
       this.workspaceId,
       { id: this.id }
     )
-    return peer.metadata || {}
+    this.metadata = peer.metadata || {}
+    return this.metadata
   }
 
   /**
@@ -263,6 +296,7 @@ export class Peer {
    *
    * Makes an API call to update the metadata associated with this peer.
    * This will overwrite any existing metadata with the provided values.
+   * This method also updates the cached metadata property.
    *
    * @param metadata - A dictionary of metadata to associate with this peer.
    *                   Keys must be strings, values can be any JSON-serializable type
@@ -271,6 +305,7 @@ export class Peer {
     await this._client.workspaces.peers.update(this.workspaceId, this.id, {
       metadata,
     })
+    this.metadata = metadata
   }
 
   /**
@@ -278,15 +313,17 @@ export class Peer {
    *
    * Makes an API call to retrieve configuration associated with this peer.
    * Configuration currently includes one optional flag, `observe_me`.
+   * This method also updates the cached configuration property.
    *
    * @returns Promise resolving to a dictionary containing the peer's configuration
    */
-  async getPeerConfig(): Promise<Record<string, unknown>> {
+  async getConfig(): Promise<Record<string, unknown>> {
     const peer = await this._client.workspaces.peers.getOrCreate(
       this.workspaceId,
       { id: this.id }
     )
-    return peer.configuration || {}
+    this.configuration = peer.configuration || {}
+    return this.configuration
   }
 
   /**
@@ -296,14 +333,46 @@ export class Peer {
    *
    * Makes an API call to update the configuration associated with this peer.
    * This will overwrite any existing configuration with the provided values.
+   * This method also updates the cached configuration property.
    *
    * @param config - A dictionary of configuration to associate with this peer.
    *                 Keys must be strings, values can be any JSON-serializable type
    */
-  async setPeerConfig(config: Record<string, unknown>): Promise<void> {
+  async setConfig(config: Record<string, unknown>): Promise<void> {
     await this._client.workspaces.peers.update(this.workspaceId, this.id, {
       configuration: config,
     })
+    this.configuration = config
+  }
+
+  /**
+   * Get the current workspace-level configuration for this peer.
+   *
+   * @deprecated Use getConfig() instead
+   * @returns Promise resolving to a dictionary containing the peer's configuration
+   */
+  async getPeerConfig(): Promise<Record<string, unknown>> {
+    return this.getConfig()
+  }
+
+  /**
+   * Set the configuration for this peer.
+   *
+   * @deprecated Use setConfig() instead
+   * @param config - A dictionary of configuration to associate with this peer
+   */
+  async setPeerConfig(config: Record<string, unknown>): Promise<void> {
+    return this.setConfig(config)
+  }
+
+  /**
+   * Refresh cached metadata and configuration for this peer.
+   *
+   * Makes API calls to retrieve the latest metadata and configuration
+   * associated with this peer and updates the cached properties.
+   */
+  async refresh(): Promise<void> {
+    await Promise.all([this.getMetadata(), this.getConfig()])
   }
 
   /**
@@ -381,6 +450,78 @@ export class Peer {
     const items: string[] = response.peer_card
 
     return items.join('\n')
+  }
+
+  /**
+   * Get a working representation for this peer.
+   *
+   * Makes an API call to retrieve the working representation for this peer.
+   *
+   * @param session - Optional session to scope the representation to.
+   * @param target - Optional target peer to get the representation of. If provided,
+   *                 returns the representation of the target from the perspective of this peer.
+   * @param options - Optional representation options to filter and configure the results
+   * @returns Promise resolving to a Representation object containing explicit and deductive observations
+   *
+   * @example
+   * ```typescript
+   * // Get global representation
+   * const globalRep = await peer.workingRep()
+   * console.log(globalRep.toString())
+   *
+   * // Get representation scoped to a session
+   * const sessionRep = await peer.workingRep('session-123')
+   *
+   * // Get representation with semantic search
+   * const searchedRep = await peer.workingRep(undefined, undefined, {
+   *   searchQuery: 'preferences',
+   *   searchTopK: 10,
+   *   maxObservations: 50
+   * })
+   * ```
+   */
+  async workingRep(
+    session?: string | Session,
+    target?: string | Peer,
+    options?: RepresentationOptions
+  ): Promise<Representation> {
+    const workingRepParams = PeerWorkingRepParamsSchema.parse({
+      session,
+      target,
+      options,
+    })
+    const sessionId = workingRepParams.session
+      ? typeof workingRepParams.session === 'string'
+        ? workingRepParams.session
+        : workingRepParams.session.id
+      : undefined
+    const targetId = workingRepParams.target
+      ? typeof workingRepParams.target === 'string'
+        ? workingRepParams.target
+        : workingRepParams.target.id
+      : undefined
+
+    const response = await this._client.workspaces.peers.workingRepresentation(
+      this.workspaceId,
+      this.id,
+      {
+        session_id: sessionId,
+        target: targetId,
+        search_query: workingRepParams.options?.searchQuery,
+        search_top_k: workingRepParams.options?.searchTopK,
+        search_max_distance: workingRepParams.options?.searchMaxDistance,
+        include_most_derived: workingRepParams.options?.includeMostDerived,
+        max_observations: workingRepParams.options?.maxObservations,
+      }
+    )
+    const maybe = response as
+      | RepresentationData
+      | { representation?: RepresentationData | null }
+      | null
+    const rep = (maybe && 'representation' in (maybe as any)
+      ? (maybe as any).representation
+      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    return Representation.fromData(rep as RepresentationData)
   }
 
   /**

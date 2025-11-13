@@ -31,9 +31,11 @@ class Honcho(BaseModel):
     `core` property to use functionality not exposed through this SDK.
 
     Attributes:
-        api_key: API key for authentication
-        base_url: Base URL for the Honcho API
         workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this workspace. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this workspace. May be stale if not
+            recently fetched. Call get_config() for fresh data.
         core: Access to the underlying honcho_core client for advanced usage
     """
 
@@ -43,6 +45,16 @@ class Honcho(BaseModel):
         ...,
         min_length=1,
         description="Workspace ID for scoping operations",
+    )
+    metadata: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached metadata for this workspace. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached configuration for this workspace. May be stale. Use get_config() for fresh data.",
     )
     _client: HonchoCore = PrivateAttr()
 
@@ -183,6 +195,7 @@ class Honcho(BaseModel):
         Raises:
             ValidationError: If the peer ID is empty or invalid
         """
+        # Peer constructor handles API call and caching when metadata/config provided
         return Peer(
             id, self.workspace_id, self._client, config=config, metadata=metadata
         )
@@ -204,7 +217,14 @@ class Honcho(BaseModel):
             workspace_id=self.workspace_id, filters=filters
         )
         return SyncPage(
-            peers_page, lambda peer: Peer(peer.id, self.workspace_id, self._client)
+            peers_page,
+            lambda peer: Peer(
+                peer.id,
+                self.workspace_id,
+                self._client,
+                metadata=peer.metadata,
+                config=peer.configuration,
+            ),
         )
 
     @validate_call
@@ -267,7 +287,13 @@ class Honcho(BaseModel):
         )
         return SyncPage(
             sessions_page,
-            lambda session: Session(session.id, self.workspace_id, self._client),
+            lambda session: Session(
+                session.id,
+                self.workspace_id,
+                self._client,
+                metadata=session.metadata,
+                config=session.configuration,
+            ),
         )
 
     def get_metadata(self) -> dict[str, object]:
@@ -276,14 +302,17 @@ class Honcho(BaseModel):
 
         Makes an API call to retrieve metadata associated with the current workspace.
         Workspace metadata can include settings, configuration, or any other
-        key-value data associated with the workspace.
+        key-value data associated with the workspace. This method also updates the
+        cached metadata attribute.
 
         Returns:
             A dictionary containing the workspace's metadata. Returns an empty
             dictionary if no metadata is set
         """
         workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
-        return workspace.metadata or {}
+        metadata = workspace.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     def set_metadata(
@@ -295,12 +324,62 @@ class Honcho(BaseModel):
 
         Makes an API call to update the metadata associated with the current workspace.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with the workspace.
                       Keys must be strings, values can be any JSON-serializable type
         """
         self._client.workspaces.update(self.workspace_id, metadata=metadata)
+        object.__setattr__(self, "metadata", metadata)
+
+    def get_config(self) -> dict[str, object]:
+        """
+        Get configuration for the current workspace.
+
+        Makes an API call to retrieve configuration associated with the current workspace.
+        Configuration includes settings that control workspace behavior.
+        This method also updates the cached configuration attribute.
+
+        Returns:
+            A dictionary containing the workspace's configuration. Returns an empty
+            dictionary if no configuration is set
+        """
+        workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
+        configuration = workspace.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
+
+    @validate_call
+    def set_config(
+        self,
+        configuration: dict[str, object] = Field(
+            ..., description="Configuration dictionary"
+        ),
+    ) -> None:
+        """
+        Set configuration for the current workspace.
+
+        Makes an API call to update the configuration associated with the current workspace.
+        This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
+
+        Args:
+            configuration: A dictionary of configuration to associate with the workspace.
+                          Keys must be strings, values can be any JSON-serializable type
+        """
+        self._client.workspaces.update(self.workspace_id, configuration=configuration)
+        object.__setattr__(self, "configuration", configuration)
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for the current workspace.
+
+        Makes API calls to retrieve the latest metadata and configuration
+        associated with the current workspace and updates the cached attributes.
+        """
+        self.get_metadata()
+        self.get_config()
 
     def get_workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
         """

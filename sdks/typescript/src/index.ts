@@ -10,7 +10,7 @@ export {
   SessionContext,
   SessionSummaries,
   Summary,
-  SummaryData,
+  type SummaryData,
 } from './session_context'
 export {
   type DialecticStreamChunk,
@@ -35,5 +35,6 @@ export type {
   SessionConfig,
   SessionMetadata,
   WorkingRepParams,
+  WorkspaceConfig,
   WorkspaceMetadata,
 } from './validation'

@@ -6,7 +6,7 @@ from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.peer import AsyncPeer
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.peer import Peer
-from sdks.python.src.honcho.types import DialecticStreamResponse
+from sdks.python.src.honcho.types import DialecticStreamResponse, Representation
 
 
 @pytest.mark.asyncio
@@ -197,8 +197,12 @@ async def test_peer_chat_streaming(client_fixture: tuple[Honcho | AsyncHoncho, s
             yield 'data: {"delta": {"content": " async"}}'
             yield 'data: {"done": true}'
 
+        mock_http_response = Mock()
+        mock_http_response.raise_for_status = Mock()
+
         mock_response = AsyncMock()
         mock_response.iter_lines = mock_aiter_lines
+        mock_response.http_response = mock_http_response
         mock_response.__aenter__ = AsyncMock(return_value=mock_response)
         mock_response.__aexit__ = AsyncMock(return_value=None)
 
@@ -285,3 +289,411 @@ async def test_peer_chat_non_streaming(
         response = peer.chat("What do I like?", stream=False)
         # Response can be None or a string
         assert response is None or isinstance(response, str)
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_no_params(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with no parameters (default behavior).
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        peer = await honcho_client.peer(id="test-working-rep-no-params")
+        session = await honcho_client.session(id="test-working-rep-session-no-params")
+
+        # Add some messages to create context
+        await session.add_messages([peer.message("I enjoy hiking and nature")])
+
+        # Get working representation with no parameters
+        result = await peer.working_rep()
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        peer = honcho_client.peer(id="test-working-rep-no-params")
+        session = honcho_client.session(id="test-working-rep-session-no-params")
+
+        # Add some messages to create context
+        session.add_messages([peer.message("I enjoy hiking and nature")])
+
+        # Get working representation with no parameters
+        result = peer.working_rep()
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_session_string(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with session parameter as string.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        peer = await honcho_client.peer(id="test-working-rep-session-str")
+        session = await honcho_client.session(id="test-working-rep-session-str-sess")
+
+        # Add some messages to the session
+        await session.add_messages([peer.message("I like reading books")])
+
+        # Get working representation scoped to session (as string)
+        result = await peer.working_rep(session=session.id)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        peer = honcho_client.peer(id="test-working-rep-session-str")
+        session = honcho_client.session(id="test-working-rep-session-str-sess")
+
+        # Add some messages to the session
+        session.add_messages([peer.message("I like reading books")])
+
+        # Get working representation scoped to session (as string)
+        result = peer.working_rep(session=session.id)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_session_object(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with session parameter as Session object.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        peer = await honcho_client.peer(id="test-working-rep-session-obj")
+        session = await honcho_client.session(id="test-working-rep-session-obj-sess")
+        from sdks.python.src.honcho.async_client.session import AsyncSession
+
+        assert isinstance(session, AsyncSession)
+
+        # Add some messages to the session
+        await session.add_messages([peer.message("I prefer tea over coffee")])
+
+        # Get working representation scoped to session (as Session object)
+        result = await peer.working_rep(session=session)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        peer = honcho_client.peer(id="test-working-rep-session-obj")
+        session = honcho_client.session(id="test-working-rep-session-obj-sess")
+        from sdks.python.src.honcho.session import Session
+
+        assert isinstance(session, Session)
+
+        # Add some messages to the session
+        session.add_messages([peer.message("I prefer tea over coffee")])
+
+        # Get working representation scoped to session (as Session object)
+        result = peer.working_rep(session=session)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_target_string(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with target parameter as string.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        observer = await honcho_client.peer(id="test-working-rep-target-str-observer")
+        target = await honcho_client.peer(id="test-working-rep-target-str-target")
+        session = await honcho_client.session(id="test-working-rep-target-str-sess")
+
+        # Add messages from both peers
+        await session.add_messages(
+            [
+                observer.message("Hello there"),
+                target.message("Hi, how are you?"),
+            ]
+        )
+
+        # Get working representation of target from observer's perspective (as string)
+        result = await observer.working_rep(target=target.id)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        observer = honcho_client.peer(id="test-working-rep-target-str-observer")
+        target = honcho_client.peer(id="test-working-rep-target-str-target")
+        session = honcho_client.session(id="test-working-rep-target-str-sess")
+
+        # Add messages from both peers
+        session.add_messages(
+            [
+                observer.message("Hello there"),
+                target.message("Hi, how are you?"),
+            ]
+        )
+
+        # Get working representation of target from observer's perspective (as string)
+        result = observer.working_rep(target=target.id)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_target_object(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with target parameter as Peer object.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        observer = await honcho_client.peer(id="test-working-rep-target-obj-observer")
+        target = await honcho_client.peer(id="test-working-rep-target-obj-target")
+        session = await honcho_client.session(id="test-working-rep-target-obj-sess")
+        from sdks.python.src.honcho.async_client.peer import AsyncPeer
+
+        assert isinstance(target, AsyncPeer)
+
+        # Add messages from both peers
+        await session.add_messages(
+            [
+                observer.message("What do you think?"),
+                target.message("I think it's great!"),
+            ]
+        )
+
+        # Get working representation of target from observer's perspective (as Peer object)
+        result = await observer.working_rep(target=target)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        observer = honcho_client.peer(id="test-working-rep-target-obj-observer")
+        target = honcho_client.peer(id="test-working-rep-target-obj-target")
+        session = honcho_client.session(id="test-working-rep-target-obj-sess")
+        from sdks.python.src.honcho.peer import Peer
+
+        assert isinstance(target, Peer)
+
+        # Add messages from both peers
+        session.add_messages(
+            [
+                observer.message("What do you think?"),
+                target.message("I think it's great!"),
+            ]
+        )
+
+        # Get working representation of target from observer's perspective (as Peer object)
+        result = observer.working_rep(target=target)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_search_query(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with search_query parameter.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        peer = await honcho_client.peer(id="test-working-rep-search-query")
+        session = await honcho_client.session(id="test-working-rep-search-query-sess")
+
+        # Add some messages with different topics
+        await session.add_messages(
+            [
+                peer.message("I love programming in Python"),
+                peer.message("I also enjoy playing basketball"),
+            ]
+        )
+
+        # Get working representation with search query
+        result = await peer.working_rep(search_query="programming")
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        peer = honcho_client.peer(id="test-working-rep-search-query")
+        session = honcho_client.session(id="test-working-rep-search-query-sess")
+
+        # Add some messages with different topics
+        session.add_messages(
+            [
+                peer.message("I love programming in Python"),
+                peer.message("I also enjoy playing basketball"),
+            ]
+        )
+
+        # Get working representation with search query
+        result = peer.working_rep(search_query="programming")
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_size(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with size parameter.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        peer = await honcho_client.peer(id="test-working-rep-size")
+        session = await honcho_client.session(id="test-working-rep-size-sess")
+
+        # Add multiple messages
+        await session.add_messages(
+            [peer.message(f"Message number {i}") for i in range(10)]
+        )
+
+        # Get working representation with custom max_observations
+        result = await peer.working_rep(max_observations=5)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+        # Test with different max_observations values
+        result = await peer.working_rep(max_observations=1)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+        result = await peer.working_rep(max_observations=100)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        peer = honcho_client.peer(id="test-working-rep-size")
+        session = honcho_client.session(id="test-working-rep-size-sess")
+
+        # Add multiple messages
+        session.add_messages([peer.message(f"Message number {i}") for i in range(10)])
+
+        # Get working representation with custom size
+        result = peer.working_rep(max_observations=5)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+        # Test with different max_observations values
+        result = peer.working_rep(max_observations=1)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+        result = peer.working_rep(max_observations=100)
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+
+@pytest.mark.asyncio
+async def test_peer_working_rep_with_all_params(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests peer.working_rep() with all parameters combined.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        observer = await honcho_client.peer(id="test-working-rep-all-observer")
+        target = await honcho_client.peer(id="test-working-rep-all-target")
+        session = await honcho_client.session(id="test-working-rep-all-sess")
+
+        # Add messages from both peers
+        await session.add_messages(
+            [
+                observer.message("I think Python is great for data science"),
+                target.message("I agree, especially with libraries like pandas"),
+                observer.message("What about machine learning?"),
+                target.message("TensorFlow and PyTorch are excellent choices"),
+            ]
+        )
+
+        # Get working representation with all parameters
+        result = await observer.working_rep(
+            session=session, target=target, search_query="Python", max_observations=10
+        )
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+        # Test with session as string and target as string
+        result = await observer.working_rep(
+            session=session.id,
+            target=target.id,
+            search_query="machine learning",
+            max_observations=5,
+        )
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+    else:
+        assert isinstance(honcho_client, Honcho)
+        observer = honcho_client.peer(id="test-working-rep-all-observer")
+        target = honcho_client.peer(id="test-working-rep-all-target")
+        session = honcho_client.session(id="test-working-rep-all-sess")
+
+        # Add messages from both peers
+        session.add_messages(
+            [
+                observer.message(content="I think Python is great for data science"),
+                target.message("I agree, especially with libraries like pandas"),
+                observer.message("What about machine learning?"),
+                target.message("TensorFlow and PyTorch are excellent choices"),
+            ]
+        )
+
+        # Get working representation with all parameters
+        result = observer.working_rep(
+            session=session, target=target, search_query="Python", max_observations=10
+        )
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
+
+        # Test with session as string and target as string
+        result = observer.working_rep(
+            session=session.id,
+            target=target.id,
+            search_query="machine learning",
+            max_observations=5,
+        )
+        assert isinstance(result, Representation)
+        assert hasattr(result, "explicit")
+        assert hasattr(result, "deductive")
