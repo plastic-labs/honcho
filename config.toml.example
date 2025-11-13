@@ -63,10 +63,12 @@ WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
 STALE_SESSION_TIMEOUT_MINUTES = 5
 PROVIDER = "google"
-MODEL = "gemini-2.0-flash-lite"
+MODEL = "gemini-2.5-flash-lite"
 DEDUPLICATE = true
 MAX_OUTPUT_TOKENS = 2500
 THINKING_BUDGET_TOKENS = 1024 # only applied when using Anthropic
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash-lite"
 
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 4096
@@ -78,6 +80,8 @@ ENABLED = true
 PROVIDER = "openai"
 MODEL = "gpt-5-nano-2025-08-07"
 MAX_OUTPUT_TOKENS = 4000
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash-lite"
 
 # Dialectic settings
 [dialectic]
@@ -91,6 +95,8 @@ SEMANTIC_SEARCH_TOP_K = 10
 SEMANTIC_SEARCH_MAX_DISTANCE = 0.85
 THINKING_BUDGET_TOKENS = 1024
 CONTEXT_WINDOW_SIZE = 100000
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash"
 
 # Summary settings
 [summary]
@@ -98,10 +104,25 @@ ENABLED = true
 MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
 PROVIDER = "google"
-MODEL = "gemini-1.5-flash-latest"
+MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 2000
 THINKING_BUDGET_TOKENS = 512
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash"
+
+# Dream settings
+[dream]
+ENABLED = true
+DOCUMENT_THRESHOLD = 50
+IDLE_TIMEOUT_MINUTES = 60
+MIN_HOURS_BETWEEN_DREAMS = 8
+ENABLED_TYPES = ["consolidate"]
+PROVIDER = "openai"
+MODEL = "gpt-4o-mini-2024-07-18"
+MAX_OUTPUT_TOKENS = 2000
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash"
 
 # Webhook settings
 [webhook]

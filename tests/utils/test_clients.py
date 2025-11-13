@@ -25,6 +25,7 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
+from src.config import settings
 from src.utils.clients import (
     CLIENTS,
     HonchoLLMCallResponse,
@@ -962,10 +963,11 @@ class TestMainLLMCallFunction:
         mock_client.messages.stream.return_value = mock_stream
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            settings.DIALECTIC.PROVIDER = "anthropic"
+            settings.DIALECTIC.MODEL = "claude-4-sonnet"
             chunks: list[HonchoLLMCallStreamChunk] = []
             async for chunk in await honcho_llm_call(
-                provider="anthropic",
-                model="claude-3-sonnet",
+                llm_settings=settings.DIALECTIC,
                 prompt="Hello",
                 max_tokens=100,
                 stream=True,
@@ -990,9 +992,10 @@ class TestMainLLMCallFunction:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            settings.DIALECTIC.PROVIDER = "anthropic"
+            settings.DIALECTIC.MODEL = "claude-4-sonnet"
             response = await honcho_llm_call(
-                provider="anthropic",
-                model="claude-3-sonnet",
+                llm_settings=settings.DIALECTIC,
                 prompt="Hello",
                 max_tokens=100,
                 enable_retry=False,
