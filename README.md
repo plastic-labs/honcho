@@ -309,7 +309,7 @@ In a separate terminal, run:
 uv run python -m src.deriver
 ```
 
-The deriver generates representation, summaries, peer cards, and manages dreaming tasks.
+The deriver generates representation, summaries, peer cards, and manages dreaming tasks. You can increase the number of deriver's to improve the run time efficiency.
 
 ### Pre-commit Hooks
 
