@@ -184,7 +184,8 @@ async def honcho_llm_call(
     stream: bool = False,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """
-    Make an LLM call with automatic backup provider failover.
+    Make an LLM call with automatic backup provider failover. Backup provider/model
+    is used on the final retry attempt, which is 3 by default.
 
     Args:
         llm_settings: Settings object containing PROVIDER, MODEL,
