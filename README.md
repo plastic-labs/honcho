@@ -231,7 +231,6 @@ To use Docker:
 docker compose up -d database
 ```
 
-
 4. **Edit the environment variables**
 
 Honcho uses a `.env` file for managing runtime environment variables. A
