@@ -514,9 +514,14 @@ export class Peer {
         max_observations: workingRepParams.options?.maxObservations,
       }
     )
-    const data = (response as { representation: RepresentationData })
-      .representation
-    return Representation.fromData(data)
+    const maybe = response as
+      | RepresentationData
+      | { representation?: RepresentationData | null }
+      | null
+    const rep = (maybe && 'representation' in (maybe as any)
+      ? (maybe as any).representation
+      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    return Representation.fromData(rep as RepresentationData)
   }
 
   /**

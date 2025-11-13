@@ -168,9 +168,9 @@ async def get_or_create_session(
         if session.metadata is not None:
             honcho_session.h_metadata = session.metadata
         if session.configuration is not None:
-            honcho_session.configuration = session.configuration.model_dump(
-                exclude_none=True
-            )
+            existing_config = (honcho_session.configuration or {}).copy()
+            incoming_config = session.configuration.model_dump(exclude_none=True)
+            honcho_session.configuration = {**existing_config, **incoming_config}
 
     # Add all peers to session
     if session.peer_names:

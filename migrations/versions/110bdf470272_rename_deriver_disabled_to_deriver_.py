@@ -63,9 +63,10 @@ def upgrade() -> None:
             ),
             {"batch_size": batch_size},
         )
-        if result.rowcount == 0:
-            break
+        rowcount = result.rowcount
         result.close()
+        if rowcount == 0:
+            break
 
 
 def downgrade() -> None:

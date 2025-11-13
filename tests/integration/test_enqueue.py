@@ -1436,7 +1436,10 @@ class TestGenerateQueueRecordsSeqInSession:
                 message=message_payload,
                 peers_with_configuration=peers_config,
                 session_id=test_session.id,
-                deriver_disabled=False,
+                deriver_enabled=True,
+                summaries_enabled=True,
+                messages_per_short_summary=20,
+                messages_per_long_summary=60,
             )
 
             mock_crud.assert_not_called()
@@ -1506,7 +1509,10 @@ class TestGenerateQueueRecordsSeqInSession:
                 message=message_payload,
                 peers_with_configuration=peers_config,
                 session_id=test_session.id,
-                deriver_disabled=False,
+                deriver_enabled=True,
+                summaries_enabled=True,
+                messages_per_short_summary=20,
+                messages_per_long_summary=60,
             )
 
             # The CRUD function SHOULD have been called as fallback
