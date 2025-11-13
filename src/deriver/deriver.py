@@ -363,6 +363,8 @@ class CertaintyReasoner:
         from src.utils.logging import save_reasoning_trace
 
         save_reasoning_trace(
+            workspace_id=latest_message.workspace_name,
+            session_name=latest_message.session_name,
             provider=settings.DERIVER.PROVIDER,
             model=settings.DERIVER.MODEL,
             max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS

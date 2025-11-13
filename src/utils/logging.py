@@ -252,6 +252,8 @@ def get_route_template(request: Request) -> str:
 
 
 def save_reasoning_trace(
+    workspace_id: str,
+    session_name: str,
     provider: str,
     model: str,
     max_tokens: int,
@@ -274,6 +276,8 @@ def save_reasoning_trace(
 
     Args:
         provider: LLM provider name
+        workspace_id: Workspace ID
+        session_name: Session name
         model: Model name
         max_tokens: Max tokens setting
         peer_id: ID of peer being analyzed
@@ -295,10 +299,12 @@ def save_reasoning_trace(
     import json
     from pathlib import Path
 
-    trace_file = Path("trace.jsonl")
+    trace_file = Path(settings.LOCAL_TRACE_FILE)
 
     trace_data = {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "workspace_id": workspace_id,
+        "session_name": session_name,
         "provider": provider,
         "model": model,
         "max_tokens": max_tokens,
