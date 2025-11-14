@@ -143,6 +143,9 @@ def build_peer_card_caller(
         "openai" if candidate.provider == "custom" else candidate.provider
     )
 
+    settings.PEER_CARD.PROVIDER = cast(Any, resolved_provider)
+    settings.PEER_CARD.MODEL = candidate.model
+
     async def call(
         old_peer_card: list[str] | None, new_observations: Representation
     ) -> PeerCardQuery:
@@ -152,8 +155,7 @@ def build_peer_card_caller(
         )
 
         response = await honcho_llm_call(
-            provider=cast(Any, resolved_provider),
-            model=candidate.model,
+            llm_settings=settings.PEER_CARD,
             prompt=prompt,
             max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS,
             response_model=PeerCardQuery,
