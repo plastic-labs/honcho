@@ -382,7 +382,7 @@ async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, s
 @pytest.mark.asyncio
 async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]) -> None:
     """
-    Tests deleting a session.
+    Tests deleting a session and verifying all associated data is removed.
     """
     honcho_client, client_type = client_fixture
 
@@ -391,17 +391,60 @@ async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]) 
         session = await honcho_client.session(id="test-session-delete")
         assert isinstance(session, AsyncSession)
 
-        # Add a peer to make the session exist
+        # Add a peer and messages to make the session have data
         user = await honcho_client.peer(id="user-delete")
         await session.add_peers([user])
+        await session.add_messages(
+            [user.message("Test message that should be deleted")]
+        )
+
+        # Verify messages exist before deletion
+        messages_page = await session.get_messages()
+        messages = messages_page.items
+        assert len(messages) == 1
 
         # Delete should not raise an exception
         await session.delete()
 
+        # Verify session is removed from active sessions list
         all_sessions_page = await honcho_client.get_sessions({"is_active": True})
         all_sessions = all_sessions_page.items
         all_session_ids = [s.id for s in all_sessions]
+        assert "test-session-delete" not in all_session_ids
 
+        # Verify session is also removed from all sessions (hard delete, not soft)
+        all_sessions_page = await honcho_client.get_sessions()
+        all_sessions = all_sessions_page.items
+        all_session_ids = [s.id for s in all_sessions]
+        assert "test-session-delete" not in all_session_ids
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-delete")
+        assert isinstance(session, Session)
+
+        # Add a peer and messages to make the session have data
+        user = honcho_client.peer(id="user-delete")
+        session.add_peers([user])
+        session.add_messages([user.message("Test message that should be deleted")])
+
+        # Verify messages exist before deletion
+        messages_page = session.get_messages()
+        messages = list(messages_page)
+        assert len(messages) == 1
+
+        # Delete should not raise an exception
+        session.delete()
+
+        # Verify session is removed from active sessions list
+        all_sessions_page = honcho_client.get_sessions({"is_active": True})
+        all_sessions = list(all_sessions_page)
+        all_session_ids = [s.id for s in all_sessions]
+        assert "test-session-delete" not in all_session_ids
+
+        # Verify session is also removed from all sessions (hard delete, not soft)
+        all_sessions_page = honcho_client.get_sessions()
+        all_sessions = list(all_sessions_page)
+        all_session_ids = [s.id for s in all_sessions]
         assert "test-session-delete" not in all_session_ids
 
 

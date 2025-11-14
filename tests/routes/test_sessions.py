@@ -270,6 +270,39 @@ def test_update_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     assert data["metadata"] == {"new_key": "new_value"}
 
 
+def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    """Test deleting a session"""
+    test_workspace, test_peer = sample_data
+    # Create a test session
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"test_key": "test_value"},
+        },
+    )
+    assert response.status_code == 200
+
+    # Delete the session
+    response = client.delete(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "Session deleted successfully"
+
+    # Verify the session is deleted by trying to list it
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filters": {"id": session_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 0
+
+
 def test_update_session_with_configuration(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -345,36 +378,6 @@ def test_update_session_with_null_configuration(
     assert response.status_code == 200
     data = response.json()
     assert "configuration" in data
-
-
-def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
-    test_workspace, test_peer = sample_data
-    # Create a test session
-    session_id = str(generate_nanoid())
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={
-            "id": session_id,
-            "peer_names": {test_peer.name: {}},
-        },
-    )
-    assert response.status_code == 200
-
-    response = client.delete(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}"
-    )
-    assert response.status_code == 200
-
-    # Check that session is marked as inactive
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filters": {"is_active": False}},
-    )
-    data = response.json()
-    # Find our session in the inactive sessions
-    inactive_session = next((s for s in data["items"] if s["id"] == session_id), None)
-    assert inactive_session is not None
-    assert inactive_session["is_active"] is False
 
 
 def test_clone_session(client: TestClient, sample_data: tuple[Workspace, Peer]):

@@ -23,6 +23,7 @@ from src.exceptions import HonchoException
 from src.routers import (
     keys,
     messages,
+    observations,
     peers,
     sessions,
     webhooks,
@@ -169,6 +170,7 @@ app.include_router(workspaces.router, prefix="/v2")
 app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
+app.include_router(observations.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
 

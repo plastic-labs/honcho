@@ -16,6 +16,8 @@ export {
   type DialecticStreamChunk,
   type DialecticStreamDelta,
   DialecticStreamResponse,
+  type Observation,
+  type ObservationQueryParams,
 } from './types'
 
 // Export validation types for advanced usage

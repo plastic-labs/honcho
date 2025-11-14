@@ -326,6 +326,25 @@ export const LimitSchema = z
   .max(100, 'Limit must be less than or equal to 100')
 
 /**
+ * Schema for observation query parameters.
+ */
+export const ObservationQueryParamsSchema = z.object({
+  query: SearchQuerySchema,
+  top_k: z
+    .number()
+    .int()
+    .min(1, 'top_k must be at least 1')
+    .max(100, 'top_k must be at most 100')
+    .optional(),
+  distance: z
+    .number()
+    .min(0.0, 'distance must be at least 0.0')
+    .max(1.0, 'distance must be at most 1.0')
+    .optional(),
+  filters: FilterSchema,
+})
+
+/**
  * Type exports for use throughout the SDK.
  */
 export type HonchoConfig = z.infer<typeof HonchoConfigSchema>
@@ -348,3 +367,6 @@ export type MessageAddition = z.infer<typeof MessageAdditionSchema>
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export type Limit = z.infer<typeof LimitSchema>
+export type ObservationQueryParams = z.infer<
+  typeof ObservationQueryParamsSchema
+>
