@@ -222,10 +222,14 @@ def upgrade() -> None:
         )
 
         if not constraint_exists:
-            op.create_check_constraint(
-                "message_requires_session",
-                "metamessages",
-                "(message_id IS NULL) OR (session_id IS NOT NULL)",
+            conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {schema}.metamessages
+                    ADD CONSTRAINT message_requires_session
+                    CHECK ((message_id IS NULL) OR (session_id IS NOT NULL))
+                    """
+                )
             )
             print("Created message_requires_session constraint")
         else:
