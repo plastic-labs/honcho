@@ -45,10 +45,19 @@ SessionLocal = async_sessionmaker(
     bind=engine,
 )
 
+# Define your naming convention
+convention = {
+    "ix": "ix_%(column_0_N_label)s",  # Index - supports multi-column
+    "uq": "uq_%(table_name)s_%(column_0_N_name)s",  # Unique constraint - supports multi-column
+    "ck": "ck_%(table_name)s_%(constraint_name)s",  # Check constraint
+    "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",  # Foreign key - supports composite keys
+    "pk": "pk_%(table_name)s",  # Primary key
+}
+
 table_schema = settings.DB.SCHEMA
 # Note: column_0_N_name expands to include all columns in multi-column constraints
 # e.g., "workspace_id_tenant_id" for a composite constraint on both columns
-meta = MetaData()
+meta = MetaData(naming_convention=convention)
 meta.schema = table_schema
 Base = declarative_base(metadata=meta)
 

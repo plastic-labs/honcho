@@ -118,6 +118,8 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
     quoted_constraint = preparer.quote(constraint_name)
     quoted_column = preparer.quote(column_name)
 
+    print(f"Adding CHECK constraint without validation: {quoted_constraint}")
+
     # Step 2: Add CHECK constraint without validation (instant)
     # Note: op.create_check_constraint() doesn't support NOT VALID, so use raw SQL
     if not constraint_exists(table_name, constraint_name, "check"):
@@ -151,9 +153,11 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
     )
 
     # Step 5: Drop the redundant CHECK constraint
-    op.drop_constraint(
-        constraint_name,
-        table_name,
-        type_="check",
-        schema=schema,
+    conn.execute(
+        sa.text(
+            f"""
+          ALTER TABLE {quoted_schema}.{quoted_table}
+          DROP CONSTRAINT {quoted_constraint}
+          """
+        )
     )
