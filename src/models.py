@@ -176,7 +176,6 @@ class Session(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
-    messages = relationship("Message", back_populates="session")
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
@@ -188,6 +187,7 @@ class Session(Base):
     peers = relationship(
         "Peer", secondary=session_peers_table, back_populates="sessions"
     )
+    messages = relationship("Message", back_populates="session")
 
     __table_args__ = (
         UniqueConstraint("name", "workspace_name"),
@@ -232,8 +232,6 @@ class Message(Base):
     workspace_name: Mapped[str] = mapped_column(TEXT, index=True)
 
     session = relationship("Session", back_populates="messages")
-    peer = relationship("Peer")
-    workspace = relationship("Workspace")
 
     __table_args__ = (
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
@@ -293,12 +291,6 @@ class MessageEmbedding(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
-
-    # Relationships
-    workspace = relationship("Workspace")
-    session = relationship("Session")
-    peer = relationship("Peer")
-    message = relationship("Message")
 
     __table_args__ = (
         # Compound foreign key constraints
