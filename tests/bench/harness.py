@@ -137,7 +137,8 @@ class HonchoHarness:
         # Change to the temp directory and start the database service
         result = subprocess.run(
             [
-                "docker-compose",
+                "docker",
+                "compose",
                 "-f",
                 str(self.docker_compose_file),
                 "-p",
@@ -166,7 +167,8 @@ class HonchoHarness:
         # Change to the temp directory and start the redis service
         result = subprocess.run(
             [
-                "docker-compose",
+                "docker",
+                "compose",
                 "-f",
                 str(self.docker_compose_file),
                 "-p",
