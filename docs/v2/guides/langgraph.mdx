@@ -1,0 +1,200 @@
+---
+title: "LangGraph Integration"
+icon: 'diagram-project'
+description: "Build stateful conversational AI agents using LangGraph for orchestration and Honcho for memory management"
+sidebarTitle: 'LangGraph'
+---
+
+Build stateful conversational AI agents using LangGraph for orchestration and Honcho for memory management.
+
+## Overview
+
+This guide shows you how to integrate Honcho with LangGraph to create chatbots that remember conversations across sessions. You'll build a simple agent that stores and retrieves conversation history automatically.
+
+## Setup
+
+Install the required packages:
+
+```bash
+uv install langgraph langchain-core honcho-core
+```
+
+### Import Dependencies
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+
+from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+
+from honcho_core import Honcho
+```
+
+## Implementation
+
+### Define Your State
+
+Create a state schema that LangGraph will use to track conversations:
+
+```python
+class State(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+    user_id: str
+    session_id: str
+```
+
+### Initialize Honcho
+
+First, configure your Honcho client based on your environment:
+
+**Option 1: Local Development/Testing**
+```python
+honcho = Honcho(
+    environment="local",
+    base_url="http://localhost:8000"
+)
+```
+
+**Option 2: Production** (requires API key from [app.honcho.dev](https://app.honcho.dev))
+```python
+honcho = Honcho(
+    environment="production",
+    base_url="https://api.honcho.dev",
+    api_key="your-api-key-here"
+)
+```
+
+Then, create your workspace and assistant peer (same for both environments):
+
+```python
+WORKSPACE_ID = "chatbot-workspace"
+ASSISTANT_PEER_ID = "assistant"
+
+workspace = honcho.workspaces.get_or_create(id=WORKSPACE_ID)
+assistant_peer = honcho.workspaces.peers.get_or_create(
+    WORKSPACE_ID,
+    id=ASSISTANT_PEER_ID
+)
+```
+
+### Create the Chatbot Node
+
+Build a node that stores messages and generates responses using Honcho:
+
+```python
+def chatbot(state: State):
+    user_message = state["messages"][-1].content
+    session_id = state["session_id"]
+    user_id = state["user_id"]
+
+    # Get or create user peer
+    user_peer = honcho.workspaces.peers.get_or_create(WORKSPACE_ID, id=user_id)
+
+    # Store user message
+    honcho.workspaces.sessions.messages.create(
+        session_id=session_id,
+        workspace_id=WORKSPACE_ID,
+        messages=[{
+            "peer_id": user_peer.id,
+            "content": user_message
+        }]
+    )
+
+    # Generate response with conversation context
+    response = honcho.workspaces.peers.chat(
+        peer_id=assistant_peer.id,
+        workspace_id=WORKSPACE_ID,
+        query=user_message,
+        session_id=session_id
+    )
+
+    # Store assistant response
+    honcho.workspaces.sessions.messages.create(
+        session_id=session_id,
+        workspace_id=WORKSPACE_ID,
+        messages=[{
+            "peer_id": assistant_peer.id,
+            "content": response.content
+        }]
+    )
+
+    return {"messages": [AIMessage(content=response.content)]}
+```
+
+### Build the Graph
+
+Compile your LangGraph with the chatbot node:
+
+```python
+builder = StateGraph(State)
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+
+graph = builder.compile()
+```
+
+### Run Conversations
+
+Create a helper function to invoke the graph:
+
+```python
+def run_conversation(user_id: str, user_input: str, session_id: str = None):
+    if session_id is None:
+        session_id = f"session_{user_id}"
+
+    # Ensure session exists
+    user_peer = honcho.workspaces.peers.get_or_create(WORKSPACE_ID, id=user_id)
+    honcho.workspaces.sessions.get_or_create(
+        WORKSPACE_ID,
+        id=session_id,
+        peers={user_peer.id: {}, assistant_peer.id: {}}
+    )
+
+    # Invoke graph
+    result = graph.invoke({
+        "messages": [HumanMessage(content=user_input)],
+        "user_id": user_id,
+        "session_id": session_id
+    })
+
+    return result["messages"][-1].content
+```
+
+## Usage
+
+Test the memory persistence across conversation turns:
+
+```python
+user_id = "alice-123"
+
+# Turn 1
+print("=== Turn 1 ===")
+turn_1 = "Hi, my name is Alice and I love Python!"
+print(turn_1)
+response = run_conversation(user_id, turn_1)
+print(f"\nResponse: {response}\n")
+
+# Turn 2
+print("=== Turn 2 ===")
+turn_2 = "What's my name?"
+print(turn_2)
+response = run_conversation(user_id, turn_2)
+print(f"\nResponse: {response}\n")
+
+# Turn 3
+print("=== Turn 3 ===")
+turn_3 = "What programming language do I like?"
+print(turn_3)
+response = run_conversation(user_id, turn_3)
+print(f"\nResponse: {response}\n")
+```
+
+## Key Features
+
+- **Automatic Memory**: Honcho stores all messages and retrieves relevant context
+- **Session Management**: Conversations are organized by user and session IDs
+- **Peer-to-Peer Structure**: Track messages from both users and assistants
+- **Contextual Responses**: The chat API uses conversation history to generate informed responses
