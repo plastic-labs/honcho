@@ -224,10 +224,11 @@ Honcho utilizes [Postgres](https://www.postgresql.org/) for its database with
 pgvector. An easy way to get started with a postgres database is to create a project
 with [Supabase](https://supabase.com/)
 
-Alternatively, a `docker-compose` template is available with a database configuration.
+Alternatively, a `docker-compose` template is available with a sample database configuration.
 To use Docker:
 
 ```bash
+cp docker-compose.yml.example docker-compose.yml
 docker compose up -d database
 ```
 
@@ -309,7 +310,7 @@ In a separate terminal, run:
 uv run python -m src.deriver
 ```
 
-The deriver generates representation, summaries, peer cards, and manages dreaming tasks. You can increase the number of deriver's to improve the run time efficiency.
+The deriver generates representation, summaries, peer cards, and manages dreaming tasks. You can increase the number of deriver's to improve runtime efficiency.
 
 ### Pre-commit Hooks
 
