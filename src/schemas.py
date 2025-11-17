@@ -212,6 +212,10 @@ class PeerCardResponse(BaseModel):
     )
 
 
+class PeerCardSet(BaseModel):
+    peer_card: list[str] = Field(..., description="The peer card content to set")
+
+
 class PeerConfig(BaseModel):
     observe_me: bool = Field(
         default=True,
