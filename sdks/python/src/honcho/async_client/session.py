@@ -174,9 +174,6 @@ class AsyncSession(BaseModel):
                 - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
                 - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
-
-        Returns:
-            The peers that were added to the session
         """
         if not isinstance(peers, list):
             peers = [peers]
