@@ -44,7 +44,6 @@ def upgrade() -> None:
                     SELECT id
                     FROM "{schema}".sessions
                     WHERE configuration ? 'deriver_disabled'
-                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE "{schema}".sessions s
@@ -63,9 +62,10 @@ def upgrade() -> None:
             ),
             {"batch_size": batch_size},
         )
-        if result.rowcount == 0:
-            break
+        rowcount = result.rowcount
         result.close()
+        if rowcount == 0:
+            break
 
 
 def downgrade() -> None:
@@ -90,7 +90,6 @@ def downgrade() -> None:
                     SELECT id
                     FROM "{schema}".sessions
                     WHERE configuration ? 'deriver_enabled'
-                    ORDER BY id
                     LIMIT :batch_size
                 )
                 UPDATE "{schema}".sessions s
@@ -109,6 +108,7 @@ def downgrade() -> None:
             ),
             {"batch_size": batch_size},
         )
-        if result.rowcount == 0:
-            break
+        rowcount = result.rowcount
         result.close()
+        if rowcount == 0:
+            break

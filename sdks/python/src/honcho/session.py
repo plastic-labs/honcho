@@ -480,11 +480,17 @@ class Session(BaseModel):
         """
         Refresh cached metadata and configuration for this session.
 
-        Makes API calls to retrieve the latest metadata and configuration
+        Makes a single API call to retrieve the latest metadata and configuration
         associated with this session and updates the cached attributes.
         """
-        self.get_metadata()
-        self.get_config()
+        session_data = self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        metadata = session_data.metadata or {}
+        configuration = session_data.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     @validate_call
     def get_context(

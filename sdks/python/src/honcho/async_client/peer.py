@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import datetime
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
@@ -398,10 +397,17 @@ class AsyncPeer(BaseModel):
         """
         Refresh cached metadata and configuration for this peer.
 
-        Makes async API calls to retrieve the latest metadata and configuration
+        Makes a single async API call to retrieve the latest metadata and configuration
         associated with this peer and updates the cached attributes.
         """
-        await asyncio.gather(self.get_metadata(), self.get_config())
+        peer = await self._client.workspaces.peers.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        metadata = peer.metadata or {}
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     @validate_call
     async def search(

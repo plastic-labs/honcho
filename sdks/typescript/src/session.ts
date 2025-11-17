@@ -509,11 +509,16 @@ export class Session {
   /**
    * Refresh cached metadata and configuration for this session.
    *
-   * Makes API calls to retrieve the latest metadata and configuration
+   * Makes a single API call to retrieve the latest metadata and configuration
    * associated with this session and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    await Promise.all([this.getMetadata(), this.getConfig()])
+    const session = await this._client.workspaces.sessions.getOrCreate(
+      this.workspaceId,
+      { id: this.id }
+    )
+    this.metadata = session.metadata || {}
+    this.configuration = session.configuration || {}
   }
 
   /**

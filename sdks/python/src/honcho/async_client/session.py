@@ -178,9 +178,6 @@ class AsyncSession(BaseModel):
                 - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
                 - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
-
-        Returns:
-            The peers that were added to the session
         """
         if not isinstance(peers, list):
             peers = [peers]
@@ -512,10 +509,17 @@ class AsyncSession(BaseModel):
         """
         Refresh cached metadata and configuration for this session.
 
-        Makes async API calls to retrieve the latest metadata and configuration
+        Makes a single async API call to retrieve the latest metadata and configuration
         associated with this session and updates the cached attributes.
         """
-        await asyncio.gather(self.get_metadata(), self.get_config())
+        session = await self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        metadata = session.metadata or {}
+        configuration = session.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     @validate_call
     async def get_context(

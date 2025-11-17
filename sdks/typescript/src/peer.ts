@@ -368,11 +368,16 @@ export class Peer {
   /**
    * Refresh cached metadata and configuration for this peer.
    *
-   * Makes API calls to retrieve the latest metadata and configuration
+   * Makes a single API call to retrieve the latest metadata and configuration
    * associated with this peer and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    await Promise.all([this.getMetadata(), this.getConfig()])
+    const peer = await this._client.workspaces.peers.getOrCreate(
+      this.workspaceId,
+      { id: this.id }
+    )
+    this.metadata = peer.metadata || {}
+    this.configuration = peer.configuration || {}
   }
 
   /**
@@ -514,9 +519,14 @@ export class Peer {
         max_observations: workingRepParams.options?.maxObservations,
       }
     )
-    const data = (response as { representation: RepresentationData })
-      .representation
-    return Representation.fromData(data)
+    const maybe = response as
+      | RepresentationData
+      | { representation?: RepresentationData | null }
+      | null
+    const rep = (maybe && 'representation' in (maybe as any)
+      ? (maybe as any).representation
+      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    return Representation.fromData(rep as RepresentationData)
   }
 
   /**
