@@ -385,11 +385,15 @@ export class Honcho {
   /**
    * Refresh cached metadata and configuration for the current workspace.
    *
-   * Makes API calls to retrieve the latest metadata and configuration
+   * Makes a single API call to retrieve the latest metadata and configuration
    * associated with the current workspace and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    await Promise.all([this.getMetadata(), this.getConfig()])
+    const workspace = await this._client.workspaces.getOrCreate({
+      id: this.workspaceId,
+    })
+    this.metadata = workspace.metadata || {}
+    this.configuration = workspace.configuration || {}
   }
 
   /**

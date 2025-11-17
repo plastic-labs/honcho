@@ -373,11 +373,17 @@ class Peer(BaseModel):
         """
         Refresh cached metadata and configuration for this peer.
 
-        Makes API calls to retrieve the latest metadata and configuration
+        Makes a single API call to retrieve the latest metadata and configuration
         associated with this peer and updates the cached attributes.
         """
-        self.get_metadata()
-        self.get_config()
+        peer = self._client.workspaces.peers.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        metadata = peer.metadata or {}
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     @validate_call
     def search(

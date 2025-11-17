@@ -375,11 +375,14 @@ class Honcho(BaseModel):
         """
         Refresh cached metadata and configuration for the current workspace.
 
-        Makes API calls to retrieve the latest metadata and configuration
+        Makes a single API call to retrieve the latest metadata and configuration
         associated with the current workspace and updates the cached attributes.
         """
-        self.get_metadata()
-        self.get_config()
+        workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
+        metadata = workspace.metadata or {}
+        configuration = workspace.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     def get_workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
         """

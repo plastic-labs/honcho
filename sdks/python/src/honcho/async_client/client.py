@@ -392,10 +392,14 @@ class AsyncHoncho(BaseModel):
         """
         Refresh cached metadata and configuration for the current workspace.
 
-        Makes async API calls to retrieve the latest metadata and configuration
+        Makes a single async API call to retrieve the latest metadata and configuration
         associated with the current workspace and updates the cached attributes.
         """
-        await asyncio.gather(self.get_metadata(), self.get_config())
+        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        metadata = workspace.metadata or {}
+        configuration = workspace.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     async def get_workspaces(
         self, filters: dict[str, object] | None = None
