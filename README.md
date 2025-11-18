@@ -224,7 +224,13 @@ Honcho utilizes [Postgres](https://www.postgresql.org/) for its database with
 pgvector. An easy way to get started with a postgres database is to create a project
 with [Supabase](https://supabase.com/)
 
-A `docker-compose` template is also available with a database configuration.
+Alternatively, a `docker-compose` template is available with a sample database configuration.
+To use Docker:
+
+```bash
+cp docker-compose.yml.example docker-compose.yml
+docker compose up -d database
+```
 
 4. **Edit the environment variables**
 
@@ -271,19 +277,40 @@ the `AUTH_JWT_SECRET` environment variable. This is required for `AUTH_USE_AUTH`
 AUTH_JWT_SECRET=<generated_secret>
 ```
 
-5. **Launch the API**
+5. **Run database migrations**
 
-With the dependencies installed, a database setup and enabled with `pgvector`,
-and the environment variables setup you can now launch a local instance of
-Honcho. The following command will launch the storage API for Honcho:
+With the database set up and environment variables configured, run the migrations
+to create the necessary tables:
 
 ```bash
-fastapi dev src/main.py
+uv run alembic upgrade head
 ```
 
-This is a development server that will reload whenever code is changed. When
-first launching the API with a connection to the database it will provision the
-necessary tables for Honcho to operate.
+This will create all tables for Honcho including workspaces, peers, sessions,
+messages, and the queue system.
+
+6. **Launch Honcho**
+
+With everything set up, you can now launch a local instance of Honcho. In addition to the database, two
+components need to be running:
+
+**Start the API server:**
+
+```bash
+uv run fastapi dev src/main.py
+```
+
+This is a development server that will reload whenever code is changed.
+
+**Start a background worker (deriver):**
+
+In a separate terminal, run:
+
+```bash
+uv run python -m src.deriver
+```
+
+The deriver generates representation, summaries, peer cards, and manages dreaming tasks. You can increase the number of deriver's to improve runtime efficiency.
 
 ### Pre-commit Hooks
 

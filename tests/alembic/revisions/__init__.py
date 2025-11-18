@@ -5,6 +5,7 @@ from . import (
     test_066e87ca5b07_align_schema_with_declarative_models,
     test_08894082221a_replace_collection_name_with_observer_,
     test_20f89a421aff_rename_metamessage_type_to_label,
+    test_29ade7350c19_remove_document_level_valid_constraint,
     test_66e63cf2cf77_add_indexes_to_documents_table,
     test_76ffba56fe8c_add_error_field_to_queueitem,
     test_88b0fb10906f_add_webhooks_table,
@@ -17,6 +18,7 @@ from . import (
     test_bb6fb3a7a643_add_message_seq_in_session_column,
     test_c3828084f472_add_indexes_for_messages_and_,
     test_d429de0e5338_adopt_peer_paradigm,
+    test_e9b705f9adf9_add_server_defaults_to_timestamp_,
     test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
 )
 
@@ -25,6 +27,7 @@ __all__ = [
     "test_066e87ca5b07_align_schema_with_declarative_models",
     "test_08894082221a_replace_collection_name_with_observer_",
     "test_20f89a421aff_rename_metamessage_type_to_label",
+    "test_29ade7350c19_remove_document_level_valid_constraint",
     "test_556a16564f50_add_user_id_and_app_id_to_tables",
     "test_564ba40505c5_add_session_name_column_to_documents",
     "test_66e63cf2cf77_add_indexes_to_documents_table",
@@ -37,5 +40,6 @@ __all__ = [
     "test_bb6fb3a7a643_add_message_seq_in_session_column",
     "test_c3828084f472_add_indexes_for_messages_and_",
     "test_d429de0e5338_adopt_peer_paradigm",
+    "test_e9b705f9adf9_add_server_defaults_to_timestamp_",
     "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
 ]

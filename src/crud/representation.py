@@ -163,13 +163,14 @@ class RepresentationManager:
                 )
             )
 
-        # Use bulk creation with NO duplicate detection
+        # Use bulk creation with optional duplicate detection
         new_documents = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
             observer=self.observer,
             observed=self.observed,
+            deduplicate=settings.DERIVER.DEDUPLICATE,
         )
 
         if session_level_configuration.dreams_enabled:
@@ -179,41 +180,6 @@ class RepresentationManager:
                 logger.warning(f"Failed to check dream scheduling: {e}")
 
         return new_documents
-
-    async def get_relevant_observations(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        max_distance: float = 0.3,
-        level: str | None = None,
-        conversation_context: str = "",
-    ) -> Representation:
-        """
-        Unified method to get relevant observations with flexible options.
-
-        Args:
-            query: The search query
-            top_k: Number of results to return
-            max_distance: Maximum distance for semantic similarity
-            level: Optional reasoning level to filter by
-            conversation_context: Additional conversation context
-
-        Returns:
-            Representation
-        """
-        async with tracked_db("representation_manager.get_relevant_observations") as db:
-            documents = await self._get_observations_internal(
-                db,
-                query,
-                top_k,
-                max_distance,
-                level,
-                conversation_context,
-            )
-
-        # convert documents to representation
-        return Representation.from_documents(documents)
 
     async def get_working_representation(
         self,
@@ -335,7 +301,6 @@ class RepresentationManager:
         top_k: int,
         max_distance: float | None = None,
         level: str | None = None,
-        conversation_context: str = "",
     ) -> list[models.Document]:
         """Query documents by semantic similarity."""
         try:
@@ -344,7 +309,6 @@ class RepresentationManager:
                     db,
                     query,
                     level,
-                    conversation_context,
                     top_k,
                     max_distance,
                 )
@@ -354,7 +318,7 @@ class RepresentationManager:
                     workspace_name=self.workspace_name,
                     observer=self.observer,
                     observed=self.observed,
-                    query=self._build_truncated_query(query, conversation_context),
+                    query=query,
                     max_distance=max_distance,
                     top_k=top_k,
                 )
@@ -417,11 +381,10 @@ class RepresentationManager:
         top_k: int,
         max_distance: float,
         level: str | None,
-        conversation_context: str,
     ) -> list[models.Document]:
         """Internal method that does the actual observation retrieval."""
         return await self._query_documents_semantic(
-            db, query, top_k, max_distance, level, conversation_context
+            db, query, top_k, max_distance, level
         )
 
     async def _query_documents_for_level(
@@ -429,7 +392,6 @@ class RepresentationManager:
         db: AsyncSession,
         query: str,
         level: str,
-        conversation_context: str,
         count: int,
         max_distance: float | None = None,
     ) -> list[models.Document]:
@@ -439,7 +401,7 @@ class RepresentationManager:
             workspace_name=self.workspace_name,
             observer=self.observer,
             observed=self.observed,
-            query=self._build_truncated_query(query, conversation_context),
+            query=query,
             max_distance=max_distance,
             top_k=count * FILTER_OVERSAMPLING_FACTOR,
             filters=self._build_filter_conditions(level),
@@ -465,69 +427,6 @@ class RepresentationManager:
             return {}
 
         return conditions[0] if len(conditions) == 1 else {"AND": conditions}
-
-    def _build_truncated_query(
-        self,
-        query: str,
-        conversation_context: str = "",
-        max_tokens: int | None = None,
-    ) -> str:
-        """Build a query that fits within token limits with clear priorities.
-
-        Args:
-            query: The search query
-            conversation_context: Optional conversation context to include
-            max_tokens: Maximum tokens allowed (defaults to setting with buffer)
-
-        Returns:
-            Truncated query string that fits within token limits
-        """
-        max_tokens = max_tokens or (settings.MAX_EMBEDDING_TOKENS - 100)
-        encoding = embedding_client.encoding
-
-        # Pre-calculate all token counts once
-        query_prefix = "Current message: "
-        context_prefix = "\nContext: "
-
-        prefix_tokens = len(encoding.encode(query_prefix))
-        context_prefix_tokens = len(encoding.encode(context_prefix))
-        query_tokens = encoding.encode(query)
-
-        # Simple case: query alone fits
-        if prefix_tokens + len(query_tokens) <= max_tokens:
-            if not conversation_context:
-                return f"{query_prefix}{query}"
-
-            # Try to add context
-            context_tokens = encoding.encode(conversation_context)
-            total_without_context = (
-                prefix_tokens + len(query_tokens) + context_prefix_tokens
-            )
-
-            if total_without_context + len(context_tokens) <= max_tokens:
-                return f"{query_prefix}{query}{context_prefix}{conversation_context}"
-
-            # Truncate context to fit
-            available_context_tokens = max_tokens - total_without_context
-            if available_context_tokens > 0:
-                truncated_context = encoding.decode(
-                    context_tokens[-available_context_tokens:]
-                )
-                return f"{query_prefix}{query}{context_prefix}{truncated_context}"
-            else:
-                # No room left for context; keep full query intact
-                return f"{query_prefix}{query}"
-
-        # Query itself is too long - truncate it
-        available_query_tokens = max_tokens - prefix_tokens
-        if available_query_tokens > 0:
-            # Keep the end (recency) of the query
-            truncated_query = encoding.decode(query_tokens[-available_query_tokens:])
-            return f"{query_prefix}{truncated_query}"
-
-        # Pathological case - just return what we can
-        logger.warning("Token limit too restrictive: %s", max_tokens)
-        return encoding.decode(query_tokens[:max_tokens])
 
 
 # Module-level functions for backward compatibility and convenience

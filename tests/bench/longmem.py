@@ -870,7 +870,7 @@ Evaluate whether the actual response correctly answers the question based on the
         return results
 
     async def run_all_questions(
-        self, test_file: Path, batch_size: int = 10
+        self, test_file: Path, batch_size: int = 10, test_count: int | None = None
     ) -> tuple[list[TestResult], float]:
         """
         Run all questions in a longmemeval test file.
@@ -878,11 +878,20 @@ Evaluate whether the actual response correctly answers the question based on the
         Args:
             test_file: Path to the longmemeval JSON file
             batch_size: Number of questions to run concurrently in each batch
+            test_count: Optional number of tests to run (runs first N tests)
 
         Returns:
             Tuple of (list of test results, total duration)
         """
         questions = self.load_test_file(test_file)
+
+        # Limit to first N questions if test_count is specified
+        if test_count is not None and test_count > 0:
+            questions = questions[:test_count]
+            print(
+                f"limiting to first {len(questions)} {'question' if len(questions) == 1 else 'questions'} from {test_file}"
+            )
+
         print(
             f"found {len(questions)} {'question' if len(questions) == 1 else 'questions'} in {test_file}"
         )
@@ -1140,6 +1149,7 @@ Examples:
   %(prog)s --test-file tests/bench/longmemeval_data/longmemeval_s.json    # Run longmemeval tests
   %(prog)s --test-file test.json --pool-size 4                            # Use 4 Honcho instances
   %(prog)s --test-file test.json --base-api-port 8000 --pool-size 4       # Custom base port with pool
+  %(prog)s --test-file test.json --test-count 50                          # Run only first 50 tests
         """,
     )
 
@@ -1208,6 +1218,12 @@ Examples:
         help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
     )
 
+    parser.add_argument(
+        "--test-count",
+        type=int,
+        help="Number of tests to run from the test file (default: all tests)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -1221,6 +1237,10 @@ Examples:
 
     if args.pool_size <= 0:
         print(f"Error: Pool size must be positive, got {args.pool_size}")
+        return 1
+
+    if args.test_count is not None and args.test_count <= 0:
+        print(f"Error: Test count must be positive, got {args.test_count}")
         return 1
 
     # Create test runner
@@ -1237,7 +1257,7 @@ Examples:
     try:
         # Run all questions
         results, total_elapsed = await runner.run_all_questions(
-            args.test_file, args.batch_size
+            args.test_file, args.batch_size, args.test_count
         )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
 

@@ -1,6 +1,6 @@
 import datetime
 import ipaddress
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Self
 from urllib.parse import urlparse
 
 import tiktoken
@@ -15,6 +15,7 @@ from pydantic import (
 
 from src.config import settings
 from src.utils.representation import Representation
+from src.utils.types import DocumentLevel
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -407,7 +408,7 @@ class DocumentCreate(DocumentBase):
     session_name: str = Field(
         description="The session from which the document was derived"
     )
-    level: Literal["explicit", "deductive"] = Field(
+    level: DocumentLevel = Field(
         default="explicit",
         description="The level of the document (explicit or deductive)",
     )
