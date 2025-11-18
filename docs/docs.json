@@ -16,7 +16,7 @@
       {
         "version": "v2.4.2",
         "api": {
-          "openapi": ["openapi.documented.yml"]
+          "openapi": ["openapi.json"]
         },
         "tabs": [
           {
