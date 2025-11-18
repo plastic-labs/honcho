@@ -68,6 +68,8 @@ def constraint_exists(
     elif type == "primary":
         constraint = inspector.get_pk_constraint(table_name, schema=schema)
         return constraint["name"] == constraint_name
+    elif type == "foreignkey":
+        constraints = inspector.get_foreign_keys(table_name, schema=schema)
     else:
         raise ValueError(f"Invalid constraint type: {type}")
     return any(constraint["name"] == constraint_name for constraint in constraints)

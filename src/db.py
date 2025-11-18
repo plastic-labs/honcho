@@ -47,7 +47,7 @@ SessionLocal = async_sessionmaker(
 
 # Define your naming convention
 convention = {
-    "ix": "ix_%(column_0_N_label)s",  # Index - supports multi-column
+    "ix": "ix_%(table_name)s_%(column_0_N_name)s",  # Index - supports multi-column
     "uq": "uq_%(table_name)s_%(column_0_N_name)s",  # Unique constraint - supports multi-column
     "ck": "ck_%(table_name)s_%(constraint_name)s",  # Check constraint
     "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",  # Foreign key - supports composite keys
