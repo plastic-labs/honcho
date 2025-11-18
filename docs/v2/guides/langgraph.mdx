@@ -1,13 +1,13 @@
 ---
 title: "LangGraph Integration"
 icon: 'diagram-project'
-description: "Build stateful conversational AI agents with LangGraph and Honcho"
+description: "Build a stateful conversational AI agent with LangGraph and Honcho"
 sidebarTitle: 'LangGraph'
 ---
 
 Integrate Honcho with LangGraph to build conversational AI agents that maintain memory across sessions. This guide shows you how to use Honcho's memory layer with LangGraph's orchestration.
 
-> The full code is available on [GitHub](https://github.com/plastic-labs/discord-python-starter)
+> The full code is available on [GitHub](https://github.com/plastic-labs/honcho/examples/langgraph_integration.py)
 
 ## Setup and Initialization
 
@@ -15,7 +15,6 @@ Integrate Honcho with LangGraph to build conversational AI agents that maintain 
 
 - Honcho API key from [app.honcho.dev](https://app.honcho.dev) (Unless running locally)
 - LLM API key (This tutorial uses OpenAI)
-- Python 3.9+ & Node.js 18+
 
 ### Installation
 
@@ -93,6 +92,7 @@ import { Honcho } from "@honcho-ai/sdk";
 import OpenAI from "openai";
 import { Annotation } from "@langchain/langgraph";
 import { StateGraph, START, END } from "@langchain/langgraph";
+import * as readline from "readline/promises";
 
 dotenv.config();
 
@@ -229,8 +229,6 @@ if __name__ == "__main__":
 ```
 
 ```typescript TypeScript
-import * as readline from "readline/promises";
-
 async function runConversation(
   userId: string,
   userInput: string,
