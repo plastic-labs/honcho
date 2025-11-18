@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config import settings
+from src.config import LLMComponentSettings, settings
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.logging import conditional_observe
 from src.utils.representation import PromptRepresentation
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
+
+# Context variable to track retry attempts for provider switching
+_current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
 CLIENTS: dict[
     SupportedProviders,
@@ -106,8 +110,7 @@ class HonchoLLMCallStreamChunk(BaseModel):
 
 @overload
 async def honcho_llm_call(
-    provider: SupportedProviders,
-    model: str,
+    llm_settings: LLMComponentSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -127,8 +130,7 @@ async def honcho_llm_call(
 
 @overload
 async def honcho_llm_call(
-    provider: SupportedProviders,
-    model: str,
+    llm_settings: LLMComponentSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -147,8 +149,7 @@ async def honcho_llm_call(
 
 @overload
 async def honcho_llm_call(
-    provider: SupportedProviders,
-    model: str,
+    llm_settings: LLMComponentSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -167,8 +168,7 @@ async def honcho_llm_call(
 
 @conditional_observe(name="LLM Call")
 async def honcho_llm_call(
-    provider: SupportedProviders,
-    model: str,
+    llm_settings: LLMComponentSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -183,51 +183,143 @@ async def honcho_llm_call(
     retry_attempts: int = 3,
     stream: bool = False,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
-    client = CLIENTS.get(provider)
-    if not client:
-        raise ValueError(f"Missing client for {provider}")
+    """
+    Make an LLM call with automatic backup provider failover. Backup provider/model
+    is used on the final retry attempt, which is 3 by default.
 
-    decorated = honcho_llm_call_inner
+    Args:
+        llm_settings: Settings object containing PROVIDER, MODEL,
+                     BACKUP_PROVIDER, and BACKUP_MODEL
+        prompt: The prompt to send to the LLM
+        max_tokens: Maximum tokens to generate
+        track_name: Optional name for AI tracking
+        response_model: Optional Pydantic model for structured output
+        json_mode: Whether to use JSON mode
+        stop_seqs: Stop sequences
+        reasoning_effort: OpenAI reasoning effort (GPT-5 only)
+        verbosity: OpenAI verbosity (GPT-5 only)
+        thinking_budget_tokens: Anthropic thinking budget
+        enable_retry: Whether to enable retry with exponential backoff
+        retry_attempts: Number of retry attempts
+        stream: Whether to stream the response
+
+    Returns:
+        HonchoLLMCallResponse or AsyncIterator depending on stream parameter
+
+    Raises:
+        ValueError: If provider is not configured
+    """
+    # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
+    _current_attempt.set(1)
+
+    async def _call_with_provider_selection() -> (
+        HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+    ):
+        """
+        Inner function that selects provider/model based on current attempt.
+        This function is retried, so provider selection happens on each attempt.
+        """
+        attempt = _current_attempt.get()
+
+        # Use backup on final retry attempt (when attempt == retry_attempts)
+        if (
+            attempt == retry_attempts
+            and llm_settings.BACKUP_PROVIDER is not None
+            and llm_settings.BACKUP_MODEL is not None
+            and llm_settings.BACKUP_PROVIDER in CLIENTS
+        ):
+            provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
+            model: str = llm_settings.BACKUP_MODEL
+            logger.info(
+                f"Final retry attempt {attempt}: switching from "
+                + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
+                + f"backup {provider}/{model}"
+            )
+
+            # Filter out incompatible parameters when using backup
+            thinking_budget = thinking_budget_tokens
+            gpt5_reasoning_effort = reasoning_effort
+            gpt5_verbosity = verbosity
+
+            if provider != "anthropic" and thinking_budget:
+                logger.warning(
+                    f"thinking_budget_tokens not supported by {provider}, ignoring"
+                )
+                thinking_budget = None
+
+            if "gpt-5" not in model and (gpt5_reasoning_effort or gpt5_verbosity):
+                logger.warning(
+                    "reasoning_effort/verbosity only supported by GPT-5 models, ignoring"
+                )
+                gpt5_reasoning_effort = None
+                gpt5_verbosity = None
+        else:
+            provider = llm_settings.PROVIDER
+            model = llm_settings.MODEL
+            thinking_budget = thinking_budget_tokens
+            gpt5_reasoning_effort = reasoning_effort
+            gpt5_verbosity = verbosity
+
+        # Validate client exists
+        client = CLIENTS.get(provider)
+        if not client:
+            raise ValueError(f"Missing client for {provider}")
+
+        if stream:
+            return await honcho_llm_call_inner(
+                provider,
+                model,
+                prompt,
+                max_tokens,
+                response_model,
+                json_mode,
+                stop_seqs,
+                gpt5_reasoning_effort,
+                gpt5_verbosity,
+                thinking_budget,
+                True,  # type: ignore[arg-type]
+            )
+        else:
+            return await honcho_llm_call_inner(
+                provider,
+                model,
+                prompt,
+                max_tokens,
+                response_model,
+                json_mode,
+                stop_seqs,
+                gpt5_reasoning_effort,
+                gpt5_verbosity,
+                thinking_budget,
+                False,  # type: ignore[arg-type]
+            )
+
+    decorated = _call_with_provider_selection
 
     # apply tracking
     if track_name:
         decorated = ai_track(track_name)(decorated)
 
-    # apply retry logic
+    # apply retry logic - retries on ANY exception
     if enable_retry:
+
+        def before_retry_callback(retry_state: Any) -> None:
+            """Update attempt counter before each retry."""
+            _current_attempt.set(retry_state.attempt_number)
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            if exc:
+                logger.warning(
+                    f"Error on attempt {retry_state.attempt_number} with "
+                    + f"{llm_settings.PROVIDER}/{llm_settings.MODEL}: {exc}"
+                )
+
         decorated = retry(
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
+            before_sleep=before_retry_callback,
         )(decorated)
 
-    if stream:
-        return await decorated(
-            provider,
-            model,
-            prompt,
-            max_tokens,
-            response_model,
-            json_mode,
-            stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
-            True,
-        )
-    else:
-        return await decorated(
-            provider,
-            model,
-            prompt,
-            max_tokens,
-            response_model,
-            json_mode,
-            stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
-            False,
-        )
+    return await decorated()
 
 
 @overload

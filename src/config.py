@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, Protocol
 
 import tomllib
 from dotenv import load_dotenv
@@ -38,6 +38,15 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
 
 # Load TOML config once
 TOML_CONFIG = load_toml_config()
+
+
+class LLMComponentSettings(Protocol):
+    """Protocol for settings classes that use LLM providers with backup support."""
+
+    PROVIDER: SupportedProviders
+    MODEL: str
+    BACKUP_PROVIDER: SupportedProviders | None
+    BACKUP_MODEL: str | None
 
 
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -120,6 +129,26 @@ class HonchoSettings(BaseSettings):
         )
 
 
+class BackupLLMSettingsMixin:
+    """Mixin class for settings that support backup LLM provider configuration.
+
+    Provides backup provider and model fields along with validation to ensure
+    both fields are set together or both are None.
+    """
+
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_backup_configuration(self):
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
+
+
 class DBSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
@@ -183,7 +212,7 @@ class LLMSettings(HonchoSettings):
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
 
-class DeriverSettings(HonchoSettings):
+class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
@@ -199,6 +228,9 @@ class DeriverSettings(HonchoSettings):
 
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
+
+    # Whether to deduplicate documents when creating them
+    DEDUPLICATE: bool = True
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     # Thinking budget tokens are only applied when using Anthropic as provider
@@ -229,7 +261,7 @@ class DeriverSettings(HonchoSettings):
         return self
 
 
-class PeerCardSettings(HonchoSettings):
+class PeerCardSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
@@ -240,7 +272,7 @@ class PeerCardSettings(HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=1000, le=10_000)] = 4000
 
 
-class DialecticSettings(HonchoSettings):
+class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
 
     PROVIDER: SupportedProviders = "anthropic"
@@ -264,7 +296,7 @@ class DialecticSettings(HonchoSettings):
     ] = 100_000
 
 
-class SummarySettings(HonchoSettings):
+class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
@@ -309,7 +341,7 @@ class CacheSettings(HonchoSettings):
     )
 
 
-class DreamSettings(HonchoSettings):
+class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True

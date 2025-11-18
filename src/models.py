@@ -388,7 +388,6 @@ class Document(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
-        CheckConstraint("level IN ('explicit', 'deductive')", name="level_valid"),
         # Composite foreign key constraint for collections
         ForeignKeyConstraint(
             ["observer", "observed", "workspace_name"],
