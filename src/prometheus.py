@@ -98,12 +98,14 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
 # Incremented in: src/deriver/deriver.py after the critical analysis call is made
 # Labels:
 #   - task_type: The type of task that processed the tokens (e.g., "representation")
+#   - token_type: The type of tokens ("input" or "output")
 DERIVER_TOKENS_PROCESSED = NamespacedCounter(
-    "tokens_processed_total",
-    "Total tokens processed",
+    "deriver_tokens_processed_total",
+    "Total tokens processed by the deriver",
     [
         "namespace",
         "task_type",
+        "token_type",
     ],
 )
 

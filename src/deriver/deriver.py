@@ -41,7 +41,6 @@ async def critical_analysis_call(
     working_representation: Representation,
     history: str,
     new_turns: list[str],
-    estimated_input_tokens: int,
 ) -> PromptRepresentation:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
@@ -70,7 +69,8 @@ async def critical_analysis_call(
 
     prometheus.DERIVER_TOKENS_PROCESSED.labels(
         task_type="representation",
-    ).inc(response.output_tokens + estimated_input_tokens)
+        token_type="output",  # nosec B106
+    ).inc(response.output_tokens)
 
     return response.content
 
@@ -341,8 +341,11 @@ class CertaintyReasoner:
                 working_representation=working_representation,
                 history=history,
                 new_turns=new_turns,
-                estimated_input_tokens=self.estimated_input_tokens,
             )
+            prometheus.DERIVER_TOKENS_PROCESSED.labels(
+                task_type="critical_analysis",
+                token_type="input",  # nosec B106
+            ).inc(self.estimated_input_tokens)
         except Exception as e:
             raise exceptions.LLMError(
                 speaker_peer_card=speaker_peer_card,
