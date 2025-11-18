@@ -72,8 +72,7 @@ async def dialectic_call(
     )
 
     response = await honcho_llm_call(
-        provider=settings.DIALECTIC.PROVIDER,
-        model=settings.DIALECTIC.MODEL,
+        llm_settings=settings.DIALECTIC,
         prompt=prompt,
         max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
         track_name="Dialectic Call",
@@ -128,8 +127,7 @@ async def dialectic_stream(
     )
 
     response = await honcho_llm_call(
-        provider=settings.DIALECTIC.PROVIDER,
-        model=settings.DIALECTIC.MODEL,
+        llm_settings=settings.DIALECTIC,
         prompt=prompt,
         max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
         track_name="Dialectic Stream",

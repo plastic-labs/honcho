@@ -123,8 +123,7 @@ Produce as thorough a summary as possible in {output_words} words or less.
 """)
 
     return await honcho_llm_call(
-        provider=settings.SUMMARY.PROVIDER,
-        model=settings.SUMMARY.MODEL,
+        llm_settings=settings.SUMMARY,
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
     )
@@ -172,8 +171,7 @@ Produce as thorough a summary as possible in {output_words} words or less.
 """)
 
     return await honcho_llm_call(
-        provider=settings.SUMMARY.PROVIDER,
-        model=settings.SUMMARY.MODEL,
+        llm_settings=settings.SUMMARY,
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
     )
