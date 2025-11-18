@@ -176,12 +176,22 @@ async def dialectic_stream(
     logger.debug(prompt)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    # Track input tokens in prometheus (output tokens not available for streaming)
+    # Track input tokens in prometheus
+    # Note: Output tokens are available in the final chunk of the stream (is_done=True)
     prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
         token_type="input",  # nosec B106
     ).inc(estimated_input_tokens)
 
-    return response
+    # Wrap the response to log output tokens from final chunk
+    async def log_streaming_response():
+        async for chunk in response:
+            if chunk.is_done and chunk.output_tokens:
+                prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+                    token_type="output",  # nosec B106
+                ).inc(chunk.output_tokens)
+            yield chunk
+
+    return log_streaming_response()
 
 
 @conditional_observe(name="Dialectic")
