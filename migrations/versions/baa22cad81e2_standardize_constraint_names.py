@@ -16,7 +16,7 @@ from migrations.utils import constraint_exists, get_schema, index_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "baa22cad81e2"
-down_revision: str | None = "b8183c5ffb48"
+down_revision: str | None = "29ade7350c19"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
