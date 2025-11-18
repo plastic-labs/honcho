@@ -109,6 +109,20 @@ DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     ],
 )
 
+# Tracks the total number of input and output tokens processed by the dialectic.
+#
+# Incremented in: src/dialectic/chat.py after the dialectic call is made
+# Labels:
+#   - token_type: The type of tokens ("input" or "output")
+DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
+    "dialectic_tokens_processed_total",
+    "Total tokens processed by the dialectic",
+    [
+        "namespace",
+        "token_type",
+    ],
+)
+
 
 async def metrics() -> StarletteResponse:
     """Prometheus metrics endpoint"""
