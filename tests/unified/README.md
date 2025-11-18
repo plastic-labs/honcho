@@ -31,28 +31,28 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
 
 ### Actions
 
-1.  **Configuration**:
-    *   `set_workspace_config`: Update workspace settings.
-    *   `set_session_config`: Update session settings.
+1. **Configuration**:
+    * `set_workspace_config`: Update workspace settings.
+    * `set_session_config`: Update session settings.
 
-2.  **Interaction**:
-    *   `create_session`: Create a new session, optionally with peers and config.
-    *   `add_message`: Add a single message.
-    *   `add_messages`: Add multiple messages.
+2. **Interaction**:
+    * `create_session`: Create a new session, optionally with peers and config.
+    * `add_message`: Add a single message.
+    * `add_messages`: Add multiple messages.
 
-3.  **Waiting**:
-    *   `wait`: Wait for duration or "queue_empty".
+3. **Waiting**:
+    * `wait`: Wait for duration or "queue_empty".
 
-4.  **Querying & Assertions**:
-    *   `query`: Perform an action and assert on the result.
-        *   `target`: "chat", "get_context", "get_peer_card", "get_representation"
+4. **Querying & Assertions**:
+    * `query`: Perform an action and assert on the result.
+        * `target`: "chat", "get_context", "get_peer_card", "get_representation"
 
 ### Assertions
 
-*   `llm_judge`: Use Claude to evaluate the result against a natural language prompt.
-*   `contains` / `not_contains`: Substring matching.
-*   `exact_match`: Strict equality.
-*   `json_match`: specific key-value checks.
+* `llm_judge`: Use Claude to evaluate the result against a natural language prompt.
+* `contains` / `not_contains`: Substring matching.
+* `exact_match`: Strict equality.
+* `json_match`: specific key-value checks.
 
 ## Example
 
@@ -94,4 +94,3 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
   ]
 }
 ```
-

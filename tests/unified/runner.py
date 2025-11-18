@@ -242,12 +242,12 @@ class UnifiedTestExecutor:
 
             prompt = f"""
             You are evaluating a test result.
-            
+
             Task: {assertion.prompt}
-            
+
             Actual Result:
             {result_str}
-            
+
             Use the submit_verdict tool to submit your decision.
             """
 
