@@ -55,8 +55,7 @@ async def critical_analysis_call(
     )
 
     response = await honcho_llm_call(
-        provider=settings.DERIVER.PROVIDER,
-        model=settings.DERIVER.MODEL,
+        llm_settings=settings.DERIVER,
         prompt=prompt,
         max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
         or settings.LLM.DEFAULT_MAX_TOKENS,
@@ -92,8 +91,7 @@ async def peer_card_call(
     )
 
     response = await honcho_llm_call(
-        provider=settings.PEER_CARD.PROVIDER,
-        model=settings.PEER_CARD.MODEL,
+        llm_settings=settings.PEER_CARD,
         prompt=prompt,
         max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS
         or settings.LLM.DEFAULT_MAX_TOKENS,
