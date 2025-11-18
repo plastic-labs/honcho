@@ -95,6 +95,9 @@ def upgrade() -> None:
     # INDEX RENAMES (using raw SQL)
     # ============================================================
 
+    # Refresh inspector after constraint renames to ensure we see current state
+    inspector = sa.inspect(conn)
+
     # Collections
     if index_exists("collections", "idx_collections_observed", inspector):
         conn.execute(
@@ -225,6 +228,16 @@ def upgrade() -> None:
     if index_exists("workspaces", "ix_workspaces_name", inspector):
         op.drop_index("ix_workspaces_name", table_name="workspaces", schema=schema)
 
+    # Drop redundant index on active_queue_sessions.work_unit_key (unique constraint auto-creates index)
+    if index_exists(
+        "active_queue_sessions", "ix_active_queue_sessions_work_unit_key", inspector
+    ):
+        op.drop_index(
+            "ix_active_queue_sessions_work_unit_key",
+            table_name="active_queue_sessions",
+            schema=schema,
+        )
+
     # Drop old queue indexes that will be replaced
     if index_exists("queue", "ix_queue_work_unit_key_processed_id", inspector):
         op.drop_index(
@@ -270,9 +283,69 @@ def upgrade() -> None:
             type_="foreignkey",
         )
 
+    # ============================================================
+    # FIX FK CASCADE (message_embeddings -> messages)
+    # ============================================================
+
+    # Refresh inspector to get latest state after potential renames
+    inspector = sa.inspect(conn)
+
+    # Drop and recreate FK with ON DELETE CASCADE
+    # This FK should exist at this point either from:
+    # 1. Being renamed from old name "message_embeddings_message_id_fkey", or
+    # 2. Already having the new name "fk_message_embeddings_message_id_messages" (from main branch)
+    if constraint_exists(
+        "message_embeddings",
+        "fk_message_embeddings_message_id_messages",
+        "foreignkey",
+        inspector,
+    ):
+        conn.execute(
+            text(
+                f"ALTER TABLE {schema}.message_embeddings DROP CONSTRAINT fk_message_embeddings_message_id_messages"
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                ALTER TABLE {schema}.message_embeddings
+                ADD CONSTRAINT fk_message_embeddings_message_id_messages
+                FOREIGN KEY (message_id) REFERENCES {schema}.messages(public_id)
+                ON DELETE CASCADE
+                """
+            )
+        )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
+    inspector = sa.inspect(conn)
+
+    # ============================================================
+    # REVERSE: FIX FK CASCADE (message_embeddings -> messages)
+    # ============================================================
+
+    # Drop FK with CASCADE and recreate without CASCADE
+    if constraint_exists(
+        "message_embeddings",
+        "fk_message_embeddings_message_id_messages",
+        "foreignkey",
+        inspector,
+    ):
+        conn.execute(
+            text(
+                f"ALTER TABLE {schema}.message_embeddings DROP CONSTRAINT fk_message_embeddings_message_id_messages"
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                ALTER TABLE {schema}.message_embeddings
+                ADD CONSTRAINT fk_message_embeddings_message_id_messages
+                FOREIGN KEY (message_id) REFERENCES {schema}.messages(public_id)
+                """
+            )
+        )
 
     # ============================================================
     # REVERSE: NEW INDEXES AND FKS
@@ -298,6 +371,14 @@ def downgrade() -> None:
     # REVERSE: INDEX DELETIONS (recreate them)
     # ============================================================
 
+    # Recreate redundant index on active_queue_sessions.work_unit_key
+    op.create_index(
+        "ix_active_queue_sessions_work_unit_key",
+        "active_queue_sessions",
+        ["work_unit_key"],
+        unique=False,
+        schema=schema,
+    )
     op.create_index(
         "ix_queue_workspace_name_processed",
         "queue",
