@@ -1,0 +1,102 @@
+{
+  "name": "observation_3peer_multiple_observers_one_observed",
+  "description": "Test multiple observers watching single peer - Bob and Charlie both observe Alice",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_all_watch_alice",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "charlie": {
+          "observe_me": null,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_all_watch_alice",
+      "messages": [
+        { "peer_id": "alice", "content": "I'm a professional dancer." },
+        { "peer_id": "bob", "content": "What style do you dance?" },
+        { "peer_id": "alice", "content": "I specialize in contemporary and ballet." },
+        { "peer_id": "charlie", "content": "How long have you been dancing?" },
+        { "peer_id": "alice", "content": "I've been dancing for 15 years, started when I was 5." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_all_watch_alice",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob's local representation of Alice contains information about Alice being a professional dancer specializing in contemporary and ballet.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "alice",
+      "session_id": "session_all_watch_alice",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Charlie's local representation of Alice contains information about Alice being a professional dancer who has been dancing for 15 years.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "charlie",
+      "session_id": "session_all_watch_alice",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "bob",
+      "session_id": "session_all_watch_alice",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

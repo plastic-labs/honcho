@@ -1,0 +1,65 @@
+{
+  "name": "observation_2peer_bidirectional",
+  "description": "Test bidirectional observation - both peers observe each other",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_bidirectional",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_bidirectional",
+      "messages": [
+        { "peer_id": "alice", "content": "I work as a software engineer." },
+        { "peer_id": "bob", "content": "I'm a high school teacher." },
+        { "peer_id": "alice", "content": "I specialize in backend development." },
+        { "peer_id": "bob", "content": "I teach mathematics and physics." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_bidirectional",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob contains information about Bob being a high school teacher who teaches mathematics and physics.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_bidirectional",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob's local representation of Alice contains information about Alice being a software engineer specializing in backend development.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

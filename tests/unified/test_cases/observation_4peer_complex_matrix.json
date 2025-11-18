@@ -1,0 +1,133 @@
+{
+  "name": "observation_4peer_complex_matrix",
+  "description": "Test complex 4-peer scenario with mixed observation patterns",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_four_peer",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "charlie": {
+          "observe_me": false,
+          "observe_others": true
+        },
+        "diana": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_four_peer",
+      "messages": [
+        { "peer_id": "alice", "content": "I'm a neurologist." },
+        { "peer_id": "bob", "content": "I'm a lawyer." },
+        { "peer_id": "charlie", "content": "I'm an undercover agent." },
+        { "peer_id": "diana", "content": "I'm a pharmacist." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_four_peer",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice observes Bob (should contain lawyer info).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "charlie",
+      "session_id": "session_four_peer",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_four_peer",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob observes Alice (should contain neurologist info).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "alice",
+      "session_id": "session_four_peer",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Charlie observes Alice (should contain neurologist info, even though Charlie has observe_me=false).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "diana",
+      "session_id": "session_four_peer",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice observes Diana (should contain pharmacist info).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "diana",
+      "observed_peer_id": "alice",
+      "session_id": "session_four_peer",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

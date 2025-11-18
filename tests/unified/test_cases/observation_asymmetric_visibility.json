@@ -1,0 +1,106 @@
+{
+  "name": "observation_asymmetric_visibility",
+  "description": "Test asymmetric visibility scenario from documentation - Alice lies to Bob but tells truth to Charlie",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_alice_bob",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_alice_bob",
+      "messages": [
+        { "peer_id": "alice", "content": "I had a great breakfast today." },
+        { "peer_id": "bob", "content": "What did you eat?" },
+        { "peer_id": "alice", "content": "I had pancakes and eggs and bacon." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "session_alice_charlie",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "charlie": {
+          "observe_me": null,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_alice_charlie",
+      "messages": [
+        { "peer_id": "alice", "content": "I actually didn't eat any breakfast today." },
+        { "peer_id": "charlie", "content": "Oh that's too bad." },
+        { "peer_id": "alice", "content": "But I lied to Bob and told him I did, so back me up if you see them." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_alice_bob",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob's local representation of Alice (from their session) shows Alice had pancakes, eggs, and bacon for breakfast. This should reflect what Bob observed.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "alice",
+      "session_id": "session_alice_charlie",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Charlie's local representation of Alice (from their session) shows Alice didn't eat breakfast and lied to Bob. This should reflect what Charlie observed.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_alice_bob",
+      "input": "What did Alice eat for breakfast today?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if the response indicates Alice had pancakes, eggs, and bacon (based on Bob's local perspective of Alice).",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

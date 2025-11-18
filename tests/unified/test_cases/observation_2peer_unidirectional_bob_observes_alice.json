@@ -1,0 +1,67 @@
+{
+  "name": "observation_2peer_unidirectional_bob_observes_alice",
+  "description": "Test unidirectional observation - Bob observes Alice, Alice does not observe Bob",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_uni_b_to_a",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_uni_b_to_a",
+      "messages": [
+        { "peer_id": "alice", "content": "I play guitar in a band." },
+        { "peer_id": "bob", "content": "I enjoy listening to classical music." },
+        { "peer_id": "alice", "content": "We mostly play rock and blues." },
+        { "peer_id": "bob", "content": "Mozart is my favorite composer." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_uni_b_to_a",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob's local representation of Alice contains information about Alice playing guitar in a band and playing rock and blues.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_uni_b_to_a",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

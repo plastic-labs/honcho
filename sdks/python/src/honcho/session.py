@@ -9,7 +9,6 @@ from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import (
     MessageCreateParam,
-    Observation,
     ObservationQueryResponse,
 )
 from honcho_core.types.workspaces.sessions.message import Message
@@ -712,35 +711,6 @@ class Session(BaseModel):
             filters=filters,
             limit=limit,
         )
-
-    @validate_call
-    def list_observations(
-        self,
-        filters: dict[str, object] | None = Field(
-            None, description="Filters to scope the observations"
-        ),
-    ) -> SyncPage[Observation]:
-        """
-        List all observations for this session.
-
-        Observations are theory-of-mind data (documents) that peers have formed about each other.
-        Returns paginated results that can be filtered by observer_id and observed_id.
-
-        Args:
-            filters: Optional filters to scope the observations. See [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-
-        Returns:
-            A paginated list of Observation objects.
-
-        Example:
-            >>> observations = session.list_observations()
-            >>> for observation in observations:
-            ...     print(f"{observation.observer_id} observed: {observation.content}")
-        """
-        response = self._client.workspaces.sessions.observations.list(
-            self.id, workspace_id=self.workspace_id, filters=filters
-        )
-        return SyncPage(response)
 
     @validate_call
     def query_observations(

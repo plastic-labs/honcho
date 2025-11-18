@@ -1,0 +1,57 @@
+{
+  "name": "config_summary_control_deriver_off",
+  "description": "Test summary generation control with deriver disabled",
+  "workspace_config": {
+    "deriver": { "enabled": false },
+    "summary": { "enabled": false }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_summary",
+      "config": {
+        "summary": {
+            "enabled": true,
+            "messages_per_short_summary": 10,
+            "messages_per_long_summary": 20
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_summary",
+      "messages": [
+        { "peer_id": "eve", "content": "1" },
+        { "peer_id": "eve", "content": "2" },
+        { "peer_id": "eve", "content": "3" },
+        { "peer_id": "eve", "content": "4" },
+        { "peer_id": "eve", "content": "5" },
+        { "peer_id": "eve", "content": "6" },
+        { "peer_id": "eve", "content": "7" },
+        { "peer_id": "eve", "content": "8" },
+        { "peer_id": "eve", "content": "9" },
+        { "peer_id": "eve", "content": "10" },
+        { "peer_id": "eve", "content": "11" }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_context",
+      "session_id": "session_summary",
+      "summary": true,
+      "observer_peer_id": "eve",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if 'summary' field is present and not null in the context.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
+

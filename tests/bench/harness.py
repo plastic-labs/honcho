@@ -613,7 +613,7 @@ except Exception as e:
 
         print("=" * 60)
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         """
         Clean up resources and stop all processes.
         """
@@ -679,7 +679,7 @@ except Exception as e:
 
         # Close cache
         try:
-            asyncio.run(self.close_cache())
+            await self.close_cache()
         except Exception as e:
             print(f"Error closing cache: {e}")
 
@@ -782,7 +782,7 @@ except Exception as e:
         except Exception as e:
             print(f"❌ Error: {e}")
         finally:
-            self.cleanup()
+            await self.cleanup()
 
 
 class HonchoHarnessPool:
@@ -944,16 +944,16 @@ class HonchoHarnessPool:
         except Exception as e:
             print(f"❌ Error: {e}")
         finally:
-            self.cleanup()
+            await self.cleanup()
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         """
         Clean up all harnesses in the pool.
         """
         print("\nCleaning up pool...")
         for harness in self.harnesses:
             print(f"\n--- Cleaning up Instance {harness.instance_id} ---")
-            harness.cleanup()
+            await harness.cleanup()
 
 
 def main():

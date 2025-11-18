@@ -1,0 +1,67 @@
+{
+  "name": "observation_2peer_observe_me_false_but_can_still_observe_others",
+  "description": "Test that a peer with observe_me=false can still observe others (observe_others=true)",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_invisible_observer",
+      "peer_configs": {
+        "alice": {
+          "observe_me": false,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_invisible_observer",
+      "messages": [
+        { "peer_id": "alice", "content": "I'm a secret agent." },
+        { "peer_id": "bob", "content": "I work in retail management." },
+        { "peer_id": "alice", "content": "Tell me more about your work." },
+        { "peer_id": "bob", "content": "I manage a team of 20 people at a department store." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_invisible_observer",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob contains information about Bob working in retail management with a team of 20 people.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_invisible_observer",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

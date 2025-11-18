@@ -1,0 +1,91 @@
+{
+  "name": "observation_isolation_between_sessions",
+  "description": "Test that local representations are isolated between sessions - same peers in different sessions have different local reps",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_work",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_work",
+      "messages": [
+        { "peer_id": "bob", "content": "I'm working on the quarterly report." },
+        { "peer_id": "alice", "content": "Let me know if you need help with the data analysis." },
+        { "peer_id": "bob", "content": "I'm focusing on the sales figures." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "session_personal",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_personal",
+      "messages": [
+        { "peer_id": "bob", "content": "I went skydiving last weekend!" },
+        { "peer_id": "alice", "content": "That sounds thrilling!" },
+        { "peer_id": "bob", "content": "It was my first time and I loved it." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_work",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob in the work session contains information about quarterly reports and sales figures, but NOT about skydiving.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_personal",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob in the personal session contains information about skydiving, but NOT about quarterly reports or sales figures.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

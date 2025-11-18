@@ -1,0 +1,95 @@
+{
+  "name": "observation_2peer_default",
+  "description": "Test default observation behavior - no local representations should be created",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_default",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_default",
+      "messages": [
+        { "peer_id": "alice", "content": "I love hiking in the mountains." },
+        { "peer_id": "bob", "content": "I prefer swimming at the beach." },
+        { "peer_id": "alice", "content": "Mountains are peaceful and serene." },
+        { "peer_id": "bob", "content": "The ocean is my happy place." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_default",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_default",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "session_id": "session_default",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if there are facts about hiking and mountains in Alice's global representation.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "session_id": "session_default",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if there are facts about swimming and beach in Bob's global representation.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

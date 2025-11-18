@@ -1,0 +1,44 @@
+{
+  "name": "config_peercard_control",
+  "description": "Test peer card generation control",
+  "workspace_config": {
+    "deriver": { "enabled": true },
+    "peer_card": { "create": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_peercard",
+      "config": {
+        "peer_card": { "create": false }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_peercard",
+      "messages": [
+        { "peer_id": "dave", "content": "My name is Dave." },
+        { "peer_id": "dave", "content": "I am a software engineer." },
+        { "peer_id": "dave", "content": "I like python." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_peer_card",
+      "observer_peer_id": "dave",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "peer_card": null
+          }
+        }
+      ]
+    }
+  ]
+}
+

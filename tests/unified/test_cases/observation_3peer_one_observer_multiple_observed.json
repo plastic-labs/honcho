@@ -1,0 +1,102 @@
+{
+  "name": "observation_3peer_one_observer_multiple_observed",
+  "description": "Test single observer watching multiple peers - Alice observes both Bob and Charlie",
+  "workspace_config": {
+    "deriver": { "enabled": true }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_alice_watches_all",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "charlie": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_alice_watches_all",
+      "messages": [
+        { "peer_id": "bob", "content": "I'm training for a marathon." },
+        { "peer_id": "charlie", "content": "I'm learning to play chess." },
+        { "peer_id": "alice", "content": "That's impressive, both of you!" },
+        { "peer_id": "bob", "content": "I run 5 miles every morning." },
+        { "peer_id": "charlie", "content": "I practice chess tactics for an hour daily." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_alice_watches_all",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob contains information about Bob training for a marathon and running 5 miles every morning.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "charlie",
+      "session_id": "session_alice_watches_all",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Charlie contains information about Charlie learning chess and practicing tactics daily.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_alice_watches_all",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "alice",
+      "session_id": "session_alice_watches_all",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

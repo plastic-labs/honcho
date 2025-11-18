@@ -1,0 +1,54 @@
+{
+  "name": "config_message_positive_override",
+  "description": "Test message-level deriver override",
+  "workspace_config": {
+    "deriver": { "enabled": false }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_msg_override"
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_msg_override",
+      "messages": [
+        {
+          "peer_id": "charlie",
+          "content": "This message should be derived.",
+          "config": {
+            "deriver": { "enabled": true }
+          }
+        },
+        {
+            "peer_id": "charlie",
+            "content": "This one should not.",
+            "config": {
+                "deriver": { "enabled": false }
+            }
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "session_id": "session_msg_override",
+      "assertions": [
+        {
+            "assertion_type": "contains",
+            "text": "should be derived"
+        },
+        {
+            "assertion_type": "not_contains",
+            "text": "This one should not"
+        }
+      ]
+    }
+  ]
+}
+
