@@ -10,6 +10,7 @@ from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
 from src.models import Message
+from src.schemas import ResolvedConfiguration
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
 from src.utils.queue_payload import (
@@ -89,6 +90,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 message_id,
                 validated.message_seq_in_session,
                 message_public_id,
+                validated.configuration,
             )
             log_performance_metrics("summary", f"{workspace_name}_{message_id}")
 
@@ -110,6 +112,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
 
 async def process_representation_batch(
     messages: list[Message],
+    message_level_configuration: ResolvedConfiguration | None,
     *,
     observer: str | None,
     observed: str | None,
@@ -133,5 +136,8 @@ async def process_representation_batch(
     )
 
     await process_representation_tasks_batch(
-        messages, observer=observer, observed=observed
+        messages,
+        message_level_configuration,
+        observer=observer,
+        observed=observed,
     )

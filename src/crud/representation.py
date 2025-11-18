@@ -13,7 +13,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
-from src.schemas import ResolvedSessionConfiguration
+from src.schemas import ResolvedConfiguration
 from src.utils.formatting import format_datetime_utc
 from src.utils.logging import accumulate_metric
 from src.utils.representation import (
@@ -48,7 +48,7 @@ class RepresentationManager:
         message_id_range: tuple[int, int],
         session_name: str,
         message_created_at: datetime.datetime,
-        session_level_configuration: ResolvedSessionConfiguration,
+        message_level_configuration: ResolvedConfiguration,
     ) -> int:
         """
         Save Representation objects to the collection as a set of documents.
@@ -103,7 +103,7 @@ class RepresentationManager:
                 message_id_range,
                 session_name,
                 message_created_at,
-                session_level_configuration,
+                message_level_configuration,
             )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
@@ -124,7 +124,7 @@ class RepresentationManager:
         message_id_range: tuple[int, int],
         session_name: str,
         message_created_at: datetime.datetime,
-        session_level_configuration: ResolvedSessionConfiguration,
+        message_level_configuration: ResolvedConfiguration,
     ) -> int:
         # get_or_create_collection already handles IntegrityError with rollback and a retry
         collection = await crud.get_or_create_collection(
@@ -172,7 +172,7 @@ class RepresentationManager:
             observed=self.observed,
         )
 
-        if session_level_configuration.dreams_enabled:
+        if message_level_configuration.dream.enabled:
             try:
                 await check_and_schedule_dream(db, collection)
             except Exception as e:

@@ -19,45 +19,29 @@ from src.utils.representation import Representation
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
-class ResolvedSessionConfiguration(BaseModel):
-    """
-    Like a SessionConfiguration, but with all fields resolved.
-    """
-
-    deriver_enabled: bool
-    peer_cards_enabled: bool
-    summaries_enabled: bool
-    dreams_enabled: bool
-    messages_per_short_summary: int
-    messages_per_long_summary: int
-
-
-class SessionConfiguration(BaseModel):
-    """
-    The set of options that can be in a session DB-level configuration dictionary.
-
-    All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
-    """
-
-    model_config = ConfigDict(extra="allow")  # pyright: ignore
-
-    deriver_enabled: bool | None = Field(
+class DeriverConfiguration(BaseModel):
+    enabled: bool | None = Field(
         default=None,
         description="Whether to enable deriver functionality.",
     )
-    peer_cards_enabled: bool | None = Field(
+
+
+class PeerCardConfiguration(BaseModel):
+    use: bool | None = Field(
         default=None,
-        description="Whether to enable peer card functionality. If deriver is disabled, peer cards will also be disabled and this setting will be ignored.",
+        description="Whether to use peer card related to this peer during deriver process.",
     )
-    summaries_enabled: bool | None = Field(
+    create: bool | None = Field(
+        default=None,
+        description="Whether to generate peer card based on content.",
+    )
+
+
+class SummaryConfiguration(BaseModel):
+    enabled: bool | None = Field(
         default=None,
         description="Whether to enable summary functionality.",
     )
-    dreams_enabled: bool | None = Field(
-        default=None,
-        description="Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored.",
-    )
-
     messages_per_short_summary: int | None = Field(
         default=None,
         ge=10,
@@ -83,14 +67,96 @@ class SessionConfiguration(BaseModel):
         return self
 
 
-class WorkspaceConfiguration(SessionConfiguration):
+class DreamConfiguration(BaseModel):
+    enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored.",
+    )
+
+
+class WorkspaceConfiguration(BaseModel):
     """
     The set of options that can be in a workspace DB-level configuration dictionary.
 
     All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
     """
 
+    model_config = ConfigDict(extra="allow")  # pyright: ignore
+
+    deriver: DeriverConfiguration | None = Field(
+        default=None,
+        description="Configuration for deriver functionality.",
+    )
+    peer_card: PeerCardConfiguration | None = Field(
+        default=None,
+        description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
+    )
+    summary: SummaryConfiguration | None = Field(
+        default=None,
+        description="Configuration for summary functionality.",
+    )
+    dream: DreamConfiguration | None = Field(
+        default=None,
+        description="Configuration for dream functionality. If deriver is disabled, dreams will also be disabled and these settings will be ignored.",
+    )
+
+
+class SessionConfiguration(WorkspaceConfiguration):
+    """
+    The set of options that can be in a session DB-level configuration dictionary.
+
+    All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
+    """
+
     pass
+
+
+class MessageConfiguration(BaseModel):
+    """
+    The set of options that can be in a message DB-level configuration dictionary.
+
+    All fields are optional. Message-level configuration overrides all other configurations.
+    """
+
+    deriver: DeriverConfiguration | None = Field(
+        default=None,
+        description="Configuration for deriver functionality.",
+    )
+    peer_card: PeerCardConfiguration | None = Field(
+        default=None,
+        description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
+    )
+
+
+class ResolvedDeriverConfiguration(BaseModel):
+    enabled: bool
+
+
+class ResolvedPeerCardConfiguration(BaseModel):
+    use: bool
+    create: bool
+
+
+class ResolvedSummaryConfiguration(BaseModel):
+    enabled: bool
+    messages_per_short_summary: int
+    messages_per_long_summary: int
+
+
+class ResolvedDreamConfiguration(BaseModel):
+    enabled: bool
+
+
+class ResolvedConfiguration(BaseModel):
+    """
+    The final resolved configuration for a given message.
+    Hierarchy: message > session > workspace > global configuration
+    """
+
+    deriver: ResolvedDeriverConfiguration
+    peer_card: ResolvedPeerCardConfiguration
+    summary: ResolvedSummaryConfiguration
+    dream: ResolvedDreamConfiguration
 
 
 class WorkspaceBase(BaseModel):
@@ -231,6 +297,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=settings.MAX_MESSAGE_SIZE)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+    configuration: MessageConfiguration | None = None
     created_at: datetime.datetime | None = None
 
     _encoded_message: list[int] = PrivateAttr(default=[])

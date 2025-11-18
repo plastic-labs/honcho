@@ -9,7 +9,7 @@ from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
-from src.schemas import ResolvedSessionConfiguration
+from src.schemas import ResolvedConfiguration
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
@@ -111,6 +111,7 @@ async def peer_card_call(
 @with_sentry_transaction("process_representation_tasks_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
+    message_level_configuration: ResolvedConfiguration | None,
     *,
     observer: str,
     observed: str,
@@ -157,13 +158,17 @@ async def process_representation_tasks_batch(
     )
 
     async with tracked_db("deriver.get_peer_card") as db:
-        session_level_configuration = get_configuration(
-            await crud.get_session(
-                db, latest_message.session_name, latest_message.workspace_name
-            ),
-            await crud.get_workspace(db, workspace_name=latest_message.workspace_name),
-        )
-        if session_level_configuration.peer_cards_enabled is False:
+        if message_level_configuration is None:
+            message_level_configuration = get_configuration(
+                None,
+                await crud.get_session(
+                    db, latest_message.session_name, latest_message.workspace_name
+                ),
+                await crud.get_workspace(
+                    db, workspace_name=latest_message.workspace_name
+                ),
+            )
+        if message_level_configuration.peer_card.use is False:
             speaker_peer_card = None
         else:
             speaker_peer_card = await crud.get_peer_card(
@@ -173,7 +178,7 @@ async def process_representation_tasks_batch(
                 observed=observed,
             )
 
-    if session_level_configuration.deriver_enabled is False:
+    if message_level_configuration.deriver.enabled is False:
         return
 
     # Estimate tokens for deriver input
@@ -257,7 +262,7 @@ async def process_representation_tasks_batch(
         observed=observed,
         observer=observer,
         estimated_input_tokens=estimated_input_tokens + session_context_tokens,
-        session_level_configuration=session_level_configuration,
+        message_level_configuration=message_level_configuration,
     )
 
     # Run single-pass reasoning
@@ -300,7 +305,7 @@ class CertaintyReasoner:
     ctx: list[Message]
     observer: str
     observed: str
-    session_level_configuration: ResolvedSessionConfiguration
+    message_level_configuration: ResolvedConfiguration
 
     def __init__(
         self,
@@ -310,14 +315,14 @@ class CertaintyReasoner:
         observed: str,
         observer: str,
         estimated_input_tokens: int,
-        session_level_configuration: ResolvedSessionConfiguration,
+        message_level_configuration: ResolvedConfiguration,
     ) -> None:
         self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
         self.estimated_input_tokens: int = estimated_input_tokens
-        self.session_level_configuration = session_level_configuration
+        self.message_level_configuration = message_level_configuration
 
     @conditional_observe(name="Deriver")
     @sentry_sdk.trace
@@ -393,10 +398,10 @@ class CertaintyReasoner:
                 (earliest_message.id, latest_message.id),
                 latest_message.session_name,
                 latest_message.created_at,
-                self.session_level_configuration,
+                self.message_level_configuration,
             )
 
-        if self.session_level_configuration.peer_cards_enabled:
+        if self.message_level_configuration.peer_card.create:
             update_peer_card_start = time.perf_counter()
             if not new_observations.is_empty():
                 await self._update_peer_card(speaker_peer_card, new_observations)

@@ -144,8 +144,20 @@ def create_queue_payload() -> Callable[..., Any]:
             "message_public_id": message.public_id,
         }
 
+        configuration = schemas.ResolvedConfiguration(
+            deriver=schemas.ResolvedDeriverConfiguration(enabled=True),
+            peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
+            summary=schemas.ResolvedSummaryConfiguration(
+                enabled=True,
+                messages_per_short_summary=10,
+                messages_per_long_summary=20,
+            ),
+            dream=schemas.ResolvedDreamConfiguration(enabled=True),
+        )
+
         return create_payload(
             message=message_dict,
+            configuration=configuration,
             task_type=task_type,
             message_seq_in_session=message_seq_in_session,
             observer=observer,

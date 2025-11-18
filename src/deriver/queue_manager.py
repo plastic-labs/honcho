@@ -29,6 +29,7 @@ from src.dreamer.dream_scheduler import (
     set_dream_scheduler,
 )
 from src.models import QueueItem
+from src.schemas import ResolvedConfiguration
 from src.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -423,6 +424,7 @@ class QueueManager:
                             (
                                 messages_context,
                                 items_to_process,
+                                message_level_configuration,
                             ) = await self.get_queue_item_batch(
                                 work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
@@ -438,6 +440,7 @@ class QueueManager:
                             try:
                                 await process_representation_batch(
                                     messages_context,
+                                    message_level_configuration,
                                     observer=work_unit.observer,
                                     observed=work_unit.observed,
                                 )
@@ -574,7 +577,7 @@ class QueueManager:
         task_type: str,
         work_unit_key: str,
         aqs_id: str,
-    ) -> tuple[list[models.Message], list[QueueItem]]:
+    ) -> tuple[list[models.Message], list[QueueItem], ResolvedConfiguration | None]:
         """
         Representation-only: returns a tuple of (messages_context, items_to_process).
         - messages_context: unique Message rows (conversation turns) forming the context window
@@ -598,7 +601,7 @@ class QueueManager:
             if not ownership_check.scalar_one_or_none():
                 # Worker lost ownership, return empty
                 await db.commit()
-                return [], []
+                return [], [], None
 
             # Step 2: Build a single SQL query that:
             # 1. Finds the earliest unprocessed message for this work_unit_key
@@ -670,7 +673,7 @@ class QueueManager:
             rows = result.all()
             if not rows:
                 await db.commit()
-                return [], []
+                return [], [], None
 
             messages_context: list[models.Message] = []
             items_to_process: list[QueueItem] = []
@@ -681,6 +684,27 @@ class QueueManager:
                     seen_messages.add(m.id)
                 if qi is not None:
                     items_to_process.append(qi)
+
+            if items_to_process:
+                # Enforce homogeneous peer_card_config in the batch
+                # We stop collecting items as soon as we encounter a different configuration
+                payload = items_to_process[0].payload
+
+                raw_config = payload.get("configuration")
+
+                resolved_config = ResolvedConfiguration.model_validate(raw_config)
+
+                valid_items: list[QueueItem] = []
+                for item in items_to_process:
+                    item_config = ResolvedConfiguration.model_validate(
+                        item.payload.get("configuration")
+                    )
+                    if item_config != resolved_config:
+                        break
+                    valid_items.append(item)
+                items_to_process = valid_items
+            else:
+                resolved_config = None
 
             if items_to_process:
                 max_queue_item_message_id = max(
@@ -696,7 +720,7 @@ class QueueManager:
 
             await db.commit()
 
-            return messages_context, items_to_process
+            return messages_context, items_to_process, resolved_config
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str

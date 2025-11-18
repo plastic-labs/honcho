@@ -105,7 +105,7 @@ class TestEnqueueFunction:
         test_session = models.Session(
             workspace_name=test_workspace.name,
             name=str(generate_nanoid()),
-            configuration={"deriver_enabled": False},
+            configuration={"deriver": {"enabled": False}},
         )
         db_session.add(test_session)
         await db_session.commit()
@@ -1431,15 +1431,22 @@ class TestGenerateQueueRecordsSeqInSession:
                     {"observe_others": True},
                 ]
             }
+            resolved_configuration = schemas.ResolvedConfiguration(
+                deriver=schemas.ResolvedDeriverConfiguration(enabled=True),
+                summary=schemas.ResolvedSummaryConfiguration(
+                    enabled=True,
+                    messages_per_short_summary=20,
+                    messages_per_long_summary=60,
+                ),
+                peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
+                dream=schemas.ResolvedDreamConfiguration(enabled=True),
+            )
             records = await generate_queue_records(
                 db_session=mock_db_session,
                 message=message_payload,
                 peers_with_configuration=peers_config,
                 session_id=test_session.id,
-                deriver_enabled=True,
-                summaries_enabled=True,
-                messages_per_short_summary=20,
-                messages_per_long_summary=60,
+                conf=resolved_configuration,
             )
 
             mock_crud.assert_not_called()
@@ -1504,15 +1511,22 @@ class TestGenerateQueueRecordsSeqInSession:
                     {"observe_others": True},
                 ]
             }
+            resolved_configuration = schemas.ResolvedConfiguration(
+                deriver=schemas.ResolvedDeriverConfiguration(enabled=True),
+                summary=schemas.ResolvedSummaryConfiguration(
+                    enabled=True,
+                    messages_per_short_summary=20,
+                    messages_per_long_summary=60,
+                ),
+                peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
+                dream=schemas.ResolvedDreamConfiguration(enabled=True),
+            )
             records = await generate_queue_records(
                 db_session=mock_db_session,
                 message=message_payload,
                 peers_with_configuration=peers_config,
                 session_id=test_session.id,
-                deriver_enabled=True,
-                summaries_enabled=True,
-                messages_per_short_summary=20,
-                messages_per_long_summary=60,
+                conf=resolved_configuration,
             )
 
             # The CRUD function SHOULD have been called as fallback

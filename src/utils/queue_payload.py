@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from src.schemas import ResolvedConfiguration
+
 
 class BasePayload(BaseModel):
     """Base payload with common fields."""
@@ -19,6 +21,7 @@ class RepresentationPayload(BasePayload):
     observer: str
     observed: str
     created_at: datetime
+    configuration: ResolvedConfiguration
 
 
 class RepresentationPayloads(BasePayload):
@@ -33,6 +36,7 @@ class SummaryPayload(BasePayload):
     task_type: Literal["summary"] = "summary"
     session_name: str
     message_seq_in_session: int
+    configuration: ResolvedConfiguration
     # Optional for backward compatibility with older queue items
     message_public_id: str | None = None
 
@@ -80,6 +84,7 @@ def create_dream_payload(
 
 def create_payload(
     message: dict[str, Any],
+    configuration: ResolvedConfiguration,
     task_type: Literal["representation", "summary"],
     message_seq_in_session: int | None = None,
     *,
@@ -96,9 +101,10 @@ def create_payload(
     Args:
         message: The original message dictionary
         task_type: Type of task ('representation' or 'summary')
+        message_seq_in_session: Required for summary tasks, must be None for representation
         observer: Name of the observer peer (required for representation tasks)
         observed: Name of the observed peer (*always* the peer who sent the message) (required for representation tasks)
-        message_seq_in_session: Required for summary tasks, must be None for representation
+
 
     Returns:
         Processed payload dictionary ready for queue processing (without workspace_name and message_id)
@@ -143,6 +149,7 @@ def create_payload(
                 created_at=created_at,
                 observer=observer,
                 observed=observed,
+                configuration=configuration,
             )
         elif task_type == "summary":
             if message_seq_in_session is None:
@@ -158,6 +165,7 @@ def create_payload(
             validated_payload = SummaryPayload(
                 session_name=session_name,
                 message_seq_in_session=message_seq_in_session,
+                configuration=configuration,
                 message_public_id=message_public_id,
             )
 
