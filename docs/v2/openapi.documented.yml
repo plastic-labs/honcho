@@ -130,26 +130,24 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const workspace of client.workspaces.list()) {
-              console.log(workspace.id);
-            }
+            const workspaces = await honcho.getWorkspaces();
+            console.log(workspaces);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.list()
-            page = page.items[0]
-            print(page.id)
+            workspaces = honcho.get_workspaces()
+            for workspace in workspaces:
+                print(workspace.id)
   /v2/workspaces/{workspace_id}:
     put:
       tags:
@@ -246,23 +244,23 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const workspace = await client.workspaces.delete('workspace_id');
+            const workspace = await honcho.deleteWorkspace('workspace_id');
 
             console.log(workspace.id);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            workspace = client.workspaces.delete(
+            workspace = honcho.delete_workspace(
                 "workspace_id",
             )
             print(workspace.id)
@@ -311,24 +309,23 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const messages = await client.workspaces.search('workspace_id', { query: 'query' });
+            const messages = await honcho.search('query');
 
             console.log(messages);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            messages = client.workspaces.search(
-                workspace_id="workspace_id",
+            messages = honcho.search(
                 query="query",
             )
             print(messages)
@@ -397,25 +394,23 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const deriverStatus = await client.workspaces.deriverStatus('workspace_id');
+            const deriverStatus = await honcho.getDeriverStatus();
 
             console.log(deriverStatus.completed_work_units);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            deriver_status = client.workspaces.deriver_status(
-                workspace_id="workspace_id",
-            )
+            deriver_status = honcho.get_deriver_status()
             print(deriver_status.completed_work_units)
   /v2/workspaces/{workspace_id}/peers/list:
     post:
@@ -482,28 +477,26 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const peer of client.workspaces.peers.list('workspace_id')) {
+            const peers = await honcho.getPeers();
+            for (const peer of peers) {
               console.log(peer.id);
             }
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.peers.list(
-                workspace_id="workspace_id",
-            )
-            page = page.items[0]
-            print(page.id)
+            peers = honcho.get_peers()
+            for peer in peers:
+                print(peer.id)
   /v2/workspaces/{workspace_id}/peers:
     post:
       tags:
@@ -550,26 +543,23 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const peer = await client.workspaces.peers.getOrCreate('workspace_id', { id: 'id' });
+            const peer = await honcho.peer('alice');
 
             console.log(peer.id);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            peer = client.workspaces.peers.get_or_create(
-                workspace_id="workspace_id",
-                id="id",
-            )
+            peer = honcho.peer("alice")
             print(peer.id)
   /v2/workspaces/{workspace_id}/peers/{peer_id}:
     put:
@@ -715,29 +705,28 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const session of client.workspaces.peers.sessions.list('workspace_id', 'peer_id')) {
+            const peer = await honcho.peer('alice');
+            const sessions = await peer.getSessions();
+            for (const session of sessions) {
               console.log(session.id);
             }
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.peers.sessions.list(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-            )
-            page = page.items[0]
-            print(page.id)
+            peer = honcho.peer("alice")
+            sessions = peer.get_sessions()
+            for session in sessions:
+                print(session.id)
   /v2/workspaces/{workspace_id}/peers/{peer_id}/chat:
     post:
       tags:
@@ -795,27 +784,25 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const response = await client.workspaces.peers.chat('workspace_id', 'peer_id', { query: 'x' });
+            const peer = await honcho.peer('alice');
+            const response = await peer.chat('What can you tell me about my preferences?');
 
             console.log(response.content);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            response = client.workspaces.peers.chat(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-                query="x",
-            )
+            peer = honcho.peer("alice")
+            response = peer.chat(query="What can you tell me about my preferences?")
             print(response.content)
   /v2/workspaces/{workspace_id}/peers/{peer_id}/representation:
     post:
@@ -958,27 +945,26 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const response = await client.workspaces.peers.card('workspace_id', 'peer_id');
+            const peer = await honcho.peer('alice');
+            const peerCard = await peer.card();
 
-            console.log(response.peer_card);
+            console.log(peerCard);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            response = client.workspaces.peers.card(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-            )
-            print(response.peer_card)
+            peer = honcho.peer("alice")
+            peer_card = peer.card()
+            print(peer_card)
   /v2/workspaces/{workspace_id}/peers/{peer_id}/search:
     post:
       tags:
@@ -1031,32 +1017,26 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-
-            const messages = await client.workspaces.peers.search('workspace_id', 'peer_id', { query: 'query'
-            });
-
+            const peer = await honcho.peer('alice');
+            const messages = await peer.search('query');
 
             console.log(messages);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            messages = client.workspaces.peers.search(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-                query="query",
-            )
+            peer = honcho.peer("alice")
+            messages = peer.search(query="query")
             print(messages)
   /v2/workspaces/{workspace_id}/sessions:
     post:
@@ -1104,26 +1084,23 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const session = await client.workspaces.sessions.getOrCreate('workspace_id', { id: 'id' });
+            const session = await honcho.session('conversation-1');
 
             console.log(session.id);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            session = client.workspaces.sessions.get_or_create(
-                workspace_id="workspace_id",
-                id="id",
-            )
+            session = honcho.session("conversation-1")
             print(session.id)
   /v2/workspaces/{workspace_id}/sessions/list:
     post:
@@ -1190,28 +1167,26 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const session of client.workspaces.sessions.list('workspace_id')) {
+            const sessions = await honcho.getSessions();
+            for (const session of sessions) {
               console.log(session.id);
             }
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.sessions.list(
-                workspace_id="workspace_id",
-            )
-            page = page.items[0]
-            print(page.id)
+            sessions = honcho.get_sessions()
+            for session in sessions:
+                print(session.id)
   /v2/workspaces/{workspace_id}/sessions/{session_id}:
     put:
       tags:
@@ -1324,27 +1299,26 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const session = await client.workspaces.sessions.delete('workspace_id', 'session_id');
+            const session = await honcho.session('conversation-1');
+            await session.delete();
 
-            console.log(session);
+            console.log('Session deleted');
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            session = client.workspaces.sessions.delete(
-                session_id="session_id",
-                workspace_id="workspace_id",
-            )
-            print(session)
+            session = honcho.session("conversation-1")
+            session.delete()
+            print("Session deleted")
   /v2/workspaces/{workspace_id}/sessions/{session_id}/clone:
     get:
       tags:
@@ -1471,35 +1445,31 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
+            const bob = await honcho.peer('bob');
+            await session.addPeers([alice, bob]);
 
-            const session = await client.workspaces.sessions.peers.add('workspace_id', 'session_id', { foo: {}
-            });
-
-
-            console.log(session.id);
+            console.log('Peers added to session');
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            session = client.workspaces.sessions.peers.add(
-                session_id="session_id",
-                workspace_id="workspace_id",
-                body={
-                    "foo": {}
-                },
-            )
-            print(session.id)
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+            bob = honcho.peer("bob")
+            session.add_peers([alice, bob])
+            print("Peers added to session")
     put:
       tags:
         - sessions
@@ -1551,35 +1521,31 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
+            const bob = await honcho.peer('bob');
+            await session.setPeers([alice, bob]);
 
-            const session = await client.workspaces.sessions.peers.set('workspace_id', 'session_id', { foo: {}
-            });
-
-
-            console.log(session.id);
+            console.log('Peers set for session');
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            session = client.workspaces.sessions.peers.set(
-                session_id="session_id",
-                workspace_id="workspace_id",
-                body={
-                    "foo": {}
-                },
-            )
-            print(session.id)
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+            bob = honcho.peer("bob")
+            session.set_peers([alice, bob])
+            print("Peers set for session")
     delete:
       tags:
         - sessions
@@ -1631,33 +1597,29 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
+            await session.removePeers([alice]);
 
-            const session = await client.workspaces.sessions.peers.remove('workspace_id', 'session_id',
-            ['string']);
-
-
-            console.log(session.id);
+            console.log('Peer removed from session');
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            session = client.workspaces.sessions.peers.remove(
-                session_id="session_id",
-                workspace_id="workspace_id",
-                body=["string"],
-            )
-            print(session.id)
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+            session.remove_peers([alice])
+            print("Peer removed from session")
     get:
       tags:
         - sessions
@@ -1721,29 +1683,28 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const peer of client.workspaces.sessions.peers.list('workspace_id', 'session_id')) {
+            const session = await honcho.session('conversation-1');
+            const peers = await session.getPeers();
+            for (const peer of peers) {
               console.log(peer.id);
             }
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.sessions.peers.list(
-                session_id="session_id",
-                workspace_id="workspace_id",
-            )
-            page = page.items[0]
-            print(page.id)
+            session = honcho.session("conversation-1")
+            peers = session.get_peers()
+            for peer in peers:
+                print(peer.id)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config:
     get:
       tags:
@@ -1795,32 +1756,27 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const sessionPeerConfig = await client.workspaces.sessions.peers.getConfig(
-              'workspace_id',
-              'session_id',
-              'peer_id',
-            );
-
-            console.log(sessionPeerConfig.observe_me);
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
+            const config = await session.getPeerConfig(alice);
+            console.log(config.observe_me);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            session_peer_config = client.workspaces.sessions.peers.get_config(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-                session_id="session_id",
-            )
-            print(session_peer_config.observe_me)
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+            config = session.get_peer_config(alice)
+            print(config.observe_me)
     post:
       tags:
         - sessions
@@ -1877,32 +1833,28 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: >-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-
-            const response = await client.workspaces.sessions.peers.setConfig('workspace_id', 'session_id',
-            'peer_id');
-
-
-            console.log(response);
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
+            await session.setPeerConfig(alice, { observe_me: true, observe_others: false });
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            response = client.workspaces.sessions.peers.set_config(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-                session_id="session_id",
-            )
-            print(response)
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+
+            from honcho.session import SessionPeerConfig
+            config = SessionPeerConfig(observe_me=True, observe_others=False)
+            session.set_peer_config(alice, config)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/context:
     get:
       tags:
@@ -2022,27 +1974,26 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const response = await client.workspaces.sessions.getContext('workspace_id', 'session_id');
+            const session = await honcho.session('conversation-1');
+            const context = await session.getContext({ summary: true, tokens: 1000 });
 
-            console.log(response.id);
+            console.log(context);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            response = client.workspaces.sessions.get_context(
-                session_id="session_id",
-                workspace_id="workspace_id",
-            )
-            print(response.id)
+            session = honcho.session("conversation-1")
+            context = session.get_context(summary=True, tokens=1000)
+            print(context)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/summaries:
     get:
       tags:
@@ -2090,27 +2041,27 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const response = await client.workspaces.sessions.summaries('workspace_id', 'session_id');
-
-            console.log(response.id);
+            const session = await honcho.session('conversation-1');
+            const summaries = await session.getSummaries();
+            console.log(summaries.short_summary);
+            console.log(summaries.long_summary);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            response = client.workspaces.sessions.summaries(
-                session_id="session_id",
-                workspace_id="workspace_id",
-            )
-            print(response.id)
+            session = honcho.session("conversation-1")
+            summaries = session.get_summaries()
+            print(summaries.short_summary)
+            print(summaries.long_summary)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/search:
     post:
       tags:
@@ -2163,32 +2114,25 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-
-            const messages = await client.workspaces.sessions.search('workspace_id', 'session_id', { query:
-            'query' });
-
-
+            const session = await honcho.session('conversation-1');
+            const messages = await session.search('important keyword');
             console.log(messages);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            messages = client.workspaces.sessions.search(
-                session_id="session_id",
-                workspace_id="workspace_id",
-                query="query",
-            )
+            session = honcho.session("conversation-1")
+            messages = session.search("important keyword")
             print(messages)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/:
     post:
@@ -2240,32 +2184,27 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const messages = await client.workspaces.sessions.messages.create('workspace_id', 'session_id', {
-              messages: [{ content: 'content', peer_id: 'peer_id' }],
-            });
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
+            const messages = await session.addMessages([alice.message('Hello from Alice!')]);
 
             console.log(messages);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            messages = client.workspaces.sessions.messages.create(
-                session_id="session_id",
-                workspace_id="workspace_id",
-                messages=[{
-                    "content": "content",
-                    "peer_id": "peer_id",
-                }],
-            )
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+            messages = session.add_messages([alice.message("Hello from Alice!")])
             print(messages)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/upload:
     post:
@@ -2318,31 +2257,31 @@ paths:
       x-codeSamples:
         - lang: JavaScript
           source: |-
-            import Honcho from '@honcho-ai/core';
+            import { Honcho } from "@honcho-ai/sdk";
+            import * as fs from 'fs';
 
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-            const messages = await client.workspaces.sessions.messages.upload('workspace_id', 'session_id', {
-              file: fs.createReadStream('path/to/file'),
-              peer_id: 'peer_id',
-            });
+            const session = await honcho.session('conversation-1');
+            const alice = await honcho.peer('alice');
 
+            const file = fs.createReadStream('path/to/document.pdf');
+            const messages = await session.uploadFile(file, alice.id);
             console.log(messages);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            messages = client.workspaces.sessions.messages.upload(
-                session_id="session_id",
-                workspace_id="workspace_id",
-                file=b"raw file contents",
-                peer_id="peer_id",
-            )
+            session = honcho.session("conversation-1")
+            alice = honcho.peer("alice")
+
+            with open("path/to/document.pdf", "rb") as file:
+                messages = session.upload_file(file, alice.id)
             print(messages)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/list:
     post:
@@ -2427,34 +2366,29 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
-
-            // Automatically fetches more pages as needed.
-
-            for await (const message of client.workspaces.sessions.messages.list('workspace_id',
-            'session_id')) {
+            const session = await honcho.session('conversation-1');
+            const messages = await session.getMessages();
+            for (const message of messages) {
               console.log(message.id);
             }
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.sessions.messages.list(
-                session_id="session_id",
-                workspace_id="workspace_id",
-            )
-            page = page.items[0]
-            print(page.id)
+            session = honcho.session("conversation-1")
+            messages = session.get_messages()
+            for message in messages:
+                print(message.id)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}:
     get:
       tags:
@@ -2588,33 +2522,32 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
-            import Honcho from '@honcho-ai/core';
+          source: |-
+            import { Honcho } from "@honcho-ai/sdk";
 
-
-            const client = new Honcho({
+            const honcho = new Honcho({
               apiKey: 'My API Key',
             });
 
+            const session = await honcho.session('conversation-1');
+            const messages = await session.getMessages();
+            const message = messages.items[0];
 
-            const message = await client.workspaces.sessions.messages.update('workspace_id', 'session_id',
-            'message_id');
-
-
-            console.log(message.id);
+            const updatedMessage = await honcho.updateMessage(message, { key: 'value' });
+            console.log(updatedMessage.id);
         - lang: Python
           source: |-
-            from honcho_core import Honcho
+            from honcho import Honcho
 
-            client = Honcho(
+            honcho = Honcho(
                 api_key="My API Key",
             )
-            message = client.workspaces.sessions.messages.update(
-                message_id="message_id",
-                workspace_id="workspace_id",
-                session_id="session_id",
-            )
-            print(message.id)
+            session = honcho.session("conversation-1")
+            messages_page = session.get_messages()
+            message = list(messages_page)[0]
+
+            updated_message = honcho.update_message(message, {"key": "value"})
+            print(updated_message.id)
   /v2/keys:
     post:
       tags:
