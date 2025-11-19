@@ -367,7 +367,7 @@ class HonchoHarness:
                 sys.exit(1)
 
             print(
-                f"[Instance {self.instance_id}] ✅ Database verification passed: Database is empty"
+                f"[Instance {self.instance_id}] Database verification passed: Database is empty"
             )
 
         except Exception as e:

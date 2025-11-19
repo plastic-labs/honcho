@@ -421,7 +421,7 @@ class UnifiedTestRunner:
                     raise ValueError("tests_dir must be set if test_file is not")
                 test_files = sorted(list(self.tests_dir.glob("*.json")))
 
-            results: dict[str, str] = {}
+            results: dict[str, tuple[str, float]] = {}
 
             logger.info(f"Found {len(test_files)} test(s)")
 
@@ -433,7 +433,10 @@ class UnifiedTestRunner:
 
             executor = UnifiedTestExecutor(client, self.anthropic)
 
+            suite_start_time = time.time()
+
             for test_file in test_files:
+                test_start_time = time.time()
                 try:
                     # Use filename (without extension) as test name
                     test_name = test_file.stem
@@ -448,16 +451,24 @@ class UnifiedTestRunner:
                     )
 
                     success = await executor.execute(test_def, test_name)
-                    results[test_file.name] = "PASS" if success else "FAIL"
+                    test_duration = time.time() - test_start_time
+                    results[test_file.name] = (
+                        "PASS" if success else "FAIL",
+                        test_duration,
+                    )
 
                 except ValidationError as e:
                     logger.error(f"Schema validation failed for {test_file}: {e}")
-                    results[test_file.name] = "INVALID SCHEMA"
+                    test_duration = time.time() - test_start_time
+                    results[test_file.name] = ("INVALID SCHEMA", test_duration)
                 except Exception as e:
                     logger.error(
                         f"Test {test_file.name} failed with error: {e}", exc_info=True
                     )
-                    results[test_file.name] = f"ERROR: {str(e)}"
+                    test_duration = time.time() - test_start_time
+                    results[test_file.name] = (f"ERROR: {str(e)}", test_duration)
+
+            total_suite_time = time.time() - suite_start_time
 
             # 4. Report
             print("\n" + "=" * 60)
@@ -470,15 +481,21 @@ class UnifiedTestRunner:
             # Calculate max name length for alignment
             max_name_length = max(len(name) for name in results) if results else 0
 
-            for name, status in results.items():
+            for name, (status, duration) in results.items():
+                duration_str = f"({duration:.2f}s)"
                 if status == "PASS":
-                    print(f"{name:<{max_name_length}} {GREEN}{status}{RESET}")
+                    print(
+                        f"{name:<{max_name_length}} {GREEN}{status:<15}{RESET} {duration_str}"
+                    )
                 else:
-                    print(f"{name:<{max_name_length}} {RED}{status}{RESET}")
+                    print(
+                        f"{name:<{max_name_length}} {RED}{status:<15}{RESET} {duration_str}"
+                    )
                     failed_count += 1
 
             print("=" * 60)
             print(f"\n{failed_count} failed / {total_count} total")
+            print(f"Total execution time: {total_suite_time:.2f}s")
             print("=" * 60)
 
         finally:
