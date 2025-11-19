@@ -654,7 +654,9 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                                         ]
                                         for chunk in chunks:
                                             if role == "user":
-                                                messages.append(user_peer.message(chunk))
+                                                messages.append(
+                                                    user_peer.message(chunk)
+                                                )
                                             elif role == "assistant":
                                                 messages.append(
                                                     assistant_peer.message(chunk)
@@ -709,6 +711,12 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                 result["error"] = "Deriver queue timeout"
                 result["end_time"] = time.time()
                 result["duration_seconds"] = result["end_time"] - result["start_time"]
+                print(
+                    f"\n[{workspace_id}] ERROR: Deriver queue timeout after {self.timeout_seconds}s"
+                )
+                print(
+                    f"[{workspace_id}] Failed to complete in {self._format_duration(result['duration_seconds'])}"
+                )
                 return result
 
             print(f"[{workspace_id}] Deriver queue empty. Executing questions...")
