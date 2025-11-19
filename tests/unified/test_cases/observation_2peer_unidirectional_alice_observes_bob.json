@@ -1,8 +1,9 @@
 {
-  "name": "observation_2peer_unidirectional_alice_observes_bob",
   "description": "Test unidirectional observation - Alice observes Bob, Bob does not observe Alice",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -23,10 +24,22 @@
       "step_type": "add_messages",
       "session_id": "session_uni_a_to_b",
       "messages": [
-        { "peer_id": "alice", "content": "I'm studying computer science." },
-        { "peer_id": "bob", "content": "I'm majoring in biology." },
-        { "peer_id": "alice", "content": "That's interesting! I love programming." },
-        { "peer_id": "bob", "content": "Biology fascinates me, especially genetics." }
+        {
+          "peer_id": "alice",
+          "content": "I'm studying computer science."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm majoring in biology."
+        },
+        {
+          "peer_id": "alice",
+          "content": "That's interesting! I love programming."
+        },
+        {
+          "peer_id": "bob",
+          "content": "Biology fascinates me, especially genetics."
+        }
       ]
     },
     {

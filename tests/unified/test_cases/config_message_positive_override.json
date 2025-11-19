@@ -1,8 +1,9 @@
 {
-  "name": "config_message_positive_override",
   "description": "Test message-level deriver override",
   "workspace_config": {
-    "deriver": { "enabled": false }
+    "deriver": {
+      "enabled": false
+    }
   },
   "steps": [
     {
@@ -17,15 +18,19 @@
           "peer_id": "charlie",
           "content": "This message should be derived.",
           "config": {
-            "deriver": { "enabled": true }
+            "deriver": {
+              "enabled": true
+            }
           }
         },
         {
-            "peer_id": "charlie",
-            "content": "This one should not.",
-            "config": {
-                "deriver": { "enabled": false }
+          "peer_id": "charlie",
+          "content": "This one should not.",
+          "config": {
+            "deriver": {
+              "enabled": false
             }
+          }
         }
       ]
     },
@@ -40,12 +45,12 @@
       "session_id": "session_msg_override",
       "assertions": [
         {
-            "assertion_type": "contains",
-            "text": "should be derived"
+          "assertion_type": "contains",
+          "text": "should be derived"
         },
         {
-            "assertion_type": "not_contains",
-            "text": "This one should not"
+          "assertion_type": "not_contains",
+          "text": "This one should not"
         }
       ]
     }

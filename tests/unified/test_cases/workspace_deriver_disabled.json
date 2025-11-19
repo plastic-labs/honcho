@@ -1,5 +1,4 @@
 {
-  "name": "workspace_deriver_disabled",
   "description": "Test that disabling deriver prevents any derived data generation",
   "workspace_config": {
     "deriver": {

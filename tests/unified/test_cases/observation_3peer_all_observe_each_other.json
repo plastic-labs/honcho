@@ -1,8 +1,9 @@
 {
-  "name": "observation_3peer_all_observe_each_other",
   "description": "Test full mesh observation - all three peers observe each other",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -27,12 +28,30 @@
       "step_type": "add_messages",
       "session_id": "session_full_mesh",
       "messages": [
-        { "peer_id": "alice", "content": "I'm a veterinarian who treats exotic animals." },
-        { "peer_id": "bob", "content": "I'm a pilot flying commercial jets." },
-        { "peer_id": "charlie", "content": "I'm a marine biologist studying coral reefs." },
-        { "peer_id": "alice", "content": "I recently treated a sick parrot." },
-        { "peer_id": "bob", "content": "I fly international routes to Asia." },
-        { "peer_id": "charlie", "content": "I'm researching coral bleaching in Australia." }
+        {
+          "peer_id": "alice",
+          "content": "I'm a veterinarian who treats exotic animals."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm a pilot flying commercial jets."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm a marine biologist studying coral reefs."
+        },
+        {
+          "peer_id": "alice",
+          "content": "I recently treated a sick parrot."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I fly international routes to Asia."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm researching coral bleaching in Australia."
+        }
       ]
     },
     {

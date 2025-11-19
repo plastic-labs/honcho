@@ -1,26 +1,35 @@
 {
-  "name": "config_deriver_hierarchy",
   "description": "Test deriver configuration hierarchy (Session > Workspace)",
   "steps": [
     {
       "step_type": "set_workspace_config",
       "config": {
-        "deriver": { "enabled": true }
+        "deriver": {
+          "enabled": true
+        }
       }
     },
     {
       "step_type": "create_session",
       "session_id": "session_disabled",
       "config": {
-        "deriver": { "enabled": false }
+        "deriver": {
+          "enabled": false
+        }
       }
     },
     {
       "step_type": "add_messages",
       "session_id": "session_disabled",
       "messages": [
-        { "peer_id": "alice", "content": "I love testing." },
-        { "peer_id": "alice", "content": "Configuration is key." }
+        {
+          "peer_id": "alice",
+          "content": "I love testing."
+        },
+        {
+          "peer_id": "alice",
+          "content": "Configuration is key."
+        }
       ]
     },
     {
@@ -45,22 +54,32 @@
     {
       "step_type": "set_workspace_config",
       "config": {
-        "deriver": { "enabled": false }
+        "deriver": {
+          "enabled": false
+        }
       }
     },
     {
       "step_type": "create_session",
       "session_id": "session_enabled",
       "config": {
-        "deriver": { "enabled": true }
+        "deriver": {
+          "enabled": true
+        }
       }
     },
     {
       "step_type": "add_messages",
       "session_id": "session_enabled",
       "messages": [
-        { "peer_id": "bob", "content": "I love testing too." },
-        { "peer_id": "bob", "content": "Override works." }
+        {
+          "peer_id": "bob",
+          "content": "I love testing too."
+        },
+        {
+          "peer_id": "bob",
+          "content": "Override works."
+        }
       ]
     },
     {
@@ -68,17 +87,17 @@
       "target": "queue_empty"
     },
     {
-        "step_type": "query",
-        "target": "get_representation",
-        "observer_peer_id": "bob",
-        "session_id": "session_enabled",
-        "assertions": [
-            {
-                "assertion_type": "llm_judge",
-                "prompt": "Check if there are explicit observations about testing or overriding in the representation.",
-                "pass_if": true
-            }
-        ]
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "session_id": "session_enabled",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if there are explicit observations about testing or overriding in the representation.",
+          "pass_if": true
+        }
+      ]
     }
   ]
 }

@@ -1,8 +1,9 @@
 {
-  "name": "observation_asymmetric_visibility",
   "description": "Test asymmetric visibility scenario from documentation - Alice lies to Bob but tells truth to Charlie",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -23,9 +24,18 @@
       "step_type": "add_messages",
       "session_id": "session_alice_bob",
       "messages": [
-        { "peer_id": "alice", "content": "I had a great breakfast today." },
-        { "peer_id": "bob", "content": "What did you eat?" },
-        { "peer_id": "alice", "content": "I had pancakes and eggs and bacon." }
+        {
+          "peer_id": "alice",
+          "content": "I had a great breakfast today."
+        },
+        {
+          "peer_id": "bob",
+          "content": "What did you eat?"
+        },
+        {
+          "peer_id": "alice",
+          "content": "I had pancakes and eggs and bacon."
+        }
       ]
     },
     {
@@ -50,9 +60,18 @@
       "step_type": "add_messages",
       "session_id": "session_alice_charlie",
       "messages": [
-        { "peer_id": "alice", "content": "I actually didn't eat any breakfast today." },
-        { "peer_id": "charlie", "content": "Oh that's too bad." },
-        { "peer_id": "alice", "content": "But I lied to Bob and told him I did, so back me up if you see them." }
+        {
+          "peer_id": "alice",
+          "content": "I actually didn't eat any breakfast today."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "Oh that's too bad."
+        },
+        {
+          "peer_id": "alice",
+          "content": "But I lied to Bob and told him I did, so back me up if you see them."
+        }
       ]
     },
     {

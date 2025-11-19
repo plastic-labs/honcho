@@ -136,8 +136,8 @@ class BackupLLMSettingsMixin:
     both fields are set together or both are None.
     """
 
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
+    BACKUP_PROVIDER: SupportedProviders | None = "custom"
+    BACKUP_MODEL: str | None = "x-ai/grok-4-fast"
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self):

@@ -1,8 +1,9 @@
 {
-  "name": "observation_2peer_bidirectional",
   "description": "Test bidirectional observation - both peers observe each other",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -23,10 +24,22 @@
       "step_type": "add_messages",
       "session_id": "session_bidirectional",
       "messages": [
-        { "peer_id": "alice", "content": "I work as a software engineer." },
-        { "peer_id": "bob", "content": "I'm a high school teacher." },
-        { "peer_id": "alice", "content": "I specialize in backend development." },
-        { "peer_id": "bob", "content": "I teach mathematics and physics." }
+        {
+          "peer_id": "alice",
+          "content": "I work as a software engineer."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm a high school teacher."
+        },
+        {
+          "peer_id": "alice",
+          "content": "I specialize in backend development."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I teach mathematics and physics."
+        }
       ]
     },
     {

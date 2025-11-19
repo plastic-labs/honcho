@@ -73,8 +73,8 @@ class UnifiedTestExecutor:
         self.anthropic: AsyncAnthropic | None = anthropic_client
         self.workspace_id: str = honcho_client.workspace_id
 
-    async def execute(self, test_def: TestDefinition) -> bool:
-        logger.info(f"Starting test: {test_def.name}")
+    async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
+        logger.info(f"Starting test: {test_name}")
 
         # 1. Apply workspace config if present
         if test_def.workspace_config:
@@ -90,7 +90,7 @@ class UnifiedTestExecutor:
                 logger.error(f"Step {i + 1} failed: {e}", exc_info=False)
                 return False
 
-        logger.info(f"Test {test_def.name} PASSED")
+        logger.info(f"Test {test_name} PASSED")
         return True
 
     async def execute_step(self, step: Any):
@@ -205,7 +205,6 @@ class UnifiedTestExecutor:
             context: SessionContext = await session.get_context(
                 summary=step.summary, tokens=step.max_tokens
             )
-            print(context)
             # Return the whole context object
             return context
 
@@ -436,16 +435,19 @@ class UnifiedTestRunner:
 
             for test_file in test_files:
                 try:
+                    # Use filename (without extension) as test name
+                    test_name = test_file.stem
+
                     with open(test_file) as f:
                         data = json.load(f)
                     test_def = TestDefinition(**data)
 
                     executor.client = AsyncHoncho(
                         base_url=f"http://localhost:{self.harness.api_port}",
-                        workspace_id=f"test_{test_def.name}_{int(time.time())}",
+                        workspace_id=f"test_{test_name}_{int(time.time())}",
                     )
 
-                    success = await executor.execute(test_def)
+                    success = await executor.execute(test_def, test_name)
                     results[test_file.name] = "PASS" if success else "FAIL"
 
                 except ValidationError as e:
@@ -465,11 +467,14 @@ class UnifiedTestRunner:
             failed_count = 0
             total_count = len(results)
 
+            # Calculate max name length for alignment
+            max_name_length = max(len(name) for name in results) if results else 0
+
             for name, status in results.items():
                 if status == "PASS":
-                    print(f"{name:<50} {GREEN}{status}{RESET}")
+                    print(f"{name:<{max_name_length}} {GREEN}{status}{RESET}")
                 else:
-                    print(f"{name:<50} {RED}{status}{RESET}")
+                    print(f"{name:<{max_name_length}} {RED}{status}{RESET}")
                     failed_count += 1
 
             print("=" * 60)

@@ -1,8 +1,9 @@
 {
-  "name": "observation_3peer_circular",
   "description": "Test circular observation - Alice observes Bob, Bob observes Charlie, Charlie observes Alice",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -27,12 +28,30 @@
       "step_type": "add_messages",
       "session_id": "session_circular",
       "messages": [
-        { "peer_id": "alice", "content": "I collect vintage vinyl records." },
-        { "peer_id": "bob", "content": "I restore classic cars from the 1960s." },
-        { "peer_id": "charlie", "content": "I paint landscapes in oil." },
-        { "peer_id": "alice", "content": "My collection has over 500 records." },
-        { "peer_id": "bob", "content": "I'm currently restoring a 1967 Mustang." },
-        { "peer_id": "charlie", "content": "I prefer painting mountain scenes." }
+        {
+          "peer_id": "alice",
+          "content": "I collect vintage vinyl records."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I restore classic cars from the 1960s."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I paint landscapes in oil."
+        },
+        {
+          "peer_id": "alice",
+          "content": "My collection has over 500 records."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm currently restoring a 1967 Mustang."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I prefer painting mountain scenes."
+        }
       ]
     },
     {

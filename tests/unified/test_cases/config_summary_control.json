@@ -1,9 +1,16 @@
 {
-  "name": "config_summary_control",
   "description": "Test summary generation control",
   "workspace_config": {
-    "deriver": { "enabled": true },
-    "summary": { "enabled": false }
+    "deriver": {
+      "enabled": true
+    },
+    "summary": {
+      "enabled": false
+    },
+    "peer_card": {
+      "use": false,
+      "create": false
+    }
   },
   "steps": [
     {
@@ -11,9 +18,9 @@
       "session_id": "session_summary",
       "config": {
         "summary": {
-            "enabled": true,
-            "messages_per_short_summary": 10,
-            "messages_per_long_summary": 20
+          "enabled": true,
+          "messages_per_short_summary": 10,
+          "messages_per_long_summary": 20
         }
       }
     },
@@ -21,17 +28,54 @@
       "step_type": "add_messages",
       "session_id": "session_summary",
       "messages": [
-        { "peer_id": "eve", "content": "1" },
-        { "peer_id": "eve", "content": "2" },
-        { "peer_id": "eve", "content": "3" },
-        { "peer_id": "eve", "content": "4" },
-        { "peer_id": "eve", "content": "5" },
-        { "peer_id": "eve", "content": "6" },
-        { "peer_id": "eve", "content": "7" },
-        { "peer_id": "eve", "content": "8" },
-        { "peer_id": "eve", "content": "9" },
-        { "peer_id": "eve", "content": "10" },
-        { "peer_id": "eve", "content": "11" }
+        {
+          "peer_id": "eve",
+          "content": "This is the first message in our conversation, discussing various topics."
+        },
+        {
+          "peer_id": "eve",
+          "content": "Here is the second message where we continue our detailed discussion."
+        },
+        {
+          "peer_id": "eve",
+          "content": "The third message adds more context and information to the conversation."
+        },
+        {
+          "peer_id": "eve",
+          "content": "In the fourth message, we explore additional ideas and concepts together."
+        },
+        {
+          "peer_id": "eve",
+          "content": "The fifth message continues building upon our previous discussion points."
+        },
+        {
+          "peer_id": "eve",
+          "content": "Message number six introduces some new perspectives to consider carefully."
+        },
+        {
+          "peer_id": "eve",
+          "content": "The seventh message provides further elaboration on the topics at hand."
+        },
+        {
+          "peer_id": "eve",
+          "content": "In message eight, we delve deeper into the subject matter with examples."
+        },
+        {
+          "peer_id": "eve",
+          "content": "The ninth message synthesizes some of the key points from earlier messages."
+        },
+        {
+          "peer_id": "eve",
+          "content": "Message ten continues our thorough exploration of these important concepts and ideas."
+        },
+        {
+          "peer_id": "eve",
+          "content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed consectetur elit id tellus interdum, consectetur finibus massa iaculis. Aliquam eros magna, eleifend id placerat vel, semper commodo ex. Nulla consequat cursus facilisis. Curabitur sapien nibh, laoreet ut ipsum a, rutrum commodo nibh. Duis lacinia, dolor quis dignissim vehicula, lectus est tincidunt libero, a aliquam mi libero eu nibh. Aliquam maximus magna a sem placerat viverra eget sed orci. Nam ultrices cursus diam sed vehicula. Aenean in enim non justo pulvinar vulputate sit amet quis sem. Phasellus lacinia rhoncus tortor et aliquam. Vestibulum luctus ligula vitae leo varius, id dictum diam semper. Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Vivamus varius lectus sit amet ante tristique iaculis. Sed sed accumsan urna. Nullam tincidunt, lorem vitae auctor tincidunt, augue magna pellentesque odio, in ultrices magna metus sit amet arcu. Etiam dapibus bibendum risus, a venenatis leo efficitur ut. Duis pulvinar, lorem at convallis malesuada, odio tortor iaculis augue, eget auctor nulla lectus ut neque. Ut quis nibh at augue ultricies fermentum id et lorem. Nam fringilla, magna non porttitor hendrerit, massa magna pellentesque nulla, sit amet lobortis tellus justo et elit. Vivamus iaculis lectus eget ultricies luctus. Aenean gravida turpis id ipsum cursus dictum sit amet quis est. Suspendisse et quam eget lacus pulvinar rutrum. Vestibulum maximus libero eu egestas ornare. Cras commodo semper urna iaculis accumsan. Donec quam tortor, tincidunt vitae neque sed, iaculis sagittis mi. Maecenas purus nibh, mollis quis faucibus mollis, hendrerit eu massa. Cras ultrices velit ut turpis eleifend cursus. Sed id ultrices lectus. Phasellus pellentesque risus at faucibus pulvinar. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae; Etiam eu quam finibus, accumsan mi sit amet, pulvinar nunc. Praesent consequat euismod enim eu vulputate. Mauris pretium quam ac gravida tincidunt. Suspendisse potenti. Quisque accumsan felis sed vulputate pharetra. Nam auctor, quam ut mollis porttitor, sem mauris maximus purus, at bibendum metus tortor sit amet mauris. Nunc tempor, velit ut porttitor tempor, mi nulla pharetra odio, condimentum interdum lacus arcu sed ipsum. Curabitur ullamcorper tellus sit amet diam feugiat aliquam. Nullam ut auctor ligula, sit amet tincidunt ligula. Praesent sed libero in ex pellentesque ornare. Nunc urna tellus, scelerisque ac pulvinar id, ultrices in velit. Pellentesque et erat vitae elit dictum rutrum non sit amet quam. Sed sodales, augue sit amet facilisis molestie, erat eros scelerisque neque, ac ornare nulla arcu vitae elit. Duis neque nisl, scelerisque vitae bibendum in, facilisis sed ligula. Curabitur suscipit enim orci, condimentum elementum dui placerat non. Pellentesque scelerisque lobortis augue, a semper turpis bibendum ut. Etiam lacinia lectus sit amet accumsan placerat. Vivamus iaculis orci nisl, vitae condimentum tellus luctus sit amet. Sed a nibh at nisi hendrerit fringilla. Praesent nulla dolor, tristique venenatis pellentesque at, dignissim id est. Maecenas quis est id nisl vehicula finibus eu nec mi. Fusce in pulvinar libero. Vestibulum in interdum mauris. Ut arcu justo, maximus vel nisl in, pulvinar iaculis sapien. Praesent sed facilisis tellus, et lobortis nunc."
+        },
+        {
+          "peer_id": "eve",
+          "content": "Finally, the eleventh message concludes this phase of our conversation together."
+        }
       ]
     },
     {
@@ -43,6 +87,7 @@
       "target": "get_context",
       "session_id": "session_summary",
       "summary": true,
+      "max_tokens": 400,
       "observer_peer_id": "eve",
       "assertions": [
         {

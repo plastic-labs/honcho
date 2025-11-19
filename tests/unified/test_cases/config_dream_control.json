@@ -1,24 +1,35 @@
 {
-  "name": "config_dream_control",
   "description": "Test dream configuration control",
   "workspace_config": {
-    "deriver": { "enabled": true },
-    "dream": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    },
+    "dream": {
+      "enabled": true
+    }
   },
   "steps": [
     {
       "step_type": "create_session",
       "session_id": "session_dream_disabled",
       "config": {
-        "dream": { "enabled": false }
+        "dream": {
+          "enabled": false
+        }
       }
     },
     {
       "step_type": "add_messages",
       "session_id": "session_dream_disabled",
       "messages": [
-        { "peer_id": "frank", "content": "I wonder what dreams are made of." },
-        { "peer_id": "frank", "content": "Do androids dream of electric sheep?" }
+        {
+          "peer_id": "frank",
+          "content": "I wonder what dreams are made of."
+        },
+        {
+          "peer_id": "frank",
+          "content": "Do androids dream of electric sheep?"
+        }
       ]
     },
     {

@@ -1,8 +1,9 @@
 {
-  "name": "observation_4peer_complex_matrix",
   "description": "Test complex 4-peer scenario with mixed observation patterns",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -31,10 +32,22 @@
       "step_type": "add_messages",
       "session_id": "session_four_peer",
       "messages": [
-        { "peer_id": "alice", "content": "I'm a neurologist." },
-        { "peer_id": "bob", "content": "I'm a lawyer." },
-        { "peer_id": "charlie", "content": "I'm an undercover agent." },
-        { "peer_id": "diana", "content": "I'm a pharmacist." }
+        {
+          "peer_id": "alice",
+          "content": "I'm a neurologist."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm a lawyer."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm an undercover agent."
+        },
+        {
+          "peer_id": "diana",
+          "content": "I'm a pharmacist."
+        }
       ]
     },
     {

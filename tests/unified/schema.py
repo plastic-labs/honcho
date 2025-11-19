@@ -140,7 +140,6 @@ class QueryAction(TestStep):
 
 
 class TestDefinition(BaseModel):
-    name: str
     description: str | None = None
     workspace_config: WorkspaceConfiguration | None = None
     steps: list[

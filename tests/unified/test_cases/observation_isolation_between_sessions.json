@@ -1,8 +1,9 @@
 {
-  "name": "observation_isolation_between_sessions",
   "description": "Test that local representations are isolated between sessions - same peers in different sessions have different local reps",
   "workspace_config": {
-    "deriver": { "enabled": true }
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {
@@ -23,9 +24,18 @@
       "step_type": "add_messages",
       "session_id": "session_work",
       "messages": [
-        { "peer_id": "bob", "content": "I'm working on the quarterly report." },
-        { "peer_id": "alice", "content": "Let me know if you need help with the data analysis." },
-        { "peer_id": "bob", "content": "I'm focusing on the sales figures." }
+        {
+          "peer_id": "bob",
+          "content": "I'm working on the quarterly report."
+        },
+        {
+          "peer_id": "alice",
+          "content": "Let me know if you need help with the data analysis."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm focusing on the sales figures."
+        }
       ]
     },
     {
@@ -50,9 +60,18 @@
       "step_type": "add_messages",
       "session_id": "session_personal",
       "messages": [
-        { "peer_id": "bob", "content": "I went skydiving last weekend!" },
-        { "peer_id": "alice", "content": "That sounds thrilling!" },
-        { "peer_id": "bob", "content": "It was my first time and I loved it." }
+        {
+          "peer_id": "bob",
+          "content": "I went skydiving last weekend!"
+        },
+        {
+          "peer_id": "alice",
+          "content": "That sounds thrilling!"
+        },
+        {
+          "peer_id": "bob",
+          "content": "It was my first time and I loved it."
+        }
       ]
     },
     {
