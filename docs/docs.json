@@ -63,7 +63,11 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v2/guides/overview", "v2/guides/mcp"]
+                "pages": ["v2/guides/overview"]
+              },
+              {
+                "group": "Integrations",
+                "pages": ["v2/integrations/langgraph", "v2/integrations/mcp"]
               },
               {
                 "group": "Application Interfaces",
