@@ -8,7 +8,7 @@ sidebarTitle: 'LangGraph'
 Integrate Honcho with LangGraph to build a conversational AI agent that maintains memory across sessions. This guide shows you how to use Honcho's memory layer with LangGraph's orchestration.
 
 <Note>
-The full code is available on [GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph_integration.py)
+The full code is available on [GitHub](https://github.com/plastic-labs/honcho/tree/main/examples/langgraph) with examples in both [Python](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph/python/main.py) and [TypeScript](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph/typescript/main.ts)
 </Note>
 
 ## What We're Building
@@ -236,8 +236,10 @@ The [`get_context()`](/v2/documentation/core-concepts/features/get-context) meth
 
 The `SessionContext` object always includes fields for messages, summaries, peer representations, and peer cards. By default, only `messages` and `summary` are populated. To populate peer-specific context, pass a `peer_target` parameter:
 
-- **Peer Representation**: A working theory-of-mind model containing explicit observations (stated facts) and deductive observations (logical conclusions) about the peer
-- **Peer Card**: Targeted context about what one peer knows about another
+**Using `peer_target` for Context:**
+
+- **Without `peer_perspective`**: Returns Honcho's omniscient view of `peer_target` (all observations and context)
+- **With `peer_perspective`**: Returns what `peer_perspective` knows about `peer_target` (perspective-based observations and context)
 
 That's it. Call `session.get_context().to_openai(assistant)` and you get properly formatted context tailored for your assistant.
 
@@ -246,7 +248,7 @@ That's it. Call `session.get_context().to_openai(assistant)` and you get properl
 </Tip>
 
 <Note>
-For more details on all available parameters, see the [Get Context documentation](/v2/documentation/core-concepts/features/get-context).
+For more details on all available parameters, see [`get_context() documentation`](/v2/documentation/core-concepts/features/get-context)
 </Note>
 
 ## Chat Loop
@@ -346,7 +348,7 @@ main();
 
 Now that you have a working LangGraph integration with Honcho, you can:
 
-- **Create tools with Honcho** to fully utilize Honcho's memory & context management features
+- **Create custom [LangChain tools](https://docs.langchain.com/oss/python/langchain/tools#customize-tool-properties) for your agent** - to fully utilize Honcho's memory & context management features
 - **Build a multi-agent LangGraph** where each agent is a Honcho `Peer` with its own memory
 
 ## Related Resources
