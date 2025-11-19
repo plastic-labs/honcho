@@ -273,7 +273,11 @@ def get_effective_observe_me(
         return sender_session_peer_config.observe_me
 
     # Otherwise use peer config
-    return sender_peer_config.observe_me
+    return (
+        sender_peer_config.observe_me
+        if sender_peer_config.observe_me is not None
+        else True
+    )
 
 
 async def generate_queue_records(

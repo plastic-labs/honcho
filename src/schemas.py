@@ -160,6 +160,20 @@ class ResolvedConfiguration(BaseModel):
     dream: ResolvedDreamConfiguration
 
 
+class PeerConfig(BaseModel):
+    observe_me: bool | None = Field(
+        default=None,
+        description="Whether honcho should form a global theory-of-mind representation of this peer",
+    )
+
+
+class SessionPeerConfig(PeerConfig):
+    observe_others: bool | None = Field(
+        default=None,
+        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
+    )
+
+
 class WorkspaceBase(BaseModel):
     pass
 
@@ -283,13 +297,6 @@ class PeerCardSet(BaseModel):
     peer_card: list[str] = Field(..., description="The peer card content to set")
 
 
-class PeerConfig(BaseModel):
-    observe_me: bool = Field(
-        default=True,
-        description="Whether honcho should form a global theory-of-mind representation of this peer",
-    )
-
-
 class MessageBase(BaseModel):
     pass
 
@@ -357,17 +364,6 @@ class MessageUploadCreate(BaseModel):
 
 class SessionBase(BaseModel):
     pass
-
-
-class SessionPeerConfig(BaseModel):
-    observe_others: bool = Field(
-        default=False,
-        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
-    )
-    observe_me: bool | None = Field(
-        default=None,
-        description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
-    )
 
 
 class SessionCreate(SessionBase):
@@ -614,14 +610,6 @@ class QueueStatusRow(BaseModel):
     session_completed: int
     session_in_progress: int
     session_pending: int
-
-
-class PeerConfigResult(BaseModel):
-    """Result from querying peer configuration data."""
-
-    peer_name: str
-    peer_configuration: dict[str, Any]
-    session_peer_configuration: dict[str, Any]
 
 
 class SessionPeerData(BaseModel):
