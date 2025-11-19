@@ -99,6 +99,7 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
 # Labels:
 #   - task_type: The type of task that processed the tokens (e.g., "representation")
 #   - token_type: The type of tokens ("input" or "output")
+#   - component: The component of the input (e.g., "peer_card", "working_representation", "base_prompt", "new_turns", "session_context")
 DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     "deriver_tokens_processed_total",
     "Total tokens processed by the deriver",
@@ -106,6 +107,7 @@ DERIVER_TOKENS_PROCESSED = NamespacedCounter(
         "namespace",
         "task_type",
         "token_type",
+        "component",
     ],
 )
 
