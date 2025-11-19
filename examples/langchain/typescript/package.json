@@ -1,0 +1,31 @@
+{
+  "name": "honcho-langgraph-example",
+  "version": "1.0.0",
+  "description": "LangGraph integration with Honcho for stateful conversational AI",
+  "main": "main.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run main.ts",
+    "dev": "bun --watch main.ts"
+  },
+  "keywords": [
+    "honcho",
+    "langgraph",
+    "openai",
+    "chatbot",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@honcho-ai/sdk": "^1.5.0",
+    "@langchain/langgraph": "^1.0.2",
+    "dotenv": "^17.2.3",
+    "openai": "^6.9.1",
+    "zod": "4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
