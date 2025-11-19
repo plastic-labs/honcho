@@ -631,29 +631,65 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             print(f"[{workspace_id}] Ingesting conversation turns...")
             messages: list[MessageCreateParam] = []
 
+            # Handle different data structures for 10M vs other sizes
             for batch in chat_data:
-                for turn_group in batch.get("turns", []):
-                    for turn in turn_group:
-                        role = turn["role"]
-                        content = turn["content"]
-                        result["total_turns"] += 1
+                # Check if this is a 10M conversation with plan-based structure
+                if any(key.startswith("plan-") for key in batch):
+                    # 10M structure: { "plan-1": [...], "plan-2": [...], ... }
+                    for plan_name, plan_batches in batch.items():
+                        if not plan_name.startswith("plan-"):
+                            continue
+                        for plan_batch in plan_batches:
+                            for turn_group in plan_batch.get("turns", []):
+                                for turn in turn_group:
+                                    role = turn["role"]
+                                    content = turn["content"]
+                                    result["total_turns"] += 1
 
-                        # Split message if it exceeds 25000 characters
-                        if len(content) > 25000:
-                            chunks = [
-                                content[i : i + 25000]
-                                for i in range(0, len(content), 25000)
-                            ]
-                            for chunk in chunks:
+                                    # Split message if it exceeds 25000 characters
+                                    if len(content) > 25000:
+                                        chunks = [
+                                            content[i : i + 25000]
+                                            for i in range(0, len(content), 25000)
+                                        ]
+                                        for chunk in chunks:
+                                            if role == "user":
+                                                messages.append(user_peer.message(chunk))
+                                            elif role == "assistant":
+                                                messages.append(
+                                                    assistant_peer.message(chunk)
+                                                )
+                                    else:
+                                        if role == "user":
+                                            messages.append(user_peer.message(content))
+                                        elif role == "assistant":
+                                            messages.append(
+                                                assistant_peer.message(content)
+                                            )
+                else:
+                    # Standard structure for 100K, 500K, 1M
+                    for turn_group in batch.get("turns", []):
+                        for turn in turn_group:
+                            role = turn["role"]
+                            content = turn["content"]
+                            result["total_turns"] += 1
+
+                            # Split message if it exceeds 25000 characters
+                            if len(content) > 25000:
+                                chunks = [
+                                    content[i : i + 25000]
+                                    for i in range(0, len(content), 25000)
+                                ]
+                                for chunk in chunks:
+                                    if role == "user":
+                                        messages.append(user_peer.message(chunk))
+                                    elif role == "assistant":
+                                        messages.append(assistant_peer.message(chunk))
+                            else:
                                 if role == "user":
-                                    messages.append(user_peer.message(chunk))
+                                    messages.append(user_peer.message(content))
                                 elif role == "assistant":
-                                    messages.append(assistant_peer.message(chunk))
-                        else:
-                            if role == "user":
-                                messages.append(user_peer.message(content))
-                            elif role == "assistant":
-                                messages.append(assistant_peer.message(content))
+                                    messages.append(assistant_peer.message(content))
 
             result["total_messages"] = len(messages)
 
