@@ -14,9 +14,7 @@ from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 load_dotenv()
 
-honcho = Honcho(
-    environment="local"
-)
+honcho = Honcho()
 
 llm = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -40,7 +38,7 @@ def chatbot(state: State):
 
     # Generate response
     response = llm.chat.completions.create(
-        model="gpt-4",
+        model="gpt-5.1",
         messages=messages
     )
     assistant_response = response.choices[0].message.content

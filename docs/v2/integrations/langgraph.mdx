@@ -1,5 +1,5 @@
 ---
-title: "LangGraph Integration"
+title: "LangGraph"
 icon: 'diagram-project'
 description: "Build a stateful conversational AI agent with LangGraph and Honcho"
 sidebarTitle: 'LangGraph'
@@ -7,16 +7,25 @@ sidebarTitle: 'LangGraph'
 
 Integrate Honcho with LangGraph to build conversational AI agents that maintain memory across sessions. This guide shows you how to use Honcho's memory layer with LangGraph's orchestration.
 
-> The full code is available on [GitHub](https://github.com/plastic-labs/honcho/examples/langgraph_integration.py)
+> The full code is available on [GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph_integration.py)
 
 ## Setup and Initialization
 
 ### Prerequisites
 
-- Honcho API key from [app.honcho.dev](https://app.honcho.dev) (Unless running locally)
 - LLM API key (This tutorial uses OpenAI)
 
-### Installation
+Create a `.env` file with your API keys:
+
+```bash
+OPENAI_API_KEY=your_openai_key
+```
+
+<Note>
+This example uses the honcho demo server. Found at https://demo.honcho.dev it runs a small instance of honcho on the latest version. If you need a production-ready setup get your Honcho API key at [app.honcho.dev](https://app.honcho.dev). For local development, use `environment="local"`.
+</Note>
+
+Install required packages:
 
 <CodeGroup>
 ```bash Python (uv)
@@ -40,19 +49,6 @@ pnpm add @honcho-ai/sdk @langchain/langgraph openai dotenv
 ```
 </CodeGroup>
 
-### Environment Variables
-
-Create a `.env` file with your API keys:
-
-```bash
-HONCHO_API_KEY=your_honcho_api_key  # Only needed for production
-OPENAI_API_KEY=your_openai_key
-```
-
-<Note>
-Get your Honcho API key from [app.honcho.dev](https://app.honcho.dev). For local development, you can use `environment="local"` without an API key.
-</Note>
-
 ### Setup
 
 Initialize Honcho and OpenAI clients, and define the state for your LangGraph:
@@ -69,11 +65,7 @@ from langgraph.graph import StateGraph, START, END
 load_dotenv()
 
 # Initialize Honcho
-# For local development: environment="local"
-# For production: environment="production", api_key=os.environ.get("HONCHO_API_KEY")
-honcho = Honcho(
-    environment="local"
-)
+honcho = Honcho()
 
 # Initialize OpenAI
 llm = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -97,11 +89,7 @@ import * as readline from "readline/promises";
 dotenv.config();
 
 // Initialize Honcho
-// For local development: environment: "local"
-// For production: environment: "production", apiKey: process.env.HONCHO_API_KEY
-const honcho = new Honcho({
-  environment: "local"
-});
+const honcho = new Honcho({});
 
 // Initialize OpenAI
 const llm = new OpenAI({
@@ -122,7 +110,7 @@ type State = typeof StateAnnotation.State;
 
 ## Create Chatbot Function
 
-Define your chatbot logic with Honcho memory integration:
+Define your chatbot logic, using Honcho for memory:
 
 <CodeGroup>
 ```python Python
@@ -140,7 +128,7 @@ def chatbot(state: State):
 
     # Generate response
     response = llm.chat.completions.create(
-        model="gpt-4",
+        model="gpt-5.1",
         messages=messages
     )
     assistant_response = response.choices[0].message.content
@@ -166,7 +154,7 @@ async function chatbot(state: State) {
 
   // Generate response
   const response = await llm.chat.completions.create({
-    model: "gpt-4",
+    model: "gpt-5.1",
     messages: messages
   });
   const assistantResponse = response.choices[0].message.content!;
@@ -276,9 +264,8 @@ main();
 
 Now that you have a working LangGraph integration with Honcho, you can:
 
-- **Create Honcho tools** to fully utilize the Honcho capabilities
+- **Create tools with Honcho** to fully utilize the Honcho's memory & context management features
 - **Create multi-agent systems** with multiple assistant peers
-- **Explore advanced memory features** like custom peer cards and metamessages
 
 ## Related Resources
 
