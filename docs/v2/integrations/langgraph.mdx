@@ -46,7 +46,7 @@ OPENAI_API_KEY=your_openai_key
 ```
 
 <Note>
-This example uses the honcho demo server at https://demo.honcho.dev which runs a small instance of honcho on the latest version. For production, get your Honcho API key at [app.honcho.dev](https://app.honcho.dev). For local development, use `environment="local"`.
+This example uses the Honcho demo server at https://demo.honcho.dev which runs a small instance of Honcho on the latest version. For production, get your Honcho API key at [app.honcho.dev](https://app.honcho.dev). For local development, use `environment="local"`.
 </Note>
 
 ## Initialize Clients
@@ -121,7 +121,7 @@ type State = typeof StateAnnotation.State;
 
 ## Create Chatbot Function
 
-Define your chatbot logic, using Honcho for memory.
+Define your chatbot logic, using Honcho to retrieve conversation context. This function demonstrates how to use Honcho to: store messages, retrieve context, and generate responses.
 
 <CodeGroup>
 ```python Python
@@ -132,19 +132,24 @@ def chatbot(state: State):
     user = state["user"]
     assistant = state["assistant"]
     session = state["session"]
+
+    # Step 1: Store the user's message in the session
+    # This adds it to Honcho's memory for future context retrieval
     session.add_messages([user.message(user_message)])
 
-    # Get context in OpenAI format
+    # Step 2: Get context in OpenAI format
+    # get_context() retrieves relevant conversation history
+    # to_openai() converts it to the format expected by OpenAI's API
     messages = session.get_context().to_openai(assistant=assistant)
 
-    # Generate response
+    # Step 3: Generate response using the context
     response = llm.chat.completions.create(
         model="gpt-5.1",
         messages=messages
     )
     assistant_response = response.choices[0].message.content
 
-    # Store assistant response
+    # Step 4: Store assistant response in Honcho for future context
     session.add_messages([assistant.message(assistant_response)])
 
     return {"assistant_response": assistant_response}
@@ -158,25 +163,41 @@ async function chatbot(state: State) {
   const user = state.user;
   const assistant = state.assistant;
   const session = state.session;
+
+  // Step 1: Store the user's message in the session
+  // This adds it to Honcho's memory for future context retrieval
   await session.addMessages([user.message(userMessage)]);
 
-  // Get context in OpenAI format
+  // Step 2: Get context in OpenAI format
+  // getContext() retrieves relevant conversation history and formats it
+  // toOpenAI() converts it to the format expected by OpenAI's API
   const messages = (await session.getContext()).toOpenAI(assistant);
 
-  // Generate response
+  // Step 3: Generate response using the context
   const response = await llm.chat.completions.create({
     model: "gpt-5.1",
     messages: messages
   });
   const assistantResponse = response.choices[0].message.content!;
 
-  // Store assistant response
+  // Step 4: Store assistant response for future context
   await session.addMessages([assistant.message(assistantResponse)]);
 
   return { assistantResponse: assistantResponse };
 }
 ```
 </CodeGroup>
+
+### Understanding get_context()
+
+The `get_context()` method retrieves the conversation history and formats it for your LLM. It automatically:
+
+- **Manages conversation history** - Tracks all messages and determines what's relevant
+- **Respects token limits** - Stays within context window constraints without manual counting
+- **Handles long conversations** - Combines recent detailed messages with summaries of older exchanges
+
+That's it. Call `session.get_context().to_openai(assistant)` and you get properly formatted context ready for your LLM.
+
 
 ## Build LangGraph
 
