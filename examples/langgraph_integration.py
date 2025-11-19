@@ -9,7 +9,7 @@ management. It creates a chatbot that remembers conversations across sessions.
 import os
 from dotenv import load_dotenv
 from typing_extensions import TypedDict
-from honcho import Honcho
+from honcho import Honcho, Peer, Session
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 load_dotenv()
@@ -21,9 +21,9 @@ llm = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 class State(TypedDict):
     user_message: str
     assistant_response: str
-    user: object
-    assistant: object
-    session: object
+    user: Peer
+    assistant: Peer
+    session: Session
 
 def chatbot(state: State):
     user_message = state["user_message"]

@@ -7,7 +7,9 @@ sidebarTitle: 'LangGraph'
 
 Integrate Honcho with LangGraph to build a conversational AI agent that maintains memory across sessions. This guide shows you how to use Honcho's memory layer with LangGraph's orchestration.
 
-> The full code is available on [GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph_integration.py)
+<Note>
+The full code is available on [GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph_integration.py)
+</Note>
 
 ## What We're Building
 
@@ -69,7 +71,7 @@ This tutorial uses the Honcho demo server at https://demo.honcho.dev which runs 
 import os
 from dotenv import load_dotenv
 from typing_extensions import TypedDict
-from honcho import Honcho
+from honcho import Honcho, Peer, Session
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 
@@ -84,7 +86,7 @@ llm = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 ```typescript TypeScript
 import * as dotenv from "dotenv";
-import { Honcho } from "@honcho-ai/sdk";
+import { Honcho, Peer, Session } from "@honcho-ai/sdk";
 import OpenAI from "openai";
 import { Annotation } from "@langchain/langgraph";
 import { StateGraph, START, END } from "@langchain/langgraph";
@@ -107,7 +109,7 @@ const llm = new OpenAI({
 Define your state schema to pass data through the graph. The state stores Honcho objects directly along with the current user message and assistant response.
 
 <Note>
-Before proceeding, it's important to understand Honcho's core concepts (Peers, Sessions, and Messages). Review the [Honcho Architecture](/v2/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
+Before proceeding, it's important to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v2/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
 </Note>
 
 <CodeGroup>
@@ -115,18 +117,18 @@ Before proceeding, it's important to understand Honcho's core concepts (Peers, S
 class State(TypedDict):
     user_message: str
     assistant_response: str
-    user: object  # Honcho Peer object
-    assistant: object  # Honcho Peer object
-    session: object  # Honcho Session object
+    user: Peer
+    assistant: Peer
+    session: Session
 ```
 
 ```typescript TypeScript
 const StateAnnotation = Annotation.Root({
   userMessage: Annotation<string>(),
   assistantResponse: Annotation<string>(),
-  user: Annotation<any>(),  // Honcho Peer object
-  assistant: Annotation<any>(),  // Honcho Peer object
-  session: Annotation<any>(),  // Honcho Session object
+  user: Annotation<Peer>(),
+  assistant: Annotation<Peer>(),
+  session: Annotation<Session>(),
 });
 
 type State = typeof StateAnnotation.State;
@@ -239,7 +241,7 @@ That's it. Call `session.get_context().to_openai(assistant)` and you get properl
 
 Now we'll create the main conversation function. To simplify logic, we initialize Honcho objects once per conversation and pass them through the LangGraph state.
 
-The `run_conversation_turn` function initializes Honcho peers and a session, passes them to the LangGraph, and returns the assistant's response. By calling it repeatedly with the same `user_id` and in the same session, the chat builds context over time.
+The `run_conversation_turn` function initializes a Honcho `Session` and `Peer` objects, passes them to the LangGraph, and returns the assistant's response. By calling it repeatedly with the same `user_id` and in the same session, the chat builds context over time.
 
 <Note>
 In production, you'd get the `user_id` from authentication and `session_id` from session management. This tutorial uses a hardcoded test user for simplicity.
@@ -331,7 +333,7 @@ main();
 Now that you have a working LangGraph integration with Honcho, you can:
 
 - **Create tools with Honcho** to fully utilize Honcho's memory & context management features
-- **Build a multi-agent LangGraph** where each agent is a Honcho peer with its own memory
+- **Build a multi-agent LangGraph** where each agent is a Honcho `Peer` with its own memory
 
 ## Related Resources
 
