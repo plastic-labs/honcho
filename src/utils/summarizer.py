@@ -16,7 +16,7 @@ from src.exceptions import ResourceNotFoundException
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric, conditional_observe
-from src.utils.tokens import estimate_tokens
+from src.utils.tokens import estimate_tokens, track_input_tokens
 
 from .. import crud, models
 
@@ -148,8 +148,8 @@ Produce as thorough a summary as possible in {output_words} words or less.
 
 
 @cache
-def estimate_short_summary_base_prompt_tokens() -> int:
-    """Estimate tokens for the base short summary prompt (without messages/previous_summary)."""
+def estimate_short_summary_prompt_tokens() -> int:
+    """Estimate tokens for the short summary prompt (without messages/previous_summary)."""
     try:
         return estimate_tokens(
             short_summary_prompt(
@@ -164,8 +164,8 @@ def estimate_short_summary_base_prompt_tokens() -> int:
 
 
 @cache
-def estimate_long_summary_base_prompt_tokens() -> int:
-    """Estimate tokens for the base long summary prompt (without messages/previous_summary)."""
+def estimate_long_summary_prompt_tokens() -> int:
+    """Estimate tokens for the long summary prompt (without messages/previous_summary)."""
     try:
         return estimate_tokens(
             long_summary_prompt(
@@ -378,14 +378,17 @@ async def _create_and_save_summary(
 
     # Get base prompt tokens based on summary type
     if summary_type == SummaryType.SHORT:
-        base_prompt_tokens = estimate_short_summary_base_prompt_tokens()
+        prompt_tokens = estimate_short_summary_prompt_tokens()
     else:
-        base_prompt_tokens = estimate_long_summary_base_prompt_tokens()
+        prompt_tokens = estimate_long_summary_prompt_tokens()
 
     track_input_tokens(
-        base_prompt_tokens=base_prompt_tokens,
-        messages_tokens=messages_tokens,
-        previous_summary_tokens=previous_summary_tokens,
+        task_type="summary",
+        components={
+            "prompt": prompt_tokens,
+            "messages": messages_tokens,
+            "previous_summary": previous_summary_tokens,
+        },
     )
 
     # Track output tokens
@@ -782,31 +785,6 @@ async def get_session_context_formatted(
         return messages_text
     else:
         return ""
-
-
-def track_input_tokens(
-    base_prompt_tokens: int,
-    messages_tokens: int,
-    previous_summary_tokens: int,
-) -> None:
-    """Helper method to track all input token components for summary task."""
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="summary",
-        token_type="input",  # nosec B106
-        component="base_prompt",
-    ).inc(base_prompt_tokens)
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="summary",
-        token_type="input",  # nosec B106
-        component="messages",
-    ).inc(messages_tokens)
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="summary",
-        token_type="input",  # nosec B106
-        component="previous_summary",
-    ).inc(previous_summary_tokens)
 
 
 def _format_messages(messages: list[models.Message]) -> str:

@@ -20,56 +20,18 @@ from src.utils.logging import (
 )
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.tokens import estimate_tokens
+from src.utils.tokens import estimate_tokens, track_input_tokens
 from src.utils.tracing import with_sentry_transaction
 
 from .prompts import (
     critical_analysis_prompt,
-    estimate_base_prompt_tokens,
+    estimate_critical_analysis_prompt_tokens,
+    estimate_peer_card_prompt_tokens,
     peer_card_prompt,
 )
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-
-def track_input_tokens(
-    peer_card_tokens: int,
-    working_rep_tokens: int,
-    base_prompt_tokens: int,
-    new_turns_tokens: int,
-    session_context_tokens: int,
-) -> None:
-    """Helper method to track all input token components for representation task."""
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="representation",
-        token_type="input",  # nosec B106
-        component="peer_card",
-    ).inc(peer_card_tokens)
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="representation",
-        token_type="input",  # nosec B106
-        component="working_representation",
-    ).inc(working_rep_tokens)
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="representation",
-        token_type="input",  # nosec B106
-        component="base_prompt",
-    ).inc(base_prompt_tokens)
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="representation",
-        token_type="input",  # nosec B106
-        component="new_turns",
-    ).inc(new_turns_tokens)
-
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="representation",
-        token_type="input",  # nosec B106
-        component="session_context",
-    ).inc(session_context_tokens)
 
 
 @conditional_observe(name="Critical Analysis Call")
@@ -141,6 +103,23 @@ async def peer_card_call(
         retry_attempts=3,
     )
 
+    # Track input tokens for peer_card task
+    track_input_tokens(
+        task_type="peer_card",
+        components={
+            "prompt": estimate_peer_card_prompt_tokens(),
+            "old_peer_card": estimate_tokens(old_peer_card),
+            "new_observations": estimate_tokens(new_observations.str_no_timestamps()),
+        },
+    )
+
+    # Track output tokens for peer_card task
+    prometheus.DERIVER_TOKENS_PROCESSED.labels(
+        task_type="peer_card",
+        token_type="output",  # nosec B106
+        component="total",
+    ).inc(response.output_tokens)
+
     return response.content
 
 
@@ -210,7 +189,7 @@ async def process_representation_tasks_batch(
         str(working_representation) if not working_representation.is_empty() else None
     )
 
-    base_prompt_tokens = estimate_base_prompt_tokens()
+    prompt_tokens = estimate_critical_analysis_prompt_tokens()
 
     # Estimate tokens for new conversation turns
     new_turns = [
@@ -220,7 +199,7 @@ async def process_representation_tasks_batch(
     new_turns_tokens = estimate_tokens(new_turns)
 
     estimated_input_tokens = (
-        peer_card_tokens + working_rep_tokens + base_prompt_tokens + new_turns_tokens
+        peer_card_tokens + working_rep_tokens + prompt_tokens + new_turns_tokens
     )
 
     # Calculate available tokens for context
@@ -250,7 +229,7 @@ async def process_representation_tasks_batch(
         + "New turns: %d, Session context: %d, Total estimated: %d",
         peer_card_tokens,
         working_rep_tokens,
-        base_prompt_tokens,
+        prompt_tokens,
         new_turns_tokens,
         session_context_tokens,
         estimated_input_tokens,
@@ -258,11 +237,14 @@ async def process_representation_tasks_batch(
 
     # Track all input token components
     track_input_tokens(
-        peer_card_tokens=peer_card_tokens,
-        working_rep_tokens=working_rep_tokens,
-        base_prompt_tokens=base_prompt_tokens,
-        new_turns_tokens=new_turns_tokens,
-        session_context_tokens=session_context_tokens,
+        task_type="representation",
+        components={
+            "peer_card": peer_card_tokens,
+            "working_representation": working_rep_tokens,
+            "prompt": prompt_tokens,
+            "new_turns": new_turns_tokens,
+            "session_context": session_context_tokens,
+        },
     )
 
     # got working representation and peer card, log timing

@@ -61,7 +61,7 @@ async def dialectic_call(
         Model response
     """
     # Estimate input tokens by concatenating all inputs
-    base_prompt_tokens = estimate_dialectic_prompt_tokens()
+    prompt_tokens = estimate_dialectic_prompt_tokens()
     inputs = [
         query,
         working_representation,
@@ -70,7 +70,7 @@ async def dialectic_call(
         "\n".join(observed_peer_card) if observed_peer_card else "",
     ]
     contextual_tokens = estimate_tokens("".join(inputs))
-    estimated_input_tokens = base_prompt_tokens + contextual_tokens
+    estimated_input_tokens = prompt_tokens + contextual_tokens
 
     # Generate the prompt and log it
     prompt = dialectic_prompt(
@@ -137,7 +137,7 @@ async def dialectic_stream(
         Streaming model response
     """
     # Estimate input tokens by concatenating all inputs
-    base_prompt_tokens = estimate_dialectic_prompt_tokens()
+    prompt_tokens = estimate_dialectic_prompt_tokens()
     variable_inputs = [
         query,
         working_representation,
@@ -146,7 +146,7 @@ async def dialectic_stream(
         "\n".join(observed_peer_card) if observed_peer_card else "",
     ]
     variable_tokens = estimate_tokens("".join(variable_inputs))
-    estimated_input_tokens = base_prompt_tokens + variable_tokens
+    estimated_input_tokens = prompt_tokens + variable_tokens
 
     # Generate the prompt and log it
     prompt = dialectic_prompt(
@@ -185,7 +185,8 @@ async def dialectic_stream(
     # Wrap the response to log output tokens from final chunk
     async def log_streaming_response():
         async for chunk in response:
-            if chunk.is_done and chunk.output_tokens:
+            if chunk.is_done and chunk.output_tokens is not None:
+                # TODO: Currently not tracking output tokens for groq models
                 prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
                     token_type="output",  # nosec B106
                 ).inc(chunk.output_tokens)

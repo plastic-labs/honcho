@@ -151,7 +151,7 @@ def estimate_dialectic_prompt_tokens() -> int:
     This value is cached since it only changes on redeploys when the prompt template changes.
     """
     try:
-        base_prompt = dialectic_prompt(
+        prompt = dialectic_prompt(
             query="",
             working_representation="",
             recent_conversation_history=None,
@@ -161,7 +161,7 @@ def estimate_dialectic_prompt_tokens() -> int:
             observed="",
         )
 
-        return estimate_tokens(base_prompt)
+        return estimate_tokens(prompt)
     except Exception:
         # Return a conservative estimate if estimation fails
         return 750

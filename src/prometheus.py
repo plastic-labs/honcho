@@ -86,7 +86,7 @@ DIALECTIC_CALLS = NamespacedCounter(
 # Incremented in: src/deriver/queue_manager.py when queue items are processed
 # Labels:
 #   - workspace_name: The workspace where items were processed
-#   - task_type: The type of task processed (e.g., "representation", "summary")
+#   - task_type: The type of task processed (e.g., "representation", "summary", "peer_card")
 DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
     "deriver_queue_items_processed_total",
     "Total deriver queue items processed",
@@ -99,7 +99,7 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
 # Labels:
 #   - task_type: The type of task that processed the tokens (e.g., "representation", "summary")
 #   - token_type: The type of tokens ("input" or "output")
-#   - component: The component of the input (e.g., "peer_card", "working_representation", "base_prompt", "new_turns", "session_context")
+#   - component: The component of the input (e.g., "peer_card", "working_representation", "prompt", "new_turns", "session_context")
 DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     "deriver_tokens_processed_total",
     "Total tokens processed by the deriver",
