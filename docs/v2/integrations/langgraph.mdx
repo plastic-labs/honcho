@@ -153,10 +153,11 @@ def chatbot(state: State):
     # This adds it to Honcho's memory for future context retrieval
     session.add_messages([user.message(user_message)])
 
-    # Step 2: Get context in OpenAI format
+    # Step 2: Get context in OpenAI format with token limit
     # get_context() retrieves relevant conversation history
+    # tokens=2000 limits the context to 2000 tokens to manage costs and fit within model limits
     # to_openai() converts it to the format expected by OpenAI's API
-    messages = session.get_context().to_openai(assistant=assistant)
+    messages = session.get_context(tokens=2000).to_openai(assistant=assistant)
 
     # Step 3: Generate response using the context
     response = llm.chat.completions.create(
@@ -184,10 +185,11 @@ async function chatbot(state: State) {
   // This adds it to Honcho's memory for future context retrieval
   await session.addMessages([user.message(userMessage)]);
 
-  // Step 2: Get context in OpenAI format
+  // Step 2: Get context in OpenAI format with token limit
   // getContext() retrieves relevant conversation history
+  // tokens: 2000 limits the context to 2000 tokens to manage costs and fit within model limits
   // toOpenAI() converts it to the format expected by OpenAI's API
-  const messages = (await session.getContext()).toOpenAI(assistant);
+  const messages = (await session.getContext({ tokens: 2000 })).toOpenAI(assistant);
 
   // Step 3: Generate response using the context
   const response = await llm.chat.completions.create({
@@ -225,17 +227,27 @@ const graph = new StateGraph(StateAnnotation)
 
 ### Understanding get_context()
 
-The [`get_context()`](/v2/documentation/core-concepts/features/get-context) method retrieves the conversation history and formats it for your LLM. It automatically:
+The [`get_context()`](/v2/documentation/core-concepts/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
 
 - **Manages conversation history** - Tracks all messages and determines what's relevant
 - **Respects token limits** - Stays within context window constraints without manual counting
 - **Handles long conversations** - Combines recent detailed messages with summaries of older exchanges
+- **Provides peer understanding** - Includes theory-of-mind representations and peer cards when requested
 
-That's it. Call `session.get_context().to_openai(assistant)` and you get properly formatted context ready for your LLM.
+The `SessionContext` object always includes fields for messages, summaries, peer representations, and peer cards. By default, only `messages` and `summary` are populated. To populate peer-specific context, pass a `peer_target` parameter:
+
+- **Peer Representation**: A working theory-of-mind model containing explicit observations (stated facts) and deductive observations (logical conclusions) about the peer
+- **Peer Card**: Targeted context about what one peer knows about another
+
+That's it. Call `session.get_context().to_openai(assistant)` and you get properly formatted context tailored for your assistant.
 
 <Tip>
 **Adding System Prompts:** Since `get_context()` returns conversation messages, you can easily prepend custom system instructions. Just add your system prompt to the beginning of the messages array before sending it to your LLM: `[{"role": "system", "content": "..."}, ...context_messages]`.
 </Tip>
+
+<Note>
+For more details on all available parameters, see the [Get Context documentation](/v2/documentation/core-concepts/features/get-context).
+</Note>
 
 ## Chat Loop
 
@@ -244,7 +256,9 @@ Now we'll create the main conversation function. To simplify logic, we initializ
 The `run_conversation_turn` function initializes a Honcho `Session` and `Peer` objects, passes them to the LangGraph, and returns the assistant's response. By calling it repeatedly with the same `user_id` and in the same session, the chat builds context over time.
 
 <Note>
-In production, you'd get the `user_id` from authentication and `session_id` from session management. This tutorial uses a hardcoded test user for simplicity.
+**Production Usage:** Honcho accepts any nanoid-compatible string for `user_id` and `session_id`. You can use IDs directly from your authentication system (Auth0, Firebase, Clerk, etc.) and session management without modification.
+
+This tutorial uses hardcoded values for simplicity.
 </Note>
 
 <CodeGroup>
