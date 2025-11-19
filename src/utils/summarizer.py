@@ -360,15 +360,10 @@ async def _create_and_save_summary(
     )
 
     messages_tokens = sum([message.token_count for message in messages])
-    print("latest_summary", latest_summary)
-    print(
-        "latest_summary token count",
-        latest_summary["token_count"] if latest_summary else 0,
-    )
     previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
     input_tokens = messages_tokens + previous_summary_tokens
 
-    new_summary = await _create_summary(
+    new_summary, is_fallback = await _create_summary(
         messages=messages,
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
@@ -376,27 +371,29 @@ async def _create_and_save_summary(
         message_public_id=message_public_id,
     )
 
-    # Get base prompt tokens based on summary type
-    if summary_type == SummaryType.SHORT:
-        prompt_tokens = estimate_short_summary_prompt_tokens()
-    else:
-        prompt_tokens = estimate_long_summary_prompt_tokens()
+    # Only track tokens if this was a real LLM call
+    if not is_fallback:
+        # Get base prompt tokens based on summary type
+        if summary_type == SummaryType.SHORT:
+            prompt_tokens = estimate_short_summary_prompt_tokens()
+        else:
+            prompt_tokens = estimate_long_summary_prompt_tokens()
 
-    track_input_tokens(
-        task_type="summary",
-        components={
-            "prompt": prompt_tokens,
-            "messages": messages_tokens,
-            "previous_summary": previous_summary_tokens,
-        },
-    )
+        track_input_tokens(
+            task_type="summary",
+            components={
+                "prompt": prompt_tokens,
+                "messages": messages_tokens,
+                "previous_summary": previous_summary_tokens,
+            },
+        )
 
-    # Track output tokens
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type="summary",
-        token_type="output",  # nosec B106
-        component="total",
-    ).inc(new_summary["token_count"])
+        # Track output tokens
+        prometheus.DERIVER_TOKENS_PROCESSED.labels(
+            task_type="summary",
+            token_type="output",  # nosec B106
+            component="total",
+        ).inc(new_summary["token_count"])
 
     await _save_summary(
         db,
@@ -433,7 +430,7 @@ async def _create_summary(
     summary_type: SummaryType,
     input_tokens: int,
     message_public_id: str,
-) -> Summary:
+) -> tuple[Summary, bool]:
     """
     Generate a summary of the provided messages using an LLM.
 
@@ -443,10 +440,12 @@ async def _create_summary(
         summary_type: Type of summary to create ("short" or "long")
 
     Returns:
-        A full summary of the conversation up to the last message
+        A tuple of (Summary, is_fallback) where is_fallback indicates if
+        the summary was generated using a fallback instead of an LLM call
     """
 
     response: HonchoLLMCallResponse[str] | None = None
+    is_fallback = False
     try:
         if summary_type == SummaryType.SHORT:
             response = await create_short_summary(
@@ -472,14 +471,18 @@ async def _create_summary(
             else ""
         )
         summary_tokens = 50
+        is_fallback = True
 
-    return Summary(
-        content=summary_text,
-        message_id=messages[-1].id if messages else 0,
-        summary_type=summary_type.value,
-        created_at=utc_now_iso(),
-        token_count=summary_tokens,
-        message_public_id=message_public_id,
+    return (
+        Summary(
+            content=summary_text,
+            message_id=messages[-1].id if messages else 0,
+            summary_type=summary_type.value,
+            created_at=utc_now_iso(),
+            token_count=summary_tokens,
+            message_public_id=message_public_id,
+        ),
+        is_fallback,
     )
 
 
