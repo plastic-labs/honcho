@@ -845,7 +845,7 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { filename = "honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:4848b905354d968086173e72a39360ecaf4020cb72ef017f712f5850f0f2702a" },
+    { filename = "honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:7cfac7e44d83bb172408e66a36b854963e4cedfb88e83814e91803f3c394fea6" },
 ]
 
 [package.metadata]

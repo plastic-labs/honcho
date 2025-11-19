@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 from src.schemas import (
+    DreamType,
     MessageConfiguration,
     SessionConfiguration,
     SessionPeerConfig,
@@ -71,6 +72,18 @@ class WaitAction(TestStep):
     )
     target: Literal["queue_empty"] = "queue_empty"
     timeout: int = 60
+
+
+# --- Dream Actions ---
+
+
+class TriggerDreamAction(TestStep):
+    step_type: Literal["trigger_dream"] = "trigger_dream"
+    observer: str = Field(..., description="Observer peer name")
+    observed: str | None = Field(
+        None, description="Observed peer name (defaults to observer if not specified)"
+    )
+    dream_type: DreamType = Field(..., description="Type of dream to trigger")
 
 
 # --- Assertions ---
@@ -150,6 +163,7 @@ class TestDefinition(BaseModel):
             | AddMessageAction
             | AddMessagesAction
             | WaitAction
+            | TriggerDreamAction
             | QueryAction,
             Field(discriminator="step_type"),
         ]

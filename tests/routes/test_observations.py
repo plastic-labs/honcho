@@ -78,7 +78,8 @@ class TestObservationRoutes:
 
         # List observations
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list"
+            f"/v2/workspaces/{test_workspace.name}/observations/list",
+            json={"filters": {"session_id": test_session.name}},
         )
 
         assert response.status_code == 200
@@ -119,7 +120,8 @@ class TestObservationRoutes:
 
         # List observations
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list"
+            f"/v2/workspaces/{test_workspace.name}/observations/list",
+            json={"filters": {"session_id": test_session.name}},
         )
 
         assert response.status_code == 200
@@ -184,8 +186,10 @@ class TestObservationRoutes:
 
         # List observations filtered by observer
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list",
-            json={"filters": {"observer": test_peer.name}},
+            f"/v2/workspaces/{test_workspace.name}/observations/list",
+            json={
+                "filters": {"observer": test_peer.name, "session_id": test_session.name}
+            },
         )
 
         assert response.status_code == 200
@@ -248,7 +252,8 @@ class TestObservationRoutes:
 
         # List observations in reverse (oldest first)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list?reverse=true"
+            f"/v2/workspaces/{test_workspace.name}/observations/list?reverse=true",
+            json={"filters": {"session_id": test_session.name}},
         )
 
         assert response.status_code == 200
@@ -301,7 +306,8 @@ class TestObservationRoutes:
 
         # Get first page (default size)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list?page=1&size=10"
+            f"/v2/workspaces/{test_workspace.name}/observations/list?page=1&size=10",
+            json={"filters": {"session_id": test_session.name}},
         )
 
         assert response.status_code == 200
@@ -311,7 +317,8 @@ class TestObservationRoutes:
 
         # Get second page
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list?page=2&size=10"
+            f"/v2/workspaces/{test_workspace.name}/observations/list?page=2&size=10",
+            json={"filters": {"session_id": test_session.name}},
         )
 
         assert response.status_code == 200
@@ -370,10 +377,14 @@ class TestObservationRoutes:
 
         # Query observations
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/query",
+            f"/v2/workspaces/{test_workspace.name}/observations/query",
             json={
                 "query": "food preferences",
-                "filters": {"observer": test_peer.name, "observed": test_peer2.name},
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
             },
         )
 
@@ -433,11 +444,15 @@ class TestObservationRoutes:
 
         # Query with top_k=2
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/query",
+            f"/v2/workspaces/{test_workspace.name}/observations/query",
             json={
                 "query": "relevant topic",
                 "top_k": 2,
-                "filters": {"observer": test_peer.name, "observed": test_peer2.name},
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
             },
         )
 
@@ -489,11 +504,15 @@ class TestObservationRoutes:
 
         # Query with distance threshold
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/query",
+            f"/v2/workspaces/{test_workspace.name}/observations/query",
             json={
                 "query": "test",
                 "distance": 0.8,
-                "filters": {"observer": test_peer.name, "observed": test_peer2.name},
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
             },
         )
 
@@ -520,7 +539,7 @@ class TestObservationRoutes:
 
         # Query without observer/observed filters should fail
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/query",
+            f"/v2/workspaces/{test_workspace.name}/observations/query",
             json={"query": "test"},
         )
 
@@ -552,11 +571,15 @@ class TestObservationRoutes:
 
         # Query with invalid top_k (too high)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/query",
+            f"/v2/workspaces/{test_workspace.name}/observations/query",
             json={
                 "query": "test",
                 "top_k": 101,  # Max is 100
-                "filters": {"observer": test_peer.name, "observed": test_peer2.name},
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
             },
         )
 
@@ -607,7 +630,7 @@ class TestObservationRoutes:
 
         # Delete observation
         response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/{observation_id}"
+            f"/v2/workspaces/{test_workspace.name}/observations/{observation_id}"
         )
 
         assert response.status_code == 200
@@ -640,72 +663,12 @@ class TestObservationRoutes:
 
         # Try to delete non-existent observation
         response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/nonexistent_id"
+            f"/v2/workspaces/{test_workspace.name}/observations/nonexistent_id"
         )
 
         assert response.status_code == 404
         data = response.json()
         assert "not found" in data["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_delete_observation_wrong_session(
-        self,
-        client: TestClient,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
-    ):
-        """Test deleting an observation from wrong session fails"""
-        test_workspace, test_peer = sample_data
-
-        # Create another peer
-        test_peer2 = models.Peer(
-            name=str(generate_nanoid()), workspace_name=test_workspace.name
-        )
-        db_session.add(test_peer2)
-        await db_session.flush()
-
-        # Create two sessions
-        test_session1 = models.Session(
-            name=str(generate_nanoid()), workspace_name=test_workspace.name
-        )
-        test_session2 = models.Session(
-            name=str(generate_nanoid()), workspace_name=test_workspace.name
-        )
-        db_session.add_all([test_session1, test_session2])
-        await db_session.commit()
-
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
-        )
-
-        # Create observation in session1
-        doc = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="Test observation",
-            embedding=[0.1] * 1536,
-            session_name=test_session1.name,
-        )
-        db_session.add(doc)
-        await db_session.commit()
-
-        observation_id = doc.id
-
-        # Try to delete from session2
-        response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session2.name}/observations/{observation_id}"
-        )
-
-        assert response.status_code == 404
-
-        # Verify observation still exists
-        from sqlalchemy import select
-
-        stmt = select(models.Document).where(models.Document.id == observation_id)
-        result = await db_session.execute(stmt)
-        assert result.scalar_one_or_none() is not None
 
     @pytest.mark.asyncio
     async def test_list_observations_nonexistent_session(
@@ -718,7 +681,8 @@ class TestObservationRoutes:
 
         # Try to list observations for non-existent session
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/nonexistent_session/observations/list"
+            f"/v2/workspaces/{test_workspace.name}/observations/list",
+            json={"filters": {"session_id": "nonexistent_session"}},
         )
 
         # Should return empty result, not error (session might exist but no observations)
@@ -769,7 +733,8 @@ class TestObservationRoutes:
 
         # List observations
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/observations/list"
+            f"/v2/workspaces/{test_workspace.name}/observations/list",
+            json={"filters": {"session_id": test_session.name}},
         )
 
         assert response.status_code == 200

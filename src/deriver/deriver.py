@@ -339,6 +339,7 @@ class CertaintyReasoner:
         """
         analysis_start = time.perf_counter()
 
+        message_ids = [m.id for m in self.ctx]
         earliest_message = self.ctx[0]
         latest_message = self.ctx[-1]
 
@@ -373,7 +374,7 @@ class CertaintyReasoner:
 
         reasoning_response = Representation.from_prompt_representation(
             reasoning_response,
-            (earliest_message.id, latest_message.id),
+            [earliest_message.id, latest_message.id],
             latest_message.session_name,
             latest_message.created_at,
         )
@@ -393,7 +394,7 @@ class CertaintyReasoner:
         if not new_observations.is_empty():
             await self.representation_manager.save_representation(
                 new_observations,
-                (earliest_message.id, latest_message.id),
+                message_ids,
                 latest_message.session_name,
                 latest_message.created_at,
                 self.message_level_configuration,

@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from src.schemas import ResolvedConfiguration
+from src.schemas import DreamType, ResolvedConfiguration
 
 
 class BasePayload(BaseModel):
@@ -53,7 +53,7 @@ class DreamPayload(BasePayload):
     """Payload for dream tasks."""
 
     task_type: Literal["dream"] = "dream"
-    dream_type: Literal["consolidate"] = "consolidate"
+    dream_type: DreamType
     observer: str
     observed: str
 
@@ -69,7 +69,7 @@ def create_webhook_payload(
 
 
 def create_dream_payload(
-    dream_type: Literal["consolidate"] = "consolidate",
+    dream_type: DreamType,
     *,
     observer: str,
     observed: str,

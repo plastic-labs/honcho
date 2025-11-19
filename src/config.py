@@ -348,11 +348,11 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
-    ENABLED_TYPES: list[str] = ["consolidate"]
+    ENABLED_TYPES: list[str] = ["consolidate", "agent"]
 
     # LLM settings for dream processing
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-4o-mini-2024-07-18"
+    PROVIDER: SupportedProviders = "google"
+    MODEL: str = "gemini-2.5-flash"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
 
 

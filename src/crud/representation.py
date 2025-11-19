@@ -45,7 +45,7 @@ class RepresentationManager:
     async def save_representation(
         self,
         representation: Representation,
-        message_id_range: tuple[int, int],
+        message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
@@ -87,7 +87,7 @@ class RepresentationManager:
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id_range[1]}_{self.observer}",
+            f"deriver_{message_ids[-1]}_{self.observer}",
             "embed_new_observations",
             batch_embed_duration,
             "ms",
@@ -100,7 +100,7 @@ class RepresentationManager:
                 db,
                 all_observations,
                 embeddings,
-                message_id_range,
+                message_ids,
                 session_name,
                 message_created_at,
                 message_level_configuration,
@@ -108,7 +108,7 @@ class RepresentationManager:
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id_range[1]}_{self.observer}",
+            f"deriver_{message_ids[-1]}_{self.observer}",
             "save_new_observations",
             create_document_duration,
             "ms",
@@ -121,7 +121,7 @@ class RepresentationManager:
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
         embeddings: list[list[float]],
-        message_id_range: tuple[int, int],
+        message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
@@ -148,7 +148,7 @@ class RepresentationManager:
                 obs_premises = None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
-                message_ids=[message_id_range],
+                message_ids=message_ids,
                 premises=obs_premises,
                 message_created_at=format_datetime_utc(message_created_at),
             )

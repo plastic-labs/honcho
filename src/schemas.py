@@ -1,5 +1,6 @@
 import datetime
 import ipaddress
+from enum import Enum
 from typing import Annotated, Any, Self
 from urllib.parse import urlparse
 
@@ -20,10 +21,21 @@ from src.utils.types import DocumentLevel
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
+class DreamType(str, Enum):
+    """Types of dreams that can be triggered."""
+
+    CONSOLIDATE = "consolidate"
+    AGENT = "agent"
+
+
 class DeriverConfiguration(BaseModel):
     enabled: bool | None = Field(
         default=None,
         description="Whether to enable deriver functionality.",
+    )
+    custom_instructions: str | None = Field(
+        default=None,
+        description="TODO: currently unused. Custom instructions to use for the deriver on this workspace/session/message.",
     )
 
 
@@ -458,7 +470,7 @@ class DocumentBase(BaseModel):
 
 
 class DocumentMetadata(BaseModel):
-    message_ids: list[tuple[int, int]] = Field(
+    message_ids: list[int] = Field(
         description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
     )
     message_created_at: str = Field(
@@ -648,6 +660,15 @@ class DeriverStatus(BaseModel):
     sessions: dict[str, SessionDeriverStatus] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )
+
+
+# Dream trigger schema
+class TriggerDreamRequest(BaseModel):
+    observer: str = Field(..., description="Observer peer name")
+    observed: str | None = Field(
+        None, description="Observed peer name (defaults to observer if not specified)"
+    )
+    dream_type: DreamType = Field(..., description="Type of dream to trigger")
 
 
 # Webhook endpoint schemas

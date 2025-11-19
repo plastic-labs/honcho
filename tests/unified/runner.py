@@ -39,6 +39,7 @@ from tests.unified.schema import (
     SetSessionConfigAction,
     SetWorkspaceConfigAction,
     TestDefinition,
+    TriggerDreamAction,
     WaitAction,
 )
 
@@ -71,7 +72,6 @@ class UnifiedTestExecutor:
     ):
         self.client: AsyncHoncho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
-        self.workspace_id: str = honcho_client.workspace_id
 
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
         logger.info(f"Starting test: {test_name}")
@@ -166,6 +166,15 @@ class UnifiedTestExecutor:
             if step.target == "queue_empty":
                 await self.wait_for_queue(step.timeout)
 
+        elif isinstance(step, TriggerDreamAction):
+            # Use the core SDK to trigger a dream
+            await self.client.core.workspaces.trigger_dream(
+                workspace_id=self.client.workspace_id,
+                observer=step.observer,
+                observed=step.observed,
+                dream_type=step.dream_type.value,
+            )
+
         elif isinstance(step, QueryAction):
             result = await self.perform_query(step)
             for assertion in step.assertions:
@@ -174,14 +183,14 @@ class UnifiedTestExecutor:
     async def wait_for_queue(self, timeout: int):
         # Poll deriver status
         # Wait for potential background tasks to enqueue
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
         start = time.time()
         while time.time() - start < timeout:
             status: DeriverStatus = await self.client.get_deriver_status()
             # status structure from schema: DeriverStatus with pending_work_units, in_progress_work_units
             if status.pending_work_units == 0 and status.in_progress_work_units == 0:
                 return
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
         raise TimeoutError("Deriver queue did not empty within timeout")
 
     async def perform_query(self, step: QueryAction) -> Any:
