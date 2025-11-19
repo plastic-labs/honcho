@@ -19,22 +19,23 @@ honcho = Honcho()
 llm = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 class State(TypedDict):
-    user_input: str
+    user_message: str
     assistant_response: str
-    user_id: str
-    session_id: str
+    user: object
+    assistant: object
+    session: object
 
 def chatbot(state: State):
-    user_message = state["user_input"]
+    user_message = state["user_message"]
 
-    # Get peers and session
-    user_peer = honcho.peer(state["user_id"])
-    assistant_peer = honcho.peer("assistant")
-    session = honcho.session(state["session_id"])
-    session.add_messages([user_peer.message(user_message)])
+    # Get objects from state
+    user = state["user"]
+    assistant = state["assistant"]
+    session = state["session"]
+    session.add_messages([user.message(user_message)])
 
     # Get context in OpenAI format
-    messages = session.get_context().to_openai(assistant=assistant_peer)
+    messages = session.get_context().to_openai(assistant=assistant)
 
     # Generate response
     response = llm.chat.completions.create(
@@ -44,7 +45,7 @@ def chatbot(state: State):
     assistant_response = response.choices[0].message.content
 
     # Store assistant response
-    session.add_messages([assistant_peer.message(assistant_response)])
+    session.add_messages([assistant.message(assistant_response)])
 
     return {"assistant_response": assistant_response}
 
@@ -54,14 +55,20 @@ graph = StateGraph(State) \
     .add_edge("chatbot", END) \
     .compile()
 
-def run_conversation(user_id: str, user_input: str, session_id: str = None):
+def run_conversation_turn(user_id: str, user_input: str, session_id: str | None = None):
     if not session_id:
         session_id = f"session_{user_id}"
 
+    # Initialize Honcho objects
+    user = honcho.peer(user_id)
+    assistant = honcho.peer("assistant")
+    session = honcho.session(session_id)
+
     result = graph.invoke({
-        "user_input": user_input,
-        "user_id": user_id,
-        "session_id": session_id
+        "user_message": user_input,
+        "user": user,
+        "assistant": assistant,
+        "session": session
     })
 
     return result["assistant_response"]
@@ -73,5 +80,5 @@ if __name__ == "__main__":
       user_input = input("You: ")
       if user_input.lower() in ['quit', 'exit']:
           break
-      response = run_conversation(user_id, user_input)
+      response = run_conversation_turn(user_id, user_input)
       print(f"Assistant: {response}\n")

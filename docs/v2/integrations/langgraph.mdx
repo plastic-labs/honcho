@@ -5,25 +5,11 @@ description: "Build a stateful conversational AI agent with LangGraph and Honcho
 sidebarTitle: 'LangGraph'
 ---
 
-Integrate Honcho with LangGraph to build conversational AI agents that maintain memory across sessions. This guide shows you how to use Honcho's memory layer with LangGraph's orchestration.
+Integrate Honcho with LangGraph to build a conversational AI agent that maintains memory across sessions. This guide shows you how to use Honcho's memory layer with LangGraph's orchestration.
 
 > The full code is available on [GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/langgraph_integration.py)
 
-## Setup and Initialization
-
-### Prerequisites
-
-- LLM API key (This tutorial uses OpenAI)
-
-Create a `.env` file with your API keys:
-
-```bash
-OPENAI_API_KEY=your_openai_key
-```
-
-<Note>
-This example uses the honcho demo server. Found at https://demo.honcho.dev it runs a small instance of honcho on the latest version. If you need a production-ready setup get your Honcho API key at [app.honcho.dev](https://app.honcho.dev). For local development, use `environment="local"`.
-</Note>
+## Installation
 
 Install required packages:
 
@@ -49,13 +35,28 @@ pnpm add @honcho-ai/sdk @langchain/langgraph openai dotenv
 ```
 </CodeGroup>
 
-### Setup
+## Configuration
 
-Initialize Honcho and OpenAI clients, and define the state for your LangGraph:
+### API Keys
+
+This tutorial uses OpenAI, but Honcho works with any LLM provider. Create a `.env` file with your API keys:
+
+```bash
+OPENAI_API_KEY=your_openai_key
+```
+
+<Note>
+This example uses the honcho demo server at https://demo.honcho.dev which runs a small instance of honcho on the latest version. For production, get your Honcho API key at [app.honcho.dev](https://app.honcho.dev). For local development, use `environment="local"`.
+</Note>
+
+## Initialize Clients
+
+Initialize Honcho and OpenAI clients:
 
 <CodeGroup>
 ```python Python
 import os
+from typing import Any
 from dotenv import load_dotenv
 from typing_extensions import TypedDict
 from honcho import Honcho
@@ -69,13 +70,6 @@ honcho = Honcho()
 
 # Initialize OpenAI
 llm = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-# Define State
-class State(TypedDict):
-    user_input: str
-    assistant_response: str
-    user_id: str
-    session_id: str
 ```
 
 ```typescript TypeScript
@@ -95,13 +89,30 @@ const honcho = new Honcho({});
 const llm = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+```
+</CodeGroup>
 
-// Define State
+## Define LangGraph State
+
+Define your state schema to pass data through the graph. The state stores Honcho objects directly (`user`, `assistant`, and `session`) along with the most recent message from both the user (`user_message`) and assistant (`assistant_response`).
+
+<CodeGroup>
+```python Python
+class State(TypedDict):
+    user_input: str
+    assistant_response: str
+    user: Any  # Honcho Peer object
+    assistant: Any  # Honcho Peer object
+    session: Any  # Honcho Session object
+```
+
+```typescript TypeScript
 const StateAnnotation = Annotation.Root({
   userInput: Annotation<string>(),
   assistantResponse: Annotation<string>(),
-  userId: Annotation<string>(),
-  sessionId: Annotation<string>(),
+  user: Annotation<any>(),  // Honcho Peer object
+  assistant: Annotation<any>(),  // Honcho Peer object
+  session: Annotation<any>(),  // Honcho Session object
 });
 
 type State = typeof StateAnnotation.State;
@@ -110,21 +121,21 @@ type State = typeof StateAnnotation.State;
 
 ## Create Chatbot Function
 
-Define your chatbot logic, using Honcho for memory:
+Define your chatbot logic, using Honcho for memory.
 
 <CodeGroup>
 ```python Python
 def chatbot(state: State):
     user_message = state["user_input"]
 
-    # Get peers and session
-    user_peer = honcho.peer(state["user_id"])
-    assistant_peer = honcho.peer("assistant")
-    session = honcho.session(state["session_id"])
-    session.add_messages([user_peer.message(user_message)])
+    # Get objects from state
+    user = state["user"]
+    assistant = state["assistant"]
+    session = state["session"]
+    session.add_messages([user.message(user_message)])
 
     # Get context in OpenAI format
-    messages = session.get_context().to_openai(assistant=assistant_peer)
+    messages = session.get_context().to_openai(assistant=assistant)
 
     # Generate response
     response = llm.chat.completions.create(
@@ -134,7 +145,7 @@ def chatbot(state: State):
     assistant_response = response.choices[0].message.content
 
     # Store assistant response
-    session.add_messages([assistant_peer.message(assistant_response)])
+    session.add_messages([assistant.message(assistant_response)])
 
     return {"assistant_response": assistant_response}
 ```
@@ -143,14 +154,14 @@ def chatbot(state: State):
 async function chatbot(state: State) {
   const userMessage = state.userInput;
 
-  // Get peers and session
-  const userPeer = await honcho.peer(state.userId);
-  const assistantPeer = await honcho.peer("assistant");
-  const session = await honcho.session(state.sessionId);
-  await session.addMessages([userPeer.message(userMessage)]);
+  // Get objects from state
+  const user = state.user;
+  const assistant = state.assistant;
+  const session = state.session;
+  await session.addMessages([user.message(userMessage)]);
 
   // Get context in OpenAI format
-  const messages = (await session.getContext()).toOpenAI(assistantPeer);
+  const messages = (await session.getContext()).toOpenAI(assistant);
 
   // Generate response
   const response = await llm.chat.completions.create({
@@ -160,7 +171,7 @@ async function chatbot(state: State) {
   const assistantResponse = response.choices[0].message.content!;
 
   // Store assistant response
-  await session.addMessages([assistantPeer.message(assistantResponse)]);
+  await session.addMessages([assistant.message(assistantResponse)]);
 
   return { assistantResponse: assistantResponse };
 }
@@ -191,16 +202,24 @@ const graph = new StateGraph(StateAnnotation)
 
 ## Chat Loop
 
+Initialize the Honcho objects once and pass them into the graph:
+
 <CodeGroup>
 ```python Python
 def run_conversation(user_id: str, user_input: str, session_id: str = None):
     if not session_id:
         session_id = f"session_{user_id}"
 
+    # Initialize Honcho objects once
+    user = honcho.peer(user_id)
+    assistant = honcho.peer("assistant")
+    session = honcho.session(session_id)
+
     result = graph.invoke({
         "user_input": user_input,
-        "user_id": user_id,
-        "session_id": session_id
+        "user": user,
+        "assistant": assistant,
+        "session": session
     })
 
     return result["assistant_response"]
@@ -226,10 +245,16 @@ async function runConversation(
     sessionId = `session_${userId}`;
   }
 
+  // Initialize Honcho objects once
+  const user = await honcho.peer(userId);
+  const assistant = await honcho.peer("assistant");
+  const session = await honcho.session(sessionId);
+
   const result = await graph.invoke({
     userInput: userInput,
-    userId: userId,
-    sessionId: sessionId,
+    user: user,
+    assistant: assistant,
+    session: session,
   });
 
   return result.assistantResponse;
@@ -265,7 +290,7 @@ main();
 Now that you have a working LangGraph integration with Honcho, you can:
 
 - **Create tools with Honcho** to fully utilize the Honcho's memory & context management features
-- **Create multi-agent systems** with multiple assistant peers
+- **Augment multi-agent LangGraphs** with multiple assistant peers
 
 ## Related Resources
 
@@ -273,7 +298,7 @@ Now that you have a working LangGraph integration with Honcho, you can:
   <Card title="Get Context" icon="messages" href="/v2/documentation/core-concepts/features/get-context">
     Learn more about retrieving and formatting conversation context
   </Card>
-  <Card title="MCP Integration" icon="star-of-life" href="/v2/guides/mcp">
+  <Card title="MCP Integration" icon="star-of-life" href="/v2/integrations/mcp">
     Use Honcho in Claude Desktop with MCP
   </Card>
 </CardGroup>
