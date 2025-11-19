@@ -167,6 +167,27 @@ wheels = [
 ]
 
 [[package]]
+name = "honcho-langgraph-example"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "honcho-ai" },
+    { name = "langchain-core" },
+    { name = "langgraph" },
+    { name = "openai" },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "honcho-ai" },
+    { name = "langchain-core", specifier = ">=1.0.6" },
+    { name = "langgraph", specifier = ">=1.0.3" },
+    { name = "openai", specifier = ">=1.99.7" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -654,27 +675,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/f2/f11dd73284122713f5f89fc940f370d035fa8e1e078d446b3313955157fe/pydantic_core-2.41.5-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:a668ce24de96165bb239160b3d854943128f4334822900534f2fe947930e5770", size = 2330317, upload-time = "2025-11-04T13:43:40.406Z" },
     { url = "https://files.pythonhosted.org/packages/88/9d/b06ca6acfe4abb296110fb1273a4d848a0bfb2ff65f3ee92127b3244e16b/pydantic_core-2.41.5-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:f14f8f046c14563f8eb3f45f499cc658ab8d10072961e07225e507adb700e93f", size = 2316992, upload-time = "2025-11-04T13:43:43.602Z" },
     { url = "https://files.pythonhosted.org/packages/36/c7/cfc8e811f061c841d7990b0201912c3556bfeb99cdcb7ed24adc8d6f8704/pydantic_core-2.41.5-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:56121965f7a4dc965bff783d70b907ddf3d57f6eba29b6d2e5dabfaf07799c51", size = 2145302, upload-time = "2025-11-04T13:43:46.64Z" },
-]
-
-[[package]]
-name = "python"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "honcho-ai" },
-    { name = "langchain-core" },
-    { name = "langgraph" },
-    { name = "openai" },
-    { name = "python-dotenv" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "honcho-ai" },
-    { name = "langchain-core", specifier = ">=1.0.6" },
-    { name = "langgraph", specifier = ">=1.0.3" },
-    { name = "openai", specifier = ">=1.99.7" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
 ]
 
 [[package]]

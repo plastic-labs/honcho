@@ -1,7 +1,7 @@
 [project]
-name = "python"
+name = "honcho-langgraph-example"
 version = "0.1.0"
-description = "Add your description here"
+description = "LangGraph integration with Honcho for stateful conversational AI"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
