@@ -71,25 +71,19 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import tiktoken
 from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam
+from anthropic.types import MessageParam, ToolParam
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from scipy.stats import kendalltau  # pyright: ignore[reportUnknownVariableType]
 from typing_extensions import TypedDict
-
-try:
-    from scipy.stats import (
-        kendalltau,  # type: ignore  # pyright: ignore[reportUnknownVariableType]
-    )
-except ImportError:
-    kendalltau = None  # type: ignore
 
 from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
@@ -140,7 +134,7 @@ class BEAMRunner:
         pool_size: int = 1,
         anthropic_api_key: str | None = None,
         timeout_seconds: int | None = None,
-        cleanup_workspace: bool = False,
+        cleanup_workspace: bool = True,
         use_get_context: bool = False,
     ):
         """
@@ -354,15 +348,7 @@ For each nugget, assign a score:
 
 Be strict but fair in your evaluation. Focus on whether the response contains the required information or demonstrates the required behavior.
 
-Always respond with valid JSON in this exact format:
-{{
-    "nugget_scores": [
-        {{"nugget_index": 1, "score": 1.0, "reasoning": "brief explanation"}},
-        {{"nugget_index": 2, "score": 0.5, "reasoning": "brief explanation"}}
-    ],
-    "overall_score": 0.75,
-    "overall_reasoning": "brief summary of the evaluation"
-}}"""
+Use the `evaluate_response` tool to submit your evaluation."""
 
             user_prompt = f"""Question: "{question}"
 
@@ -372,6 +358,31 @@ Rubric (atomic criteria to check):
 Actual Response: "{actual_response}"
 
 Evaluate the response against each nugget in the rubric. Provide a score for each nugget and calculate the overall score as the average of all nugget scores."""
+
+            tool_definition: ToolParam = {
+                "name": "evaluate_response",
+                "description": "Submit the evaluation results for the response based on the rubric.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "nugget_scores": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "nugget_index": {"type": "integer"},
+                                    "score": {"type": "number"},
+                                    "reasoning": {"type": "string"},
+                                },
+                                "required": ["nugget_index", "score", "reasoning"],
+                            },
+                        },
+                        "overall_score": {"type": "number"},
+                        "overall_reasoning": {"type": "string"},
+                    },
+                    "required": ["nugget_scores", "overall_score", "overall_reasoning"],
+                },
+            }
 
             response = await self.anthropic_client.messages.create(
                 model="claude-sonnet-4-5",
@@ -384,30 +395,26 @@ Evaluate the response against each nugget in the rubric. Provide a score for eac
                         "content": user_prompt,
                     }
                 ],
+                tools=[tool_definition],
+                tool_choice={"type": "tool", "name": "evaluate_response"},
             )
 
             if not response.content:
                 raise ValueError("Anthropic returned empty response")
 
-            content_block = response.content[0]
-            judgment_text = getattr(content_block, "text", None)
-            if judgment_text is None:
-                raise ValueError(
-                    f"No text content in response block: {type(content_block)}"
-                )
+            # Find the tool use block
+            tool_use_block = next(
+                (block for block in response.content if block.type == "tool_use"), None
+            )
 
-            # Extract JSON from the response if it's wrapped in markdown
-            if "```json" in judgment_text:
-                json_start = judgment_text.find("```json") + 7
-                json_end = judgment_text.find("```", json_start)
-                judgment_text = judgment_text[json_start:json_end].strip()
-            elif "```" in judgment_text:
-                json_start = judgment_text.find("```") + 3
-                json_end = judgment_text.find("```", json_start)
-                judgment_text = judgment_text[json_start:json_end].strip()
+            if not tool_use_block:
+                raise ValueError("No tool use block found in response")
 
-            judgment = json.loads(judgment_text)
-            return judgment
+            judgment: object = tool_use_block.input
+            if not isinstance(judgment, dict):
+                raise ValueError(f"Tool input is not a dictionary: {type(judgment)}")
+
+            return cast(dict[str, Any], judgment)
 
         except Exception as e:
             self.logger.error(f"Error judging response: {e}")
@@ -441,16 +448,28 @@ Evaluate the response against each nugget in the rubric. Provide a score for eac
 
 Your task is to extract the ordered list of events/items mentioned in a response.
 
-Return valid JSON in this format:
-{
-    "extracted_events": ["first event", "second event", "third event"]
-}"""
+Use the `extract_ordered_events` tool to submit the extracted list."""
 
             user_prompt = f"""Question: "{question}"
 
 Response: "{actual_response}"
 
 Extract the ordered list of events or items mentioned in the response. Preserve the order as stated in the response."""
+
+            tool_definition: ToolParam = {
+                "name": "extract_ordered_events",
+                "description": "Submit the ordered list of events extracted from the response.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "extracted_events": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["extracted_events"],
+                },
+            }
 
             response = await self.anthropic_client.messages.create(
                 model="claude-sonnet-4-5",
@@ -463,30 +482,28 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                         "content": user_prompt,
                     }
                 ],
+                tools=[tool_definition],
+                tool_choice={"type": "tool", "name": "extract_ordered_events"},
             )
 
             if not response.content:
                 raise ValueError("Anthropic returned empty response")
 
-            content_block = response.content[0]
-            extraction_text = getattr(content_block, "text", None)
-            if extraction_text is None:
-                raise ValueError(
-                    f"No text content in response block: {type(content_block)}"
-                )
+            # Find the tool use block
+            tool_use_block = next(
+                (block for block in response.content if block.type == "tool_use"), None
+            )
 
-            # Extract JSON
-            if "```json" in extraction_text:
-                json_start = extraction_text.find("```json") + 7
-                json_end = extraction_text.find("```", json_start)
-                extraction_text = extraction_text[json_start:json_end].strip()
-            elif "```" in extraction_text:
-                json_start = extraction_text.find("```") + 3
-                json_end = extraction_text.find("```", json_start)
-                extraction_text = extraction_text[json_start:json_end].strip()
+            if not tool_use_block:
+                raise ValueError("No tool use block found in response")
 
-            extracted = json.loads(extraction_text)
-            extracted_events = extracted.get("extracted_events", [])
+            extracted = tool_use_block.input
+            if not isinstance(extracted, dict):
+                raise ValueError(f"Tool input is not a dictionary: {type(extracted)}")
+
+            extracted_dict = cast(dict[str, Any], extracted)
+            raw_events: list[str] = extracted_dict.get("extracted_events", [])
+            extracted_events = [str(e) for e in raw_events]
 
             # Now compute alignment and Kendall tau-b
             # Match extracted events to rubric events using LLM equivalence
