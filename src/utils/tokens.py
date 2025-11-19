@@ -1,6 +1,6 @@
 import tiktoken
 
-tokenizer = tiktoken.get_encoding("cl100k_base")
+tokenizer = tiktoken.get_encoding("o200k_base")
 
 
 def estimate_tokens(text: str | list[str] | None) -> int:
