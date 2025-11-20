@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - QueueItems to use standardized columns
 - Improved Deduplication logic for Representation Tasks
 - More finegrained metrics for representation, summary, and peer card tasks
+- DB constraint to follow standard naming conventions
 
 ## [2.4.2] - 2025-11-03
 
