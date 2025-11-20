@@ -239,10 +239,6 @@ def upgrade() -> None:
         )
 
     # Drop old queue indexes that will be replaced
-    if index_exists("queue", "ix_queue_work_unit_key_processed_id", inspector):
-        op.drop_index(
-            "ix_queue_work_unit_key_processed_id", table_name="queue", schema=schema
-        )
     if index_exists("queue", "ix_queue_workspace_name_processed", inspector):
         op.drop_index(
             "ix_queue_workspace_name_processed", table_name="queue", schema=schema
@@ -257,9 +253,13 @@ def upgrade() -> None:
         op.create_index(
             "ix_queue_processed", "queue", ["processed"], unique=False, schema=schema
         )
-    if not index_exists("queue", "work_unit_key", inspector):
+    if not index_exists("queue", "ix_queue_work_unit_key_processed_id", inspector):
         op.create_index(
-            "work_unit_key", "queue", ["processed", "id"], unique=False, schema=schema
+            "ix_queue_work_unit_key_processed_id",
+            "queue",
+            ["work_unit_key", "processed", "id"],
+            unique=False,
+            schema=schema,
         )
 
     # Sessions - new index
@@ -364,7 +364,6 @@ def downgrade() -> None:
 
     # Drop new indexes
     op.drop_index("ix_sessions_workspace_name", table_name="sessions", schema=schema)
-    op.drop_index("work_unit_key", table_name="queue", schema=schema)
     op.drop_index("ix_queue_processed", table_name="queue", schema=schema)
 
     # ============================================================
@@ -383,13 +382,6 @@ def downgrade() -> None:
         "ix_queue_workspace_name_processed",
         "queue",
         ["workspace_name", "processed"],
-        unique=False,
-        schema=schema,
-    )
-    op.create_index(
-        "ix_queue_work_unit_key_processed_id",
-        "queue",
-        ["work_unit_key", "processed", "id"],
         unique=False,
         schema=schema,
     )

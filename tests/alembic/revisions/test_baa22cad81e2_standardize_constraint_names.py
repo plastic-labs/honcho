@@ -133,7 +133,6 @@ def verify_standardize_constraint_names(verifier: MigrationVerifier) -> None:
         ("peers", "idx_peers_workspace_lookup"),
         ("workspaces", "ix_workspaces_name"),
         ("active_queue_sessions", "ix_active_queue_sessions_work_unit_key"),
-        ("queue", "ix_queue_work_unit_key_processed_id"),
         ("queue", "ix_queue_workspace_name_processed"),
     ]
     verifier.assert_indexes_not_exist(redundant_indexes)
@@ -141,7 +140,7 @@ def verify_standardize_constraint_names(verifier: MigrationVerifier) -> None:
     # Verify new indexes were created
     new_queue_indexes = [
         ("queue", "ix_queue_processed"),
-        ("queue", "work_unit_key"),
+        ("queue", "ix_queue_work_unit_key_processed_id"),
         ("sessions", "ix_sessions_workspace_name"),
     ]
     verifier.assert_indexes_exist(new_queue_indexes)
@@ -155,14 +154,13 @@ def verify_standardize_constraint_names(verifier: MigrationVerifier) -> None:
     # Check using raw SQL since the verifier doesn't have a method for this
     result = verifier.conn.execute(
         text(
-            """
+            f"""
                 SELECT confdeltype
                 FROM pg_constraint
-                WHERE conrelid = :table_name::regclass
+                WHERE conrelid = '{verifier.schema}.message_embeddings'::regclass
                 AND conname = 'fk_message_embeddings_message_id_messages'
                 """
-        ),
-        {"table_name": f"{verifier.schema}.message_embeddings"},
+        )
     )
     row = result.fetchone()
     assert row is not None, "FK fk_message_embeddings_message_id_messages not found"

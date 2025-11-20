@@ -459,6 +459,7 @@ class QueueItem(Base):
             postgresql_where=text("message_id IS NOT NULL"),
         ),
         Index(
+            "ix_queue_work_unit_key_processed_id",
             "work_unit_key",
             "processed",
             "id",
