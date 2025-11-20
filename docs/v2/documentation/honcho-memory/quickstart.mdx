@@ -1,31 +1,13 @@
 ---
 title: 'Quickstart'
-description: 'Start building with Honcho in under 5 minutes.'
 icon: 'bolt'
 ---
 
-For production-level use, Honcho offers two powerful ways to leverage ambient personalization: our managed platform and our open source solution. Read further if you want to explore the quickstart demo.
+Implement Honcho in just a few steps. No signup required.
 
-<CardGroup cols={2}>
-  <Card title="Honcho Platform" icon="cloud" href="https://app.honcho.dev">
-    Fully managed, hassle-free solution with one-click deployment
-  </Card>
-  <Card title="Honcho Open Source" icon="github" href="https://github.com/plastic-labs/honcho">
-    Self-hosted, fully customizable, and open source
-  </Card>
-</CardGroup>
-
-# Getting Started
-
-Have your project use Honcho's ambient personalization capabilities in just a few steps. No signup required!
-
-<Info>
+<Note>
 By default, the SDK uses the demo server hosted at demo.honcho.dev. The demo server is meant for quick experimentation and the data is cleared on a regular basis. Do not use for production applications.
-
-For production use:
-1. Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys)
-2. Set `environment="production"` and provide your `api_key`
-</Info>
+</Note>
 
 ## 1. Install the SDK
 
@@ -55,8 +37,6 @@ pnpm add @honcho-ai/sdk
 
 The Honcho client is the main entry point for interacting with Honcho's API. By default, it uses the demo environment and a default workspace.
 
-### Demo Environment (Default)
-
 <CodeGroup>
 ```python Python
 from honcho import Honcho
@@ -72,35 +52,6 @@ import { Honcho } from '@honcho-ai/sdk';
 // Initialize client (uses demo environment and default workspace)
 const honcho = new Honcho({});
 
-```
-</CodeGroup>
-
-### Production Environment
-
-<CodeGroup>
-```python Python
-import os
-from honcho import Honcho
-
-# Production environment with API key
-honcho = Honcho(
-    api_key=os.environ["HONCHO_API_KEY"],
-    environment="production",
-    # Create a workspace, otherwise set to "default"
-    # workspaceId="your-workspace-id"
-)
-```
-
-```typescript TypeScript
-import { Honcho } from '@honcho-ai/sdk';
-
-// Production environment with API key
-const honcho = new Honcho({
-    apiKey: process.env.HONCHO_API_KEY!,
-    environment: "production",
-    // Create a workspace, otherwise set to "default"
-    // workspace: "your-workspace-id"
-});
 ```
 </CodeGroup>
 
@@ -193,6 +144,10 @@ bob.chat("Tell me about Bob's interests and habits").then((response) => {
 ```
 </CodeGroup>
 
+<Note>
+Writing messages to Honcho triggers reasoning by default...
+</Note>
+
 ## 7. Putting it all together
 
     <CodeGroup>
@@ -201,12 +156,7 @@ import os
 from honcho import Honcho
 
 # Create your client
-honcho = Honcho(
-    api_key=os.environ["HONCHO_API_KEY"],
-    environment="production",
-    # Create a workspace, otherwise set to "default"
-    # workspaceId="your-workspace-id"
-)
+honcho = Honcho()
 
 # Get your Peers
 alice = honcho.peer("alice")
@@ -241,12 +191,7 @@ print(response)
 import { Honcho } from '@honcho-ai/sdk';
 
 // Create your client
-const honcho = new Honcho({
-    apiKey: process.env.HONCHO_API_KEY!,
-    environment: "production",
-    // Create a workspace, otherwise set to "default"
-    // workspace: "your-workspace-id"
-});
+const honcho = new Honcho({});
 
 // Get your Peers
 const alice = await honcho.peer("alice")
@@ -278,16 +223,16 @@ bob.chat("Tell me about Bob's interests and habits").then((response) => {
 ```
 </CodeGroup>
 
-## What Just Happened?
+## Recap
 
-You just got through building a simple conversation between two people, Alice
+Honcho just reasoned about a conversation between two people--Alice
 and Bob. We:
 
 1. Set up our connection to Honcho.
-2. Setup who the participants of our conversation are, these are called `Peers`.
-3. Made a `Session` and added our `Peers` to it.
-4. Sent messages from our `Peers`
-5. Chat with Honcho to get insights about one of the `Peers` in the conversation
+2. Setup the participants of our conversation--these are called `Peers`.
+3. Made a `Session` and added our `Peers`.
+4. Sent messages from our `Peers`.
+5. Queried Honcho to get insights about one of the `Peers` in the conversation.
 
 As soon as you save a message in Honcho, it will start to reason about it to
 pull out insights and develop a profile of the user. This is the default
@@ -307,3 +252,36 @@ behavior and can be toggled off via [the configuration](/v2/documentation/core-c
     Check out spellbooks to see different examples apps built with Honcho
     </Card>
 </CardGroup>
+
+---
+
+# SCRATCH
+
+### Production Environment
+
+<CodeGroup>
+```python Python
+import os
+from honcho import Honcho
+
+# Production environment with API key
+honcho = Honcho(
+    api_key=os.environ["HONCHO_API_KEY"],
+    environment="production",
+    # Create a workspace, otherwise set to "default"
+    # workspaceId="your-workspace-id"
+)
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Production environment with API key
+const honcho = new Honcho({
+    apiKey: process.env.HONCHO_API_KEY!,
+    environment: "production",
+    // Create a workspace, otherwise set to "default"
+    // workspace: "your-workspace-id"
+});
+```
+</CodeGroup>
