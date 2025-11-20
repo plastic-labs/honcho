@@ -1,0 +1,4447 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Honcho API",
+    "summary": "The Identity Layer for the Agentic World",
+    "description": "Honcho is a platform for giving agents user-centric memory and social cognition",
+    "contact": {
+      "name": "Plastic Labs",
+      "url": "https://honcho.dev/",
+      "email": "hello@plasticlabs.ai"
+    },
+    "version": "2.4.2"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local Development Server"
+    },
+    {
+      "url": "https://demo.honcho.dev",
+      "description": "Demo Server"
+    },
+    {
+      "url": "https://api.honcho.dev",
+      "description": "Production SaaS Platform"
+    }
+  ],
+  "paths": {
+    "/v2/workspaces": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Get Or Create Workspace",
+        "description": "Get a Workspace by ID.\n\nIf workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the workspace_id from the JWT.",
+        "operationId": "get_or_create_workspace_v2_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreate",
+                "description": "Workspace creation parameters"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v2/workspaces/list": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Get All Workspaces",
+        "description": "Get all Workspaces",
+        "operationId": "get_all_workspaces_v2_workspaces_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/WorkspaceGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering and pagination options for the workspaces list",
+                "title": "Options"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Workspace_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}": {
+      "put": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Update Workspace",
+        "description": "Update a Workspace",
+        "operationId": "update_workspace_v2_workspaces__workspace_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace to update",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceUpdate",
+                "description": "Updated workspace parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Delete Workspace",
+        "description": "Delete a Workspace",
+        "operationId": "delete_workspace_v2_workspaces__workspace_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace to delete",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace to delete"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/search": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Search Workspace",
+        "description": "Search a Workspace",
+        "operationId": "search_workspace_v2_workspaces__workspace_id__search_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace to search",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace to search"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageSearchOptions",
+                "description": "Message search parameters "
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
+                  "title": "Response Search Workspace V2 Workspaces  Workspace Id  Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/deriver/status": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Get Deriver Status",
+        "description": "Get the deriver processing status, optionally scoped to an observer, sender, and/or session",
+        "operationId": "get_deriver_status_v2_workspaces__workspace_id__deriver_status_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "observer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional observer ID to filter by",
+              "title": "Observer Id"
+            },
+            "description": "Optional observer ID to filter by"
+          },
+          {
+            "name": "sender_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional sender ID to filter by",
+              "title": "Sender Id"
+            },
+            "description": "Optional sender ID to filter by"
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional session ID to filter by",
+              "title": "Session Id"
+            },
+            "description": "Optional session ID to filter by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeriverStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/list": {
+      "post": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Get Peers",
+        "description": "Get All Peers for a Workspace",
+        "operationId": "get_peers_v2_workspaces__workspace_id__peers_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PeerGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering options for the peers list",
+                "title": "Options"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Peer_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers": {
+      "post": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Get Or Create Peer",
+        "description": "Get a Peer by ID\n\nIf peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the peer_id from the JWT.",
+        "operationId": "get_or_create_peer_v2_workspaces__workspace_id__peers_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerCreate",
+                "description": "Peer creation parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Peer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/{peer_id}": {
+      "put": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Update Peer",
+        "description": "Update a Peer's name and/or metadata",
+        "operationId": "update_peer_v2_workspaces__workspace_id__peers__peer_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer to update",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerUpdate",
+                "description": "Updated peer parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Peer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/{peer_id}/sessions": {
+      "post": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Get Sessions For Peer",
+        "description": "Get All Sessions for a Peer",
+        "operationId": "get_sessions_for_peer_v2_workspaces__workspace_id__peers__peer_id__sessions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering options for the sessions list",
+                "title": "Options"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Session_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/{peer_id}/chat": {
+      "post": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Chat",
+        "operationId": "chat_v2_workspaces__workspace_id__peers__peer_id__chat_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DialecticOptions",
+                "description": "Dialectic Endpoint Parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Response to a question informed by Honcho's User Representation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "content": {
+                      "title": "Content",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "content"
+                  ],
+                  "title": "DialecticResponse",
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/{peer_id}/representation": {
+      "post": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Get Working Representation",
+        "description": "Get a peer's working representation for a session.\n\nIf a session_id is provided in the body, we get the working representation of the peer in that session.\nIf a target is provided, we get the representation of the target from the perspective of the peer.\nIf no target is provided, we get the omniscient Honcho representation of the peer.",
+        "operationId": "get_working_representation_v2_workspaces__workspace_id__peers__peer_id__representation_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerRepresentationGet",
+                "description": "Options for getting the peer representation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id  Representation Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/{peer_id}/card": {
+      "get": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Get Peer Card",
+        "description": "Get a peer card for a specific peer relationship.\n\nReturns the peer card that the observer peer has for the target peer if it exists.\nIf no target is specified, returns the observer's own peer card.",
+        "operationId": "get_peer_card_v2_workspaces__workspace_id__peers__peer_id__card_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the observer peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the observer peer"
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The peer whose card to retrieve. If not provided, returns the observer's own card",
+              "title": "Target"
+            },
+            "description": "The peer whose card to retrieve. If not provided, returns the observer's own card"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerCardResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/peers/{peer_id}/search": {
+      "post": {
+        "tags": [
+          "peers"
+        ],
+        "summary": "Search Peer",
+        "description": "Search a Peer",
+        "operationId": "search_peer_v2_workspaces__workspace_id__peers__peer_id__search_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageSearchOptions",
+                "description": "Message search parameters "
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
+                  "title": "Response Search Peer V2 Workspaces  Workspace Id  Peers  Peer Id  Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Or Create Session",
+        "description": "Get a specific session in a workspace.\n\nIf session_id is provided as a query parameter, it verifies the session is in the workspace.\nOtherwise, it uses the session_id from the JWT for verification.",
+        "operationId": "get_or_create_session_v2_workspaces__workspace_id__sessions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreate",
+                "description": "Session creation parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/list": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Sessions",
+        "description": "Get All Sessions in a Workspace",
+        "operationId": "get_sessions_v2_workspaces__workspace_id__sessions_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering and pagination options for the sessions list",
+                "title": "Options"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Session_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}": {
+      "put": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Update Session",
+        "description": "Update the metadata of a Session",
+        "operationId": "update_session_v2_workspaces__workspace_id__sessions__session_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session to update",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionUpdate",
+                "description": "Updated session parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Delete Session",
+        "description": "Delete a session by marking it as inactive",
+        "operationId": "delete_session_v2_workspaces__workspace_id__sessions__session_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session to delete",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to delete"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/clone": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Clone Session",
+        "description": "Clone a session, optionally up to a specific message",
+        "operationId": "clone_session_v2_workspaces__workspace_id__sessions__session_id__clone_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session to clone",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to clone"
+          },
+          {
+            "name": "message_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Message ID to cut off the clone at",
+              "title": "Message Id"
+            },
+            "description": "Message ID to cut off the clone at"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/peers": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Add Peers To Session",
+        "description": "Add peers to a session",
+        "operationId": "add_peers_to_session_v2_workspaces__workspace_id__sessions__session_id__peers_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/SessionPeerConfig"
+                },
+                "description": "List of peer IDs to add to the session",
+                "title": "Peers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Set Session Peers",
+        "description": "Set the peers in a session",
+        "operationId": "set_session_peers_v2_workspaces__workspace_id__sessions__session_id__peers_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/SessionPeerConfig"
+                },
+                "description": "List of peer IDs to set for the session",
+                "title": "Peers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Remove Peers From Session",
+        "description": "Remove peers from a session",
+        "operationId": "remove_peers_from_session_v2_workspaces__workspace_id__sessions__session_id__peers_delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of peer IDs to remove from the session",
+                "title": "Peers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Session Peers",
+        "description": "Get peers from a session",
+        "operationId": "get_session_peers_v2_workspaces__workspace_id__sessions__session_id__peers_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Peer_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Peer Config",
+        "description": "Get the configuration for a peer in a session",
+        "operationId": "get_peer_config_v2_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPeerConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Set Peer Config",
+        "description": "Set the configuration for a peer in a session",
+        "operationId": "set_peer_config_v2_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "peer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the peer",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionPeerConfig",
+                "description": "Peer configuration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/context": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Session Context",
+        "description": "Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.\nIf not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit\nto the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than\nthis. If the caller does not want a summary, we allocate all the tokens to recent messages.",
+        "operationId": "get_session_context_v2_workspaces__workspace_id__sessions__session_id__context_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "tokens",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 100000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within 100000 tokens)",
+              "title": "Tokens"
+            },
+            "description": "Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within 100000 tokens)"
+          },
+          {
+            "name": "last_message",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The most recent message, used to fetch semantically relevant observations",
+              "title": "Last Message"
+            },
+            "description": "The most recent message, used to fetch semantically relevant observations"
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether or not to include a summary *if* one is available for the session",
+              "default": true,
+              "title": "Summary"
+            },
+            "description": "Whether or not to include a summary *if* one is available for the session"
+          },
+          {
+            "name": "peer_target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.",
+              "title": "Peer Target"
+            },
+            "description": "The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*."
+          },
+          {
+            "name": "peer_perspective",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+              "title": "Peer Perspective"
+            },
+            "description": "A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionContext"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/summaries": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Session Summaries",
+        "description": "Get available summaries for a session.\n\nReturns both short and long summaries if available, including metadata like\nthe message ID they cover up to, creation timestamp, and token count.",
+        "operationId": "get_session_summaries_v2_workspaces__workspace_id__sessions__session_id__summaries_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummaries"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/search": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Search Session",
+        "description": "Search a Session",
+        "operationId": "search_session_v2_workspaces__workspace_id__sessions__session_id__search_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageSearchOptions",
+                "description": "Message search parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
+                  "title": "Response Search Session V2 Workspaces  Workspace Id  Sessions  Session Id  Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/": {
+      "post": {
+        "tags": [
+          "messages"
+        ],
+        "summary": "Create Messages For Session",
+        "description": "Create messages for a session with JSON data (original functionality).",
+        "operationId": "create_messages_for_session_v2_workspaces__workspace_id__sessions__session_id__messages__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageBatchCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
+                  "title": "Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id  Messages  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/upload": {
+      "post": {
+        "tags": [
+          "messages"
+        ],
+        "summary": "Create Messages With File",
+        "description": "Create messages from uploaded files. Files are converted to text and split into multiple messages.",
+        "operationId": "create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
+                  "title": "Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id  Messages Upload Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/list": {
+      "post": {
+        "tags": [
+          "messages"
+        ],
+        "summary": "Get Messages",
+        "description": "Get all messages for a session",
+        "operationId": "get_messages_v2_workspaces__workspace_id__sessions__session_id__messages_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MessageGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering options for the messages list",
+                "title": "Options"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Message_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}": {
+      "get": {
+        "tags": [
+          "messages"
+        ],
+        "summary": "Get Message",
+        "description": "Get a Message by ID",
+        "operationId": "get_message_v2_workspaces__workspace_id__sessions__session_id__messages__message_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the message to retrieve",
+              "title": "Message Id"
+            },
+            "description": "ID of the message to retrieve"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "messages"
+        ],
+        "summary": "Update Message",
+        "description": "Update the metadata of a Message",
+        "operationId": "update_message_v2_workspaces__workspace_id__sessions__session_id__messages__message_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the message to update",
+              "title": "Message Id"
+            },
+            "description": "ID of the message to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageUpdate",
+                "description": "Updated message parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/keys": {
+      "post": {
+        "tags": [
+          "keys"
+        ],
+        "summary": "Create Key",
+        "description": "Create a new Key",
+        "operationId": "create_key_v2_keys_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ID of the workspace to scope the key to",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace to scope the key to"
+          },
+          {
+            "name": "peer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ID of the peer to scope the key to",
+              "title": "Peer Id"
+            },
+            "description": "ID of the peer to scope the key to"
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ID of the session to scope the key to",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to scope the key to"
+          },
+          {
+            "name": "expires_at",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expires At"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/webhooks": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Get Or Create Webhook Endpoint",
+        "description": "Get or create a webhook endpoint URL.",
+        "operationId": "get_or_create_webhook_endpoint_v2_workspaces__workspace_id__webhooks_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Workspace ID",
+              "title": "Workspace Id"
+            },
+            "description": "Workspace ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEndpointCreate",
+                "description": "Webhook endpoint parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "List Webhook Endpoints",
+        "description": "List all webhook endpoints, optionally filtered by workspace.",
+        "operationId": "list_webhook_endpoints_v2_workspaces__workspace_id__webhooks_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Workspace ID",
+              "title": "Workspace Id"
+            },
+            "description": "Workspace ID"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WebhookEndpoint_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/webhooks/{endpoint_id}": {
+      "delete": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delete Webhook Endpoint",
+        "description": "Delete a specific webhook endpoint.",
+        "operationId": "delete_webhook_endpoint_v2_workspaces__workspace_id__webhooks__endpoint_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Workspace ID",
+              "title": "Workspace Id"
+            },
+            "description": "Workspace ID"
+          },
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Webhook endpoint ID",
+              "title": "Endpoint Id"
+            },
+            "description": "Webhook endpoint ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/workspaces/{workspace_id}/webhooks/test": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Test Emit",
+        "description": "Test publishing a webhook event.",
+        "operationId": "test_emit_v2_workspaces__workspace_id__webhooks_test_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Workspace ID",
+              "title": "Workspace Id"
+            },
+            "description": "Workspace ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "description": "Prometheus metrics endpoint",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          },
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "peer_id"
+        ],
+        "title": "Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post"
+      },
+      "DeductiveObservation": {
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "message_ids": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Message Ids"
+          },
+          "session_name": {
+            "type": "string",
+            "title": "Session Name"
+          },
+          "premises": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Premises",
+            "description": "Supporting premises or evidence for this conclusion"
+          },
+          "conclusion": {
+            "type": "string",
+            "title": "Conclusion",
+            "description": "The deductive conclusion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "created_at",
+          "message_ids",
+          "session_name",
+          "conclusion"
+        ],
+        "title": "DeductiveObservation",
+        "description": "Deductive observation with multiple premises and one conclusion, plus metadata."
+      },
+      "DeriverStatus": {
+        "properties": {
+          "total_work_units": {
+            "type": "integer",
+            "title": "Total Work Units",
+            "description": "Total work units"
+          },
+          "completed_work_units": {
+            "type": "integer",
+            "title": "Completed Work Units",
+            "description": "Completed work units"
+          },
+          "in_progress_work_units": {
+            "type": "integer",
+            "title": "In Progress Work Units",
+            "description": "Work units currently being processed"
+          },
+          "pending_work_units": {
+            "type": "integer",
+            "title": "Pending Work Units",
+            "description": "Work units waiting to be processed"
+          },
+          "sessions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/SessionDeriverStatus"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessions",
+            "description": "Per-session status when not filtered by session"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_work_units",
+          "completed_work_units",
+          "in_progress_work_units",
+          "pending_work_units"
+        ],
+        "title": "DeriverStatus"
+      },
+      "DialecticOptions": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "ID of the session to scope the representation to"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target",
+            "description": "Optional peer to get the representation for, from the perspective of this peer"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Query",
+            "description": "Dialectic API Prompt"
+          },
+          "stream": {
+            "type": "boolean",
+            "title": "Stream",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "DialecticOptions"
+      },
+      "ExplicitObservation": {
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "message_ids": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Message Ids"
+          },
+          "session_name": {
+            "type": "string",
+            "title": "Session Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The explicit observation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "created_at",
+          "message_ids",
+          "session_name",
+          "content"
+        ],
+        "title": "ExplicitObservation",
+        "description": "Explicit observation with content and metadata."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Message": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "peer_id",
+          "session_id",
+          "created_at",
+          "workspace_id",
+          "token_count"
+        ],
+        "title": "Message"
+      },
+      "MessageBatchCreate": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MessageCreate"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "MessageBatchCreate",
+        "description": "Schema for batch message creation with a max of 100 messages"
+      },
+      "MessageCreate": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 25000,
+            "minLength": 0,
+            "title": "Content"
+          },
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "peer_id"
+        ],
+        "title": "MessageCreate"
+      },
+      "MessageGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          }
+        },
+        "type": "object",
+        "title": "MessageGet"
+      },
+      "MessageSearchOptions": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Search query"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters",
+            "description": "Filters to scope the search"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "Number of results to return",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "MessageSearchOptions"
+      },
+      "MessageUpdate": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "title": "MessageUpdate"
+      },
+      "Page_Message_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
+        "title": "Page[Message]"
+      },
+      "Page_Peer_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Peer"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
+        "title": "Page[Peer]"
+      },
+      "Page_Session_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
+        "title": "Page[Session]"
+      },
+      "Page_WebhookEndpoint_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
+        "title": "Page[WebhookEndpoint]"
+      },
+      "Page_Workspace_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
+        "title": "Page[Workspace]"
+      },
+      "Peer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "created_at"
+        ],
+        "title": "Peer"
+      },
+      "PeerCardResponse": {
+        "properties": {
+          "peer_card": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer Card",
+            "description": "The peer card content, or None if not found"
+          }
+        },
+        "type": "object",
+        "title": "PeerCardResponse"
+      },
+      "PeerCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "PeerCreate"
+      },
+      "PeerGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          }
+        },
+        "type": "object",
+        "title": "PeerGet"
+      },
+      "PeerRepresentationGet": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Get the working representation within this session"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target",
+            "description": "Optional peer ID to get the representation for, from the perspective of this peer"
+          }
+        },
+        "type": "object",
+        "title": "PeerRepresentationGet"
+      },
+      "PeerUpdate": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "title": "PeerUpdate"
+      },
+      "Representation": {
+        "properties": {
+          "explicit": {
+            "items": {
+              "$ref": "#/components/schemas/ExplicitObservation"
+            },
+            "type": "array",
+            "title": "Explicit",
+            "description": "Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']"
+          },
+          "deductive": {
+            "items": {
+              "$ref": "#/components/schemas/DeductiveObservation"
+            },
+            "type": "array",
+            "title": "Deductive",
+            "description": "Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion."
+          }
+        },
+        "type": "object",
+        "title": "Representation",
+        "description": "A Representation is a traversable and diffable map of observations.\nAt the base, we have a list of explicit observations, derived from a peer's messages.\n\nFrom there, deductive observations can be made by establishing logical relationships between explicit observations.\n\nIn the future, we can add more levels of reasoning on top of these.\n\nAll of a peer's observations are stored as documents in a collection. These documents can be queried in various ways\nto produce this Representation object.\n\nAdditionally, a \"working representation\" is a version of this data structure representing the most recent observations\nwithin a single session.\n\nA representation can have a maximum number of observations, which is applied individually to each level of reasoning.\nIf a maximum is set, observations are added and removed in FIFO order."
+      },
+      "Session": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "is_active",
+          "workspace_id",
+          "created_at"
+        ],
+        "title": "Session"
+      },
+      "SessionContext": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "type": "array",
+            "title": "Messages"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The summary if available"
+          },
+          "peer_representation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Representation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The peer representation, if context is requested from a specific perspective"
+          },
+          "peer_card": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer Card",
+            "description": "The peer card, if context is requested from a specific perspective"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "messages"
+        ],
+        "title": "SessionContext"
+      },
+      "SessionCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "peers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/SessionPeerConfig"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peers"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "SessionCreate"
+      },
+      "SessionDeriverStatus": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Session ID if filtered by session"
+          },
+          "total_work_units": {
+            "type": "integer",
+            "title": "Total Work Units",
+            "description": "Total work units"
+          },
+          "completed_work_units": {
+            "type": "integer",
+            "title": "Completed Work Units",
+            "description": "Completed work units"
+          },
+          "in_progress_work_units": {
+            "type": "integer",
+            "title": "In Progress Work Units",
+            "description": "Work units currently being processed"
+          },
+          "pending_work_units": {
+            "type": "integer",
+            "title": "Pending Work Units",
+            "description": "Work units waiting to be processed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_work_units",
+          "completed_work_units",
+          "in_progress_work_units",
+          "pending_work_units"
+        ],
+        "title": "SessionDeriverStatus"
+      },
+      "SessionGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          }
+        },
+        "type": "object",
+        "title": "SessionGet"
+      },
+      "SessionPeerConfig": {
+        "properties": {
+          "observe_others": {
+            "type": "boolean",
+            "title": "Observe Others",
+            "description": "Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
+            "default": false
+          },
+          "observe_me": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observe Me",
+            "description": "Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer"
+          }
+        },
+        "type": "object",
+        "title": "SessionPeerConfig"
+      },
+      "SessionSummaries": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "short_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The short summary if available"
+          },
+          "long_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The long summary if available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "SessionSummaries"
+      },
+      "SessionUpdate": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "title": "SessionUpdate"
+      },
+      "Summary": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The summary text"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id",
+            "description": "The public ID of the message that this summary covers up to"
+          },
+          "summary_type": {
+            "type": "string",
+            "title": "Summary Type",
+            "description": "The type of summary (short or long)"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "The timestamp of when the summary was created (ISO format)"
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count",
+            "description": "The number of tokens in the summary text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "message_id",
+          "summary_type",
+          "created_at",
+          "token_count"
+        ],
+        "title": "Summary"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WebhookEndpoint": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "url",
+          "created_at"
+        ],
+        "title": "WebhookEndpoint"
+      },
+      "WebhookEndpointCreate": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "WebhookEndpointCreate"
+      },
+      "Workspace": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "Workspace"
+      },
+      "WorkspaceCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata",
+            "default": {}
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "WorkspaceCreate"
+      },
+      "WorkspaceGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          }
+        },
+        "type": "object",
+        "title": "WorkspaceGet"
+      },
+      "WorkspaceUpdate": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "title": "WorkspaceUpdate"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}
