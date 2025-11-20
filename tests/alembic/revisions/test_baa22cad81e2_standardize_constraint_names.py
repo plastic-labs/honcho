@@ -155,13 +155,14 @@ def verify_standardize_constraint_names(verifier: MigrationVerifier) -> None:
     # Check using raw SQL since the verifier doesn't have a method for this
     result = verifier.conn.execute(
         text(
-            f"""
+            """
                 SELECT confdeltype
                 FROM pg_constraint
-                WHERE conrelid = '{verifier.schema}.message_embeddings'::regclass
+                WHERE conrelid = :table_name::regclass
                 AND conname = 'fk_message_embeddings_message_id_messages'
                 """
-        )
+        ),
+        {"table_name": f"{verifier.schema}.message_embeddings"},
     )
     row = result.fetchone()
     assert row is not None, "FK fk_message_embeddings_message_id_messages not found"
