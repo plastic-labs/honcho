@@ -83,9 +83,13 @@ async def get_sessions(
     filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
-    Get all sessions in a workspace.
+    Get all active sessions in a workspace.
     """
-    stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.is_active == True)  # noqa: E712
+    )
 
     stmt = apply_filter(stmt, models.Session, filters)
 
@@ -436,11 +440,12 @@ async def clone_session(
     Returns:
         The newly created session
     """
-    # Get the original session
+    # Get the original session (must be active)
     stmt = (
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == original_session_name)
+        .where(models.Session.is_active == True)  # noqa: E712
     )
     result = await db.execute(stmt)
     original_session = result.scalar_one_or_none()

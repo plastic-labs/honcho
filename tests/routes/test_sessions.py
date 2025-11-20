@@ -289,7 +289,7 @@ def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     response = client.delete(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}",
     )
-    assert response.status_code == 200
+    assert response.status_code == 202
     data = response.json()
     assert data["message"] == "Session deleted successfully"
 
