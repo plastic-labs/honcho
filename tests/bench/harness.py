@@ -68,19 +68,55 @@ class HonchoHarness:
         # Update the database port
         compose_data["services"]["database"]["ports"] = [f"{self.db_port}:5432"]
 
+        # Increase shared memory size
+        compose_data["services"]["database"]["shm_size"] = "4gb"
+
+        # Configure Postgres for larger workloads
+        cmd = ["postgres"]
+        params = {
+            "max_connections": "800",
+            "max_wal_size": "8GB",
+            "min_wal_size": "2GB",
+            "checkpoint_timeout": "15min",
+            "maintenance_work_mem": "1GB",
+            "work_mem": "64MB",
+        }
+        for k, v in params.items():
+            cmd.extend(["-c", f"{k}={v}"])
+        compose_data["services"]["database"]["command"] = cmd
+
         # Update the Redis port
+        # TODO: Make this configurable if running multiple instances
         compose_data["services"]["redis"]["ports"] = ["6379:6379"]
 
         # Add a unique project name to avoid conflicts
         compose_data["name"] = f"honcho_harness_{self.db_port}"
 
-        # remove init.sql mount since we use provision_db.py for setup
+        # Configure named volumes for better performance and cleanup
+        compose_data.setdefault("volumes", {})
+        db_vol_name = f"pgdata_{self.db_port}"
+        redis_vol_name = f"redis_data_{self.db_port}"
+        compose_data["volumes"][db_vol_name] = {}
+        compose_data["volumes"][redis_vol_name] = {}
+
+        # Update database volumes - use named volume instead of bind mount
+        new_db_volumes: list[str] = []
         if "volumes" in compose_data["services"]["database"]:
-            compose_data["services"]["database"]["volumes"] = [
-                vol
-                for vol in compose_data["services"]["database"]["volumes"]
-                if "init.sql" not in vol
-            ]
+            for vol in compose_data["services"]["database"]["volumes"]:
+                # Filter out init.sql (handled by provision script) and existing data mounts
+                if "init.sql" not in vol and ":/var/lib/postgresql/data/" not in vol:
+                    new_db_volumes.append(vol)
+        new_db_volumes.append(f"{db_vol_name}:/var/lib/postgresql/data/")
+        compose_data["services"]["database"]["volumes"] = new_db_volumes
+
+        # Update redis volumes - use named volume
+        new_redis_volumes: list[str] = []
+        if "volumes" in compose_data["services"]["redis"]:
+            for vol in compose_data["services"]["redis"]["volumes"]:
+                if ":/data" not in vol:
+                    new_redis_volumes.append(vol)
+        new_redis_volumes.append(f"{redis_vol_name}:/data")
+        compose_data["services"]["redis"]["volumes"] = new_redis_volumes
 
         # Create temporary file
         self.temp_dir = Path(tempfile.mkdtemp(prefix="honcho_harness_"))
@@ -133,6 +169,24 @@ class HonchoHarness:
         Start the PostgreSQL database using Docker Compose.
         """
         print(f"Starting PostgreSQL database on port {self.db_port}...")
+
+        # Ensure clean state by removing any existing containers/volumes
+        # This handles cases where a previous run was interrupted
+        subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(self.docker_compose_file),
+                "-p",
+                f"honcho_harness_{self.db_port}",
+                "down",
+                "--volumes",
+                "--remove-orphans",
+            ],
+            cwd=self.temp_dir,
+            capture_output=True,
+        )
 
         # Change to the temp directory and start the database service
         result = subprocess.run(

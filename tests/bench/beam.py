@@ -53,7 +53,7 @@ Optional arguments:
 --pool-size: Number of Honcho instances in the pool (default: 1)
 --batch-size: Number of conversations to run concurrently in each batch (default: 1)
 --json-output: Path to write JSON summary results for analytics
---cleanup-workspace: Delete workspace after executing each conversation (default: False)
+--cleanup-workspace: Delete workspace after executing each conversation (default: True)
 --use-get-context: Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)
 ```
 
@@ -575,6 +575,86 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                 alignment.append(best_match_idx)
         return alignment
 
+    async def _process_single_question(
+        self,
+        session: Any,
+        user_peer: Any,
+        ability: str,
+        q_idx: int,
+        q_data: dict[str, Any],
+        semaphore: asyncio.Semaphore,
+    ) -> QuestionResult:
+        """Process a single BEAM question."""
+        async with semaphore:
+            question = q_data["question"]
+            rubric = q_data.get("rubric", [])
+            answer = (
+                q_data.get("answer")
+                or q_data.get("ideal_response")
+                or q_data.get("ideal_answer")
+            )
+
+            print(f"  [{ability}] Q{q_idx + 1}: {question[:100]}...")
+
+            # Execute question using dialectic
+            if self.use_get_context:
+                context = await session.get_context(
+                    summary=True,
+                    peer_target="user",
+                    last_user_message=question,
+                )
+                context_messages = context.to_anthropic(assistant="assistant")
+                context_messages.append({"role": "user", "content": question})
+
+                response = await self.anthropic_client.messages.create(
+                    model="claude-sonnet-4-5",
+                    max_tokens=2048,
+                    messages=cast(list[MessageParam], context_messages),
+                )
+
+                if not response.content:
+                    actual_response = ""
+                else:
+                    content_block = response.content[0]
+                    actual_response = getattr(content_block, "text", "")
+            else:
+                actual_response = await user_peer.chat(question)
+                actual_response = (
+                    actual_response if isinstance(actual_response, str) else ""
+                )
+
+            # Judge response based on memory ability
+            if ability == "event_ordering":
+                judgment = await self.judge_event_ordering(
+                    question, rubric, actual_response
+                )
+                nugget_scores = None
+            else:
+                judgment = await self.judge_nugget_based(
+                    question, rubric, actual_response, ability
+                )
+                nugget_scores = judgment.get("nugget_scores")
+
+            score = judgment.get("overall_score", 0.0)
+            reasoning = judgment.get("overall_reasoning", "")
+
+            question_result: QuestionResult = {
+                "question": question,
+                "answer": answer,
+                "actual_response": actual_response,
+                "memory_ability": ability,
+                "rubric": rubric,
+                "nugget_scores": nugget_scores,
+                "score": score,
+                "passed": score >= 0.5,
+                "reasoning": reasoning,
+            }
+
+            status = "PASS" if score >= 0.5 else "FAIL"
+            print(f"    [{ability}] Q{q_idx + 1} Score: {score:.2f} [{status}]")
+
+            return question_result
+
     async def execute_conversation(
         self, context_length: str, conversation_id: str, honcho_url: str
     ) -> ConversationResult:
@@ -739,82 +819,28 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             print(f"[{workspace_id}] Deriver queue empty. Executing questions...")
 
             # Execute questions for each memory ability
+            question_tasks: list[Any] = []
+            semaphore = asyncio.Semaphore(5)
+
             for ability, questions in questions_data.items():
                 print(
-                    f"\n[{workspace_id}] Testing {ability} ({len(questions)} questions)"
+                    f"\n[{workspace_id}] Queuing {ability} ({len(questions)} questions)"
                 )
 
                 for q_idx, q_data in enumerate(questions):
-                    question = q_data["question"]
-                    rubric = q_data.get("rubric", [])
-                    answer = (
-                        q_data.get("answer")
-                        or q_data.get("ideal_response")
-                        or q_data.get("ideal_answer")
+                    question_tasks.append(
+                        self._process_single_question(
+                            session,
+                            user_peer,
+                            ability,
+                            q_idx,
+                            q_data,
+                            semaphore,
+                        )
                     )
 
-                    print(f"  Q{q_idx + 1}: {question[:100]}...")
-
-                    # Execute question using dialectic
-                    if self.use_get_context:
-                        context = await session.get_context(
-                            summary=True,
-                            peer_target="user",
-                            last_user_message=question,
-                        )
-                        context_messages = context.to_anthropic(assistant="assistant")
-                        context_messages.append({"role": "user", "content": question})
-
-                        from typing import cast
-
-                        response = await self.anthropic_client.messages.create(
-                            model="claude-sonnet-4-5",
-                            max_tokens=2048,
-                            messages=cast(list[MessageParam], context_messages),
-                        )
-
-                        if not response.content:
-                            actual_response = ""
-                        else:
-                            content_block = response.content[0]
-                            actual_response = getattr(content_block, "text", "")
-                    else:
-                        actual_response = await user_peer.chat(question)
-                        actual_response = (
-                            actual_response if isinstance(actual_response, str) else ""
-                        )
-
-                    # Judge response based on memory ability
-                    if ability == "event_ordering":
-                        judgment = await self.judge_event_ordering(
-                            question, rubric, actual_response
-                        )
-                        nugget_scores = None
-                    else:
-                        judgment = await self.judge_nugget_based(
-                            question, rubric, actual_response, ability
-                        )
-                        nugget_scores = judgment.get("nugget_scores")
-
-                    score = judgment.get("overall_score", 0.0)
-                    reasoning = judgment.get("overall_reasoning", "")
-
-                    question_result: QuestionResult = {
-                        "question": question,
-                        "answer": answer,
-                        "actual_response": actual_response,
-                        "memory_ability": ability,
-                        "rubric": rubric,
-                        "nugget_scores": nugget_scores,
-                        "score": score,
-                        "passed": score >= 0.5,
-                        "reasoning": reasoning,
-                    }
-
-                    result["question_results"].append(question_result)
-
-                    status = "PASS" if score >= 0.5 else "FAIL"
-                    print(f"    Score: {score:.2f} [{status}]")
+            results = await asyncio.gather(*question_tasks)
+            result["question_results"] = list(results)
 
             # Calculate ability scores
             ability_totals: dict[str, list[float]] = {}
@@ -1064,7 +1090,7 @@ async def main() -> int:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=1,
+        default=10,
         help="Number of conversations to run concurrently in each batch (default: 1)",
     )
 
@@ -1077,7 +1103,7 @@ async def main() -> int:
     parser.add_argument(
         "--cleanup-workspace",
         action="store_true",
-        help="Delete workspace after executing each conversation (default: False)",
+        help="Delete workspace after executing each conversation (default: True)",
     )
 
     parser.add_argument(
