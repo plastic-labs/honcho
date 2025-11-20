@@ -8,6 +8,7 @@ from src.models import Message
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
+    PromptRepresentation,
     Representation,
 )
 
@@ -19,7 +20,7 @@ async def test_generic_honcho_llm_call_mock():
     from src.deriver.deriver import critical_analysis_call
 
     # Call the decorated function - this should use our mock
-    result = await critical_analysis_call(
+    result: PromptRepresentation = await critical_analysis_call(
         peer_id="test_peer_id",
         peer_card=["test_peer_card"],
         message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
@@ -44,7 +45,6 @@ async def test_generic_honcho_llm_call_mock():
         ),
         history="test history",
         new_turns=["test new turn"],
-        estimated_input_tokens=100,
     )
 
     # Verify that we get a mock result, not an actual LLM call
