@@ -26,32 +26,64 @@
                 "group": "Introduction",
                 "pages": [
                   "v2/documentation/introduction/overview",
-                  "v2/documentation/introduction/quickstart",
                   "v2/documentation/introduction/vibecoding"
                 ]
               },
               {
-                "group": "Core Concepts",
+                "group": "Honcho Context",
                 "pages": [
-                  "v2/documentation/core-concepts/architecture",
-                  "v2/documentation/core-concepts/features/storing-data",
-                  "v2/documentation/core-concepts/features/dialectic-endpoint",
-                  "v2/documentation/core-concepts/features/get-context",
-                  "v2/documentation/core-concepts/features/search",
-                  "v2/documentation/core-concepts/features/working-rep",
-                  "v2/documentation/core-concepts/features/streaming-response",
-                  "v2/documentation/core-concepts/features/using-filters",
-                  "v2/documentation/core-concepts/features/file-uploads",
-                  "v2/documentation/core-concepts/features/queue-status",
-                  "v2/documentation/core-concepts/features/local-vs-global",
-                  "v2/documentation/core-concepts/configuration",
-                  "v2/documentation/core-concepts/summarizer",
-                  "v2/documentation/core-concepts/glossary"
+                  "v2/documentation/honcho-context/quickstart",
+                  {
+                    "group": "Storage",
+                    "expanded": true,
+                    "pages": [
+                      "v2/documentation/core-concepts/features/storing-data",
+                      "v2/documentation/core-concepts/features/file-uploads"
+                    ]
+                  },
+                  {
+                    "group": "Retrieval",
+                    "expanded": true,
+                    "pages": [
+                      "v2/documentation/honcho-context/retrieval/overview",
+                      "v2/documentation/core-concepts/features/using-filters",
+                      "v2/documentation/core-concepts/features/search",
+                      "v2/documentation/core-concepts/features/get-context"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "Honcho Memory",
+                "pages": [
+                  "v2/documentation/honcho-memory/quickstart",
+                  {
+                    "group": "Advanced Storage",
+                    "expanded": true,
+                    "pages": [
+                      "v2/documentation/core-concepts/features/queue-status",
+                      "v2/documentation/core-concepts/features/working-rep"
+                    ]
+                  },
+                  {
+                    "group": "Advanced Retrieval",
+                    "expanded": true,
+                    "pages": [
+                      "v2/documentation/honcho-memory/advanced-retrieval/get-context",
+                      "v2/documentation/core-concepts/summarizer",
+                      "v2/documentation/core-concepts/features/dialectic-endpoint",
+                      "v2/documentation/core-concepts/features/streaming-response"
+                    ]
+                  }
                 ]
               },
               {
                 "group": "Reference",
                 "pages": [
+                  "v2/documentation/core-concepts/architecture",
+                  "v2/documentation/core-concepts/configuration",
+                  "v2/documentation/core-concepts/features/local-vs-global",
+                  "v2/documentation/core-concepts/glossary",
                   "v2/documentation/reference/platform",
                   "v2/documentation/reference/sdk"
                 ]
@@ -59,7 +91,7 @@
             ]
           },
           {
-            "tab": "Spellbooks",
+            "tab": "Integrations",
             "groups": [
               {
                 "group": "Getting Started",
@@ -71,7 +103,36 @@
               }
             ]
           },
-
+          {
+            "tab": "Cookbooks",
+            "groups": [
+              {
+                "group": "Cookbooks",
+                "pages": [
+                  "v2/cookbooks/placeholder"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Open Source",
+            "groups": [
+              {
+                "group": "Self-Hosting",
+                "pages": [
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/configuration"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/license"
+                ]
+              }
+            ]
+          },
           {
             "tab": "API Reference",
             "groups": [
@@ -158,20 +219,6 @@
                 "pages": [
                   "changelog/introduction",
                   "changelog/compatibility-guide"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Contributing",
-            "groups": [
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v2/contributing/guidelines",
-                  "v2/contributing/self-hosting",
-                  "v2/contributing/configuration",
-                  "v2/contributing/license"
                 ]
               }
             ]
@@ -358,8 +405,9 @@
   },
   "footer": {
     "socials": {
-      "twitter": "https://twitter.com/plastic_labs",
-      "github": "https://github.com/plastic-labs",
+      "twitter": "https://x.com/honchodotdev",
+      "github": "https://github.com/plastic-labs/honcho",
+      "discord": "https://discord.gg/honcho",
       "linkedin": "https://www.linkedin.com/company/plasticlabs"
     }
   },
