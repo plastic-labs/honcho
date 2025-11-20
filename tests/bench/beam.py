@@ -48,7 +48,7 @@ Optional arguments:
 --context-length: Context length subset to test (100K, 500K, 1M, 10M) (default: 100K)
 --conversation-ids: Comma-separated list of conversation IDs to test (default: all in context length)
 --anthropic-api-key: Anthropic API key for response judging (can be set in .env as LLM_ANTHROPIC_API_KEY)
---timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes)
+    --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))
 --base-api-port: Base port for Honcho API instances (default: 8000)
 --pool-size: Number of Honcho instances in the pool (default: 1)
 --batch-size: Number of conversations to run concurrently in each batch (default: 1)
@@ -154,7 +154,7 @@ class BEAMRunner:
         self.pool_size: int = pool_size
         self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
-            timeout_seconds if timeout_seconds is not None else 10000
+            timeout_seconds if timeout_seconds is not None else 600
         )
         self.cleanup_workspace: bool = cleanup_workspace
         self.use_get_context: bool = use_get_context
@@ -507,7 +507,7 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
 
             # Now compute alignment and Kendall tau-b
             # Match extracted events to rubric events using LLM equivalence
-            alignment = await self._align_events(rubric, extracted_events)
+            alignment = self._align_events(rubric, extracted_events)
 
             # Compute Kendall tau-b
             tau: float
@@ -551,7 +551,7 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                 "overall_reasoning": f"Evaluation failed due to error: {e}",
             }
 
-    async def _align_events(
+    def _align_events(
         self, expected_events: list[str], extracted_events: list[str]
     ) -> list[int]:
         """
@@ -1084,7 +1084,7 @@ async def main() -> int:
         "--timeout",
         type=int,
         default=None,
-        help="Timeout for deriver queue to empty in seconds (default: 10 minutes)",
+        help="Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))",
     )
 
     parser.add_argument(

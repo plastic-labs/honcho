@@ -218,6 +218,23 @@ class HonchoHarness:
         """
         print("Starting Redis cache server on port 6379...")
 
+        # Ensure clean state by removing any existing containers/volumes
+        subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(self.docker_compose_file),
+                "-p",
+                f"honcho_harness_{self.db_port}",
+                "down",
+                "--volumes",
+                "--remove-orphans",
+            ],
+            cwd=self.temp_dir,
+            capture_output=True,
+        )
+
         # Change to the temp directory and start the redis service
         result = subprocess.run(
             [
@@ -699,7 +716,8 @@ except Exception as e:
                 # More aggressive cleanup - remove containers, volumes, and orphaned containers
                 subprocess.run(
                     [
-                        "docker-compose",
+                        "docker",
+                        "compose",
                         "-f",
                         str(self.docker_compose_file),
                         "-p",
@@ -710,7 +728,6 @@ except Exception as e:
                     ],
                     cwd=self.temp_dir,
                     capture_output=True,
-                    text=True,
                 )
 
                 # Also try to remove any containers that might still be running
