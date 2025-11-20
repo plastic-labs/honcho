@@ -421,6 +421,50 @@ class DocumentCreate(DocumentBase):
     embedding: list[float] = Field()
 
 
+class ObservationGet(BaseModel):
+    """Schema for listing observations with optional filters"""
+
+    filters: dict[str, Any] | None = None
+
+
+class Observation(BaseModel):
+    """Observation response - external view of a document"""
+
+    id: str
+    content: str
+    observer: str = Field(
+        description="The peer who made the observation",
+        serialization_alias="observer_id",
+    )
+    observed: str = Field(
+        description="The peer being observed", serialization_alias="observed_id"
+    )
+    session_name: str = Field(serialization_alias="session_id")
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
+class ObservationQuery(BaseModel):
+    """Query parameters for semantic search of observations"""
+
+    query: str = Field(..., description="Semantic search query")
+    top_k: int = Field(
+        default=10, ge=1, le=100, description="Number of results to return"
+    )
+    distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Maximum cosine distance threshold for results",
+    )
+    filters: dict[str, Any] | None = Field(
+        default=None, description="Additional filters to apply"
+    )
+
+
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
     filters: dict[str, Any] | None = Field(

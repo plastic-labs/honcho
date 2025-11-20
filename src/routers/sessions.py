@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Body, Depends, Path, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,23 +226,63 @@ async def update_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
+async def _delete_session_background_task(workspace_id: str, session_id: str):
+    """
+    Background task to delete session data.
+
+    This is a fire-and-forget task that performs the actual deletion of session data.
+    If it fails, the session will remain marked as inactive but data will persist.
+    """
+    try:
+        async with tracked_db("delete_session_background") as db:
+            await crud.delete_session(
+                db, workspace_name=workspace_id, session_name=session_id
+            )
+            logger.info("Session %s deleted successfully in background", session_id)
+    except Exception as e:
+        logger.error(
+            "Failed to delete session %s in background task: %s",
+            session_id,
+            e,
+            exc_info=True,
+        )
+        # TODO: Consider adding retry logic or alerting mechanism
+
+
 @router.delete(
     "/{session_id}",
+    status_code=202,
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def delete_session(
+    background_tasks: BackgroundTasks,
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to delete"),
     db: AsyncSession = db,
 ):
-    """Delete a session by marking it as inactive"""
+    """
+    Delete a session and all associated data.
+
+    The session is marked as inactive immediately and returns 202 Accepted. The actual
+    deletion of all related data (messages, embeddings, documents, etc.) happens
+    asynchronously in the background.
+
+    This action cannot be undone.
+    """
     try:
-        await crud.delete_session(
-            db, workspace_name=workspace_id, session_name=session_id
+        # Mark session as inactive immediately (fast operation)
+        session = await crud.get_session(db, session_id, workspace_id)
+        session.is_active = False
+        await db.commit()
+
+        # Schedule background deletion of all session data
+        background_tasks.add_task(
+            _delete_session_background_task, workspace_id, session_id
         )
-        logger.debug("Session %s deleted successfully", session_id)
+
+        logger.debug("Session %s marked as inactive, deletion scheduled", session_id)
         return {"message": "Session deleted successfully"}
     except ValueError as e:
         logger.warning(f"Failed to delete session {session_id}: {str(e)}")

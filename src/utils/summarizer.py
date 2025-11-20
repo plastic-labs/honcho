@@ -9,7 +9,9 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
+from src.cache.client import cache
 from src.config import settings
+from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
@@ -472,6 +474,10 @@ async def _save_summary(
 
     await db.execute(stmt)
     await db.commit()
+
+    # Invalidate the cached session to ensure other processes see the updated summary
+    cache_key = session_cache_key(workspace_name, session_name)
+    await cache.delete(cache_key)
 
 
 async def get_summarized_history(

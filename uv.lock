@@ -835,7 +835,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 [[package]]
 name = "honcho-core"
 version = "1.6.0"
-source = { git = "https://github.com/plastic-labs/honcho-python-core.git?rev=release-please--branches--main--changes--next#9eb640b14bd30171b817f5b55df569038b31e962" }
+source = { git = "https://github.com/plastic-labs/honcho-python-core.git?rev=release-please--branches--main--changes--next#cb11c42df8856c8b0d172f104d5e7ed31f9e8cb5" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },

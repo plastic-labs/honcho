@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
-from honcho_core.types.workspaces.sessions import MessageCreateParam
+from honcho_core.types.workspaces.sessions import (
+    MessageCreateParam,
+    # Observation,  # Disabled: observations not ready for release
+    # ObservationQueryResponse,  # Disabled: observations not ready for release
+)
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -386,9 +390,16 @@ class Session(BaseModel):
 
     def delete(self) -> None:
         """
-        Delete this session
+        Delete this session and all associated data.
 
-        Makes an API call to mark this session as inactive.
+        Makes an API call to permanently delete this session and all related data including:
+        - Messages
+        - Message embeddings
+        - Observations
+        - Session-Peer associations
+        - Background processing queue items
+
+        This action cannot be undone.
         """
         self._client.workspaces.sessions.delete(
             session_id=self.id,
@@ -701,6 +712,109 @@ class Session(BaseModel):
             filters=filters,
             limit=limit,
         )
+
+    @validate_call
+    # Disabled: observations not ready for release
+    # def list_observations(
+    #     self,
+    #     filters: dict[str, object] | None = Field(
+    #         None, description="Filters to scope the observations"
+    #     ),
+    # ) -> SyncPage[Observation]:
+    #     """
+    #     List all observations for this session.
+    #
+    #     Observations are theory-of-mind data (documents) that peers have formed about each other.
+    #     Returns paginated results that can be filtered by observer_id and observed_id.
+    #
+    #     Args:
+    #         filters: Optional filters to scope the observations. See [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+    #
+    #     Returns:
+    #         A paginated list of Observation objects.
+    #
+    #     Example:
+    #         >>> observations = session.list_observations()
+    #         >>> for observation in observations:
+    #         ...     print(f"{observation.observer_id} observed: {observation.content}")
+    #     """
+    #     response = self._client.workspaces.sessions.observations.list(
+    #         self.id, workspace_id=self.workspace_id, filters=filters
+    #     )
+    #     return SyncPage(response)
+
+    # Disabled: observations not ready for release
+    # @validate_call
+    # def query_observations(
+    #     self,
+    #     query: str = Field(..., min_length=1, description="Semantic search query"),
+    #     top_k: int = Field(
+    #         default=10, ge=1, le=100, description="Number of results to return"
+    #     ),
+    #     distance: float | None = Field(
+    #         default=None,
+    #         ge=0.0,
+    #         le=1.0,
+    #         description="Maximum cosine distance threshold for results",
+    #     ),
+    #     filters: dict[str, object] | None = Field(
+    #         None, description="Additional filters to apply"
+    #     ),
+    # ) -> ObservationQueryResponse:
+    #     """
+    #     Query observations using semantic search.
+    #
+    #     Performs vector similarity search on observations to find semantically relevant results.
+    #     Use this to find observations related to a specific topic or concept.
+    #
+    #     Args:
+    #         query: The semantic search query
+    #         top_k: Number of results to return (1-100, default: 10)
+    #         distance: Maximum cosine distance threshold for results (0.0-1.0)
+    #         filters: Optional filters to scope the query
+    #
+    #     Returns:
+    #         A list of Observation objects matching the query
+    #
+    #     Example:
+    #         >>> observations = session.query_observations(
+    #         ...     query="user preferences about music",
+    #         ...     top_k=5,
+    #         ...     distance=0.8
+    #         ... )
+    #     """
+    #     return self._client.workspaces.sessions.observations.query(
+    #         self.id,
+    #         workspace_id=self.workspace_id,
+    #         query=query,
+    #         top_k=top_k,
+    #         distance=distance,
+    #         filters=filters,
+    #     )
+
+    # Disabled: observations not ready for release
+    # @validate_call
+    # def delete_observation(
+    #     self,
+    #     observation_id: str = Field(
+    #         ..., min_length=1, description="ID of the observation to delete"
+    #     ),
+    # ) -> None:
+    #     """
+    #     Delete a specific observation by ID.
+    #
+    #     This permanently deletes the observation (document) from the theory-of-mind system.
+    #     This action cannot be undone.
+    #
+    #     Args:
+    #         observation_id: The ID of the observation to delete
+    #
+    #     Example:
+    #         >>> session.delete_observation('obs_123abc')
+    #     """
+    #     self._client.workspaces.sessions.observations.delete(
+    #         observation_id, session_id=self.id, workspace_id=self.workspace_id
+    #     )
 
     @validate_call
     def upload_file(

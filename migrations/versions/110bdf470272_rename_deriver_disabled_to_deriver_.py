@@ -1,7 +1,7 @@
 """rename_deriver_disabled_to_deriver_enabled
 
 Revision ID: 110bdf470272
-Revises: bb6fb3a7a643
+Revises: 29ade7350c19
 Create Date: 2025-10-31 13:04:31.029856
 
 """
@@ -15,7 +15,7 @@ from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "110bdf470272"
-down_revision: str | None = "bb6fb3a7a643"
+down_revision: str | None = "29ade7350c19"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
