@@ -148,17 +148,29 @@ export class SessionContext {
    * @returns A list of dictionaries in OpenAI format, where each dictionary contains
    *          "role" and "content" keys suitable for the OpenAI API
    */
-  toOpenAI(
-    assistant: string | Peer
-  ): Array<{ role: string; content: string; name?: string }> {
+  toOpenAI(assistant: string | Peer): Array<{
+    role: 'system' | 'user' | 'assistant'
+    content: string
+    name?: string
+  }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    const messages = this.messages.map((message) => ({
-      role: message.peer_id === assistantId ? 'assistant' : 'user',
-      name: message.peer_id,
-      content: message.content,
-    }))
+    const messages = this.messages.map((message) => {
+      const role = message.peer_id === assistantId ? 'assistant' : 'user'
+      const msg: {
+        role: 'user' | 'assistant'
+        content: string
+        name?: string
+      } = {
+        role,
+        content: message.content,
+      }
+      if (message.peer_id) {
+        msg.name = message.peer_id
+      }
+      return msg
+    })
 
-    const systemMessages: Array<{ role: string; content: string }> = []
+    const systemMessages: Array<{ role: 'system'; content: string }> = []
 
     if (this.peerRepresentation) {
       systemMessages.push({

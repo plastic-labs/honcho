@@ -127,14 +127,16 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        messages = [
-            {
+        messages: list[dict[str, str]] = []
+        for message in self.messages:
+            msg = {
                 "role": "assistant" if message.peer_id == assistant_id else "user",
-                "name": message.peer_id,
                 "content": message.content,
             }
-            for message in self.messages
-        ]
+            if message.peer_id:
+                msg["name"] = message.peer_id
+            messages.append(msg)
+
         system_messages: list[dict[str, str]] = []
 
         if self.peer_representation:
