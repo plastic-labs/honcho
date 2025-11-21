@@ -13,7 +13,8 @@ import {
   type RepresentationOptions,
 } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
-import type { Observation, ObservationQueryParams } from './types'
+// Disabled: observations not ready for release
+// import type { Observation, ObservationQueryParams } from './types'
 import {
   ContextParamsSchema,
   type DeriverStatusOptions,
@@ -24,7 +25,7 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
-  ObservationQueryParamsSchema,
+  // ObservationQueryParamsSchema,  // Disabled: observations not ready for release
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -766,15 +767,16 @@ export class Session {
    * }
    * ```
    */
-  async listObservations(filters?: Filters): Promise<Page<Observation>> {
-    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
-    const response = await this._client.workspaces.sessions.observations.list(
-      this.workspaceId,
-      this.id,
-      { filters: validatedFilters }
-    )
-    return new Page(response)
-  }
+  // Disabled: observations not ready for release
+  // async listObservations(filters?: Filters): Promise<Page<Observation>> {
+  //   const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
+  //   const response = await this._client.workspaces.sessions.observations.list(
+  //     this.workspaceId,
+  //     this.id,
+  //     { filters: validatedFilters }
+  //   )
+  //   return new Page(response)
+  // }
 
   /**
    * Query observations using semantic search.
@@ -798,16 +800,17 @@ export class Session {
    * })
    * ```
    */
-  async queryObservations(
-    params: ObservationQueryParams
-  ): Promise<Observation[]> {
-    const validated = ObservationQueryParamsSchema.parse(params)
-    return await this._client.workspaces.sessions.observations.query(
-      this.workspaceId,
-      this.id,
-      validated
-    )
-  }
+  // Disabled: observations not ready for release
+  // async queryObservations(
+  //   params: ObservationQueryParams
+  // ): Promise<Observation[]> {
+  //   const validated = ObservationQueryParamsSchema.parse(params)
+  //   return await this._client.workspaces.sessions.observations.query(
+  //     this.workspaceId,
+  //     this.id,
+  //     validated
+  //   )
+  // }
 
   /**
    * Delete a specific observation by ID.
@@ -823,13 +826,14 @@ export class Session {
    * await session.deleteObservation('obs_123abc')
    * ```
    */
-  async deleteObservation(observationId: string): Promise<void> {
-    await this._client.workspaces.sessions.observations.delete(
-      this.workspaceId,
-      this.id,
-      observationId
-    )
-  }
+  // Disabled: observations not ready for release
+  // async deleteObservation(observationId: string): Promise<void> {
+  //   await this._client.workspaces.sessions.observations.delete(
+  //     this.workspaceId,
+  //     this.id,
+  //     observationId
+  //   )
+  // }
 
   /**
    * Get the deriver processing status for this session, optionally scoped to an observer or sender.

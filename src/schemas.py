@@ -328,7 +328,7 @@ class MessageCreate(MessageBase):
 
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
-        encoding = tiktoken.get_encoding("cl100k_base")
+        encoding = tiktoken.get_encoding("o200k_base")
         encoded_message = encoding.encode(self.content)
 
         self._encoded_message = encoded_message

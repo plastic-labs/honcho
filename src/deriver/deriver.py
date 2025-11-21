@@ -22,12 +22,13 @@ from src.utils.logging import (
 )
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.tokens import estimate_tokens
+from src.utils.tokens import estimate_tokens, track_input_tokens
 from src.utils.tracing import with_sentry_transaction
 
 from .prompts import (
     critical_analysis_prompt,
-    estimate_base_prompt_tokens,
+    estimate_critical_analysis_prompt_tokens,
+    estimate_peer_card_prompt_tokens,
     peer_card_prompt,
 )
 
@@ -43,7 +44,6 @@ async def critical_analysis_call(
     working_representation: Representation,
     history: str,
     new_turns: list[str],
-    estimated_input_tokens: int,
 ) -> PromptRepresentation:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
@@ -72,7 +72,9 @@ async def critical_analysis_call(
 
     prometheus.DERIVER_TOKENS_PROCESSED.labels(
         task_type="representation",
-    ).inc(response.output_tokens + estimated_input_tokens)
+        token_type="output",  # nosec B106
+        component="total",
+    ).inc(response.output_tokens)
 
     return response.content
 
@@ -102,6 +104,23 @@ async def peer_card_call(
         enable_retry=True,
         retry_attempts=3,
     )
+
+    # Track input tokens for peer_card task
+    track_input_tokens(
+        task_type="peer_card",
+        components={
+            "prompt": estimate_peer_card_prompt_tokens(),
+            "old_peer_card": estimate_tokens(old_peer_card),
+            "new_observations": estimate_tokens(new_observations.str_no_timestamps()),
+        },
+    )
+
+    # Track output tokens for peer_card task
+    prometheus.DERIVER_TOKENS_PROCESSED.labels(
+        task_type="peer_card",
+        token_type="output",  # nosec B106
+        component="total",
+    ).inc(response.output_tokens)
 
     return response.content
 
@@ -181,10 +200,12 @@ async def process_representation_tasks_batch(
 
     # Estimate tokens for deriver input
     peer_card_tokens = estimate_tokens(speaker_peer_card)
+
     working_rep_tokens = estimate_tokens(
         str(working_representation) if not working_representation.is_empty() else None
     )
-    base_prompt_tokens = estimate_base_prompt_tokens()
+
+    prompt_tokens = estimate_critical_analysis_prompt_tokens()
 
     # Estimate tokens for new conversation turns
     new_turns = [
@@ -194,7 +215,7 @@ async def process_representation_tasks_batch(
     new_turns_tokens = estimate_tokens(new_turns)
 
     estimated_input_tokens = (
-        peer_card_tokens + working_rep_tokens + base_prompt_tokens + new_turns_tokens
+        peer_card_tokens + working_rep_tokens + prompt_tokens + new_turns_tokens
     )
 
     # Calculate available tokens for context
@@ -202,17 +223,6 @@ async def process_representation_tasks_batch(
     available_context_tokens = max(
         0,
         settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
-    )
-
-    logger.debug(
-        "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
-        + "New turns: %d, Total estimated: %d, Available for context: %d",
-        peer_card_tokens,
-        working_rep_tokens,
-        base_prompt_tokens,
-        new_turns_tokens,
-        estimated_input_tokens,
-        available_context_tokens,
     )
 
     async with tracked_db("deriver.get_session_context_formatted") as db:
@@ -226,6 +236,32 @@ async def process_representation_tasks_batch(
         )
 
     session_context_tokens = estimate_tokens(formatted_history)
+
+    # Update total estimated input tokens with session context
+    estimated_input_tokens += session_context_tokens
+
+    logger.debug(
+        "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
+        + "New turns: %d, Session context: %d, Total estimated: %d",
+        peer_card_tokens,
+        working_rep_tokens,
+        prompt_tokens,
+        new_turns_tokens,
+        session_context_tokens,
+        estimated_input_tokens,
+    )
+
+    # Track all input token components
+    track_input_tokens(
+        task_type="representation",
+        components={
+            "peer_card": peer_card_tokens,
+            "working_representation": working_rep_tokens,
+            "prompt": prompt_tokens,
+            "new_turns": new_turns_tokens,
+            "session_context": session_context_tokens,
+        },
+    )
 
     # got working representation and peer card, log timing
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
@@ -259,7 +295,6 @@ async def process_representation_tasks_batch(
         ctx=messages,
         observed=observed,
         observer=observer,
-        estimated_input_tokens=estimated_input_tokens + session_context_tokens,
         message_level_configuration=message_level_configuration,
     )
 
@@ -312,14 +347,12 @@ class CertaintyReasoner:
         *,
         observed: str,
         observer: str,
-        estimated_input_tokens: int,
         message_level_configuration: ResolvedConfiguration,
     ) -> None:
         self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
-        self.estimated_input_tokens: int = estimated_input_tokens
         self.message_level_configuration = message_level_configuration
 
     @conditional_observe(name="Deriver")
@@ -362,7 +395,6 @@ class CertaintyReasoner:
                 working_representation=working_representation,
                 history=history,
                 new_turns=new_turns,
-                estimated_input_tokens=self.estimated_input_tokens,
             )
         except Exception as e:
             raise exceptions.LLMError(

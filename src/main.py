@@ -23,7 +23,6 @@ from src.exceptions import HonchoException
 from src.routers import (
     keys,
     messages,
-    observations,
     peers,
     sessions,
     webhooks,
@@ -135,7 +134,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.4.2",
+    version="2.4.3",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -170,7 +169,6 @@ app.include_router(workspaces.router, prefix="/v2")
 app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
-app.include_router(observations.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
 
