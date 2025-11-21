@@ -64,6 +64,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress cashews Redis error logs (NoScriptError, ConnectionError, etc.)
+# These are handled gracefully by SafeRedis and don't need full tracebacks
+logging.getLogger("cashews.backends.redis.client").setLevel(logging.CRITICAL)
+
 
 # JWT Setup
 async def setup_admin_jwt():
