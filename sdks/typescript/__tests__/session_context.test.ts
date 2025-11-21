@@ -177,8 +177,8 @@ describe('SessionContext', () => {
 
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 'Hello', name: 'assistant' },
-        { role: 'user', content: 'No peer', name: '' },
-        { role: 'user', content: 'Another message', name: '' },
+        { role: 'user', content: 'No peer' },
+        { role: 'user', content: 'Another message' },
       ])
     })
 
