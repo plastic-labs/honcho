@@ -1,113 +1,18 @@
 """
 CrewAI Integration with Honcho and OpenAI
 
-This module demonstrates how to build AI agents with persistent memory using
+This example demonstrates how to build AI agents with persistent memory using
 CrewAI for agent orchestration, OpenAI for the AI model, and Honcho for memory
-management. It creates agents that remember conversations across sessions.
+management via the honcho_crewai package.
 """
 
-import os
-import uuid
-from typing import Any, Dict, List, Optional
+from typing import Optional
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process
 from crewai.memory.external.external_memory import ExternalMemory
-from crewai.memory.storage.interface import Storage
-from honcho import Honcho
+from honcho_crewai import HonchoStorage
 
 load_dotenv()
-
-
-class HonchoStorage(Storage):
-    """
-    Honcho-backed storage provider for CrewAI external memory.
-    Implements CrewAI's Storage interface using Honcho's session-based memory.
-    """
-
-    def __init__(
-        self,
-        user_id: str,
-        session_id: Optional[str] = None,
-    ):
-        """
-        Initialize Honcho storage for a specific user and session.
-
-        Args:
-            user_id: Unique identifier for the user
-            session_id: Optional session ID. If not provided, one will be generated
-        """
-        self.honcho = Honcho()
-
-        # Initialize user and assistant peers
-        self.user = self.honcho.peer(user_id)
-        self.assistant = self.honcho.peer("assistant")
-
-        # Create or use existing session
-        if not session_id:
-            session_id = f"session_{uuid.uuid4()}"
-        self.session = self.honcho.session(session_id)
-        self.session_id = session_id
-
-    def save(self, value: Any, metadata: Dict[str, Any]) -> None:
-        """
-        Save a message to Honcho session.
-
-        Args:
-            value: Message content to save
-            metadata: Metadata dict that may contain 'role', 'agent', or 'type' info
-        """
-        # Determine if this is from user or assistant based on metadata
-        role = metadata.get("role", metadata.get("agent", "assistant"))
-        is_user = role == "user"
-        peer = self.user if is_user else self.assistant
-
-        # Add message to session
-        self.session.add_messages([peer.message(str(value))])
-
-    def search(
-        self,
-        query: str,
-        limit: int = 10,
-        score_threshold: float = 0.5
-    ) -> List[Dict[str, Any]]:
-        """
-        Search for relevant messages in Honcho session.
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-            score_threshold: Minimum relevance score
-
-        Returns:
-            List of message dictionaries in CrewAI expected format
-        """
-        # Token limit approximation: ~100 tokens per message
-        token_limit = limit * 100
-
-        # Get context from Honcho
-        context = self.session.get_context(tokens=token_limit)
-        messages = context.messages
-
-        # Convert to CrewAI expected format
-        # CrewAI's external memory expects a 'memory' key
-        results = []
-        for msg in messages[:limit]:
-            results.append({
-                "memory": msg.content,
-                "context": msg.content,
-                "metadata": {
-                    "peer_id": msg.peer_id,
-                    "created_at": str(msg.created_at) if hasattr(msg, 'created_at') else None
-                }
-            })
-
-        return results
-
-    def reset(self) -> None:
-        """Create a new session, effectively resetting memory."""
-        new_session_id = f"session_{uuid.uuid4()}"
-        self.session = self.honcho.session(new_session_id)
-        self.session_id = new_session_id
 
 
 def run_conversation_turn(
@@ -172,7 +77,7 @@ def run_conversation_turn(
     result = crew.kickoff()
 
     # Save assistant response back to memory
-    response_text = str(result)
+    response_text = str(result.raw)
     external_memory.save(response_text, metadata={"agent": "assistant"})
 
     return response_text, storage
