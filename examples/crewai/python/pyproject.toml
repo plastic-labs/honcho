@@ -1,5 +1,5 @@
 [project]
-name = "python"
+name = "honcho-crewai"
 version = "0.1.0"
 description = "CrewAI integration example with Honcho for persistent agent memory"
 readme = "README.md"
