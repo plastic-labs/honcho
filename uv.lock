@@ -826,7 +826,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", git = "https://github.com/plastic-labs/honcho-python-core.git?rev=release-please--branches--main--changes--next" },
+    { name = "honcho-core", path = "sdks/python/honcho_core-1.5.1-py3-none-any.whl" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -837,8 +837,8 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.6.0"
-source = { git = "https://github.com/plastic-labs/honcho-python-core.git?rev=release-please--branches--main--changes--next#cb11c42df8856c8b0d172f104d5e7ed31f9e8cb5" }
+version = "1.5.1"
+source = { path = "sdks/python/honcho_core-1.5.1-py3-none-any.whl" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -847,6 +847,22 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
+wheels = [
+    { filename = "honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:7cfac7e44d83bb172408e66a36b854963e4cedfb88e83814e91803f3c394fea6" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'aiohttp'" },
+    { name = "anyio", specifier = ">=3.5.0,<5" },
+    { name = "distro", specifier = ">=1.7.0,<2" },
+    { name = "httpx", specifier = ">=0.23.0,<1" },
+    { name = "httpx-aiohttp", marker = "extra == 'aiohttp'", specifier = ">=0.1.9" },
+    { name = "pydantic", specifier = ">=1.9.0,<3" },
+    { name = "sniffio" },
+    { name = "typing-extensions", specifier = ">=4.10,<5" },
+]
+provides-extras = ["aiohttp"]
 
 [[package]]
 name = "httpcore"

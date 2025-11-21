@@ -47,6 +47,14 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
     "metadata": "h_metadata",
 }
 
+ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
+    "session_id": "session_name",
+    "workspace_id": "workspace_name",
+    "observer_id": "observer",
+    "observed_id": "observed",
+    "metadata": "internal_metadata",
+}
+
 
 def apply_filter(
     stmt: Select[tuple[T]], model_class: type[T], filters: dict[str, Any] | None = None
@@ -193,8 +201,10 @@ def _build_field_condition(
     if model_class.__name__ == "Message":
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
     elif model_class.__name__ == "Document":
-        # documents are fully internal so we can use any column name directly
-        column_name = key
+        column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS.get(
+            key,
+            key,  # fallback to the key itself if not found in the mapping for internal use here
+        )
     else:
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key)
 

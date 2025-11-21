@@ -36,7 +36,10 @@ CLIENTS: dict[
 ] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
-    anthropic = AsyncAnthropic(api_key=settings.LLM.ANTHROPIC_API_KEY)
+    anthropic = AsyncAnthropic(
+        api_key=settings.LLM.ANTHROPIC_API_KEY,
+        timeout=600.0,  # 10 minutes timeout for long-running operations
+    )
     CLIENTS["anthropic"] = anthropic
 
 if settings.LLM.OPENAI_API_KEY:
@@ -75,6 +78,27 @@ SELECTED_PROVIDERS = [
 for provider_name, provider_value in SELECTED_PROVIDERS:
     if provider_value not in CLIENTS:
         raise ValueError(f"Missing client for {provider_name}: {provider_value}")
+
+# Validate backup providers are initialized if configured
+BACKUP_PROVIDERS = [
+    ("Deriver", settings.DERIVER),
+    ("PeerCard", settings.PEER_CARD),
+    ("Dialectic", settings.DIALECTIC),
+    ("Summary", settings.SUMMARY),
+    ("Dream", settings.DREAM),
+]
+
+for component_name, component_settings in BACKUP_PROVIDERS:
+    if (
+        hasattr(component_settings, "BACKUP_PROVIDER")
+        and component_settings.BACKUP_PROVIDER is not None
+        and component_settings.BACKUP_PROVIDER not in CLIENTS
+    ):
+        raise ValueError(
+            f"Backup provider for {component_name} is set to {component_settings.BACKUP_PROVIDER}, "
+            + "but this provider is not initialized. Please set the required API key/URL environment "
+            + "variables or remove the backup configuration."
+        )
 
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
@@ -232,8 +256,8 @@ async def honcho_llm_call(
         ):
             provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
             model: str = llm_settings.BACKUP_MODEL
-            logger.info(
-                f"Final retry attempt {attempt}: switching from "
+            logger.warning(
+                f"Final retry attempt {attempt}/{retry_attempts}: switching from "
                 + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
                 + f"backup {provider}/{model}"
             )
@@ -306,14 +330,20 @@ async def honcho_llm_call(
     if enable_retry:
 
         def before_retry_callback(retry_state: Any) -> None:
-            """Update attempt counter before each retry."""
-            _current_attempt.set(retry_state.attempt_number)
+            """Update attempt counter before each retry.
+
+            Note: before_sleep is called AFTER an attempt fails and BEFORE sleeping,
+            so we need to increment to the next attempt number.
+            """
+            next_attempt = retry_state.attempt_number + 1
+            _current_attempt.set(next_attempt)
             exc = retry_state.outcome.exception() if retry_state.outcome else None
             if exc:
                 logger.warning(
-                    f"Error on attempt {retry_state.attempt_number} with "
+                    f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
                     + f"{llm_settings.PROVIDER}/{llm_settings.MODEL}: {exc}"
                 )
+                logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
         decorated = retry(
             stop=stop_after_attempt(retry_attempts),
@@ -416,27 +446,36 @@ async def honcho_llm_call_inner(
 
     match client:
         case AsyncAnthropic():
-            if response_model:
-                raise NotImplementedError(
-                    "Response model is not supported for Anthropic"
-                )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": list(params["messages"]),
             }
-            if json_mode:
+
+            # For response models, we need to request JSON and parse manually
+            if response_model or json_mode:
+                # Add JSON schema instructions to the prompt if using response_model
+                if response_model:
+                    schema_json = json.dumps(
+                        response_model.model_json_schema(), indent=2
+                    )
+                    anthropic_params["messages"][-1]["content"] += (
+                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                    )
                 anthropic_params["messages"].append(
                     {"role": "assistant", "content": "{"}
                 )
+
             if thinking_budget_tokens:
                 anthropic_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+
             anthropic_response: AnthropicMessage = await client.messages.create(  # pyright: ignore
                 **anthropic_params
             )
+
             # Extract text content from content blocks
             text_blocks: list[str] = []
             for block in anthropic_response.content:  # pyright: ignore
@@ -447,8 +486,28 @@ async def honcho_llm_call_inner(
             usage = anthropic_response.usage  # pyright: ignore
             stop_reason = anthropic_response.stop_reason  # pyright: ignore
 
+            text_content = "\n".join(text_blocks)
+
+            # If using response_model, parse the JSON response
+            if response_model:
+                try:
+                    # Add back the opening brace that we prefilled
+                    json_content = "{" + text_content
+                    parsed_json = json.loads(json_content)
+                    parsed_content = response_model.model_validate(parsed_json)
+
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
+                        finish_reasons=[stop_reason] if stop_reason else [],
+                    )
+                except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                    raise ValueError(
+                        f"Failed to parse Anthropic response as {response_model}: {e}. Raw content: {text_content}"
+                    ) from e
+
             return HonchoLLMCallResponse(
-                content="\n".join(text_blocks),
+                content=text_content,
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
             )
@@ -730,24 +789,33 @@ async def handle_streaming_response(
     """
     match client:
         case AsyncAnthropic():
-            if response_model:
-                raise NotImplementedError(
-                    "Response model is not supported for Anthropic"
-                )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": list(params["messages"]),
             }
-            if json_mode:
+
+            # For response models, we need to request JSON and parse manually
+            # Note: Streaming with response_model is not ideal but we'll accumulate and parse at the end
+            if response_model or json_mode:
+                # Add JSON schema instructions to the prompt if using response_model
+                if response_model:
+                    schema_json = json.dumps(
+                        response_model.model_json_schema(), indent=2
+                    )
+                    anthropic_params["messages"][-1]["content"] += (
+                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                    )
                 anthropic_params["messages"].append(
                     {"role": "assistant", "content": "{"}
                 )
+
             if thinking_budget_tokens:
                 anthropic_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+
             async with client.messages.stream(**anthropic_params) as anthropic_stream:
                 async for chunk in anthropic_stream:
                     if (

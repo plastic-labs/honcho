@@ -3,10 +3,13 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
+from src.config import settings
 from src.dependencies import db
+from src.deriver.enqueue import enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
 from src.utils.search import search
@@ -152,3 +155,55 @@ async def get_deriver_status(
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post(
+    "/{workspace_id}/trigger_dream",
+    status_code=204,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def trigger_dream(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    request: schemas.TriggerDreamRequest = Body(
+        ..., description="Dream trigger parameters"
+    ),
+    db: AsyncSession = db,
+):
+    """
+    Manually trigger a dream task immediately for a specific collection.
+
+    This endpoint bypasses all automatic dream conditions (document threshold,
+    minimum hours between dreams) and executes the dream task immediately without delay.
+    """
+    # Check if dreams are enabled
+    if not settings.DREAM.ENABLED:
+        raise HTTPException(
+            status_code=400,
+            detail="Dreams are not enabled in the system configuration",
+        )
+
+    # Default observed to observer if not provided
+    observer = request.observer
+    observed = request.observed if request.observed is not None else request.observer
+    dream_type = request.dream_type
+
+    # Count documents in the collection
+    count_stmt = select(func.count(models.Document.id)).where(
+        models.Document.workspace_name == workspace_id,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+    )
+    document_count = int(await db.scalar(count_stmt) or 0)
+
+    # Enqueue the dream task for immediate processing
+    await enqueue_dream(
+        workspace_id,
+        observer=observer,
+        observed=observed,
+        dream_type=dream_type,
+        document_count=document_count,
+    )
+
+    logger.info(
+        f"Manually triggered dream: {dream_type.value} for {workspace_id}/{observer}/{observed}"
+    )

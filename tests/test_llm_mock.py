@@ -29,7 +29,7 @@ async def test_generic_honcho_llm_call_mock():
                 ExplicitObservation(
                     content="test explicit observation",
                     created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[(1, 1)],
+                    message_ids=[1],
                     session_name="test_session",
                 )
             ],
@@ -38,7 +38,7 @@ async def test_generic_honcho_llm_call_mock():
                     conclusion="test deductive conclusion",
                     premises=["test premise 1", "test premise 2"],
                     created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[(1, 1)],
+                    message_ids=[1],
                     session_name="test_session",
                 )
             ],

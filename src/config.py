@@ -67,6 +67,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
         "DREAM": "dream",
+        "AGENTIC_INGESTION": "agentic_ingestion",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -136,8 +137,8 @@ class BackupLLMSettingsMixin:
     both fields are set together or both are None.
     """
 
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
+    BACKUP_PROVIDER: SupportedProviders | None = "custom"
+    BACKUP_MODEL: str | None = "x-ai/grok-4-fast"
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self):
@@ -214,6 +215,8 @@ class LLMSettings(HonchoSettings):
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -348,12 +351,25 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
-    ENABLED_TYPES: list[str] = ["consolidate"]
+    ENABLED_TYPES: list[str] = ["consolidate", "agent"]
 
     # LLM settings for dream processing
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-4o-mini-2024-07-18"
+    PROVIDER: SupportedProviders = "google"
+    MODEL: str = "gemini-2.5-flash"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+
+
+class AgenticIngestionSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="AGENTIC_INGESTION_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    BATCH_MAX_TOKENS: Annotated[
+        int,
+        Field(
+            default=8192,
+            ge=1,
+        ),
+    ] = 4096
 
 
 class AppSettings(HonchoSettings):
@@ -397,6 +413,9 @@ class AppSettings(HonchoSettings):
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
+    AGENTIC_INGESTION: AgenticIngestionSettings = Field(
+        default_factory=AgenticIngestionSettings
+    )
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

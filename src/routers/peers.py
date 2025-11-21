@@ -302,6 +302,48 @@ async def get_peer_card(
     return schemas.PeerCardResponse(peer_card=peer_card)
 
 
+@router.put(
+    "/{peer_id}/card",
+    response_model=schemas.PeerCardResponse,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def set_peer_card(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the observer peer"),
+    peer_card_data: schemas.PeerCardSet = Body(
+        ..., description="Peer card data to set"
+    ),
+    target: str | None = Query(
+        None,
+        description="The peer whose card to set. If not provided, sets the observer's own card",
+    ),
+    db: AsyncSession = db,
+):
+    """Set a peer card for a specific peer relationship.
+
+    Sets the peer card that the observer peer has for the target peer.
+    If no target is specified, sets the observer's own peer card.
+    """
+    # If no target specified, set the observer's own card
+    observed = target if target is not None else peer_id
+
+    await crud.set_peer_card(
+        db,
+        workspace_id,
+        peer_card=peer_card_data.peer_card,
+        observer=peer_id,
+        observed=observed,
+    )
+
+    # Return the updated peer card
+    peer_card = await crud.get_peer_card(
+        db, workspace_id, observer=peer_id, observed=observed
+    )
+    return schemas.PeerCardResponse(peer_card=peer_card)
+
+
 @router.post(
     "/{peer_id}/search",
     response_model=list[schemas.Message],

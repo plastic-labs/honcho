@@ -334,7 +334,7 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
                         ExplicitObservation(
                             content=o,
                             created_at=datetime.now(timezone.utc),
-                            message_ids=[(0, 0)],
+                            message_ids=[0],
                             session_name=case.name,
                         )
                         for o in case.new_observations

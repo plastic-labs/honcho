@@ -13,11 +13,9 @@ from src.security import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/workspaces/{workspace_id}/sessions/{session_id}/observations",
+    prefix="/workspaces/{workspace_id}/observations",
     tags=["observations"],
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 
 
@@ -67,7 +65,6 @@ async def list_observations(
 )
 async def query_observations(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
     body: schemas.ObservationQuery = Body(
         ..., description="Semantic search parameters for observations"
     ),
@@ -79,38 +76,32 @@ async def query_observations(
     Performs vector similarity search on observations to find semantically relevant results.
     Observer and observed are required for semantic search and must be provided in filters.
     """
-    try:
-        # Extract observer and observed from filters if provided
-        observer = None
-        observed = None
-        if body.filters:
-            observer = body.filters.get("observer") or body.filters.get("observer_id")
-            observed = body.filters.get("observed") or body.filters.get("observed_id")
+    # Extract observer and observed from filters if provided
+    observer = None
+    observed = None
+    if body.filters:
+        observer = body.filters.get("observer") or body.filters.get("observer_id")
+        observed = body.filters.get("observed") or body.filters.get("observed_id")
 
-        # If no observer/observed specified, we need to query across all session documents
-        # For now, we'll require these to be specified for semantic search
-        if not observer or not observed:
-            raise ValidationException(
-                "observer and observed must be specified for semantic search"
-            )
-        else:
-            # Query specific observer/observed pair
-            documents = await crud.query_documents(
-                db,
-                workspace_name=workspace_id,
-                query=body.query,
-                observer=observer,
-                observed=observed,
-                filters=body.filters,
-                max_distance=body.distance,
-                top_k=body.top_k,
-            )
-            return [schemas.Observation.model_validate(doc) for doc in documents]
-    except ValueError as e:
-        logger.warning(
-            f"Failed to query observations for session {session_id}: {str(e)}"
+    # If no observer/observed specified, we need to query across all session documents
+    # For now, we'll require these to be specified for semantic search
+    if not observer or not observed:
+        raise ValidationException(
+            "observer and observed must be specified for semantic search"
         )
-        raise ResourceNotFoundException("Session not found") from e
+    else:
+        # Query specific observer/observed pair
+        documents = await crud.query_documents(
+            db,
+            workspace_name=workspace_id,
+            query=body.query,
+            observer=observer,
+            observed=observed,
+            filters=body.filters,
+            max_distance=body.distance,
+            top_k=body.top_k,
+        )
+        return [schemas.Observation.model_validate(doc) for doc in documents]
 
 
 @router.delete(
@@ -119,7 +110,6 @@ async def query_observations(
 )
 async def delete_observation(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
     observation_id: str = Path(..., description="ID of the observation to delete"),
     db: AsyncSession = db,
 ):
@@ -130,11 +120,10 @@ async def delete_observation(
     This action cannot be undone.
     """
     try:
-        await crud.delete_document_by_session(
+        await crud.delete_document_by_id(
             db,
             workspace_name=workspace_id,
             document_id=observation_id,
-            session_name=session_id,
         )
 
         logger.debug("Observation %s deleted successfully", observation_id)

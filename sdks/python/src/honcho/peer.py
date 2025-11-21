@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Generator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
@@ -10,6 +10,7 @@ from honcho_core.types.workspaces import PeerCardResponse
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
+from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
@@ -217,6 +218,10 @@ class Peer(BaseModel):
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
+        config: Configuration | None = Field(
+            None,
+            description="Optional configuration dictionary to associate with the message",
+        ),
         created_at: datetime.datetime | str | None = Field(
             None,
             description="Optional created-at timestamp for the message. Accepts a datetime which will be converted to an ISO 8601 string, or a preformatted string.",
@@ -244,6 +249,7 @@ class Peer(BaseModel):
         return MessageCreateParam(
             peer_id=self.id,
             content=content,
+            configuration=config,
             metadata=metadata,
             created_at=created_at_str,
         )
@@ -520,7 +526,11 @@ class Peer(BaseModel):
             else omit,
             max_observations=max_observations if max_observations is not None else omit,
         )
-        return _Representation.from_dict(data)  # type: ignore
+        representation = data.get("representation")
+        if representation is not None:
+            return _Representation.from_dict(cast(dict[str, object], representation))
+        else:
+            return _Representation.from_dict(data)
 
     def __repr__(self) -> str:
         """

@@ -48,7 +48,7 @@ async def create_messages_for_session(
     session_id: str = Path(...),
     db: AsyncSession = db,
 ):
-    """Create messages for a session with JSON data (original functionality)."""
+    """Add new message(s) to a session."""
     try:
         created_messages = await crud.create_messages(
             db,
@@ -72,8 +72,11 @@ async def create_messages_for_session(
                 "created_at": message.created_at,
                 "message_public_id": message.public_id,
                 "seq_in_session": message.seq_in_session,
+                "configuration": original.configuration,
             }
-            for message in created_messages
+            for message, original in zip(
+                created_messages, messages.messages, strict=True
+            )
         ]
 
         # Enqueue all messages in one call

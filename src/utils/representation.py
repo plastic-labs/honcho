@@ -10,7 +10,7 @@ from src.utils.formatting import parse_datetime_iso
 
 class ObservationMetadata(BaseModel):
     created_at: datetime
-    message_ids: list[tuple[int, int]]
+    message_ids: list[int]
     session_name: str
 
 
@@ -267,7 +267,7 @@ class Representation(BaseModel):
                         doc.internal_metadata, doc.created_at
                     ),
                     content=doc.content,
-                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
                 )
                 for doc in documents
@@ -279,7 +279,7 @@ class Representation(BaseModel):
                         doc.internal_metadata, doc.created_at
                     ),
                     conclusion=doc.content,
-                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
                     premises=doc.internal_metadata.get("premises", []),
                 )
@@ -292,7 +292,7 @@ class Representation(BaseModel):
     def from_prompt_representation(
         cls,
         prompt_representation: "PromptRepresentation",
-        message_ids: tuple[int, int],
+        message_ids: list[int],
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
@@ -301,7 +301,7 @@ class Representation(BaseModel):
                 ExplicitObservation(
                     content=e.content,
                     created_at=created_at,
-                    message_ids=[message_ids],
+                    message_ids=message_ids,
                     session_name=session_name,
                 )
                 for e in prompt_representation.explicit
@@ -310,7 +310,7 @@ class Representation(BaseModel):
                 DeductiveObservation(
                     conclusion=d.conclusion,
                     created_at=created_at,
-                    message_ids=[message_ids],
+                    message_ids=message_ids,
                     session_name=session_name,
                     premises=d.premises,
                 )

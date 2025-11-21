@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from src.schemas import DreamType, ResolvedConfiguration
+
 
 class BasePayload(BaseModel):
     """Base payload with common fields."""
@@ -19,6 +21,7 @@ class RepresentationPayload(BasePayload):
     observer: str
     observed: str
     created_at: datetime
+    configuration: ResolvedConfiguration
 
 
 class RepresentationPayloads(BasePayload):
@@ -33,6 +36,7 @@ class SummaryPayload(BasePayload):
     task_type: Literal["summary"] = "summary"
     session_name: str
     message_seq_in_session: int
+    configuration: ResolvedConfiguration
     # Optional for backward compatibility with older queue items
     message_public_id: str | None = None
 
@@ -49,9 +53,21 @@ class DreamPayload(BasePayload):
     """Payload for dream tasks."""
 
     task_type: Literal["dream"] = "dream"
-    dream_type: Literal["consolidate"] = "consolidate"
+    dream_type: DreamType
     observer: str
     observed: str
+
+
+class AgentPayload(BasePayload):
+    """Payload for agent tasks."""
+
+    task_type: Literal["agent"] = "agent"
+    session_name: str
+    content: str
+    observer: str
+    observed: str
+    created_at: datetime
+    configuration: ResolvedConfiguration
 
 
 def create_webhook_payload(
@@ -65,7 +81,7 @@ def create_webhook_payload(
 
 
 def create_dream_payload(
-    dream_type: Literal["consolidate"] = "consolidate",
+    dream_type: DreamType,
     *,
     observer: str,
     observed: str,
@@ -80,7 +96,8 @@ def create_dream_payload(
 
 def create_payload(
     message: dict[str, Any],
-    task_type: Literal["representation", "summary"],
+    configuration: ResolvedConfiguration,
+    task_type: Literal["representation", "summary", "agent"],
     message_seq_in_session: int | None = None,
     *,
     observer: str | None = None,
@@ -96,9 +113,10 @@ def create_payload(
     Args:
         message: The original message dictionary
         task_type: Type of task ('representation' or 'summary')
+        message_seq_in_session: Required for summary tasks, must be None for representation
         observer: Name of the observer peer (required for representation tasks)
         observed: Name of the observed peer (*always* the peer who sent the message) (required for representation tasks)
-        message_seq_in_session: Required for summary tasks, must be None for representation
+
 
     Returns:
         Processed payload dictionary ready for queue processing (without workspace_name and message_id)
@@ -143,6 +161,31 @@ def create_payload(
                 created_at=created_at,
                 observer=observer,
                 observed=observed,
+                configuration=configuration,
+            )
+        elif task_type == "agent":
+            content = message.get("content")
+            created_at = message.get("created_at")
+
+            if not isinstance(content, str):
+                raise TypeError("Message content must be a string")
+
+            if not isinstance(created_at, datetime):
+                raise TypeError("created_at must be a datetime object")
+
+            if observer is None:
+                raise ValueError("observer is required for agent tasks")
+
+            if observed is None:
+                raise ValueError("observed is required for agent tasks")
+
+            validated_payload = AgentPayload(
+                content=content,
+                session_name=session_name,
+                created_at=created_at,
+                observer=observer,
+                observed=observed,
+                configuration=configuration,
             )
         elif task_type == "summary":
             if message_seq_in_session is None:
@@ -158,6 +201,7 @@ def create_payload(
             validated_payload = SummaryPayload(
                 session_name=session_name,
                 message_seq_in_session=message_seq_in_session,
+                configuration=configuration,
                 message_public_id=message_public_id,
             )
 

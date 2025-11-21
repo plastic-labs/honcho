@@ -37,7 +37,7 @@ class ObservationMetadata(BaseModel):
     """Metadata associated with an observation."""
 
     created_at: datetime
-    message_ids: list[tuple[int, int]]
+    message_ids: list[int]
     session_name: str
 
 

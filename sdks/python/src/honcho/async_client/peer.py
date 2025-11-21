@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
 from honcho_core.types.workspaces import PeerCardResponse
+from honcho_core.types.workspaces.peer_working_representation_response import (
+    PeerWorkingRepresentationResponse,
+)
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
+from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from ..types import DialecticStreamResponse
@@ -238,6 +242,10 @@ class AsyncPeer(BaseModel):
             ..., min_length=1, description="The text content for the message"
         ),
         *,
+        config: Configuration | None = Field(
+            None,
+            description="Optional configuration dictionary to associate with the message",
+        ),
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
@@ -268,6 +276,7 @@ class AsyncPeer(BaseModel):
         return MessageCreateParam(
             peer_id=self.id,
             content=content,
+            configuration=config,
             metadata=metadata,
             created_at=created_at_str,
         )
@@ -529,22 +538,30 @@ class AsyncPeer(BaseModel):
             else session.id
         )
 
-        data = await self._client.workspaces.peers.working_representation(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            session_id=session_id,
-            target=str(target.id) if isinstance(target, AsyncPeer) else target,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+        data: PeerWorkingRepresentationResponse = (
+            await self._client.workspaces.peers.working_representation(
+                peer_id=self.id,
+                workspace_id=self.workspace_id,
+                session_id=session_id,
+                target=str(target.id) if isinstance(target, AsyncPeer) else target,
+                search_query=search_query if search_query is not None else omit,
+                search_top_k=search_top_k if search_top_k is not None else omit,
+                search_max_distance=search_max_distance
+                if search_max_distance is not None
+                else omit,
+                include_most_derived=include_most_derived
+                if include_most_derived is not None
+                else omit,
+                max_observations=max_observations
+                if max_observations is not None
+                else omit,
+            )
         )
-        return _Representation.from_dict(data)  # type: ignore
+        representation = data.get("representation")
+        if representation is not None:
+            return _Representation.from_dict(cast(dict[str, object], representation))
+        else:
+            return _Representation.from_dict(data)
 
     def __repr__(self) -> str:
         """
