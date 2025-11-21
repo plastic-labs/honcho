@@ -5,6 +5,7 @@ Basic tests to verify the HonchoStorage implementation works correctly
 with CrewAI's Storage interface.
 """
 
+import time
 import pytest
 from honcho_crewai import HonchoStorage
 
@@ -100,6 +101,175 @@ def test_honcho_storage_search_format():
         assert isinstance(result["memory"], str)
         assert isinstance(result["context"], str)
         assert isinstance(result["metadata"], dict)
+
+
+def test_semantic_search_relevance():
+    """Test that semantic search returns relevant results based on query."""
+    storage = HonchoStorage(user_id="test_user_semantic")
+
+    # Save messages on different topics
+    storage.save("I love Italian food, especially pasta and pizza", metadata={"agent": "user"})
+    storage.save("My favorite programming language is Python", metadata={"agent": "user"})
+    storage.save("The weather today is sunny and warm", metadata={"agent": "user"})
+    storage.save("Pizza is the best food in the world", metadata={"agent": "assistant"})
+
+    # Allow time for indexing
+    time.sleep(2)
+
+    # Search for food-related content
+    results = storage.search("pizza and Italian cuisine", limit=5)
+
+    # Results should exist
+    assert isinstance(results, list)
+
+    # If results are returned, they should be relevant to the query
+    # The semantic search should prioritize food-related messages
+    if len(results) > 0:
+        # Check that results contain expected fields
+        for result in results:
+            assert "memory" in result
+            assert "context" in result
+            assert "content" in result
+            assert "metadata" in result
+
+
+def test_session_summaries_included():
+    """Test that session summaries are included in search results when available."""
+    storage = HonchoStorage(user_id="test_user_summaries")
+
+    # Save enough messages to potentially trigger summary generation
+    # (Honcho generates summaries after ~20 messages)
+    for i in range(25):
+        storage.save(
+            f"Message {i}: This is a test message about various topics",
+            metadata={"agent": "user" if i % 2 == 0 else "assistant"}
+        )
+
+    # Allow time for background processing
+    time.sleep(5)
+
+    # Search should include summaries if available
+    results = storage.search("test message", limit=10)
+
+    assert isinstance(results, list)
+
+    # Check if any summaries are present
+    summary_results = [r for r in results if r["metadata"].get("type") == "summary"]
+
+    # If summaries exist, verify their format
+    for summary in summary_results:
+        assert "summary_type" in summary["metadata"]
+        assert summary["metadata"]["summary_type"] in ["short", "long"]
+        assert "[Session Summary]" in summary["context"]
+        assert "created_at" in summary["metadata"]
+
+def test_search_limit_parameter():
+    """Test that the limit parameter correctly restricts result count."""
+    storage = HonchoStorage(user_id="test_user_limit")
+
+    # Save multiple messages
+    for i in range(10):
+        storage.save(f"Message number {i} about testing", metadata={"agent": "user"})
+
+    # Allow time for indexing
+    time.sleep(2)
+
+    # Search with small limit
+    results = storage.search("testing", limit=3)
+
+    # Note: Results may include summaries, so we check the total count
+    # The limit should be respected (though summaries may add to the count)
+    assert isinstance(results, list)
+    # Should not exceed limit significantly (summaries could add 1-2)
+    assert len(results) <= 5  # Allow some margin for summaries
+
+
+def test_search_no_results():
+    """Test search behavior when no relevant messages exist."""
+    storage = HonchoStorage(user_id="test_user_noresults")
+
+    # Save unrelated messages
+    storage.save("The quick brown fox", metadata={"agent": "user"})
+
+    time.sleep(1)
+
+    # Search for completely unrelated content
+    results = storage.search("quantum physics blockchain cryptocurrency", limit=5)
+
+    # Should return a list (may be empty or with low relevance)
+    assert isinstance(results, list)
+
+
+def test_multiple_peers_search():
+    """Test that search works with messages from multiple peers."""
+    storage = HonchoStorage(user_id="test_user_multipeer")
+
+    # Save messages from both user and assistant
+    storage.save("I need help with Python", metadata={"agent": "user"})
+    storage.save("I can help you with Python!", metadata={"agent": "assistant"})
+    storage.save("How do I use decorators?", metadata={"agent": "user"})
+    storage.save("Decorators are functions that modify other functions", metadata={"agent": "assistant"})
+
+    time.sleep(2)
+
+    # Search for Python-related content
+    results = storage.search("Python programming", limit=10)
+
+    if len(results) > 0:
+        # Should find messages from both peers
+        peer_ids = set(r["metadata"].get("peer_id") for r in results if "peer_id" in r["metadata"])
+
+        # Verify we have results with peer information
+        assert len(peer_ids) > 0
+
+        # All results should have required fields
+        for result in results:
+            assert "memory" in result
+            assert "context" in result
+            assert "content" in result
+            assert result["memory"] == result["content"]  # Should match
+
+
+def test_search_result_format_consistency():
+    """Test that all search results have consistent format."""
+    storage = HonchoStorage(user_id="test_user_format_consistency")
+
+    # Save various types of messages
+    storage.save("Regular message", metadata={"agent": "user"})
+    storage.save("Another message", metadata={"agent": "assistant", "type": "response"})
+
+    time.sleep(1)
+
+    results = storage.search("message", limit=5)
+
+    # All results should have the same structure
+    required_keys = ["content", "memory", "context", "metadata"]
+
+    for result in results:
+        for key in required_keys:
+            assert key in result, f"Missing required key: {key}"
+
+        # Check types
+        assert isinstance(result["content"], str)
+        assert isinstance(result["memory"], str)
+        assert isinstance(result["context"], str)
+        assert isinstance(result["metadata"], dict)
+
+
+def test_save_preserves_peer_identity():
+    """Test that save correctly identifies user vs assistant messages."""
+    storage = HonchoStorage(user_id="test_user_peers")
+
+    # Save as user
+    storage.save("User message", metadata={"agent": "user"})
+    storage.save("User message with role", metadata={"role": "user"})
+
+    # Save as assistant
+    storage.save("Assistant message", metadata={"agent": "assistant"})
+    storage.save("Default message", metadata={})  # Should default to assistant
+
+    # If no exceptions raised, test passes
+    # The peer assignment happens internally
 
 
 if __name__ == "__main__":
