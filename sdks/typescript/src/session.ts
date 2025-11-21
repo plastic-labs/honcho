@@ -7,7 +7,14 @@ import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/mess
 import type { Uploadable } from '@honcho-ai/core/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
+import {
+  Representation,
+  type RepresentationData,
+  type RepresentationOptions,
+} from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
+// Disabled: observations not ready for release
+// import type { Observation, ObservationQueryParams } from './types'
 import {
   ContextParamsSchema,
   type DeriverStatusOptions,
@@ -18,6 +25,7 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
+  // ObservationQueryParamsSchema,  // Disabled: observations not ready for release
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -112,6 +120,22 @@ export class Session {
    * Reference to the parent Honcho client instance.
    */
   private _client: HonchoCore
+  /**
+   * Cached metadata for this session. May be stale if the session
+   * was not recently fetched from the API.
+   *
+   * Call getMetadata() to get the latest metadata from the server,
+   * which will also update this cached value.
+   */
+  public metadata?: Record<string, unknown> | null
+  /**
+   * Cached configuration for this session. May be stale if the session
+   * was not recently fetched from the API.
+   *
+   * Call getConfig() to get the latest configuration from the server,
+   * which will also update this cached value.
+   */
+  public configuration?: Record<string, unknown> | null
 
   /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
@@ -119,11 +143,21 @@ export class Session {
    * @param id - Unique identifier for this session within the workspace
    * @param workspaceId - Workspace ID for scoping operations
    * @param client - Reference to the parent Honcho client instance
+   * @param metadata - Optional metadata to initialize the cached value
+   * @param configuration - Optional configuration to initialize the cached value
    */
-  constructor(id: string, workspaceId: string, client: HonchoCore) {
+  constructor(
+    id: string,
+    workspaceId: string,
+    client: HonchoCore,
+    metadata?: Record<string, unknown> | null,
+    configuration?: Record<string, unknown> | null
+  ) {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
+    this.metadata = metadata
+    this.configuration = configuration
   }
 
   /**
@@ -364,12 +398,12 @@ export class Session {
    * })
    * ```
    */
-  async addMessages(messages: MessageAddition): Promise<void> {
+  async addMessages(messages: MessageAddition): Promise<Message[]> {
     const validatedMessages = MessageAdditionSchema.parse(messages)
     const messagesList = Array.isArray(validatedMessages)
       ? validatedMessages
       : [validatedMessages]
-    await this._client.workspaces.sessions.messages.create(
+    return await this._client.workspaces.sessions.messages.create(
       this.workspaceId,
       this.id,
       {
@@ -403,7 +437,8 @@ export class Session {
    *
    * Makes an API call to retrieve the current metadata associated with this session.
    * Metadata can include custom attributes, settings, or any other key-value data
-   * that provides context about the session.
+   * that provides context about the session. This method also updates the cached
+   * metadata property.
    *
    * @returns Promise resolving to a dictionary containing the session's metadata.
    *          Returns an empty dictionary if no metadata is set
@@ -413,7 +448,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    return session.metadata || {}
+    this.metadata = session.metadata || {}
+    return this.metadata
   }
 
   /**
@@ -422,7 +458,8 @@ export class Session {
    * Makes an API call to update the metadata associated with this session.
    * This will overwrite any existing metadata with the provided values.
    * Metadata is useful for storing custom attributes, configuration, or
-   * contextual information about the session.
+   * contextual information about the session. This method also updates the
+   * cached metadata property.
    *
    * @param metadata - A dictionary of metadata to associate with this session.
    *                   Keys must be strings, values can be any JSON-serializable type
@@ -431,12 +468,71 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       metadata,
     })
+    this.metadata = metadata
   }
 
   /**
-   * Delete this session.
+   * Get configuration for this session.
    *
-   * Makes an API call to mark this session as inactive.
+   * Makes an API call to retrieve the current configuration associated with this session.
+   * Configuration includes settings that control session behavior. This method also
+   * updates the cached configuration property.
+   *
+   * @returns Promise resolving to a dictionary containing the session's configuration.
+   *          Returns an empty dictionary if no configuration is set
+   */
+  async getConfig(): Promise<Record<string, unknown>> {
+    const session = await this._client.workspaces.sessions.getOrCreate(
+      this.workspaceId,
+      { id: this.id }
+    )
+    this.configuration = session.configuration || {}
+    return this.configuration
+  }
+
+  /**
+   * Set configuration for this session.
+   *
+   * Makes an API call to update the configuration associated with this session.
+   * This will overwrite any existing configuration with the provided values.
+   * This method also updates the cached configuration property.
+   *
+   * @param configuration - A dictionary of configuration to associate with this session.
+   *                        Keys must be strings, values can be any JSON-serializable type
+   */
+  async setConfig(configuration: Record<string, unknown>): Promise<void> {
+    await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
+      configuration,
+    })
+    this.configuration = configuration
+  }
+
+  /**
+   * Refresh cached metadata and configuration for this session.
+   *
+   * Makes a single API call to retrieve the latest metadata and configuration
+   * associated with this session and updates the cached properties.
+   */
+  async refresh(): Promise<void> {
+    const session = await this._client.workspaces.sessions.getOrCreate(
+      this.workspaceId,
+      { id: this.id }
+    )
+    this.metadata = session.metadata || {}
+    this.configuration = session.configuration || {}
+  }
+
+  /**
+   * Delete this session and all associated data.
+   *
+   * Makes an API call to permanently delete this session and all related data including:
+   * - Messages
+   * - Message embeddings
+   * - Observations
+   * - Session-Peer associations
+   * - Background processing queue items
+   *
+   * This action cannot be undone.
    */
   async delete(): Promise<void> {
     await this._client.workspaces.sessions.delete(this.workspaceId, this.id)
@@ -478,7 +574,8 @@ export class Session {
     tokens?: number,
     peerTarget?: string | Peer,
     lastUserMessage?: string | Message,
-    peerPerspective?: string | Peer
+    peerPerspective?: string | Peer,
+    representationOptions?: RepresentationOptions
   ): Promise<SessionContext>
   async getContext(options?: {
     summary?: boolean
@@ -486,6 +583,8 @@ export class Session {
     peerTarget?: string | Peer
     lastUserMessage?: string | Message
     peerPerspective?: string | Peer
+    limitToSession?: boolean
+    representationOptions?: RepresentationOptions
   }): Promise<SessionContext>
   async getContext(
     summaryOrOptions?:
@@ -496,11 +595,14 @@ export class Session {
           peerTarget?: string | Peer
           lastUserMessage?: string | Message
           peerPerspective?: string | Peer
+          limitToSession?: boolean
+          representationOptions?: RepresentationOptions
         },
     tokens?: number,
     peerTarget?: string | Peer,
     lastUserMessage?: string | Message,
-    peerPerspective?: string | Peer
+    peerPerspective?: string | Peer,
+    representationOptions?: RepresentationOptions
   ): Promise<SessionContext> {
     // Normalize positional arguments into options object
     let options: {
@@ -509,6 +611,8 @@ export class Session {
       peerTarget?: string
       lastUserMessage?: string
       peerPerspective?: string
+      limitToSession?: boolean
+      representationOptions?: RepresentationOptions
     }
 
     if (
@@ -528,6 +632,7 @@ export class Session {
           typeof peerPerspective === 'object'
             ? peerPerspective.id
             : peerPerspective,
+        representationOptions,
       }
     } else {
       // Options object pattern
@@ -540,6 +645,8 @@ export class Session {
       peerTarget: options.peerTarget,
       lastUserMessage: options.lastUserMessage,
       peerPerspective: options.peerPerspective,
+      limitToSession: options.limitToSession,
+      representationOptions: options.representationOptions,
     })
 
     // Extract message ID if lastUserMessage is a Message object
@@ -557,6 +664,13 @@ export class Session {
         last_message: lastMessageId,
         peer_target: contextParams.peerTarget,
         peer_perspective: contextParams.peerPerspective,
+        limit_to_session: contextParams.limitToSession,
+        search_top_k: contextParams.representationOptions?.searchTopK,
+        search_max_distance:
+          contextParams.representationOptions?.searchMaxDistance,
+        include_most_derived:
+          contextParams.representationOptions?.includeMostDerived,
+        max_observations: contextParams.representationOptions?.maxObservations,
       }
     )
     // Convert the summary response to Summary object if present
@@ -635,6 +749,91 @@ export class Session {
       }
     )
   }
+
+  /**
+   * List all observations for this session.
+   *
+   * Observations are theory-of-mind data (documents) that peers have formed about each other.
+   * Returns paginated results that can be filtered by observer_id and observed_id.
+   *
+   * @param filters - Optional filters to scope the observations: see [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @returns A paginated list of Observation objects.
+   *
+   * @example
+   * ```typescript
+   * const observations = await session.listObservations()
+   * for await (const observation of observations) {
+   *   console.log(`${observation.observer_id} observed: ${observation.content}`)
+   * }
+   * ```
+   */
+  // Disabled: observations not ready for release
+  // async listObservations(filters?: Filters): Promise<Page<Observation>> {
+  //   const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
+  //   const response = await this._client.workspaces.sessions.observations.list(
+  //     this.workspaceId,
+  //     this.id,
+  //     { filters: validatedFilters }
+  //   )
+  //   return new Page(response)
+  // }
+
+  /**
+   * Query observations using semantic search.
+   *
+   * Performs vector similarity search on observations to find semantically relevant results.
+   * Use this to find observations related to a specific topic or concept.
+   *
+   * @param params - Query parameters
+   * @param params.query - The semantic search query
+   * @param params.top_k - Number of results to return (1-100, default: 10)
+   * @param params.distance - Maximum cosine distance threshold for results (0.0-1.0)
+   * @param params.filters - Optional filters to scope the query
+   * @returns A list of Observation objects matching the query
+   *
+   * @example
+   * ```typescript
+   * const observations = await session.queryObservations({
+   *   query: "user preferences about music",
+   *   top_k: 5,
+   *   distance: 0.8
+   * })
+   * ```
+   */
+  // Disabled: observations not ready for release
+  // async queryObservations(
+  //   params: ObservationQueryParams
+  // ): Promise<Observation[]> {
+  //   const validated = ObservationQueryParamsSchema.parse(params)
+  //   return await this._client.workspaces.sessions.observations.query(
+  //     this.workspaceId,
+  //     this.id,
+  //     validated
+  //   )
+  // }
+
+  /**
+   * Delete a specific observation by ID.
+   *
+   * This permanently deletes the observation (document) from the theory-of-mind system.
+   * This action cannot be undone.
+   *
+   * @param observationId - The ID of the observation to delete
+   * @returns A promise that resolves when the observation is deleted
+   *
+   * @example
+   * ```typescript
+   * await session.deleteObservation('obs_123abc')
+   * ```
+   */
+  // Disabled: observations not ready for release
+  // async deleteObservation(observationId: string): Promise<void> {
+  //   await this._client.workspaces.sessions.observations.delete(
+  //     this.workspaceId,
+  //     this.id,
+  //     observationId
+  //   )
+  // }
 
   /**
    * Get the deriver processing status for this session, optionally scoped to an observer or sender.
@@ -792,23 +991,41 @@ export class Session {
    * @param peer - The peer to get the working representation of. Can be peer ID string or Peer object
    * @param target - Optional target peer. If provided, returns what `peer` knows about
    *                 `target` within this session context rather than `peer`'s global representation
-   * @returns Promise resolving to a dictionary containing the peer's representation information,
-   *          including facts, characteristics, and contextual knowledge
+   * @param options - Optional representation options to filter and configure the results
+   * @returns Promise resolving to a Representation object containing explicit and deductive observations
    *
    * @example
    * ```typescript
    * // Get peer's global representation in this session
    * const globalRep = await session.workingRep('user123')
+   * console.log(globalRep.toString())
    *
    * // Get what user123 knows about assistant in this session
    * const localRep = await session.workingRep('user123', 'assistant')
+   *
+   * // Get representation with semantic search
+   * const searchedRep = await session.workingRep('user123', undefined, {
+   *   searchQuery: 'preferences',
+   *   searchTopK: 10
+   * })
    * ```
    */
   async workingRep(
     peer: string | Peer,
-    target?: string | Peer
-  ): Promise<Record<string, unknown>> {
-    const workingRepParams = WorkingRepParamsSchema.parse({ peer, target })
+    target?: string | Peer,
+    options?: {
+      searchQuery?: string
+      searchTopK?: number
+      searchMaxDistance?: number
+      includeMostDerived?: boolean
+      maxObservations?: number
+    }
+  ): Promise<Representation> {
+    const workingRepParams = WorkingRepParamsSchema.parse({
+      peer,
+      target,
+      options,
+    })
     const peerId =
       typeof workingRepParams.peer === 'string'
         ? workingRepParams.peer
@@ -819,14 +1036,27 @@ export class Session {
         : workingRepParams.target.id
       : undefined
 
-    return await this._client.workspaces.peers.workingRepresentation(
+    const response = await this._client.workspaces.peers.workingRepresentation(
       this.workspaceId,
       peerId,
       {
         session_id: this.id,
         target: targetId,
+        search_query: workingRepParams.options?.searchQuery,
+        search_top_k: workingRepParams.options?.searchTopK,
+        search_max_distance: workingRepParams.options?.searchMaxDistance,
+        include_most_derived: workingRepParams.options?.includeMostDerived,
+        max_observations: workingRepParams.options?.maxObservations,
       }
     )
+    const maybe = response as
+      | RepresentationData
+      | { representation?: RepresentationData | null }
+      | null
+    const rep = (maybe && 'representation' in (maybe as any)
+      ? (maybe as any).representation
+      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    return Representation.fromData(rep as RepresentationData)
   }
 
   /**

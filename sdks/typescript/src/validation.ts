@@ -139,6 +139,30 @@ const MessageSchema: z.ZodType<Message> = z.object({
 }) as z.ZodType<Message>
 
 /**
+ * Schema for representation options.
+ */
+export const RepresentationOptionsSchema = z.object({
+  searchTopK: z
+    .number()
+    .int()
+    .min(1, 'searchTopK must be at least 1')
+    .max(100, 'searchTopK must be at most 100')
+    .optional(),
+  searchMaxDistance: z
+    .number()
+    .min(0.0, 'searchMaxDistance must be at least 0.0')
+    .max(1.0, 'searchMaxDistance must be at most 1.0')
+    .optional(),
+  includeMostDerived: z.boolean().optional(),
+  maxObservations: z
+    .number()
+    .int()
+    .min(1, 'maxObservations must be at least 1')
+    .max(100, 'maxObservations must be at most 100')
+    .optional(),
+})
+
+/**
  * Schema for context retrieval parameters.
  */
 export const ContextParamsSchema = z
@@ -156,6 +180,8 @@ export const ContextParamsSchema = z
       .optional(),
     peerTarget: PeerIdSchema.optional(),
     peerPerspective: PeerIdSchema.optional(),
+    limitToSession: z.boolean().optional(),
+    representationOptions: RepresentationOptionsSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.lastUserMessage && !data.peerTarget) {
@@ -225,6 +251,20 @@ export const FileUploadSchema = z.object({
 export const WorkingRepParamsSchema = z.object({
   peer: z.union([z.string(), z.object({ id: z.string() })]),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  options: RepresentationOptionsSchema.extend({
+    searchQuery: SearchQuerySchema.optional(),
+  }).optional(),
+})
+
+/**
+ * Schema for peer working representation parameters.
+ */
+export const PeerWorkingRepParamsSchema = z.object({
+  session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  options: RepresentationOptionsSchema.extend({
+    searchQuery: SearchQuerySchema.optional(),
+  }).optional(),
 })
 
 /**
@@ -272,6 +312,11 @@ export const MessageAdditionSchema = z.union([
 export const WorkspaceMetadataSchema = z.record(z.string(), z.unknown())
 
 /**
+ * Schema for workspace configuration.
+ */
+export const WorkspaceConfigSchema = z.record(z.string(), z.unknown())
+
+/**
  * Schema for limit.
  */
 export const LimitSchema = z
@@ -279,6 +324,25 @@ export const LimitSchema = z
   .int()
   .min(1, 'Limit must be a positive integer')
   .max(100, 'Limit must be less than or equal to 100')
+
+/**
+ * Schema for observation query parameters.
+ */
+export const ObservationQueryParamsSchema = z.object({
+  query: SearchQuerySchema,
+  top_k: z
+    .number()
+    .int()
+    .min(1, 'top_k must be at least 1')
+    .max(100, 'top_k must be at most 100')
+    .optional(),
+  distance: z
+    .number()
+    .min(0.0, 'distance must be at least 0.0')
+    .max(1.0, 'distance must be at most 1.0')
+    .optional(),
+  filters: FilterSchema,
+})
 
 /**
  * Type exports for use throughout the SDK.
@@ -296,8 +360,13 @@ export type ContextParams = z.infer<typeof ContextParamsSchema>
 export type DeriverStatusOptions = z.infer<typeof DeriverStatusOptionsSchema>
 export type FileUpload = z.infer<typeof FileUploadSchema>
 export type WorkingRepParams = z.infer<typeof WorkingRepParamsSchema>
+export type PeerWorkingRepParams = z.infer<typeof PeerWorkingRepParamsSchema>
 export type PeerAddition = z.infer<typeof PeerAdditionSchema>
 export type PeerRemoval = z.infer<typeof PeerRemovalSchema>
 export type MessageAddition = z.infer<typeof MessageAdditionSchema>
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export type Limit = z.infer<typeof LimitSchema>
+export type ObservationQueryParams = z.infer<
+  typeof ObservationQueryParamsSchema
+>

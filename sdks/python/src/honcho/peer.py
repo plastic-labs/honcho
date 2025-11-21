@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
@@ -12,11 +12,12 @@ from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
-from .types import DialecticStreamResponse
 from .pagination import SyncPage
+from .types import DialecticStreamResponse
 
 if TYPE_CHECKING:
     from .session import Session
+    from .types import Representation
 
 
 class Peer(BaseModel):
@@ -29,12 +30,26 @@ class Peer(BaseModel):
 
     Attributes:
         id: Unique identifier for this peer
-        _client: Reference to the parent Honcho client instance
+        workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this peer. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this peer. May be stale if not
+            recently fetched. Call get_config() for fresh data.
     """
 
     id: str = Field(..., min_length=1, description="Unique identifier for this peer")
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
+    )
+    metadata: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
+    )
+    configuration: dict[str, object] | None = Field(
+        None,
+        frozen=True,
+        description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
     )
     _client: HonchoCore = PrivateAttr()
 
@@ -77,16 +92,24 @@ class Peer(BaseModel):
             config: Optional configuration to set for this peer.
             If set, will get/create peer immediately with flags.
         """
-        super().__init__(id=peer_id, workspace_id=workspace_id)
+        super().__init__(
+            id=peer_id,
+            workspace_id=workspace_id,
+            metadata=metadata,
+            configuration=config,
+        )
         self._client = client
 
         if config is not None or metadata is not None:
-            self._client.workspaces.peers.get_or_create(
+            peer_data = self._client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
                 configuration=config if config is not None else omit,
                 metadata=metadata if metadata is not None else omit,
             )
+            # Update cached values with API response
+            object.__setattr__(self, "metadata", peer_data.metadata)
+            object.__setattr__(self, "configuration", peer_data.configuration)
 
     def chat(
         self,
@@ -231,7 +254,7 @@ class Peer(BaseModel):
 
         Makes an API call to retrieve metadata associated with this peer. Metadata
         can include custom attributes, settings, or any other key-value data
-        associated with the peer.
+        associated with the peer. This method also updates the cached metadata attribute.
 
         Returns:
             A dictionary containing the peer's metadata. Returns an empty dictionary
@@ -241,7 +264,9 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.metadata or {}
+        metadata = peer.metadata or {}
+        object.__setattr__(self, "metadata", metadata)
+        return metadata
 
     @validate_call
     def set_metadata(
@@ -255,6 +280,7 @@ class Peer(BaseModel):
 
         Makes an API call to update the metadata associated with this peer.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with this peer.
@@ -265,13 +291,15 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
+        object.__setattr__(self, "metadata", metadata)
 
-    def get_peer_config(self) -> dict[str, object]:
+    def get_config(self) -> dict[str, object]:
         """
         Get the current workspace-level configuration for this peer.
 
         Makes an API call to retrieve configuration associated with this peer.
         Configuration currently includes one optional flag, `observe_me`.
+        This method also updates the cached configuration attribute.
 
         Returns:
             A dictionary containing the peer's configuration
@@ -280,10 +308,12 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        return peer.configuration or {}
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "configuration", configuration)
+        return configuration
 
     @validate_call
-    def set_peer_config(
+    def set_config(
         self,
         config: dict[str, object] = Field(
             ..., description="Configuration dictionary to associate with this peer"
@@ -296,6 +326,7 @@ class Peer(BaseModel):
 
         Makes an API call to update the configuration associated with this peer.
         This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
 
         Args:
             config: A dictionary of configuration to associate with this peer.
@@ -306,6 +337,53 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
+        object.__setattr__(self, "configuration", config)
+
+    def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`get_config` instead.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        return self.get_config()
+
+    @validate_call
+    def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`set_config` instead.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer
+        """
+        return self.set_config(config)
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this peer.
+
+        Makes a single API call to retrieve the latest metadata and configuration
+        associated with this peer and updates the cached attributes.
+        """
+        peer = self._client.workspaces.peers.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        metadata = peer.metadata or {}
+        configuration = peer.configuration or {}
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "configuration", configuration)
 
     @validate_call
     def search(
@@ -373,6 +451,76 @@ class Peer(BaseModel):
         items: list[str] = response.peer_card
 
         return "\n".join(items)
+
+    def working_rep(
+        self,
+        session: str | Session | None = None,
+        target: str | Peer | None = None,
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
+    ) -> "Representation":
+        """
+        Get a working representation for this peer.
+
+        Args:
+            session: Optional session to scope the representation to.
+            target: Optional target peer to get the representation of. If provided,
+            returns the representation of the target from the perspective of this peer.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
+
+        Returns:
+            A Representation object containing explicit and deductive observations
+
+        Example:
+            ```python
+            # Get global representation
+            rep = peer.working_rep()
+            print(rep)
+
+            # Get representation scoped to a session
+            session_rep = peer.working_rep(session='session-123')
+
+            # Get representation with semantic search
+            searched_rep = peer.working_rep(
+                search_query='preferences',
+                search_top_k=10,
+                max_observations=50
+            )
+            ```
+        """
+        from .types import Representation as _Representation
+
+        session_id = (
+            None
+            if session is None
+            else session
+            if isinstance(session, str)
+            else session.id
+        )
+
+        data = self._client.workspaces.peers.working_representation(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            session_id=session_id,
+            target=str(target.id) if isinstance(target, Peer) else target,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
+        )
+        return _Representation.from_dict(data)  # type: ignore
 
     def __repr__(self) -> str:
         """

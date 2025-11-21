@@ -3,6 +3,28 @@
  */
 
 /**
+ * Observation - external view of a document (theory-of-mind data).
+ */
+export interface Observation {
+  id: string
+  content: string
+  observer_id: string
+  observed_id: string
+  session_id: string
+  created_at: string
+}
+
+/**
+ * Parameters for semantic search of observations.
+ */
+export interface ObservationQueryParams {
+  query: string
+  top_k?: number
+  distance?: number
+  filters?: Record<string, any>
+}
+
+/**
  * Delta object for streaming dialectic responses.
  */
 export interface DialecticStreamDelta {

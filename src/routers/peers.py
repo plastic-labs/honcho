@@ -9,6 +9,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, prometheus, schemas
+from src.config import settings
 from src.dependencies import db, tracked_db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
@@ -253,6 +254,15 @@ async def get_working_representation(
             observer=peer_id,
             observed=options.target if options.target is not None else peer_id,
             session_name=options.session_id,
+            include_semantic_query=options.search_query,
+            semantic_search_top_k=options.search_top_k,
+            semantic_search_max_distance=options.search_max_distance,
+            include_most_derived=options.include_most_derived
+            if options.include_most_derived is not None
+            else False,
+            max_observations=options.max_observations
+            if options.max_observations is not None
+            else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
         )
         return {"representation": representation}
     except ValueError as e:
