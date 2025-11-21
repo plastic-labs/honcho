@@ -124,6 +124,11 @@ MAX_OUTPUT_TOKENS = 2000
 # BACKUP_PROVIDER = "google"
 # BACKUP_MODEL = "gemini-2.5-flash"
 
+# Agentic ingestion settings
+[agentic_ingestion]
+ENABLED = false
+BATCH_MAX_TOKENS = 4096
+
 # Webhook settings
 [webhook]
 SECRET = ""

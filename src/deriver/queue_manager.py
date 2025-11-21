@@ -20,6 +20,7 @@ from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
+    process_agent_batch,
     process_item,
     process_representation_batch,
 )
@@ -420,7 +421,7 @@ class QueueManager:
                         )
                         break
                     try:
-                        if work_unit.task_type == "representation":
+                        if work_unit.task_type in ["representation", "agent"]:
                             (
                                 messages_context,
                                 items_to_process,
@@ -438,12 +439,20 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_representation_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observer=work_unit.observer,
-                                    observed=work_unit.observed,
-                                )
+                                if work_unit.task_type == "representation":
+                                    await process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
+                                else:  # agent
+                                    await process_agent_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
@@ -453,7 +462,7 @@ class QueueManager:
                                     e,
                                     items_to_process,
                                     work_unit_key,
-                                    "processing representation batch",
+                                    f"processing {work_unit.task_type} batch",
                                 )
 
                         else:
@@ -510,7 +519,11 @@ class QueueManager:
                 if removed and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        if work_unit.task_type in ["representation", "summary"]:
+                        if work_unit.task_type in [
+                            "representation",
+                            "summary",
+                            "agent",
+                        ]:
                             logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
                             )
@@ -522,10 +535,6 @@ class QueueManager:
                                     observer=work_unit.observer,
                                     observed=work_unit.observed,
                                 )
-                            )
-                        else:
-                            logger.debug(
-                                f"Skipping queue.empty event for webhook work unit {work_unit_key}"
                             )
                     except Exception:
                         logger.exception("Error triggering queue_empty webhook")
@@ -539,9 +548,9 @@ class QueueManager:
         self, task_type: str, work_unit_key: str, aqs_id: str
     ) -> QueueItem | None:
         """Get the next queue item to process for a specific work unit."""
-        if task_type == "representation":
+        if task_type in ["representation", "agent"]:
             raise ValueError(
-                "Representation tasks are not supported for get_next_queue_item"
+                f"{task_type.capitalize()} tasks are not supported for get_next_queue_item"
             )
         async with tracked_db("get_next_queue_item") as db:
             # ActiveQueueSession conditions for worker ownership verification
@@ -579,16 +588,26 @@ class QueueManager:
         aqs_id: str,
     ) -> tuple[list[models.Message], list[QueueItem], ResolvedConfiguration | None]:
         """
-        Representation-only: returns a tuple of (messages_context, items_to_process).
+        Batch processing for representation and agent tasks.
+        Returns a tuple of (messages_context, items_to_process, configuration).
         - messages_context: unique Message rows (conversation turns) forming the context window
         - items_to_process: QueueItems for the current work_unit_key within that window
+        - configuration: Resolved configuration for the batch
         """
-        if task_type != "representation":
+        if task_type not in ["representation", "agent"]:
             raise ValueError(
-                "Non-representation tasks are not supported for get_queue_item_batch"
+                f"{task_type} tasks are not supported for get_queue_item_batch"
             )
+
+        # Select the appropriate batch token limit based on task type
+        batch_max_tokens = (
+            settings.AGENTIC_INGESTION.BATCH_MAX_TOKENS
+            if task_type == "agent"
+            else settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        )
+
         async with tracked_db("get_queue_item_batch") as db:
-            # For representation tasks, get a batch based on token limit.
+            # For batch tasks, get messages based on token limit.
             # Step 1: Parse work_unit_key to get session context and focused sender
             parsed_key = parse_work_unit_key(work_unit_key)
 
@@ -644,10 +663,7 @@ class QueueManager:
             )
 
             allowed_condition = (
-                (
-                    cte.c.cumulative_token_count
-                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-                )
+                (cte.c.cumulative_token_count <= batch_max_tokens)
                 | (
                     cte.c.message_id == min_unprocessed_message_id_subq
                 )  # always include the first unprocessed message
@@ -743,7 +759,7 @@ class QueueManager:
             )
             await db.commit()
 
-            if work_unit.task_type in ["representation", "summary"]:
+            if work_unit.task_type in ["representation", "summary", "agent"]:
                 prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,

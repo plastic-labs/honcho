@@ -2,10 +2,10 @@ import logging
 
 import sentry_sdk
 from pydantic import ValidationError
-from rich.console import Console
 from sqlalchemy import select
 
 from src import models
+from src.agent.worker import process_agent_task, process_agent_task_batch
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
@@ -22,8 +22,6 @@ from src.webhooks import webhook_delivery
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-console = Console(markup=True)
 
 
 async def process_item(queue_item: models.QueueItem) -> None:
@@ -106,6 +104,9 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_dream(validated, workspace_name)
+    elif task_type == "agent":
+        with sentry_sdk.start_transaction(name="process_agent_task", op="deriver"):
+            await process_agent_task(queue_item)
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
@@ -117,9 +118,12 @@ async def process_representation_batch(
     observer: str | None,
     observed: str | None,
 ) -> None:
-    """Prepares and processes a batch of messages for representation tasks.
+    """
+    Prepares and processes a batch of messages for representation tasks.
+
     Args:
         messages: List of messages to process
+        message_level_configuration: Resolved configuration for this batch
         observer: The observer of the messages
         observed: The observed of the messages
     """
@@ -136,6 +140,40 @@ async def process_representation_batch(
     )
 
     await process_representation_tasks_batch(
+        messages,
+        message_level_configuration,
+        observer=observer,
+        observed=observed,
+    )
+
+
+async def process_agent_batch(
+    messages: list[Message],
+    message_level_configuration: ResolvedConfiguration | None,
+    *,
+    observer: str | None,
+    observed: str | None,
+) -> None:
+    """
+    Prepares and processes a batch of messages for agent tasks.
+
+    Args:
+        messages: List of messages to process
+        message_level_configuration: Resolved configuration for this batch
+    """
+    if not messages or not messages[0]:
+        logger.debug("process_agent_batch received no messages")
+        return
+
+    if observed is None or observer is None:
+        raise ValueError("observed and observer are required for agent tasks")
+
+    logger.debug(
+        "process_agent_batch received %s messages",
+        len(messages),
+    )
+
+    await process_agent_task_batch(
         messages,
         message_level_configuration,
         observer=observer,

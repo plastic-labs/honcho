@@ -1,9 +1,6 @@
 {
   "description": "Test that manually triggering consolidate dream reduces document count by merging repetitive facts",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    },
     "dream": {
       "enabled": true
     }

@@ -1440,6 +1440,9 @@ class TestGenerateQueueRecordsSeqInSession:
                 ),
                 peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
                 dream=schemas.ResolvedDreamConfiguration(enabled=True),
+                agentic_ingestion=schemas.ResolvedAgenticIngestionConfiguration(
+                    enabled=False
+                ),
             )
             records = await generate_queue_records(
                 db_session=mock_db_session,
@@ -1520,6 +1523,9 @@ class TestGenerateQueueRecordsSeqInSession:
                 ),
                 peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
                 dream=schemas.ResolvedDreamConfiguration(enabled=True),
+                agentic_ingestion=schemas.ResolvedAgenticIngestionConfiguration(
+                    enabled=False
+                ),
             )
             records = await generate_queue_records(
                 db_session=mock_db_session,

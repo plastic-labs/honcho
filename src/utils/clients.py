@@ -36,7 +36,10 @@ CLIENTS: dict[
 ] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
-    anthropic = AsyncAnthropic(api_key=settings.LLM.ANTHROPIC_API_KEY)
+    anthropic = AsyncAnthropic(
+        api_key=settings.LLM.ANTHROPIC_API_KEY,
+        timeout=600.0,  # 10 minutes timeout for long-running operations
+    )
     CLIENTS["anthropic"] = anthropic
 
 if settings.LLM.OPENAI_API_KEY:
@@ -443,27 +446,36 @@ async def honcho_llm_call_inner(
 
     match client:
         case AsyncAnthropic():
-            if response_model:
-                raise NotImplementedError(
-                    "Response model is not supported for Anthropic"
-                )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": list(params["messages"]),
             }
-            if json_mode:
+
+            # For response models, we need to request JSON and parse manually
+            if response_model or json_mode:
+                # Add JSON schema instructions to the prompt if using response_model
+                if response_model:
+                    schema_json = json.dumps(
+                        response_model.model_json_schema(), indent=2
+                    )
+                    anthropic_params["messages"][-1]["content"] += (
+                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                    )
                 anthropic_params["messages"].append(
                     {"role": "assistant", "content": "{"}
                 )
+
             if thinking_budget_tokens:
                 anthropic_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+
             anthropic_response: AnthropicMessage = await client.messages.create(  # pyright: ignore
                 **anthropic_params
             )
+
             # Extract text content from content blocks
             text_blocks: list[str] = []
             for block in anthropic_response.content:  # pyright: ignore
@@ -474,8 +486,28 @@ async def honcho_llm_call_inner(
             usage = anthropic_response.usage  # pyright: ignore
             stop_reason = anthropic_response.stop_reason  # pyright: ignore
 
+            text_content = "\n".join(text_blocks)
+
+            # If using response_model, parse the JSON response
+            if response_model:
+                try:
+                    # Add back the opening brace that we prefilled
+                    json_content = "{" + text_content
+                    parsed_json = json.loads(json_content)
+                    parsed_content = response_model.model_validate(parsed_json)
+
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
+                        finish_reasons=[stop_reason] if stop_reason else [],
+                    )
+                except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                    raise ValueError(
+                        f"Failed to parse Anthropic response as {response_model}: {e}. Raw content: {text_content}"
+                    ) from e
+
             return HonchoLLMCallResponse(
-                content="\n".join(text_blocks),
+                content=text_content,
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
             )
@@ -757,24 +789,33 @@ async def handle_streaming_response(
     """
     match client:
         case AsyncAnthropic():
-            if response_model:
-                raise NotImplementedError(
-                    "Response model is not supported for Anthropic"
-                )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": list(params["messages"]),
             }
-            if json_mode:
+
+            # For response models, we need to request JSON and parse manually
+            # Note: Streaming with response_model is not ideal but we'll accumulate and parse at the end
+            if response_model or json_mode:
+                # Add JSON schema instructions to the prompt if using response_model
+                if response_model:
+                    schema_json = json.dumps(
+                        response_model.model_json_schema(), indent=2
+                    )
+                    anthropic_params["messages"][-1]["content"] += (
+                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                    )
                 anthropic_params["messages"].append(
                     {"role": "assistant", "content": "{"}
                 )
+
             if thinking_budget_tokens:
                 anthropic_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
+
             async with client.messages.stream(**anthropic_params) as anthropic_stream:
                 async for chunk in anthropic_stream:
                     if (

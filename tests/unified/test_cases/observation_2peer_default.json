@@ -1,9 +1,6 @@
 {
   "description": "Test default observation behavior - no local representations should be created",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

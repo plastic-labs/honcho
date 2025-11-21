@@ -51,7 +51,7 @@ def get_configuration(
     """
     # Start with defaults
     config_dict: dict[str, Any] = {
-        "deriver": {"enabled": True},
+        "deriver": {"enabled": settings.DERIVER.ENABLED},
         "peer_card": {
             "use": settings.PEER_CARD.ENABLED,
             "create": settings.PEER_CARD.ENABLED,
@@ -62,6 +62,7 @@ def get_configuration(
             "messages_per_long_summary": settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY,
         },
         "dream": {"enabled": settings.DREAM.ENABLED},
+        "agentic_ingestion": {"enabled": settings.AGENTIC_INGESTION.ENABLED},
     }
 
     # Apply overrides in order (Workspace -> Session -> Message)

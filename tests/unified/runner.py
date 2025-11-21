@@ -359,6 +359,7 @@ class UnifiedTestRunner:
         test_file: Path | None = None,
         honcho_port: int = 9000,
         api_port: int = 9001,
+        redis_port: int = 6379,
     ):
         if not tests_dir and not test_file:
             raise ValueError("Either tests_dir or test_file must be provided")
@@ -368,7 +369,10 @@ class UnifiedTestRunner:
         self.tests_dir: Path | None = tests_dir
         self.test_file: Path | None = test_file
         self.harness: HonchoHarness = HonchoHarness(
-            db_port=honcho_port, api_port=api_port, project_root=Path.cwd()
+            db_port=honcho_port,
+            api_port=api_port,
+            redis_port=redis_port,
+            project_root=Path.cwd(),
         )
         self.api_key: str | None = os.getenv("LLM_ANTHROPIC_API_KEY")
         self.anthropic: AsyncAnthropic | None = (
