@@ -100,11 +100,14 @@ def upgrade() -> None:
 
     # Step 6: Add CHECK constraint for level
     if not constraint_exists("documents", "level_valid", "check", inspector):
-        op.create_check_constraint(
-            "level_valid",
-            "documents",
-            "level IN ('explicit', 'deductive')",
-            schema=schema,
+        connection.execute(
+            text(
+                f"""
+                ALTER TABLE {schema}.documents
+                ADD CONSTRAINT level_valid
+                CHECK (level IN ('explicit', 'deductive'))
+                """
+            )
         )
 
 
@@ -115,11 +118,8 @@ def downgrade() -> None:
 
     # Step 1: Drop CHECK constraint for level
     if constraint_exists("documents", "level_valid", "check", inspector):
-        op.drop_constraint(
-            "level_valid",
-            "documents",
-            type_="check",
-            schema=schema,
+        connection.execute(
+            text(f"ALTER TABLE {schema}.documents DROP CONSTRAINT level_valid")
         )
 
     # Step 2: Copy level and times_derived back to internal_metadata in batches (optional, for safety)

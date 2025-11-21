@@ -134,7 +134,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.4.2",
+    version="2.4.3",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",

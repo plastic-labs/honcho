@@ -1,6 +1,15 @@
-# Honcho Development Harness
+# Honcho Benchmark Suite
 
-This directory contains a development harness script that makes it easy to run Honcho locally with a Docker database.
+This directory contains benchmarking tools for evaluating Honcho's long-term memory capabilities.
+
+## Available Benchmarks
+
+- **LongMemEval**: Tests memory retention across multi-session conversations
+- **BEAM**: Beyond a Million Tokens - comprehensive long-term memory evaluation across 10 memory abilities
+
+## Development Harness
+
+The development harness script makes it easy to run Honcho locally with a Docker database.
 
 ## Overview
 
