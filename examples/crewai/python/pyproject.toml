@@ -1,0 +1,12 @@
+[project]
+name = "python"
+version = "0.1.0"
+description = "CrewAI integration example with Honcho for persistent agent memory"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "crewai>=0.134.0",
+    "honcho-ai>=0.2.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]

@@ -1,0 +1,328 @@
+---
+title: "CrewAI"
+icon: 'users-gear'
+description: "Build AI agents with persistent memory using CrewAI and Honcho"
+sidebarTitle: 'CrewAI'
+---
+
+Integrate Honcho with CrewAI to build AI agents that maintain memory across sessions. This guide shows you how to use Honcho's memory layer with CrewAI's agent orchestration framework.
+
+<Note>
+The full code is available on [GitHub](https://github.com/plastic-labs/honcho/tree/main/examples/crewai) with examples in [Python](https://github.com/plastic-labs/honcho/blob/main/examples/crewai/python/main.py)
+</Note>
+
+## What We're Building
+
+We'll create AI agents that remember and reason over past conversations. Here's how the pieces fit together:
+
+- **CrewAI** orchestrates agent behavior and task execution
+- **Honcho** stores messages and retrieves relevant context
+- **Your LLM** generates responses using Honcho's formatted context
+
+The key benefit: CrewAI automatically retrieves relevant conversation history from Honcho without you needing to manually manage context, token limits, or message formatting.
+
+<Note>
+This tutorial demonstrates a single-agent setup to show how Honcho integrates with CrewAI. For production applications, you can extend this to multi-agent crews with shared or individual memory using Honcho's peer system.
+</Note>
+
+## Setup
+
+Install required packages:
+
+<CodeGroup>
+```bash Python (uv)
+uv add honcho-ai crewai openai python-dotenv
+```
+
+```bash Python (pip)
+pip install honcho-ai crewai openai python-dotenv
+```
+</CodeGroup>
+
+This tutorial uses OpenAI for the LLM, but Honcho works with any LLM provider. Create a `.env` file with your API keys:
+
+```bash
+OPENAI_API_KEY=your_openai_key
+```
+
+<Note>
+This tutorial uses the Honcho demo server at https://demo.honcho.dev which runs a small instance of Honcho on the latest version. For production, get your Honcho API key at [app.honcho.dev](https://app.honcho.dev). For local development, use `environment="local"`.
+</Note>
+
+## Initialize Clients
+
+```python Python
+import os
+import uuid
+from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
+from crewai import Agent, Task, Crew, Process
+from crewai.memory.external.external_memory import ExternalMemory
+from crewai.memory.storage.interface import Storage
+from honcho import Honcho
+
+load_dotenv()
+
+# Initialize Honcho
+honcho = Honcho()
+```
+
+## Implement Honcho Storage
+
+CrewAI's external memory system requires a storage provider that implements the `Storage` interface. We'll create a `HonchoStorage` class that bridges CrewAI's memory system with Honcho's session-based memory.
+
+<Note>
+Before proceeding, it's important to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v2/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
+</Note>
+
+```python Python
+class HonchoStorage(Storage):
+    """
+    Honcho-backed storage provider for CrewAI external memory.
+    Implements CrewAI's Storage interface using Honcho's session-based memory.
+    """
+
+    def __init__(
+        self,
+        user_id: str,
+        session_id: Optional[str] = None,
+    ):
+        """
+        Initialize Honcho storage for a specific user and session.
+
+        Args:
+            user_id: Unique identifier for the user
+            session_id: Optional session ID. If not provided, one will be generated
+        """
+        self.honcho = Honcho()
+
+        # Initialize user and assistant peers
+        self.user = self.honcho.peer(user_id)
+        self.assistant = self.honcho.peer("assistant")
+
+        # Create or use existing session
+        if not session_id:
+            session_id = f"session_{uuid.uuid4()}"
+        self.session = self.honcho.session(session_id)
+        self.session_id = session_id
+
+    def save(self, value: Any, metadata: Dict[str, Any]) -> None:
+        """
+        Save a message to Honcho session.
+
+        Args:
+            value: Message content to save
+            metadata: Metadata dict that may contain 'role', 'agent', or 'type' info
+        """
+        # Determine if this is from user or assistant based on metadata
+        role = metadata.get("role", metadata.get("agent", "assistant"))
+        is_user = role == "user"
+        peer = self.user if is_user else self.assistant
+
+        # Add message to session
+        self.session.add_messages([peer.message(str(value))])
+
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        score_threshold: float = 0.5
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for relevant messages in Honcho session.
+
+        Args:
+            query: Search query
+            limit: Maximum number of results
+            score_threshold: Minimum relevance score
+
+        Returns:
+            List of message dictionaries in CrewAI expected format
+        """
+        # Token limit approximation: ~100 tokens per message
+        token_limit = limit * 100
+
+        # Get context from Honcho
+        context = self.session.get_context(tokens=token_limit)
+        messages = context.messages
+
+        # Convert to CrewAI expected format
+        # CrewAI's external memory expects a 'memory' key
+        results = []
+        for msg in messages[:limit]:
+            results.append({
+                "memory": msg.content,
+                "context": msg.content,
+                "metadata": {
+                    "peer_id": msg.peer_id,
+                    "created_at": str(msg.created_at) if hasattr(msg, 'created_at') else None
+                }
+            })
+
+        return results
+
+    def reset(self) -> None:
+        """Create a new session, effectively resetting memory."""
+        new_session_id = f"session_{uuid.uuid4()}"
+        self.session = self.honcho.session(new_session_id)
+        self.session_id = new_session_id
+```
+
+### Understanding the Storage Interface
+
+The `HonchoStorage` class implements three key methods:
+
+- **`save()`** - Stores messages in Honcho's session, associating them with the appropriate peer (user or assistant)
+- **`search()`** - Retrieves relevant conversation history using Honcho's `get_context()` method
+- **`reset()`** - Creates a new session to start fresh conversations
+
+CrewAI automatically calls these methods when agents need to store or retrieve memory, creating a seamless integration.
+
+## Create Agents with Memory
+
+Now let's create a function that initializes a CrewAI agent with Honcho-backed memory:
+
+```python Python
+def run_conversation_turn(
+    user_id: str,
+    user_input: str,
+    session_id: Optional[str] = None,
+    storage: Optional[HonchoStorage] = None
+) -> tuple[str, HonchoStorage]:
+    """
+    Run a single conversation turn with the CrewAI agent.
+
+    Args:
+        user_id: Unique identifier for the user
+        user_input: User's message
+        session_id: Optional session ID for conversation continuity
+        storage: Optional existing HonchoStorage instance
+
+    Returns:
+        Tuple of (agent_response, storage_instance)
+    """
+    # Step 1: Initialize or reuse storage
+    if storage is None:
+        if not session_id:
+            session_id = f"session_{user_id}"
+        storage = HonchoStorage(user_id=user_id, session_id=session_id)
+
+    # Step 2: Create ExternalMemory wrapper for automatic context retrieval
+    # This enables CrewAI to automatically query Honcho for relevant context
+    external_memory = ExternalMemory(storage=storage)
+
+    # Step 3: Save user input to memory
+    external_memory.save(user_input, metadata={"agent": "user"})
+
+    # Step 4: Create an agent
+    agent = Agent(
+        role="AI Assistant",
+        goal="Help users with their questions and remember context from previous conversations",
+        backstory=(
+            "You are a helpful AI assistant with the ability to remember past conversations. "
+            "You use context from previous interactions to provide personalized and relevant responses."
+        ),
+        verbose=False,
+        allow_delegation=False
+    )
+
+    # Step 5: Create task for the agent
+    task = Task(
+        description=f"Respond to the user's message: {user_input}",
+        expected_output="A helpful and contextually relevant response that considers conversation history",
+        agent=agent
+    )
+
+    # Step 6: Create crew with external memory
+    # This enables automatic context retrieval from Honcho
+    crew = Crew(
+        agents=[agent],
+        tasks=[task],
+        process=Process.sequential,
+        external_memory=external_memory,
+        verbose=False
+    )
+
+    # Step 7: Execute - CrewAI automatically retrieves relevant context from Honcho
+    result = crew.kickoff()
+
+    # Step 8: Save assistant response back to memory
+    response_text = str(result)
+    external_memory.save(response_text, metadata={"agent": "assistant"})
+
+    return response_text, storage
+```
+
+### How Memory Retrieval Works
+
+When you pass `external_memory` to the `Crew`, CrewAI automatically:
+
+1. Calls `storage.search()` to retrieve relevant context from Honcho
+2. Injects this context into the agent's working memory
+3. Uses the context when generating responses
+4. Stores new messages back to Honcho via `storage.save()`
+
+This happens transparently without manual memory management.
+
+## Chat Loop
+
+Create the main conversation function with an interactive loop:
+
+<Note>
+**Production Usage:** Honcho accepts any nanoid-compatible string for `user_id` and `session_id`. You can use IDs directly from your authentication system (Auth0, Firebase, Clerk, etc.) and session management without modification.
+
+This tutorial uses hardcoded values for simplicity.
+</Note>
+
+```python Python
+def main():
+    """Interactive chat loop with CrewAI agent powered by Honcho memory."""
+    print("Welcome to the AI Assistant powered by CrewAI and Honcho!")
+    print("Type 'quit' or 'exit' to end the conversation.\\n")
+
+    user_id = "demo-user-123"
+    storage = None
+
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ['quit', 'exit']:
+            print("Goodbye!")
+            break
+
+        if not user_input.strip():
+            continue
+
+        try:
+            response, storage = run_conversation_turn(
+                user_id=user_id,
+                user_input=user_input,
+                storage=storage
+            )
+            print(f"Assistant: {response}\\n")
+        except Exception as e:
+            print(f"Error: {e}\\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Next Steps
+
+Now that you have a working CrewAI integration with Honcho, you can:
+
+- **Build multi-agent crews** where each agent is a Honcho `Peer` with its own memory
+- **Create specialized agents** with domain-specific memory and context
+- **Use CrewAI's advanced features** like hierarchical processes, tool delegation, and conditional task execution
+- **Scale to production** by connecting your authentication system's user IDs directly to Honcho
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Get Context" icon="messages" href="/v2/documentation/core-concepts/features/get-context">
+    Learn more about retrieving and formatting conversation context
+  </Card>
+  <Card title="LangGraph Integration" icon="diagram-project" href="/v2/integrations/langgraph">
+    Build stateful agents with LangGraph and Honcho
+  </Card>
+</CardGroup>

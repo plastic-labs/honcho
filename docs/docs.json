@@ -67,7 +67,7 @@
               },
               {
                 "group": "Integrations",
-                "pages": ["v2/integrations/langgraph", "v2/integrations/mcp"]
+                "pages": ["v2/integrations/crewai", "v2/integrations/langgraph", "v2/integrations/mcp"]
               },
               {
                 "group": "Application Interfaces",
