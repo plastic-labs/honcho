@@ -69,7 +69,7 @@ storage = HonchoStorage(
 The `HonchoStorage` class implements three key methods:
 
 - **`save()`** - Stores messages in Honcho's `session`, associating them with the appropriate `peer` (user or assistant)
-- **`search()`** - Performs semantic vector search using `session.search()` to find messages most relevant to the query, and includes `session` summaries when available for context compression. This provides better relevance matching than simple retrieval.
+- **`search()`** - Performs semantic vector search using `session.search()` to find messages most relevant to the query.
 - **`reset()`** - Creates a new `session` to start fresh conversations
 
 CrewAI automatically calls these methods when agents need to store or retrieve memory, creating a seamless integration.
