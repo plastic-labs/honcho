@@ -152,8 +152,9 @@ async def get_or_create_session(
         )
         try:
             db.add(honcho_session)
-            # Flush to ensure session exists in DB before adding peers
+            # Flush to ensure session exists in DB before adding peers and set flag to warm cache
             await db.flush()
+            needs_cache_update = True
 
         except IntegrityError:
             await db.rollback()
