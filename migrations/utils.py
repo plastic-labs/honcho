@@ -68,6 +68,8 @@ def constraint_exists(
     elif type == "primary":
         constraint = inspector.get_pk_constraint(table_name, schema=schema)
         return constraint["name"] == constraint_name
+    elif type == "foreignkey":
+        constraints = inspector.get_foreign_keys(table_name, schema=schema)
     else:
         raise ValueError(f"Invalid constraint type: {type}")
     return any(constraint["name"] == constraint_name for constraint in constraints)
@@ -151,9 +153,11 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
     )
 
     # Step 5: Drop the redundant CHECK constraint
-    op.drop_constraint(
-        constraint_name,
-        table_name,
-        type_="check",
-        schema=schema,
+    conn.execute(
+        sa.text(
+            f"""
+          ALTER TABLE {quoted_schema}.{quoted_table}
+          DROP CONSTRAINT {quoted_constraint}
+          """
+        )
     )

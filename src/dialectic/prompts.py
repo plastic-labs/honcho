@@ -1,4 +1,7 @@
+from functools import cache
 from inspect import cleandoc as c
+
+from src.utils.tokens import estimate_tokens
 
 
 def dialectic_prompt(
@@ -139,6 +142,29 @@ Provide a natural language response that:
 <working_representation>{working_representation}</working_representation>
 """
     )
+
+
+@cache
+def estimate_dialectic_prompt_tokens() -> int:
+    """Estimate base dialectic prompt tokens by calling dialectic_prompt with empty values.
+
+    This value is cached since it only changes on redeploys when the prompt template changes.
+    """
+    try:
+        prompt = dialectic_prompt(
+            query="",
+            working_representation="",
+            recent_conversation_history=None,
+            observer_peer_card=None,
+            observed_peer_card=None,
+            observer="",
+            observed="",
+        )
+
+        return estimate_tokens(prompt)
+    except Exception:
+        # Return a conservative estimate if estimation fails
+        return 750
 
 
 def query_generation_prompt(query: str, observed: str) -> str:

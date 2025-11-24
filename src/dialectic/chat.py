@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 
 from dotenv import load_dotenv
 
-from src import crud
+from src import crud, prometheus
 from src.config import settings
 from src.dependencies import tracked_db
 from src.utils import summarizer
@@ -26,7 +26,7 @@ from src.utils.logging import (
 from src.utils.representation import Representation
 from src.utils.tokens import estimate_tokens
 
-from .prompts import dialectic_prompt
+from .prompts import dialectic_prompt, estimate_dialectic_prompt_tokens
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -60,6 +60,18 @@ async def dialectic_call(
     Returns:
         Model response
     """
+    # Estimate input tokens by concatenating all inputs
+    prompt_tokens = estimate_dialectic_prompt_tokens()
+    inputs = [
+        query,
+        working_representation,
+        recent_conversation_history or "",
+        "\n".join(peer_card) if peer_card else "",
+        "\n".join(observed_peer_card) if observed_peer_card else "",
+    ]
+    contextual_tokens = estimate_tokens("".join(inputs))
+    estimated_input_tokens = prompt_tokens + contextual_tokens
+
     # Generate the prompt and log it
     prompt = dialectic_prompt(
         query,
@@ -86,6 +98,15 @@ async def dialectic_call(
     logger.debug("=== DIALECTIC PROMPT ===")
     logger.debug(prompt)
     logger.debug("=== END DIALECTIC PROMPT ===")
+
+    # Track tokens in prometheus
+    prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+        token_type="input",  # nosec B106
+    ).inc(estimated_input_tokens)
+
+    prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+        token_type="output",  # nosec B106
+    ).inc(response.output_tokens)
 
     return response.content
 
@@ -115,6 +136,18 @@ async def dialectic_stream(
     Returns:
         Streaming model response
     """
+    # Estimate input tokens by concatenating all inputs
+    prompt_tokens = estimate_dialectic_prompt_tokens()
+    variable_inputs = [
+        query,
+        working_representation,
+        recent_conversation_history or "",
+        "\n".join(peer_card) if peer_card else "",
+        "\n".join(observed_peer_card) if observed_peer_card else "",
+    ]
+    variable_tokens = estimate_tokens("".join(variable_inputs))
+    estimated_input_tokens = prompt_tokens + variable_tokens
+
     # Generate the prompt and log it
     prompt = dialectic_prompt(
         query,
@@ -143,7 +176,23 @@ async def dialectic_stream(
     logger.debug(prompt)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    return response
+    # Track input tokens in prometheus
+    # Note: Output tokens are available in the final chunk of the stream (is_done=True)
+    prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+        token_type="input",  # nosec B106
+    ).inc(estimated_input_tokens)
+
+    # Wrap the response to log output tokens from final chunk
+    async def log_streaming_response():
+        async for chunk in response:
+            if chunk.is_done and chunk.output_tokens is not None:
+                # TODO: Currently not tracking output tokens for groq models
+                prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+                    token_type="output",  # nosec B106
+                ).inc(chunk.output_tokens)
+            yield chunk
+
+    return log_streaming_response()
 
 
 @conditional_observe(name="Dialectic")

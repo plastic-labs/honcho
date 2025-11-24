@@ -2,19 +2,23 @@ import asyncio
 import logging
 import time
 from enum import Enum
+from functools import cache
 from inspect import cleandoc as c
 from typing import TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import schemas
+from src import prometheus, schemas
+from src.cache.client import cache as cache_client
 from src.config import settings
+from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric, conditional_observe
+from src.utils.tokens import estimate_tokens, track_input_tokens
 
 from .. import crud, models
 
@@ -79,25 +83,13 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
-@conditional_observe(name="Create Short Summary")
-async def create_short_summary(
+def short_summary_prompt(
     messages: list[models.Message],
-    input_tokens: int,
-    previous_summary: str | None = None,
-) -> HonchoLLMCallResponse[str]:
-    # input_tokens indicates how many tokens the message list + previous summary take up
-    # we want to optimize short summaries to be smaller than the actual content being summarized
-    # so we ask the agent to produce a word count roughly equal to either the input, or the max
-    # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
-    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
-    output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
-
-    if previous_summary:
-        previous_summary_text = previous_summary
-    else:
-        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
-
-    prompt = c(f"""
+    output_words: int,
+    previous_summary_text: str,
+) -> str:
+    """Generate the short summary prompt."""
+    return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
@@ -122,28 +114,14 @@ Return only the summary without any explanation or meta-commentary.
 Produce as thorough a summary as possible in {output_words} words or less.
 """)
 
-    return await honcho_llm_call(
-        llm_settings=settings.SUMMARY,
-        prompt=prompt,
-        max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
-    )
 
-
-@conditional_observe(name="Create Long Summary")
-async def create_long_summary(
+def long_summary_prompt(
     messages: list[models.Message],
-    previous_summary: str | None = None,
-) -> HonchoLLMCallResponse[str]:
-    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
-    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
-    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
-
-    if previous_summary:
-        previous_summary_text = previous_summary
-    else:
-        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
-
-    prompt = c(f"""
+    output_words: int,
+    previous_summary_text: str,
+) -> str:
+    """Generate the long summary prompt."""
+    return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
@@ -169,6 +147,82 @@ Return only the summary without any explanation or meta-commentary.
 
 Produce as thorough a summary as possible in {output_words} words or less.
 """)
+
+
+@cache
+def estimate_short_summary_prompt_tokens() -> int:
+    """Estimate tokens for the short summary prompt (without messages/previous_summary)."""
+    try:
+        return estimate_tokens(
+            short_summary_prompt(
+                messages=[],
+                output_words=0,
+                previous_summary_text="",
+            )
+        )
+    except Exception:
+        # Return a rough estimate if estimation fails
+        return 200
+
+
+@cache
+def estimate_long_summary_prompt_tokens() -> int:
+    """Estimate tokens for the long summary prompt (without messages/previous_summary)."""
+    try:
+        return estimate_tokens(
+            long_summary_prompt(
+                messages=[],
+                output_words=0,
+                previous_summary_text="",
+            )
+        )
+    except Exception:
+        # Return a rough estimate if estimation fails
+        return 200
+
+
+@conditional_observe(name="Create Short Summary")
+async def create_short_summary(
+    messages: list[models.Message],
+    input_tokens: int,
+    previous_summary: str | None = None,
+) -> HonchoLLMCallResponse[str]:
+    # input_tokens indicates how many tokens the message list + previous summary take up
+    # we want to optimize short summaries to be smaller than the actual content being summarized
+    # so we ask the agent to produce a word count roughly equal to either the input, or the max
+    # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
+    output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
+
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
+    prompt = short_summary_prompt(messages, output_words, previous_summary_text)
+
+    return await honcho_llm_call(
+        llm_settings=settings.SUMMARY,
+        prompt=prompt,
+        max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+    )
+
+
+@conditional_observe(name="Create Long Summary")
+async def create_long_summary(
+    messages: list[models.Message],
+    previous_summary: str | None = None,
+) -> HonchoLLMCallResponse[str]:
+    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
+    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
+
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
+    prompt = long_summary_prompt(messages, output_words, previous_summary_text)
 
     return await honcho_llm_call(
         llm_settings=settings.SUMMARY,
@@ -311,13 +365,37 @@ async def _create_and_save_summary(
     previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
     input_tokens = messages_tokens + previous_summary_tokens
 
-    new_summary = await _create_summary(
+    new_summary, is_fallback = await _create_summary(
         messages=messages,
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
         input_tokens=input_tokens,
         message_public_id=message_public_id,
     )
+
+    # Only track tokens if this was a real LLM call
+    if not is_fallback:
+        # Get base prompt tokens based on summary type
+        if summary_type == SummaryType.SHORT:
+            prompt_tokens = estimate_short_summary_prompt_tokens()
+        else:
+            prompt_tokens = estimate_long_summary_prompt_tokens()
+
+        track_input_tokens(
+            task_type="summary",
+            components={
+                "prompt": prompt_tokens,
+                "messages": messages_tokens,
+                "previous_summary": previous_summary_tokens,
+            },
+        )
+
+        # Track output tokens
+        prometheus.DERIVER_TOKENS_PROCESSED.labels(
+            task_type="summary",
+            token_type="output",  # nosec B106
+            component="total",
+        ).inc(new_summary["token_count"])
 
     await _save_summary(
         db,
@@ -354,7 +432,7 @@ async def _create_summary(
     summary_type: SummaryType,
     input_tokens: int,
     message_public_id: str,
-) -> Summary:
+) -> tuple[Summary, bool]:
     """
     Generate a summary of the provided messages using an LLM.
 
@@ -364,10 +442,12 @@ async def _create_summary(
         summary_type: Type of summary to create ("short" or "long")
 
     Returns:
-        A full summary of the conversation up to the last message
+        A tuple of (Summary, is_fallback) where is_fallback indicates if
+        the summary was generated using a fallback instead of an LLM call
     """
 
     response: HonchoLLMCallResponse[str] | None = None
+    is_fallback = False
     try:
         if summary_type == SummaryType.SHORT:
             response = await create_short_summary(
@@ -393,14 +473,18 @@ async def _create_summary(
             else ""
         )
         summary_tokens = 50
+        is_fallback = True
 
-    return Summary(
-        content=summary_text,
-        message_id=messages[-1].id if messages else 0,
-        summary_type=summary_type.value,
-        created_at=utc_now_iso(),
-        token_count=summary_tokens,
-        message_public_id=message_public_id,
+    return (
+        Summary(
+            content=summary_text,
+            message_id=messages[-1].id if messages else 0,
+            summary_type=summary_type.value,
+            created_at=utc_now_iso(),
+            token_count=summary_tokens,
+            message_public_id=message_public_id,
+        ),
+        is_fallback,
     )
 
 
@@ -451,6 +535,9 @@ async def _save_summary(
 
     await db.execute(stmt)
     await db.commit()
+
+    cache_key = session_cache_key(workspace_name, session_name)
+    await cache_client.delete(cache_key)
 
 
 async def get_summarized_history(

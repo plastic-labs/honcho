@@ -9,12 +9,17 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "navigation": {
     "versions": [
       {
-        "version": "v2.4.2",
+        "version": "v2.4.3",
         "api": {
           "openapi": ["openapi.json"]
         },
@@ -63,25 +68,34 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v2/guides/overview"]
+                "pages": [
+                  "v2/guides/overview"
+                ]
               },
               {
                 "group": "Integrations",
-                "pages": ["v2/integrations/langgraph", "v2/integrations/mcp"]
+                "pages": [
+                  "v2/integrations/langgraph",
+                  "v2/integrations/mcp"
+                ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+                "pages": [
+                  "v2/guides/discord",
+                  "v2/guides/telegram"
+                ]
               }
             ]
           },
-
           {
             "tab": "API Reference",
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v2/api-reference/introduction"]
+                "pages": [
+                  "v2/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -185,7 +199,9 @@
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -215,15 +231,23 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
+                "pages": [
+                  "v1/guides/overview",
+                  "v1/guides/streaming-response"
+                ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
+                "pages": [
+                  "v1/guides/discord",
+                  "v1/guides/honcho-mcp"
+                ]
               },
               {
                 "group": "Personal Memory",
-                "pages": ["v1/guides/dialectic-endpoint"]
+                "pages": [
+                  "v1/guides/dialectic-endpoint"
+                ]
               }
             ]
           },
@@ -232,7 +256,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v1/api-reference/introduction"]
+                "pages": [
+                  "v1/api-reference/introduction"
+                ]
               },
               {
                 "group": "apps",
@@ -280,7 +306,9 @@
               },
               {
                 "group": "keys",
-                "pages": ["v1/api-reference/endpoint/keys/create-key"]
+                "pages": [
+                  "v1/api-reference/endpoint/keys/create-key"
+                ]
               },
               {
                 "group": "metamessages",
