@@ -25,8 +25,11 @@ class GetContextInput(BaseModel):
     peer_target: Optional[str] = Field(
         None, description="A peer ID to get context for (retrieves representation and peer card)"
     )
-    include_summary: bool = Field(
+    summary: bool = Field(
         True, description="Whether to include session summary in the context"
+    )
+    peer_perspective: Optional[str] = Field(
+        None, description="Peer ID to use as the perspective for context retrieval"
     )
 
 
@@ -47,6 +50,9 @@ class SearchInput(BaseModel):
 
     query: str = Field(..., min_length=1, description="Search query for semantic matching")
     limit: int = Field(10, ge=1, le=100, description="Number of results to return (1-100)")
+    filters: Optional[dict[str, Any]] = Field(
+        None, description="Optional filters to apply to search results"
+    )
 
 
 # Tool Implementations
@@ -88,7 +94,8 @@ class HonchoGetContextTool(BaseTool):
         self,
         tokens: Optional[int] = None,
         peer_target: Optional[str] = None,
-        include_summary: bool = True,
+        summary: bool = True,
+        peer_perspective: Optional[str] = None,
     ) -> str:
         """
         Execute get_context and format results.
@@ -96,7 +103,8 @@ class HonchoGetContextTool(BaseTool):
         Args:
             tokens: Maximum tokens to include
             peer_target: Target peer ID for representation
-            include_summary: Whether to include summary
+            summary: Whether to include summary
+            peer_perspective: Peer ID to use as perspective
 
         Returns:
             Formatted string containing context information
@@ -104,9 +112,10 @@ class HonchoGetContextTool(BaseTool):
         try:
             session = self._honcho.session(self._session_id)
             context = session.get_context(
-                summary=include_summary,
+                summary=summary,
                 tokens=tokens,
                 peer_target=peer_target,
+                peer_perspective=peer_perspective,
             )
 
             # Format for agent consumption
@@ -252,13 +261,14 @@ class HonchoSearchTool(BaseTool):
         self._honcho = honcho
         self._session_id = session_id
 
-    def _run(self, query: str, limit: int = 10) -> str:
+    def _run(self, query: str, limit: int = 10, filters: Optional[dict[str, Any]] = None) -> str:
         """
         Execute semantic search.
 
         Args:
             query: Search query for semantic matching
             limit: Number of results to return (1-100)
+            filters: Optional filters to apply to search results
 
         Returns:
             Formatted string with search results
@@ -267,7 +277,7 @@ class HonchoSearchTool(BaseTool):
             session = self._honcho.session(self._session_id)
 
             # Perform semantic search
-            messages = session.search(query=query, limit=limit)
+            messages = session.search(query=query, limit=limit, filters=filters)
 
             if not messages:
                 return f"No messages found matching '{query}'"
