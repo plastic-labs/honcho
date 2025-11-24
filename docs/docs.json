@@ -26,6 +26,7 @@
                 "group": "Introduction",
                 "pages": [
                   "v2/documentation/introduction/overview",
+                  "v2/documentation/introduction/architecture",
                   "v2/documentation/introduction/vibecoding"
                 ]
               },
@@ -37,18 +38,17 @@
                     "group": "Storage",
                     "expanded": true,
                     "pages": [
-                      "v2/documentation/core-concepts/features/storing-data",
-                      "v2/documentation/core-concepts/features/file-uploads"
+                      "v2/documentation/honcho-context/storage/storing-data",
+                      "v2/documentation/honcho-context/storage/file-uploads"
                     ]
                   },
                   {
                     "group": "Retrieval",
                     "expanded": true,
                     "pages": [
-                      "v2/documentation/honcho-context/retrieval/overview",
-                      "v2/documentation/core-concepts/features/using-filters",
-                      "v2/documentation/core-concepts/features/search",
-                      "v2/documentation/core-concepts/features/get-context"
+                      "v2/documentation/honcho-context/retrieval/using-filters",
+                      "v2/documentation/honcho-context/retrieval/search",
+                      "v2/documentation/honcho-context/retrieval/get-context"
                     ]
                   }
                 ]
@@ -372,26 +372,7 @@
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Dashboard",
-          "href": "https://app.honcho.dev",
-          "icon": "table-columns"
-        },
-        {
-          "anchor": "Community",
-          "href": "https://discord.gg/honcho",
-          "icon": "discord"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://blog.plasticlabs.ai",
-          "icon": "newspaper"
-        }
-      ]
-    }
+    ]
   },
   "logo": {
     "light": "/logo/honcho-dark.svg",
@@ -408,7 +389,8 @@
       "twitter": "https://x.com/honchodotdev",
       "github": "https://github.com/plastic-labs/honcho",
       "discord": "https://discord.gg/honcho",
-      "linkedin": "https://www.linkedin.com/company/plasticlabs"
+      "linkedin": "https://www.linkedin.com/company/plasticlabs",
+      "youtube": "https://www.youtube.com/@plasticlabs"
     }
   },
   "integrations": {

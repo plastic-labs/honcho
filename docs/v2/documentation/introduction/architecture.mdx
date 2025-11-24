@@ -1,25 +1,22 @@
 ---
 title: "Architecture & Intuition"
-description: "Understanding Honcho's core concepts and data model."
+description: "Understanding Honcho's data model and core concepts."
 icon: "sitemap"
 sidebarTitle: "Architecture"
 ---
 
 <Note> The goal of this page is to build an intuition for the primitives in Honcho and how they fit together </Note>
 
-Honcho has 2 main components that work together to manage agent identity and context.
+Honcho has 2 main components that work together to manage agent context and memory.
 
-- **The Memory Layer**: The Memory layer for storing interaction history for your agents
-- **The Reasoning Layer**: The background processing layer that builds representations of users and agents
-
-Below we'll deep dive into these different areas, discussing the data
-primitives, the flow of data through the system, artifacts Honcho produces, and
-how to use them.
+- **The Context Layer**: For storing and retrieving interaction history for your agents.
+- **The Memory Layer**: Background processing that builds representations of users and agents.
 
 ## Data Model
 
 Honcho has a hierarchical data model centered around the entities below.
 
+<div style={{ display: 'flex', justifyContent: 'center' }}>
 ```mermaid
  graph TD
       W[Workspaces] -->|have| P[Peers]
@@ -29,21 +26,27 @@ Honcho has a hierarchical data model centered around the entities below.
 
       P <-.->|many-to-many| S
 
-      style W fill:#FF5A7E,stroke:#333,stroke-width:2px,color:#fff
-      style P fill:#e1f5fe,stroke:#0277bd,color:#000
-      style S fill:#f3e5f5,stroke:#7b1fa2,color:#000
-      style SM fill:#e8f5e9,stroke:#2e7d32,color:#000
+      style W fill:#B6DBFF,stroke:#333,color:#000
+      style P fill:#B6DBFF,stroke:#333,color:#000
+      style S fill:#B6DBFF,stroke:#333,color:#000
+      style SM fill:#B6DBFF,stroke:#333,color:#000
 ```
+</div>
 
-- A `Workspaces` has `Peers` & `Sessions`
+- A `Workspace` has `Peers` & `Sessions`
 - A `Peer` can be in multiple `Sessions` and can send `Messages` in a `Session`.
 - A `Session` can have many `Peers` and stores `Messages` sent by its `Peers`.
 
-### <Icon icon="building" /> Workspaces
+---
 
-Workspaces are the top-level containers that provide complete isolation between
-different applications or environments; they essentially serve as a namespace
-to isolate different workloads or environments
+<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+  <Icon icon="building" />
+  <h3 style={{ margin: 0 }}>Workspaces</h3>
+</div>
+
+Workspaces are the top-level containers that provide complete isolation between different applications or environments; they essentially serve as a namespace to isolate different workloads or environments.
+
+
 
 **Key Features:**
 - **Isolation**: Complete data separation between workspaces
@@ -59,7 +62,10 @@ to isolate different workloads or environments
 
 ---
 
-### <Icon icon="user" /> Peers
+<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+  <Icon icon="user" />
+  <h3 style={{ margin: 0 }}>Peers</h3>
+</div>
 
 Honcho has a Peer-Centric Architecture: Peers are the most important entity within Honcho, with everything revolving around Peers and their representations.
 
@@ -83,7 +89,10 @@ multi-agent or group chat scenarios.
 
 ---
 
-### <Icon icon="message" /> Sessions
+<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+  <Icon icon="message" />
+  <h3 style={{ margin: 0 }}>Sessions</h3>
+</div>
 
 Sessions represent individual conversation threads or interaction contexts between peers.
 
@@ -102,7 +111,10 @@ Sessions represent individual conversation threads or interaction contexts betwe
 
 ---
 
-### <Icon icon="envelope" /> Messages
+<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+  <Icon icon="envelope" />
+  <h3 style={{ margin: 0 }}>Messages</h3>
+</div>
 
 Messages are the fundamental units of interaction within sessions. They may
 also be used to ingest information of any kind that is not related to a specific interaction, but provides
