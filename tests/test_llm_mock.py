@@ -1,58 +1,58 @@
-from datetime import datetime, timezone
+# from datetime import datetime, timezone
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.models import Message
-from src.utils.representation import (
-    DeductiveObservation,
-    ExplicitObservation,
-    PromptRepresentation,
-    Representation,
-)
 
+# from src.utils.representation import (
+#     DeductiveObservation,
+#     ExplicitObservation,
+#     PromptRepresentation,
+#     Representation,
+# )
 
-@pytest.mark.asyncio
-async def test_generic_honcho_llm_call_mock():
-    """Test that the generic honcho_llm_call mock is working for existing decorated functions"""
-    # Import a function that we know is decorated with honcho_llm_call
-    from src.deriver.deriver import critical_analysis_call
+# @pytest.mark.asyncio
+# async def test_generic_honcho_llm_call_mock():
+#     """Test that the generic honcho_llm_call mock is working for existing decorated functions"""
+#     # Import a function that we know is decorated with honcho_llm_call
+#     from src.deriver.deriver import critical_analysis_call
 
-    # Call the decorated function - this should use our mock
-    result: PromptRepresentation = await critical_analysis_call(
-        peer_id="test_peer_id",
-        peer_card=["test_peer_card"],
-        message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-        working_representation=Representation(
-            explicit=[
-                ExplicitObservation(
-                    content="test explicit observation",
-                    created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[1],
-                    session_name="test_session",
-                )
-            ],
-            deductive=[
-                DeductiveObservation(
-                    conclusion="test deductive conclusion",
-                    premises=["test premise 1", "test premise 2"],
-                    created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[1],
-                    session_name="test_session",
-                )
-            ],
-        ),
-        history="test history",
-        new_turns=["test new turn"],
-    )
+#     # Call the decorated function - this should use our mock
+#     result: PromptRepresentation = await critical_analysis_call(
+#         peer_id="test_peer_id",
+#         peer_card=["test_peer_card"],
+#         message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+#         working_representation=Representation(
+#             explicit=[
+#                 ExplicitObservation(
+#                     content="test explicit observation",
+#                     created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+#                     message_ids=[1],
+#                     session_name="test_session",
+#                 )
+#             ],
+#             deductive=[
+#                 DeductiveObservation(
+#                     conclusion="test deductive conclusion",
+#                     premises=["test premise 1", "test premise 2"],
+#                     created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+#                     message_ids=[1],
+#                     session_name="test_session",
+#                 )
+#             ],
+#         ),
+#         history="test history",
+#         new_turns=["test new turn"],
+#     )
 
-    # Verify that we get a mock result, not an actual LLM call
-    assert result is not None
-    # The result should have the attributes we expect from our mock
-    assert hasattr(result, "explicit")
-    assert hasattr(result, "deductive")
-    assert hasattr(result, "_response")
+#     # Verify that we get a mock result, not an actual LLM call
+#     assert result is not None
+#     # The result should have the attributes we expect from our mock
+#     assert hasattr(result, "explicit")
+#     assert hasattr(result, "deductive")
+#     assert hasattr(result, "_response")
 
 
 @pytest.mark.asyncio

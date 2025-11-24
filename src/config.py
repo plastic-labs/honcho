@@ -67,7 +67,6 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
         "DREAM": "dream",
-        "AGENTIC_INGESTION": "agentic_ingestion",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -359,19 +358,6 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
 
 
-class AgenticIngestionSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENTIC_INGESTION_", extra="ignore")  # pyright: ignore
-
-    ENABLED: bool = False
-    BATCH_MAX_TOKENS: Annotated[
-        int,
-        Field(
-            default=8192,
-            ge=1,
-        ),
-    ] = 4096
-
-
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -413,9 +399,6 @@ class AppSettings(HonchoSettings):
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
-    AGENTIC_INGESTION: AgenticIngestionSettings = Field(
-        default_factory=AgenticIngestionSettings
-    )
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

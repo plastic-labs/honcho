@@ -347,3 +347,38 @@ async def update_message(
     await db.commit()
     # await db.refresh(honcho_message)
     return honcho_message
+
+
+async def search_messages(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    query: str,
+    limit: int = 5,
+) -> list[models.MessageEmbedding]:
+    """
+    Search for messages in the session using semantic similarity.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        query: Search query text
+        limit: Maximum number of results to return
+
+    Returns:
+        List of message embeddings ordered by relevance
+    """
+    # Generate embedding for the search query
+    query_embedding = await embedding_client.embed(query)
+
+    stmt = (
+        select(models.MessageEmbedding)
+        .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .where(models.MessageEmbedding.session_name == session_name)
+        .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
+        .limit(limit)
+    )
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

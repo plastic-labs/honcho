@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -159,12 +159,11 @@ async def get_peers_with_configuration(
     }
 
 
-def create_representation_or_agent_record(
+def create_representation_record(
     message: dict[str, Any],
     conf: ResolvedConfiguration,
     session_id: str | None = None,
     *,
-    task_type: Literal["representation", "agent"],
     observer: str,
     observed: str,
 ) -> dict[str, Any]:
@@ -192,7 +191,7 @@ def create_representation_or_agent_record(
     processed_payload: dict[str, Any] = create_payload(
         message=message,
         configuration=conf,
-        task_type=task_type,
+        task_type="representation",
         observer=observer,
         observed=observed,
     )
@@ -200,7 +199,7 @@ def create_representation_or_agent_record(
         "work_unit_key": construct_work_unit_key(workspace_name, processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
-        "task_type": task_type,
+        "task_type": "representation",
         "workspace_name": workspace_name,
         "message_id": message_id,
     }
@@ -336,58 +335,15 @@ async def generate_queue_records(
     # Check if the sender should be observed based on peer configuration
     should_observe = get_effective_observe_me(observed, peers_with_configuration)
 
-    # Check for agentic ingestion
-    if conf.agentic_ingestion.enabled:
-        # Only create agent task if observe_me is enabled for the sender
-        if should_observe:
-            records.append(
-                create_representation_or_agent_record(
-                    message,
-                    conf,
-                    task_type="agent",
-                    observed=observed,
-                    observer=observed,
-                    session_id=session_id,
-                )
-            )
-
-        for peer_name, peer_conf in peers_with_configuration.items():
-            if peer_name == observed:
-                continue
-
-            # If the observer peer has left the session, we don't need to enqueue a representation task for them.
-            if not peer_conf[2]:
-                continue
-
-            session_peer_config = (
-                schemas.SessionPeerConfig(**peer_conf[1]) if peer_conf[1] else None
-            )
-
-            if session_peer_config is None or not session_peer_config.observe_others:
-                continue
-
-            records.append(
-                # peer representation task
-                create_representation_or_agent_record(
-                    message,
-                    conf,
-                    task_type="agent",
-                    observed=observed,
-                    observer=peer_name,
-                    session_id=session_id,
-                )
-            )
-
     if not conf.deriver.enabled:
         return records
 
     if should_observe:
         # global representation task
         records.append(
-            create_representation_or_agent_record(
+            create_representation_record(
                 message,
                 conf,
-                task_type="representation",
                 observed=observed,
                 observer=observed,
                 session_id=session_id,
@@ -411,10 +367,9 @@ async def generate_queue_records(
 
             records.append(
                 # peer representation task
-                create_representation_or_agent_record(
+                create_representation_record(
                     message,
                     conf,
-                    task_type="representation",
                     observed=observed,
                     observer=peer_name,
                     session_id=session_id,

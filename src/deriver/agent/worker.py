@@ -1,8 +1,8 @@
 import logging
 
 from src import crud, models, schemas
-from src.agent.core import Agent
 from src.dependencies import tracked_db
+from src.deriver.agent.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,6 @@ async def process_agent_task_batch(
                     observed=observed,
                 )
 
-            # Initialize agent with the fixed observer/observed relationship from queue item
             agent = Agent(
                 db=db,
                 workspace_name=workspace_name,

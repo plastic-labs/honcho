@@ -6,9 +6,6 @@
       "config": {
         "deriver": {
           "enabled": true
-        },
-        "agentic_ingestion": {
-          "enabled": false
         }
       }
     },

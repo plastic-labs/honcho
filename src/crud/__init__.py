@@ -14,6 +14,7 @@ from .message import (
     get_message_seq_in_session,
     get_messages,
     get_messages_id_range,
+    search_messages,
     update_message,
 )
 from .peer import (
@@ -73,6 +74,7 @@ __all__ = [
     "get_messages_id_range",
     "get_message",
     "get_message_seq_in_session",
+    "search_messages",
     "update_message",
     # Peer
     "get_or_create_peers",

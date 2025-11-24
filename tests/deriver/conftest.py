@@ -153,9 +153,6 @@ def create_queue_payload() -> Callable[..., Any]:
                 messages_per_long_summary=20,
             ),
             dream=schemas.ResolvedDreamConfiguration(enabled=True),
-            agentic_ingestion=schemas.ResolvedAgenticIngestionConfiguration(
-                enabled=False
-            ),
         )
 
         return create_payload(

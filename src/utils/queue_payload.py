@@ -58,18 +58,6 @@ class DreamPayload(BasePayload):
     observed: str
 
 
-class AgentPayload(BasePayload):
-    """Payload for agent tasks."""
-
-    task_type: Literal["agent"] = "agent"
-    session_name: str
-    content: str
-    observer: str
-    observed: str
-    created_at: datetime
-    configuration: ResolvedConfiguration
-
-
 def create_webhook_payload(
     event_type: str,
     data: dict[str, Any],
@@ -97,7 +85,7 @@ def create_dream_payload(
 def create_payload(
     message: dict[str, Any],
     configuration: ResolvedConfiguration,
-    task_type: Literal["representation", "summary", "agent"],
+    task_type: Literal["representation", "summary"],
     message_seq_in_session: int | None = None,
     *,
     observer: str | None = None,
@@ -156,30 +144,6 @@ def create_payload(
                 raise ValueError("observed is required for representation tasks")
 
             validated_payload = RepresentationPayload(
-                content=content,
-                session_name=session_name,
-                created_at=created_at,
-                observer=observer,
-                observed=observed,
-                configuration=configuration,
-            )
-        elif task_type == "agent":
-            content = message.get("content")
-            created_at = message.get("created_at")
-
-            if not isinstance(content, str):
-                raise TypeError("Message content must be a string")
-
-            if not isinstance(created_at, datetime):
-                raise TypeError("created_at must be a datetime object")
-
-            if observer is None:
-                raise ValueError("observer is required for agent tasks")
-
-            if observed is None:
-                raise ValueError("observed is required for agent tasks")
-
-            validated_payload = AgentPayload(
                 content=content,
                 session_name=session_name,
                 created_at=created_at,

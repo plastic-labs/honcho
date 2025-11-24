@@ -87,13 +87,6 @@ class DreamConfiguration(BaseModel):
     )
 
 
-class AgenticIngestionConfiguration(BaseModel):
-    enabled: bool | None = Field(
-        default=None,
-        description="Whether to enable agentic ingestion.",
-    )
-
-
 class WorkspaceConfiguration(BaseModel):
     """
     The set of options that can be in a workspace DB-level configuration dictionary.
@@ -118,10 +111,6 @@ class WorkspaceConfiguration(BaseModel):
     dream: DreamConfiguration | None = Field(
         default=None,
         description="Configuration for dream functionality. If deriver is disabled, dreams will also be disabled and these settings will be ignored.",
-    )
-    agentic_ingestion: AgenticIngestionConfiguration | None = Field(
-        default=None,
-        description="Configuration for agentic ingestion.",
     )
 
 
@@ -150,10 +139,6 @@ class MessageConfiguration(BaseModel):
         default=None,
         description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
     )
-    agentic_ingestion: AgenticIngestionConfiguration | None = Field(
-        default=None,
-        description="Configuration for agentic ingestion.",
-    )
 
 
 class ResolvedDeriverConfiguration(BaseModel):
@@ -175,10 +160,6 @@ class ResolvedDreamConfiguration(BaseModel):
     enabled: bool
 
 
-class ResolvedAgenticIngestionConfiguration(BaseModel):
-    enabled: bool
-
-
 class ResolvedConfiguration(BaseModel):
     """
     The final resolved configuration for a given message.
@@ -189,7 +170,6 @@ class ResolvedConfiguration(BaseModel):
     peer_card: ResolvedPeerCardConfiguration
     summary: ResolvedSummaryConfiguration
     dream: ResolvedDreamConfiguration
-    agentic_ingestion: ResolvedAgenticIngestionConfiguration
 
 
 class PeerConfig(BaseModel):
