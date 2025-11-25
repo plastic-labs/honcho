@@ -1,0 +1,173 @@
+---
+title: 'Migrating from Mem0'
+description: 'A guide to migrate from Mem0 to Honcho'
+icon: 'arrow-right-arrow-left'
+---
+
+Transferring data from Mem0 to Honcho is straightforward. This guide covers why to switch, how to migrate your data and API comparisons.
+
+## Why Honcho?
+
+**Inference, Not Just Storage** - Honcho builds evolving profiles of each participant through rich reasoning. Rather than retrieving facts, Honcho infers communication styles, values, patterns, and relationships - adapting to how users interact, not just what they say.
+
+**Superior Performance** - Higher benchmark scores with optimized retrieval and more contextually relevant responses. Efficient HNSW indexing, batched background processing, and no markup on LLM costs make Honcho cost-effective at scale.
+
+**Competitive Pricing** - (it is cheaper for XYZ)
+
+**Multi-Peer Sessions** - Native support for group conversations with multiple users and AI agents in a single session with configurable observation settings.
+
+**Rich Context Management** - Multi-tier summarization, (maybe dialectic API?)
+
+## Quick Comparison
+
+<CodeGroup>
+```python Mem0
+from mem0 import MemoryClient
+
+client = MemoryClient(api_key="your-api-key")
+
+messages = [
+    {"role": "user", "content": "I'm a vegetarian and allergic to nuts."}
+]
+client.add(messages, user_id="user123")
+
+results = client.search(
+    "What are my dietary restrictions?",
+    filters={"user_id": "user123"}
+)
+```
+
+```python Honcho
+from honcho import Honcho
+
+honcho = Honcho(api_key="your-api-key", environment="production")
+
+user = honcho.peer("user123")
+session = honcho.session("session_1")
+session.add_peers([user])
+
+session.add_messages([
+    user.message("I'm a vegetarian and allergic to nuts.")
+])
+
+response = user.chat("What are my dietary restrictions?")
+```
+</CodeGroup>
+
+**Key concept mapping:**
+- `user_id` → `peer` (supports both users and agents)
+- `client.add()` → `session.add_messages()` (session-scoped)
+- `client.search()` → `peer.chat()` (inference-powered)
+
+## Migration Steps
+
+### 1. Export from Mem0
+
+Use Mem0's [export API](https://docs.mem0.ai/cookbooks/essentials/exporting-memories):
+
+```python
+from mem0 import MemoryClient
+
+client = MemoryClient(api_key="your-mem0-api-key")
+memories = client.get_all(filters={"user_id": "user123"}, page_size=100)
+```
+
+### 2. Install and Initialize Honcho
+
+<CodeGroup>
+```bash Python
+pip install honcho-ai
+```
+
+```bash TypeScript
+npm install @honcho-ai/sdk
+```
+</CodeGroup>
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho(
+    api_key="your-api-key",
+    environment="production"
+)
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({
+    apiKey: process.env.HONCHO_API_KEY!,
+    environment: "production"
+});
+```
+</CodeGroup>
+
+<Info>Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys)</Info>
+
+### 3. Import Your Data
+
+```python
+for memory in memories:
+    user_id = memory['filters']['user_id']
+    peer = honcho.peer(user_id)
+    session = honcho.session(f"imported-{user_id}")
+    session.add_peers([peer])
+
+    # Add message history
+    if 'messages' in memory:
+        session.add_messages([
+            peer.message(msg['content']) for msg in memory['messages']
+        ])
+    elif 'memory' in memory:
+        session.add_messages([peer.message(memory['memory'])])
+```
+
+### 4. Update Application Code
+
+```python
+# Before: Mem0
+client.add(messages, user_id="user123")
+results = client.search("query", filters={"user_id": "user123"})
+
+# After: Honcho
+user = honcho.peer("user123")
+session = honcho.session("current-session")
+session.add_peers([user])
+session.add_messages([user.message("content")])
+response = user.chat("query")
+```
+
+## TODO Advanced Features
+
+Honcho enables capabilities not available in Mem0:
+
+```python
+# Multi-peer sessions
+alice, bob = honcho.peer("alice"), honcho.peer("bob")
+session = honcho.session("group-chat")
+session.add_peers([alice, bob])
+
+# Working representation
+rep = user.get_working_representation(session_id="session_1")
+
+# Session context with summaries
+context = session.get_context()
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Architecture" icon="rocket" href="/v2/documentation/core-concepts/architecture">
+    Understand peers and sessions
+  </Card>
+  <Card title="Dialectic API" icon="brain" href="/v2/documentation/core-concepts/features/dialectic-endpoint">
+    Inference responses
+  </Card>
+  <Card title="Guides" icon="book" href="/v2/guides/overview">
+    Integration examples
+  </Card>
+</CardGroup>
+
+Questions? Join our [Discord](https://discord.gg/honcho) or open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues).

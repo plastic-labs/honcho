@@ -75,6 +75,12 @@
                 ]
               },
               {
+                "group": "Migrations",
+                "pages": [
+                  "v2/migrations/from-mem0"
+                ]
+              },
+              {
                 "group": "Integrations",
                 "pages": [
                   "v2/integrations/langgraph",
