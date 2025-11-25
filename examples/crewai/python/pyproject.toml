@@ -1,7 +1,7 @@
 [project]
 name = "honcho-crewai"
 version = "0.1.0"
-description = "CrewAI integration with Honcho for persistent agent memory and theory-of-mind capabilities"
+description = "CrewAI integration with Honcho for persistent agent memory"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "AGPL-3.0-or-later"}
@@ -16,11 +16,7 @@ keywords = [
     "crewai",
     "ai-agents",
     "memory",
-    "llm",
     "agent-memory",
-    "theory-of-mind",
-    "social-cognition",
-    "multi-agent",
     "persistent-memory"
 ]
 classifiers = [

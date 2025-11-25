@@ -429,7 +429,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[cache]` - Redis cache configuration
 - `[llm]` - LLM provider API keys and general settings
 - `[dialectic]` - Dialectic API configuration (provider, model, search settings)
-- `[deriver]` - Background worker settings and theory of mind configuration
+- `[deriver]` - Background worker settings and representation configuration
 - `[peer_card]` - Peer card generation settings
 - `[summary]` - Session summarization settings
 - `[dream]` - Dream processing configuration
@@ -501,8 +501,8 @@ Honcho uses a peer-based model where both users and agents are represented as "p
 
 #### Key Features
 
-- **Theory-of-Mind System**: Multiple implementation methods that extract facts from interactions and build comprehensive models of peer psychology
-- **Dialectic API**: Provides theory-of-mind informed responses that integrate long-term facts with current context
+- **Rich Reasoning System**: Multiple implementation methods that extract facts from interactions and build comprehensive models of peer psychology
+- **Dialectic API**: Provides reasoned informed responses that integrate long-term facts with current context
 - **Background Processing**: Asynchronous processing pipeline for expensive operations like representation updates and session summarization
 - **Multi-Provider Support**: Configurable LLM providers for different use cases
 
@@ -567,7 +567,7 @@ The `Message` represents an atomic data unit that can exist at two levels:
 - **Session-level Messages**: Communication between peers within a session context
 
 All messages are labeled by their source peer and can be processed
-asynchronously to update theory-of-mind models. This flexible design allows for
+asynchronously to update their representations. This flexible design allows for
 both conversational interactions and broader data ingestion for personality
 modeling.
 
@@ -578,8 +578,7 @@ familiar with RAG based applications will be familiar with these. `Collections`
 store vector embedded data that developers and agents can retrieve against using
 functions like cosine similarity.
 
-Collections are also used internally by Honcho while creating theory-of-mind
-representations of peers.
+Collections are also used internally by Honcho while creating representations of peers.
 
 #### Documents
 
@@ -596,7 +595,7 @@ A high level summary of the pipeline is as follows:
 
 1. Messages are created via the API
 2. Derivation Tasks are enqueued for background processing including:
-   - `representation`: To update theory-of-mind representations of `Peers`
+   - `representation`: To update representations of `Peers`
    - `summary`: To create summaries of `Sessions`
 3. Session-based queue processing ensures proper ordering
 4. Results are stored internally
@@ -638,7 +637,7 @@ A developer's application can treat Honcho as an oracle to the `Peer` and
 consult it when necessary. Some examples of how to leverage the Dialectic
 API include:
 
-- Asking Honcho for a theory-of-mind insight about the `Peer`
+- Asking Honcho for a generic or specific insight about the `Peer` 
 - Asking Honcho to hydrate a prompt with data about the `Peer`s behavior
 - Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
 - Getting personalized responses that incorporate long-term facts and context

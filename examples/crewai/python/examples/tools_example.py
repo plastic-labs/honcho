@@ -3,7 +3,7 @@ Honcho Tools with CrewAI Example
 
 Demonstrates how to equip CrewAI agents with Honcho's memory tools:
 - HonchoGetContextTool: Retrieve session context with token limits
-- HonchoDialecticTool: Query theory-of-mind representations about users
+- HonchoDialecticTool: Query representations about peers
 - HonchoSearchTool: Perform semantic search across session messages
 
 These tools give agents explicit control over memory retrieval, beyond the

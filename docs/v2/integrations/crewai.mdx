@@ -137,7 +137,7 @@ print(result.raw)
 Honcho provides specialized tools that give CrewAI agents explicit control over memory retrieval:
 
 - **`HonchoGetContextTool`** - Retrieves comprehensive conversation history with token limits. Use for tasks needing broad conversation understanding.
-- **`HonchoDialecticTool`** - Queries theory-of-mind representations about users. Use for understanding user preferences and characteristics without full message history.
+- **`HonchoDialecticTool`** - Queries representations about `peer`s. Use for understanding user preferences and characteristics without full message history.
 - **`HonchoSearchTool`** - Performs semantic search for specific information. Use for targeted queries like "what did the user say about budget?"
 
 <Tip>
@@ -245,7 +245,7 @@ Now that you have a working CrewAI integration with Honcho, you can:
 
 - **Create specialized agents** with domain-specific memory and context
 - **Use CrewAI's advanced features** like hierarchical processes, tool delegation, and conditional task execution
-- **Leverage theory-of-mind** via the Dialectic API for deep user understanding
+- **Leverage logical reasoning** via the Dialectic API for deep `peer` understanding
 - **Implement custom tools** to give agents explicit control over memory retrieval
 
 ## Related Resources
@@ -258,7 +258,7 @@ Now that you have a working CrewAI integration with Honcho, you can:
     Learn about retrieving and formatting conversation context
   </Card>
   <Card title="Dialectic API" icon="brain" href="/v2/documentation/core-concepts/features/dialectic">
-    Query theory-of-mind representations for deep user understanding
+    Query `peer` representations for deeper understanding
   </Card>
   <Card title="LangGraph Integration" icon="diagram-project" href="/v2/integrations/langgraph">
     Build stateful agents with LangGraph and Honcho

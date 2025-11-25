@@ -1,6 +1,6 @@
 # Honcho CrewAI Integration
 
-Build CrewAI agents with persistent memory and theory-of-mind capabilities powered by Honcho.
+Build CrewAI agents with persistent memory and reasoning capabilities powered by Honcho.
 
 ## Installation
 
@@ -38,7 +38,7 @@ crew = Crew(
 
 - **Automatic Memory**: CrewAI agents automatically store and retrieve conversation context
 - **Semantic Search**: Find relevant past messages using vector similarity
-- **Theory of Mind**: Query what the system knows about users via the Dialectic API
+- **Logical Reasoning**: Query what the system knows about users via the Dialectic API
 - **Multi-Agent Support**: Give each agent distinct memory and identity
 - **Tools Integration**: `HonchoGetContextTool`, `HonchoDialecticTool`, and `HonchoSearchTool` for explicit memory control
 

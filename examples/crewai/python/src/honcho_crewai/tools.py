@@ -154,15 +154,15 @@ class HonchoGetContextTool(BaseTool):
 
 class HonchoDialecticTool(BaseTool):
     """
-    Tool to query Honcho's dialectic API (theory-of-mind representations).
+    Tool to query Honcho's dialectic API (peer representations).
 
     This tool allows agents to ask questions about what the system knows
-    about users or other peers, leveraging Honcho's theory-of-mind capabilities.
+    about users or other peers, leveraging Honcho's reasoning capabilities.
     """
 
     name: str = "query_peer_knowledge"
     description: str = (
-        "Query the system's theory-of-mind representation about peers. "
+        "Query the system's representation about peers. "
         "Ask questions like 'What does the user like?' or 'What are their preferences?' "
         "to retrieve information from the peer's long-term representation. "
         "Can optionally query what one peer knows about another (local representation)."
