@@ -1,12 +1,50 @@
 [project]
 name = "honcho-crewai"
 version = "0.1.0"
-description = "CrewAI integration example with Honcho for persistent agent memory"
+description = "CrewAI integration with Honcho for persistent agent memory and theory-of-mind capabilities"
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "AGPL-3.0-or-later"}
+authors = [
+    {name = "Plastic Labs", email = "hello@plasticlabs.ai"}
+]
+maintainers = [
+    {name = "Plastic Labs", email = "hello@plasticlabs.ai"}
+]
+keywords = [
+    "honcho",
+    "crewai",
+    "ai-agents",
+    "memory",
+    "llm",
+    "agent-memory",
+    "theory-of-mind",
+    "social-cognition",
+    "multi-agent",
+    "persistent-memory"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: Pydantic",
+]
 dependencies = [
     "crewai>=0.134.0",
     "honcho-ai>=0.2.0",
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://honcho.dev"
+Documentation = "https://docs.honcho.dev/v2/integrations/crewai"
+Repository = "https://github.com/plastic-labs/honcho"
+"Bug Tracker" = "https://github.com/plastic-labs/honcho/issues"
+Changelog = "https://github.com/plastic-labs/honcho/blob/main/CHANGELOG.md"
