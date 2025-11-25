@@ -126,9 +126,9 @@ class Agent:
             prompt="",  # Ignored since we pass messages
             max_tokens=32_768,  # TODO config
             tools=self._tools,
-            # tool_choice="required",
+            tool_choice="required",
             tool_executor=tool_executor,
-            max_tool_iterations=5,
+            max_tool_iterations=3,
             messages=self.messages,
             track_name="Deriver Agent",
         )

@@ -25,7 +25,6 @@ class DreamType(str, Enum):
     """Types of dreams that can be triggered."""
 
     CONSOLIDATE = "consolidate"
-    AGENT = "agent"
 
 
 class DeriverConfiguration(BaseModel):

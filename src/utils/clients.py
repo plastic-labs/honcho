@@ -86,7 +86,6 @@ for provider_name, provider_value in SELECTED_PROVIDERS:
 # Validate backup providers are initialized if configured
 BACKUP_PROVIDERS = [
     ("Deriver", settings.DERIVER),
-    ("PeerCard", settings.PEER_CARD),
     ("Dialectic", settings.DIALECTIC),
     ("Summary", settings.SUMMARY),
     ("Dream", settings.DREAM),

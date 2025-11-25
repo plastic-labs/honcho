@@ -220,16 +220,16 @@ class DreamerAgent:
         return response.content
 
 
-async def process_agent_dream(payload: DreamPayload, workspace_name: str) -> None:
+async def process_consolidate_dream(payload: DreamPayload, workspace_name: str) -> None:
     """
-    Process an agent dream task using the agentic dreamer.
+    Process a consolidation dream task using the agentic dreamer.
 
     Args:
         payload: The dream task payload
         workspace_name: The workspace name
     """
     logger.info(
-        f"Processing agent dream for {workspace_name}/{payload.observer}/{payload.observed}"
+        f"Processing consolidation dream for {workspace_name}/{payload.observer}/{payload.observed}"
     )
 
     async with tracked_db("dreamer_agent") as db:

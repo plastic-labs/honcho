@@ -382,6 +382,7 @@ def mock_llm_call_functions():
 
     # Create mock responses for different function types
     # Note: critical_analysis_call was removed as the deriver now uses agentic approach
+    # Note: dialectic_call/dialectic_stream were replaced with agentic_chat
     with (
         patch(
             "src.utils.summarizer.create_short_summary", new_callable=AsyncMock
@@ -390,26 +391,20 @@ def mock_llm_call_functions():
             "src.utils.summarizer.create_long_summary", new_callable=AsyncMock
         ) as mock_long_summary,
         patch(
-            "src.dialectic.chat.dialectic_call", new_callable=AsyncMock
-        ) as mock_dialectic_call,
-        patch(
-            "src.dialectic.chat.dialectic_stream", new_callable=AsyncMock
-        ) as mock_dialectic_stream,
+            "src.dialectic.chat.agentic_chat", new_callable=AsyncMock
+        ) as mock_agentic_chat,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
 
-        # Mock dialectic_call to return a string (matching actual return type)
-        mock_dialectic_call.return_value = "Test dialectic response"
-
-        mock_dialectic_stream.return_value = AsyncMock()
+        # Mock agentic_chat to return a string (matching actual return type)
+        mock_agentic_chat.return_value = "Test dialectic response"
 
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
-            "dialectic_call": mock_dialectic_call,
-            "dialectic_stream": mock_dialectic_stream,
+            "agentic_chat": mock_agentic_chat,
         }
 
 
@@ -537,6 +532,7 @@ def mock_tracked_db(db_session: AsyncSession):
 
     # Note: src.deriver.deriver.tracked_db was removed as the file is now commented out
     # The deriver now uses agentic approach in src.deriver.agent.worker
+    # Note: src.dreamer.consolidate was removed - dreamer now uses agentic approach in src.dreamer.agent
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
@@ -546,7 +542,6 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.consolidate.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.agent.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),

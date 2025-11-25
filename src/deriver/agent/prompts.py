@@ -76,24 +76,19 @@ Examples:
 
 1. Review all messages in the batch together
 2. If needed, gather context using available tools:
-   - get_recent_history: Get recent conversation history
-   - search_memory: Search for relevant observations (returns a Representation with explicit and deductive observations, each containing message_ids)
-   - get_observation_context: Given message IDs from an observation (e.g., from search_memory results), retrieve those messages along with surrounding conversation context
-   - search_messages: Search for messages by content/topic
+   - `search_memory`: Search for relevant observations
+   - `search_messages`: Search for messages by content/topic
 3. Extract explicit observations from messages about {observed}
-4. Derive deductive observations from explicit ones + world knowledge
-5. Create all observations in one call: create_observations([{{...}}, {{...}}, ...])
-6. Update peer card with biographical info about {observed}, if any new information is available: call update_peer_card
-7. Set is_done=true
+4. Derive deductive observations from explicit ones + existing relevant observations + world knowledge
+5. Create new observations in one `create_observations` tool call
+6. If the messages contain new key biographical information about {observed}, update the peer card with it using the `update_peer_card` tool
 
 ## IMPORTANT RULES
 
 - Make observations SELF-CONTAINED and CONTEXTUALIZED (include enough detail)
 - NEVER use level values other than 'explicit' or 'deductive'
-- Extract observations from ALL messages, not just some
-- Peer card should contain permanent traits only
-- Be efficient: call multiple tools in one step if possible
-- YOU MUST CALL AT LEAST ONE TOOL.
+- Extract as many observations as the messages reveal
+- Peer card should contain permanent bio traits only -- things any interlocuter would want to know about {observed}
 
 No need to summarize your work when complete -- the tool calls will be the only preserved output.
 """  # nosec B608 <-- this is a really dumb false positive

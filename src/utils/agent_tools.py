@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.embedding_client import embedding_client
 from src.utils import summarizer
-from src.utils.formatting import utc_now_iso
+from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
 from src.utils.types import DocumentLevel
 
@@ -210,10 +210,10 @@ TOOLS: dict[str, dict[str, Any]] = {
 
 # Tools for the deriver agent (ingestion)
 DERIVER_TOOLS: list[dict[str, Any]] = [
+    TOOLS["search_memory"],
+    TOOLS["search_messages"],
     TOOLS["create_observations"],
     TOOLS["update_peer_card"],
-    TOOLS["get_recent_history"],
-    TOOLS["search_memory"],
 ]
 
 # Tools for the dialectic agent (analysis)
@@ -825,7 +825,9 @@ def create_tool_executor(
                     return f"No messages found for IDs {tool_input['message_ids']}"
                 messages_text = "\n".join(
                     [
-                        f"[{m.created_at.replace(microsecond=0)}] {m.peer_name}: {m.content}"
+                        format_new_turn_with_timestamp(
+                            m.content, m.created_at, m.peer_name
+                        )
                         for m in messages
                     ]
                 )
@@ -847,13 +849,12 @@ def create_tool_executor(
                 snippet_texts: list[str] = []
                 total_matches = sum(len(matches) for matches, _ in snippets)
                 for i, (matches, context) in enumerate(snippets, 1):
-                    matched_ids = {m.id for m in matches}
                     lines: list[str] = []
                     for msg in context:
-                        timestamp = msg.created_at.replace(microsecond=0)
-                        prefix = ">>> " if msg.id in matched_ids else "    "
                         lines.append(
-                            f"{prefix}[{msg.peer_name} at {timestamp}]: {msg.content}"
+                            format_new_turn_with_timestamp(
+                                msg.content, msg.created_at, msg.peer_name
+                            )
                         )
                     # Get session name from context (first message)
                     sess = context[0].session_name if context else "unknown"

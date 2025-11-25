@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.dialectic.agent import prompts
+from src.dialectic import prompts
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.logging import accumulate_metric, log_performance_metrics
