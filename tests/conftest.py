@@ -381,6 +381,7 @@ def mock_llm_call_functions():
     """Mock LLM functions to avoid needing API keys during tests"""
 
     # Create mock responses for different function types
+    # Note: critical_analysis_call was removed as the deriver now uses agentic approach
     with (
         patch(
             "src.utils.summarizer.create_short_summary", new_callable=AsyncMock
@@ -389,42 +390,15 @@ def mock_llm_call_functions():
             "src.utils.summarizer.create_long_summary", new_callable=AsyncMock
         ) as mock_long_summary,
         patch(
-            "src.deriver.deriver.critical_analysis_call", new_callable=AsyncMock
-        ) as mock_critical_analysis,
-        patch(
             "src.dialectic.chat.dialectic_call", new_callable=AsyncMock
         ) as mock_dialectic_call,
         patch(
             "src.dialectic.chat.dialectic_stream", new_callable=AsyncMock
         ) as mock_dialectic_stream,
     ):
-        # Import the required models for proper mocking
-        from src.utils.representation import (
-            DeductiveObservationBase,
-            ExplicitObservationBase,
-            PromptRepresentation,
-        )
-
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
-
-        # Mock critical_analysis_call to return a proper object with _response attribute
-        _rep = PromptRepresentation(
-            explicit=[ExplicitObservationBase(content="Test explicit observation")],
-            deductive=[
-                DeductiveObservationBase(
-                    conclusion="Test deductive conclusion",
-                    premises=["Test premise 1", "Test premise 2"],
-                )
-            ],
-        )
-        mock_critical_analysis_result = MagicMock(wraps=_rep)
-        # Add the _response attribute that contains thinking (used in the actual code)
-        mock_response = MagicMock()
-        mock_response.thinking = "Test thinking content"
-        mock_critical_analysis_result._response = mock_response
-        mock_critical_analysis.return_value = mock_critical_analysis_result
 
         # Mock dialectic_call to return a string (matching actual return type)
         mock_dialectic_call.return_value = "Test dialectic response"
@@ -434,7 +408,6 @@ def mock_llm_call_functions():
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
-            "critical_analysis": mock_critical_analysis,
             "dialectic_call": mock_dialectic_call,
             "dialectic_stream": mock_dialectic_stream,
         }
@@ -443,7 +416,7 @@ def mock_llm_call_functions():
 @pytest.fixture(autouse=True)
 def mock_honcho_llm_call():
     """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
 
     from src.utils.representation import (
         DeductiveObservationBase,
@@ -562,15 +535,20 @@ def mock_tracked_db(db_session: AsyncSession):
     async def mock_tracked_db_context(_: str | None = None):
         yield db_session
 
+    # Note: src.deriver.deriver.tracked_db was removed as the file is now commented out
+    # The deriver now uses agentic approach in src.deriver.agent.worker
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.deriver.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.agent.worker.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.consolidate.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.agent.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
     ):

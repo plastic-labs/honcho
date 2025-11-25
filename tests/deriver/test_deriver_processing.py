@@ -1,16 +1,9 @@
 import signal
-from collections.abc import Callable, Generator
-
-# from datetime import datetime, timedelta, timezone
 from typing import Any
 
-# from unittest.mock import AsyncMock
 import pytest
 
-# from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
-
-# from src.deriver.deriver import process_representation_tasks_batch
 from src.utils.representation import Representation
 from src.utils.work_unit import construct_work_unit_key
 
@@ -18,18 +11,6 @@ from src.utils.work_unit import construct_work_unit_key
 @pytest.mark.asyncio
 class TestDeriverProcessing:
     """Test suite for deriver processing using the conftest fixtures"""
-
-    async def test_mock_critical_analysis_call(
-        self,
-        mock_critical_analysis_call: Generator[Callable[..., Any], None, None],
-        sample_messages: list[models.Message],
-    ):
-        """Test that the critical analysis call is properly mocked"""
-        assert mock_critical_analysis_call is not None
-        assert len(sample_messages) > 0  # Verify we have messages for testing
-
-        # The mock should be in place and return a predefined response
-        # This ensures no actual LLM calls are made during testing
 
     async def test_work_unit_key_generation(
         self,
