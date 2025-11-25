@@ -75,7 +75,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "timeout": 180
     },
     {
       "step_type": "query",

@@ -1,4 +1,6 @@
 import logging
+import time
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -9,8 +11,9 @@ from src.config import settings
 from src.deriver.agent import prompts
 from src.models import Message
 from src.schemas import ResolvedConfiguration
-from src.utils.agent_tools import AGENT_TOOLS, create_agent_tool_executor
-from src.utils.clients import honcho_llm_call
+from src.utils.agent_tools import DERIVER_TOOLS, create_tool_executor
+from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
+from src.utils.logging import accumulate_metric, log_performance_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +36,31 @@ class Agent:
         self.observer: str = observer
         self.observed: str = observed
         self.observed_peer_card: list[str] | None = observed_peer_card
+        self._current_messages: list[Message] = []
+
+        # Only include peer card in prompt if use is enabled
+        prompt_peer_card: list[str] | None = (
+            observed_peer_card if configuration.peer_card.use is not False else None
+        )
+
+        # Build tools list based on configuration
+        self._tools: list[dict[str, Any]] = [
+            tool
+            for tool in DERIVER_TOOLS
+            if not (
+                tool["name"] == "update_peer_card"
+                and configuration.peer_card.create is False
+            )
+        ]
+
         self.messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": prompts.agent_system_prompt(
-                    observer, observed, observed_peer_card
+                    observer, observed, prompt_peer_card
                 ),
             }
         ]
-        self._current_messages: list[Message] = []
 
     async def run_loop(self, messages: list[models.Message]) -> None:
         """
@@ -54,6 +73,25 @@ class Agent:
             logger.warning("run_loop called with empty message list")
             return
 
+        # Generate unique ID for this run
+        run_id = str(uuid.uuid4())[:8]
+        task_name = f"deriver_agent_{run_id}"
+        start_time = time.perf_counter()
+
+        # Log input context
+        accumulate_metric(
+            task_name,
+            "context",
+            (
+                f"workspace: {self.workspace_name}\n"
+                f"session: {self.session_name}\n"
+                f"observer: {self.observer}\n"
+                f"observed: {self.observed}"
+            ),
+            "blob",
+        )
+        accumulate_metric(task_name, "message_count", len(messages), "count")
+
         # Add all new messages to context at once
         messages_summary: list[Any] = []
         for msg in messages:
@@ -61,10 +99,12 @@ class Agent:
                 f"[{msg.created_at}] {msg.peer_name}: {msg.content}"
             )
 
+        messages_input = "\n".join(messages_summary)
+
         self.messages.append(
             {
                 "role": "user",
-                "content": "New messages to process:\n" + "\n".join(messages_summary),
+                "content": "New messages to process:\n" + messages_input,
             }
         )
 
@@ -72,24 +112,49 @@ class Agent:
         self._current_messages = messages
 
         # Create tool executor with context
-        tool_executor: Callable[[str, dict[str, Any]], Any] = (
-            create_agent_tool_executor(
-                db=self.db,
-                workspace_name=self.workspace_name,
-                session_name=self.session_name,
-                observer=self.observer,
-                observed=self.observed,
-                current_messages=messages,
-            )
+        tool_executor: Callable[[str, dict[str, Any]], Any] = create_tool_executor(
+            db=self.db,
+            workspace_name=self.workspace_name,
+            session_name=self.session_name,
+            observer=self.observer,
+            observed=self.observed,
+            current_messages=messages,
         )
 
-        await honcho_llm_call(
-            llm_settings=settings.DIALECTIC,
+        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
+            llm_settings=settings.DERIVER,
             prompt="",  # Ignored since we pass messages
             max_tokens=32_768,  # TODO config
-            tools=AGENT_TOOLS,
-            tool_choice=None,
+            tools=self._tools,
+            tool_choice="required",
             tool_executor=tool_executor,
             max_tool_iterations=10,
             messages=self.messages,
+            track_name="Deriver Agent",
         )
+
+        # Log tool calls made with inputs and outputs
+        accumulate_metric(
+            task_name, "tool_calls", len(response.tool_calls_made), "count"
+        )
+        for i, tc in enumerate(response.tool_calls_made, 1):
+            tool_name = tc.get("tool_name", "unknown")
+            tool_input = tc.get("tool_input", {})
+            tool_result = tc.get("tool_result", "")
+            accumulate_metric(
+                task_name,
+                f"tool_{i}_{tool_name}",
+                f"INPUT: {tool_input}\nOUTPUT: {tool_result}",
+                "blob",
+            )
+
+        # Log output
+        accumulate_metric(task_name, "output_tokens", response.output_tokens, "tokens")
+        if response.content:
+            accumulate_metric(task_name, "response", response.content, "blob")
+
+        # Log timing
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(task_name, "total_duration", elapsed_ms, "ms")
+
+        log_performance_metrics("deriver_agent", run_id)

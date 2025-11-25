@@ -59,7 +59,7 @@ RED = "\033[91m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
-JUDGE_MODEL: str = "claude-haiku-4-5"
+JUDGE_MODEL: str = "claude-sonnet-4-5"
 
 
 class TestExecutionError(Exception):

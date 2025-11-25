@@ -352,7 +352,7 @@ async def update_message(
 async def search_messages(
     db: AsyncSession,
     workspace_name: str,
-    session_name: str,
+    session_name: str | None,
     query: str,
     limit: int = 5,
 ) -> list[models.MessageEmbedding]:
@@ -375,10 +375,12 @@ async def search_messages(
     stmt = (
         select(models.MessageEmbedding)
         .where(models.MessageEmbedding.workspace_name == workspace_name)
-        .where(models.MessageEmbedding.session_name == session_name)
         .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
         .limit(limit)
     )
+
+    if session_name:
+        stmt = stmt.where(models.MessageEmbedding.session_name == session_name)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())

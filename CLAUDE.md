@@ -100,6 +100,52 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - Explicit error handling with appropriate exception types
 - Docstrings: Use Google style docstrings
 
+### Agent Architecture
+
+Honcho uses three specialized LLM agents that work together to form memories and answer queries:
+
+#### 1. Deriver Agent (`src/deriver/agent/`)
+
+**Role**: Memory formation through content ingestion
+
+The Deriver processes incoming messages and extracts observations about peers.
+
+- **Trigger**: Messages created via API are enqueued for background processing
+- **Tools**: `create_observations`, `update_peer_card`, `get_recent_history`, `search_memory`, `get_observation_context`, `search_messages`
+- **Output**: Explicit observations (direct facts) and deductive observations (inferences)
+- **Entry point**: `src/deriver/agent/worker.py` → `Agent.run_loop()`
+
+#### 2. Dialectic Agent (`src/dialectic/agent/`)
+
+**Role**: Analysis and recall for answering queries
+
+The Dialectic answers questions about peers by strategically gathering context from memory.
+
+- **Trigger**: API call to `/peers/{peer_id}/chat` with `agentic=true`
+- **Tools**: `search_memory`, `get_recent_history`, `get_observation_context`, `search_messages`, `get_recent_observations`, `get_most_derived_observations`, `get_session_summary`, `get_peer_card`, `create_observations` (deductive only)
+- **Output**: Natural language response grounded in gathered context
+- **Entry point**: `src/dialectic/chat.py` → `agentic_chat()` → `DialecticAgent.answer()`
+
+#### 3. Dreamer Agent (`src/dreamer/agent.py`)
+
+**Role**: Consolidation and self-improvement of memory
+
+The Dreamer explores and consolidates observations to improve memory quality.
+
+- **Trigger**: Scheduled or explicit dream task via queue
+- **Tools**: `get_recent_observations`, `get_most_derived_observations`, `search_memory`, `create_observations`, `delete_observations`, `update_peer_card`
+- **Strategy**: Random walk exploration - start from recent/high-value observations, search for related content, consolidate redundancies
+- **Output**: Consolidated observations, deleted redundancies
+- **Entry point**: `src/dreamer/agent.py` → `DreamerAgent.consolidate()`
+
+#### Shared Agent Infrastructure
+
+All agents share common infrastructure in `src/utils/agent_tools.py`:
+
+- **Tool definitions**: Unified tool schemas used by all agents
+- **Tool executor**: `create_tool_executor()` factory creates context-aware executors
+- **LLM client**: `honcho_llm_call()` handles tool calling loops with configurable iterations
+
 ### Project Structure
 
 ```
@@ -127,9 +173,12 @@ src/
 │   └── workspace.py      # Workspace CRUD operations
 ├── dialectic/            # Dialectic API implementation
 │   ├── __init__.py
-│   ├── chat.py           # Chat functionality
+│   ├── chat.py           # Chat functionality (standard + agentic)
 │   ├── prompts.py        # Prompt templates
-│   └── utils.py          # Dialectic utilities
+│   └── agent/            # Agentic dialectic implementation
+│       ├── __init__.py
+│       ├── core.py       # DialecticAgent class
+│       └── prompts.py    # Agent system prompts
 ├── routers/              # API endpoints
 │   ├── workspaces.py
 │   ├── peers.py
@@ -141,19 +190,25 @@ src/
 │   ├── __init__.py
 │   ├── __main__.py      # Deriver entry point
 │   ├── consumer.py      # Message consumer
-│   ├── deriver.py       # Main deriver logic
 │   ├── enqueue.py       # Queue operations
-│   ├── prompts.py       # Deriver prompts
 │   ├── queue_manager.py # Queue management
-│   ├── queue_payload.py # Queue payload schemas
-│   └── utils.py         # Deriver utilities
+│   └── agent/           # Agentic deriver implementation
+│       ├── __init__.py
+│       ├── core.py      # Agent class
+│       ├── worker.py    # Task processing
+│       └── prompts.py   # Agent system prompts
+├── dreamer/             # Memory consolidation system
+│   ├── __init__.py
+│   ├── agent.py         # DreamerAgent class + process_agent_dream
+│   └── dreamer.py       # Legacy dreamer (scheduled)
 ├── utils/               # Utilities
 │   ├── __init__.py
+│   ├── agent_tools.py   # Shared agent tools and executor
 │   ├── clients.py       # LLM client abstraction
 │   ├── files.py         # File handling utilities
 │   ├── filter.py        # Query filtering utilities
 │   ├── formatting.py    # Message formatting utilities
-│   ├── logging.py       # Logging configuration
+│   ├── logging.py       # Logging and metrics (Rich console output)
 │   ├── search.py        # Search functionality
 │   ├── shared_models.py # Shared data models
 │   ├── summarizer.py    # Session summarization

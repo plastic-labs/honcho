@@ -99,6 +99,83 @@ def get_documents_with_filters(
     return stmt
 
 
+async def query_documents_recent(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    limit: int = 10,
+    session_name: str | None = None,
+) -> Sequence[models.Document]:
+    """
+    Query most recent documents.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        limit: Maximum number of documents to return
+        session_name: Optional session name to filter by
+
+    Returns:
+        Sequence of documents ordered by created_at descending
+    """
+    stmt = (
+        select(models.Document)
+        .limit(limit)
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+        )
+        .order_by(models.Document.created_at.desc())
+    )
+
+    if session_name is not None:
+        stmt = stmt.where(models.Document.session_name == session_name)
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def query_documents_most_derived(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    limit: int = 10,
+) -> Sequence[models.Document]:
+    """
+    Query documents sorted by times_derived (most reinforced first).
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        limit: Maximum number of documents to return
+
+    Returns:
+        Sequence of documents ordered by times_derived descending
+    """
+    stmt = (
+        select(models.Document)
+        .limit(limit)
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+        )
+        .order_by(models.Document.times_derived.desc())
+    )
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 async def query_documents(
     db: AsyncSession,
     workspace_name: str,

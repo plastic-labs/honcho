@@ -89,11 +89,11 @@ Examples:
 ## IMPORTANT RULES
 
 - Make observations SELF-CONTAINED and CONTEXTUALIZED (include enough detail)
-- ALWAYS start observations with the person's name (from peer card if available, otherwise use peer identifier)
 - NEVER use level values other than 'explicit' or 'deductive'
 - Extract observations from ALL messages, not just some
 - Peer card should contain permanent traits only
 - Be efficient: call multiple tools in one step if possible
+- YOU MUST CALL AT LEAST ONE TOOL.
 
 No need to summarize your work when complete -- the tool calls will be the only preserved output.
 """  # nosec B608 <-- this is a really dumb false positive

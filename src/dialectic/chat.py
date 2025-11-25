@@ -26,6 +26,7 @@ from src.utils.logging import (
 from src.utils.representation import Representation
 from src.utils.tokens import estimate_tokens
 
+from .agent import DialecticAgent
 from .prompts import dialectic_prompt, estimate_dialectic_prompt_tokens
 
 # Configure logging
@@ -411,4 +412,72 @@ async def chat(
     )
 
     log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
+    return response
+
+
+@conditional_observe(name="Dialectic Agent")
+async def agentic_chat(
+    workspace_name: str,
+    session_name: str | None,
+    query: str,
+    *,
+    observer: str,
+    observed: str,
+) -> str:
+    """
+    Chat with the Agentic Dialectic API that dynamically gathers context.
+
+    Unlike the standard dialectic which pre-gathers all context, the agentic
+    dialectic uses tools to strategically gather only the context needed
+    to answer the specific query.
+
+    Args:
+        workspace_name: Name of the workspace
+        session_name: Optional session name for scoping
+        query: Input Dialectic Query
+        observer: Name of the peer making the query
+        observed: Name of the peer being queried about
+
+    Returns:
+        Dialectic response string (no streaming support)
+    """
+    agentic_chat_uuid = str(uuid.uuid4())
+    start_time = time.perf_counter()
+
+    # Get peer cards upfront - these provide useful identity context for the agent
+    observer_peer_card: list[str] | None = None
+    observed_peer_card: list[str] | None = None
+
+    if settings.PEER_CARD.ENABLED:
+        async with tracked_db("agentic_chat.get_peer_card") as db:
+            observer_peer_card = await crud.get_peer_card(
+                db, workspace_name, observer=observer, observed=observer
+            )
+            if observer != observed:
+                observed_peer_card = await crud.get_peer_card(
+                    db, workspace_name, observer=observer, observed=observed
+                )
+
+    # Create and run the agentic dialectic
+    metric_key = f"agentic_dialectic_chat_{agentic_chat_uuid}"
+    async with tracked_db("agentic_chat.agent") as db:
+        agent = DialecticAgent(
+            db=db,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            observer=observer,
+            observed=observed,
+            observer_peer_card=observer_peer_card,
+            observed_peer_card=observed_peer_card,
+            metric_key=metric_key,
+        )
+
+        response = await agent.answer(query)
+
+    elapsed = (time.perf_counter() - start_time) * 1000
+
+    # Update total_duration to include peer card fetch time (overwrites agent's duration)
+    accumulate_metric(metric_key, "total_duration", elapsed, "ms")
+
+    log_performance_metrics("agentic_dialectic_chat", agentic_chat_uuid)
     return response

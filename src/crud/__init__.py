@@ -7,6 +7,8 @@ from .document import (
     get_all_documents,
     get_documents_with_filters,
     query_documents,
+    query_documents_most_derived,
+    query_documents_recent,
 )
 from .message import (
     create_messages,
@@ -66,6 +68,8 @@ __all__ = [
     "get_all_documents",
     "get_documents_with_filters",
     "query_documents",
+    "query_documents_most_derived",
+    "query_documents_recent",
     "delete_document",
     "delete_document_by_id",
     # Message

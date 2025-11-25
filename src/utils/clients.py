@@ -8,7 +8,11 @@ from anthropic import AsyncAnthropic
 from anthropic.types import TextBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
 from google import genai
-from google.genai.types import GenerateContentResponse
+from google.genai.types import (
+    ContentListUnionDict,
+    GenerateContentConfigDict,
+    GenerateContentResponse,
+)
 from groq import AsyncGroq
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -118,8 +122,9 @@ def convert_tools_for_provider(
     if provider == "anthropic":
         # Anthropic format: input_schema
         return tools
-    elif provider == "openai":
+    elif provider in ("openai", "custom", "vllm"):
         # OpenAI format: parameters instead of input_schema
+        # custom and vllm use AsyncOpenAI client so need OpenAI format
         return [
             {
                 "type": "function",
@@ -130,6 +135,20 @@ def convert_tools_for_provider(
                 },
             }
             for tool in tools
+        ]
+    elif provider == "google":
+        # Google format: function_declarations wrapped in a tool object
+        return [
+            {
+                "function_declarations": [
+                    {
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "parameters": tool["input_schema"],
+                    }
+                    for tool in tools
+                ]
+            }
         ]
     else:
         # For unsupported providers, return as-is (will likely error if tools are used)
@@ -441,6 +460,8 @@ async def honcho_llm_call(
 
     iteration = 0
     all_tool_calls: list[dict[str, Any]] = []
+    # Track effective tool_choice - switches from "required" to "auto" after first iteration
+    effective_tool_choice = tool_choice
 
     while iteration < max_tool_iterations:
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
@@ -455,7 +476,9 @@ async def honcho_llm_call(
         # The cleanest way is to modify the prompt to be ignored and pass messages via closure
 
         # Create a wrapper that injects our messages
-        async def _call_with_messages() -> HonchoLLMCallResponse[Any]:
+        async def _call_with_messages(
+            effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
+        ) -> HonchoLLMCallResponse[Any]:
             # Reimplement provider selection with messages
             attempt = _current_attempt.get()
 
@@ -504,7 +527,7 @@ async def honcho_llm_call(
                 thinking_budget,
                 False,
                 converted_tools,
-                tool_choice,
+                effective_tool_choice,
                 conversation_messages,
             )
 
@@ -565,13 +588,51 @@ async def honcho_llm_call(
                 "role": "assistant",
                 "content": content_blocks,
             }
+        elif current_provider == "google":
+            # Google format: model role with function_call parts
+            parts: list[dict[str, Any]] = []
+
+            # Add text content if present
+            if isinstance(response.content, str) and response.content:
+                parts.append({"text": response.content})
+
+            # Add function call parts with thought_signature if present
+            for tool_call in response.tool_calls_made:
+                part_data: dict[str, Any] = {
+                    "function_call": {
+                        "name": tool_call["name"],
+                        "args": tool_call["input"],
+                    }
+                }
+                # Include thought_signature if present (required by Gemini)
+                if "thought_signature" in tool_call:
+                    part_data["thought_signature"] = tool_call["thought_signature"]
+                parts.append(part_data)
+
+            assistant_message = {
+                "role": "model",
+                "parts": parts,
+            }
         else:
-            # OpenAI format (simplified for now)
+            # OpenAI format - must include tool_calls in the assistant message
+            openai_tool_calls: list[Any] = []
+            for tool_call in response.tool_calls_made:
+                openai_tool_calls.append(
+                    {
+                        "id": tool_call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tool_call["name"],
+                            "arguments": json.dumps(tool_call["input"]),
+                        },
+                    }
+                )
             assistant_message = {
                 "role": "assistant",
                 "content": response.content
                 if isinstance(response.content, str)
-                else "",
+                else None,
+                "tool_calls": openai_tool_calls,
             }
 
         conversation_messages.append(assistant_message)
@@ -635,17 +696,44 @@ async def honcho_llm_call(
                 "role": "user",
                 "content": result_blocks,
             }
-        else:
-            # OpenAI/other providers - use simple text format
-            result_text = "\n\n".join(
-                f"Tool {tr['tool_name']} result: {tr['result']}" for tr in tool_results
-            )
+        elif current_provider == "google":
+            # Google format: user role with function_response parts
+            response_parts: list[dict[str, Any]] = []
+            for tr in tool_results:
+                response_parts.append(
+                    {
+                        "function_response": {
+                            "name": tr["tool_name"],
+                            "response": {"result": str(tr["result"])},
+                        }
+                    }
+                )
+
             tool_result_message = {
                 "role": "user",
-                "content": result_text,
+                "parts": response_parts,
             }
+        else:
+            # OpenAI format - add each tool result as a separate message with role="tool"
+            for tr in tool_results:
+                tool_result_message = {
+                    "role": "tool",
+                    "tool_call_id": tr["tool_id"],
+                    "content": str(tr["result"]),
+                }
+                conversation_messages.append(tool_result_message)
+            # Skip the append below since we already added messages
+            tool_result_message = None  # type: ignore
 
-        conversation_messages.append(tool_result_message)
+        if tool_result_message is not None:
+            conversation_messages.append(tool_result_message)
+
+        # After first iteration, switch from "required" to "auto" to allow model to stop
+        if iteration == 0 and effective_tool_choice in ("required", "any"):
+            effective_tool_choice = "auto"
+            logger.debug(
+                "Switched tool_choice from 'required'/'any' to 'auto' after first iteration"
+            )
 
         iteration += 1
 
@@ -803,13 +891,13 @@ async def honcho_llm_call_inner(
     # Remove stream parameter for non-streaming calls as some providers don't accept it
     params.pop("stream", None)
 
+    system_messages: list[str] = []
+    non_system_messages: list[dict[str, Any]] = []
+
     match client:
         case AsyncAnthropic():
             # Anthropic requires system messages to be passed as a top-level parameter
             # Extract system messages and non-system messages
-            system_messages: list[str] = []
-            non_system_messages: list[dict[str, Any]] = []
-
             for msg in params["messages"]:
                 if msg.get("role") == "system":
                     system_messages.append(msg["content"])
@@ -1078,21 +1166,126 @@ async def honcho_llm_call_inner(
                 )
 
         case genai.Client():
+            # Build config for Gemini
+            gemini_config: dict[str, Any] = {}
+
+            # Add tools if provided
+            if tools:
+                gemini_config["tools"] = tools
+                # Handle tool_choice
+                if tool_choice:
+                    if tool_choice == "auto":
+                        gemini_config["tool_config"] = {
+                            "function_calling_config": {"mode": "AUTO"}
+                        }
+                    elif tool_choice == "any" or tool_choice == "required":
+                        gemini_config["tool_config"] = {
+                            "function_calling_config": {"mode": "ANY"}
+                        }
+                    elif tool_choice == "none":
+                        gemini_config["tool_config"] = {
+                            "function_calling_config": {"mode": "NONE"}
+                        }
+                    elif isinstance(tool_choice, dict) and "name" in tool_choice:
+                        # Specific tool selection
+                        gemini_config["tool_config"] = {
+                            "function_calling_config": {
+                                "mode": "ANY",
+                                "allowed_function_names": [tool_choice["name"]],
+                            }
+                        }
+
             if response_model is None:
+                if json_mode and not tools:
+                    gemini_config["response_mime_type"] = "application/json"
+
+                # Use messages if provided, otherwise use prompt
+                if messages:
+                    # Extract system messages for system_instruction parameter
+                    # Gemini doesn't support system role in contents - it causes
+                    # consecutive user messages which results in empty responses
+                    for msg in messages:
+                        if msg.get("role") == "system":
+                            if isinstance(msg.get("content"), str):
+                                system_messages.append(msg["content"])
+                        else:
+                            non_system_messages.append(msg)
+
+                    # Add system instruction if present
+                    if system_messages:
+                        gemini_config["system_instruction"] = "\n\n".join(
+                            system_messages
+                        )
+
+                    # Convert non-system messages to Google format
+                    gemini_contents: list[dict[str, Any]] = []
+                    for msg in non_system_messages:
+                        # Map roles to Google's expected values (user, model)
+                        role = msg.get("role", "user")
+                        if role == "assistant":
+                            role = "model"
+
+                        # Handle different content formats
+                        if isinstance(msg.get("content"), str):
+                            # Simple string content
+                            gemini_contents.append(
+                                {"role": role, "parts": [{"text": msg["content"]}]}
+                            )
+                        elif isinstance(msg.get("parts"), list):
+                            # Already in Google format (from tool calling loop)
+                            # But still need to ensure role is correct
+                            msg_copy = msg.copy()
+                            msg_copy["role"] = role
+                            gemini_contents.append(msg_copy)
+                        elif isinstance(msg.get("content"), list):
+                            # Content is a list of parts (Anthropic format) - skip for now
+                            # This shouldn't happen with Google provider in tool loop
+                            continue
+                        else:
+                            # Empty or unknown format, skip
+                            continue
+                    contents: ContentListUnionDict = cast(
+                        ContentListUnionDict, gemini_contents
+                    )
+                else:
+                    contents = prompt
+
                 gemini_response: GenerateContentResponse = (
                     await client.aio.models.generate_content(
                         model=model,
-                        contents=prompt,
-                        config={
-                            "response_mime_type": "application/json"
-                            if json_mode
-                            else None,
-                        },
+                        contents=contents,
+                        config=cast(GenerateContentConfigDict, gemini_config)  # pyright: ignore[reportInvalidCast]
+                        if gemini_config
+                        else None,
                     )
                 )
 
-                # Safely extract response data
-                text_content = gemini_response.text if gemini_response.text else ""
+                # Extract text content and function calls from response
+                text_parts: list[str] = []
+                gemini_tool_calls: list[dict[str, Any]] = []
+
+                if gemini_response.candidates and gemini_response.candidates[0].content:
+                    for part in gemini_response.candidates[0].content.parts or []:
+                        if hasattr(part, "text") and part.text:
+                            text_parts.append(part.text)
+                        if hasattr(part, "function_call") and part.function_call:
+                            fc = part.function_call
+                            tool_call_data: dict[str, Any] = {
+                                "id": f"call_{fc.name}_{len(gemini_tool_calls)}",
+                                "name": fc.name,
+                                "input": dict(fc.args) if fc.args else {},
+                            }
+                            # Preserve thought_signature if present (required by Gemini)
+                            if (
+                                hasattr(part, "thought_signature")
+                                and part.thought_signature
+                            ):
+                                tool_call_data["thought_signature"] = (
+                                    part.thought_signature
+                                )
+                            gemini_tool_calls.append(tool_call_data)
+
+                text_content = "\n".join(text_parts) if text_parts else ""
                 token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
                     if gemini_response.usage_metadata
@@ -1109,17 +1302,17 @@ async def honcho_llm_call_inner(
                     content=text_content,
                     output_tokens=token_count,
                     finish_reasons=[finish_reason],
-                    tool_calls_made=[],
+                    tool_calls_made=gemini_tool_calls,
                 )
 
             else:
+                gemini_config["response_mime_type"] = "application/json"
+                gemini_config["response_schema"] = response_model
+
                 gemini_response = await client.aio.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config={
-                        "response_mime_type": "application/json",
-                        "response_schema": response_model,
-                    },
+                    config=cast(GenerateContentConfigDict, gemini_config),  # pyright: ignore[reportInvalidCast]
                 )
 
                 token_count = (
