@@ -20,16 +20,16 @@ class GetContextInput(BaseModel):
     """Input schema for get_context tool."""
 
     tokens: Optional[int] = Field(
-        None, gt=0, description="Maximum number of tokens to include in the context"
+        default=None, gt=0, description="Maximum number of tokens to include in the context"
     )
     peer_target: Optional[str] = Field(
-        None, description="A peer ID to get context for (retrieves representation and peer card)"
+        default=None, description="A peer ID to get context for (retrieves representation and peer card)"
     )
     summary: bool = Field(
-        True, description="Whether to include session summary in the context"
+        default=True, description="Whether to include session summary in the context"
     )
     peer_perspective: Optional[str] = Field(
-        None, description="Peer ID to use as the perspective for context retrieval"
+        default=None, description="Peer ID to use as the perspective for context retrieval"
     )
 
 
@@ -38,10 +38,10 @@ class DialecticInput(BaseModel):
 
     query: str = Field(..., min_length=1, description="Natural language question to ask")
     target: Optional[str] = Field(
-        None, description="Optional target peer for local representation query"
+        default=None, description="Optional target peer for local representation query"
     )
     session_id: Optional[str] = Field(
-        None, description="Optional session ID to scope query to specific session"
+        default=None, description="Optional session ID to scope query to specific session"
     )
 
 
@@ -49,9 +49,9 @@ class SearchInput(BaseModel):
     """Input schema for search tool."""
 
     query: str = Field(..., min_length=1, description="Search query for semantic matching")
-    limit: int = Field(10, ge=1, le=100, description="Number of results to return (1-100)")
+    limit: int = Field(default=10, ge=1, le=100, description="Number of results to return (1-100)")
     filters: Optional[dict[str, Any]] = Field(
-        None, description="Optional filters to apply to search results"
+        default=None, description="Optional filters to apply to search results"
     )
 
 

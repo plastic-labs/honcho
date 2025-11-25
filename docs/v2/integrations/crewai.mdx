@@ -30,11 +30,11 @@ Install required packages:
 
 <CodeGroup>
 ```bash Python (uv)
-uv add honcho_crewai crewai python-dotenv
+uv add honcho-crewai crewai python-dotenv
 ```
 
 ```bash Python (pip)
-pip install honcho_crewai crewai python-dotenv
+pip install honcho-crewai crewai python-dotenv
 ```
 </CodeGroup>
 
@@ -61,7 +61,7 @@ Before proceeding, it's important to understand Honcho's core concepts (`Peers` 
 ```python
 storage = HonchoStorage(
     user_id="demo-user",           # Required: Honcho `peer` ID for the user
-    session_id=None,               # Optional: Specific `session` ID (auto-generated if None)
+    session_id=None,               # Optional: Specific `session` ID (auto-generated using nanoid if None)
     honcho_client=None,            # Optional: Pre-configured Honcho client instance
 )
 ```

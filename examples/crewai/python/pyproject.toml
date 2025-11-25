@@ -3,7 +3,7 @@ name = "honcho-crewai"
 version = "0.1.0"
 description = "CrewAI integration with Honcho for persistent agent memory"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Plastic Labs", email = "hello@plasticlabs.ai"}
@@ -24,6 +24,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -34,6 +35,7 @@ classifiers = [
 dependencies = [
     "crewai>=0.134.0",
     "honcho-ai>=0.2.0",
+    "nanoid>=2.0.0",
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
 ]

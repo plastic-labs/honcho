@@ -6,11 +6,11 @@ system, enabling AI agents to maintain persistent conversation memory across ses
 """
 
 import logging
-import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from crewai.memory.storage.interface import Storage
 from honcho import Honcho
+from nanoid import generate as generate_nanoid
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +64,11 @@ class HonchoStorage(Storage):
 
         # Create or use existing session
         if not session_id:
-            session_id = f"session_{uuid.uuid4()}"
+            session_id = generate_nanoid()
         self.session = self.honcho.session(session_id)
         self.session_id = session_id
 
-    def save(self, value: Any, metadata: Dict[str, Any]) -> None:
+    def save(self, value: Any, metadata: dict[str, Any]) -> None:
         """
         Save a message to Honcho session.
 
@@ -98,7 +98,7 @@ class HonchoStorage(Storage):
             )
 
         except Exception as e:
-            logger.error(f"Error saving to Honcho: {e}")
+            logger.exception("Error saving to Honcho")
             raise
 
     def search(
@@ -106,7 +106,7 @@ class HonchoStorage(Storage):
         query: str,
         limit: int = 10,
         score_threshold: float = 0.5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Search for relevant messages using semantic search.
 
@@ -134,15 +134,22 @@ class HonchoStorage(Storage):
 
             # Convert to CrewAI expected format
             for msg in messages:
+                # Build base metadata with peer_id and created_at
+                metadata = {
+                    "peer_id": msg.peer_id,
+                    "created_at": str(msg.created_at) if hasattr(msg, "created_at") else None,
+                }
+
+                # Merge custom metadata if present
+                if hasattr(msg, "metadata") and msg.metadata:
+                    metadata.update(msg.metadata)
+
                 results.append(
                     {
                         "content": msg.content,
                         "memory": msg.content,
                         "context": msg.content,
-                        "metadata": {
-                            "peer_id": msg.peer_id,
-                            "created_at": str(msg.created_at) if hasattr(msg, "created_at") else None,
-                        },
+                        "metadata": metadata,
                     }
                 )
 
@@ -150,23 +157,23 @@ class HonchoStorage(Storage):
             return results
 
         except Exception as e:
-            logger.error(f"Error searching Honcho: {e}")
+            logger.exception("Error searching Honcho")
             raise
 
     def reset(self) -> None:
         """
         Create a new session, effectively resetting memory.
 
-        This creates a new Honcho session with a fresh UUID, allowing the agent
+        This creates a new Honcho session with a fresh nanoid, allowing the agent
         to start a new conversation without the previous context.
         """
         try:
-            new_session_id = f"session_{uuid.uuid4()}"
+            new_session_id = generate_nanoid()
             self.session = self.honcho.session(new_session_id)
             self.session_id = new_session_id
 
             logger.debug(f"Reset session. New session ID: {new_session_id}")
 
         except Exception as e:
-            logger.error(f"Error resetting Honcho session: {e}")
+            logger.exception("Error resetting Honcho session")
             raise
