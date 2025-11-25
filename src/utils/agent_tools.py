@@ -210,8 +210,8 @@ TOOLS: dict[str, dict[str, Any]] = {
 
 # Tools for the deriver agent (ingestion)
 DERIVER_TOOLS: list[dict[str, Any]] = [
-    TOOLS["search_memory"],
-    TOOLS["search_messages"],
+    # TOOLS["search_memory"],
+    # TOOLS["search_messages"],
     TOOLS["create_observations"],
     TOOLS["update_peer_card"],
 ]

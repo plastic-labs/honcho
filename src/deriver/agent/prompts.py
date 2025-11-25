@@ -75,13 +75,10 @@ Examples:
 ## WORKFLOW
 
 1. Review all messages in the batch together
-2. If needed, gather context using available tools:
-   - `search_memory`: Search for relevant observations
-   - `search_messages`: Search for messages by content/topic
-3. Extract explicit observations from messages about {observed}
-4. Derive deductive observations from explicit ones + existing relevant observations + world knowledge
-5. Create new observations in one `create_observations` tool call
-6. If the messages contain new key biographical information about {observed}, update the peer card with it using the `update_peer_card` tool
+2. Extract explicit observations from messages about {observed}
+3. Derive deductive observations from explicit ones + existing relevant observations + world knowledge
+4. Create new observations in one `create_observations` tool call
+5. If the messages contain new key biographical information about {observed}, update the peer card with it using the `update_peer_card` tool
 
 ## IMPORTANT RULES
 
@@ -89,6 +86,7 @@ Examples:
 - NEVER use level values other than 'explicit' or 'deductive'
 - Extract as many observations as the messages reveal
 - Peer card should contain permanent bio traits only -- things any interlocuter would want to know about {observed}
+- NEVER duplicate observations or facts across multiple tool calls -- should EITHER go in an observation or the peer card, and only ONCE.
 
 No need to summarize your work when complete -- the tool calls will be the only preserved output.
 """  # nosec B608 <-- this is a really dumb false positive
