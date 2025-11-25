@@ -460,6 +460,7 @@ async def honcho_llm_call(
 
     iteration = 0
     all_tool_calls: list[dict[str, Any]] = []
+    total_output_tokens = 0  # Accumulate output tokens across all tool iterations
     # Track effective tool_choice - switches from "required" to "auto" after first iteration
     effective_tool_choice = tool_choice
 
@@ -544,11 +545,15 @@ async def honcho_llm_call(
         # Make the call
         response = await call_func()
 
+        # Accumulate output tokens from this iteration
+        total_output_tokens += response.output_tokens
+
         # Check if there are tool calls
         if not response.tool_calls_made:
             # No tool calls, return final response
             logger.debug("No tool calls in response, finishing")
             response.tool_calls_made = all_tool_calls
+            response.output_tokens = total_output_tokens
             return response
 
         # Determine which provider we're using
@@ -782,6 +787,8 @@ async def honcho_llm_call(
 
     final_response = await final_call_func()
     final_response.tool_calls_made = all_tool_calls
+    # Include accumulated output tokens from all iterations plus the final call
+    final_response.output_tokens = total_output_tokens + final_response.output_tokens
     return final_response
 
 
@@ -918,7 +925,24 @@ async def honcho_llm_call_inner(
             if tools:
                 anthropic_params["tools"] = tools
                 if tool_choice:
-                    anthropic_params["tool_choice"] = tool_choice
+                    # Convert tool_choice to Anthropic format
+                    if isinstance(tool_choice, str):
+                        if tool_choice == "auto":
+                            anthropic_params["tool_choice"] = {"type": "auto"}
+                        elif tool_choice in ("any", "required"):
+                            anthropic_params["tool_choice"] = {"type": "any"}
+                        elif tool_choice == "none":
+                            # Don't set tool_choice, let Anthropic default
+                            pass
+                        else:
+                            # Assume it's a tool name
+                            anthropic_params["tool_choice"] = {
+                                "type": "tool",
+                                "name": tool_choice,
+                            }
+                    else:
+                        # Already in dict format, use as-is
+                        anthropic_params["tool_choice"] = tool_choice
 
             # For response models, we need to request JSON and parse manually
             # Note: tools and response_model should not be used together

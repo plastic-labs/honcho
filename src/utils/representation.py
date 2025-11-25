@@ -132,6 +132,12 @@ class Representation(BaseModel):
         """
         return len(self.explicit) == 0 and len(self.deductive) == 0
 
+    def len(self) -> int:
+        """
+        Return the total number of observations in the representation.
+        """
+        return len(self.explicit) + len(self.deductive)
+
     def diff_representation(self, other: "Representation") -> "Representation":
         """
         Given this and another representation, return a new representation with only observations that are unique to the other.

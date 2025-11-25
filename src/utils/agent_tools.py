@@ -123,7 +123,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_messages": {
         "name": "search_messages",
-        "description": "Search for messages in the current session using semantic similarity. Use this to find 5 relevant messages based on content or topic.",
+        "description": "Search for messages using semantic similarity and retrieve conversation snippets. Returns up to 5 matching messages, each with surrounding context (2 messages before and after). Nearby matches within the same session are merged into a single snippet to avoid repetition.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -214,19 +214,13 @@ DERIVER_TOOLS: list[dict[str, Any]] = [
     TOOLS["update_peer_card"],
     TOOLS["get_recent_history"],
     TOOLS["search_memory"],
-    TOOLS["get_observation_context"],
-    TOOLS["search_messages"],
 ]
 
 # Tools for the dialectic agent (analysis)
 DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_memory"],
-    TOOLS["get_recent_history"],
-    TOOLS["get_observation_context"],
     TOOLS["search_messages"],
-    TOOLS["get_recent_observations"],
-    TOOLS["get_most_derived_observations"],
-    TOOLS["get_session_summary"],
+    TOOLS["get_observation_context"],
     TOOLS["get_peer_card"],
     TOOLS["create_observations_deductive"],
 ]
@@ -502,9 +496,11 @@ async def search_messages(
     workspace_name: str,
     session_name: str | None,
     query: str,
-) -> list[models.MessageEmbedding]:
+) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
-    Search for messages in the session using semantic similarity.
+    Search for messages using semantic similarity and return conversation snippets.
+
+    Overlapping snippets within the same session are merged to avoid repetition.
 
     Args:
         db: Database session
@@ -513,7 +509,8 @@ async def search_messages(
         query: Search query text
 
     Returns:
-        List of message embeddings ordered by relevance (limited to 5 results)
+        List of tuples: (matched_messages, context_messages)
+        Each snippet may contain multiple matches if they were close together.
     """
     return await crud.search_messages(
         db,
@@ -521,6 +518,7 @@ async def search_messages(
         session_name=session_name,
         query=query,
         limit=5,
+        context_window=2,
     )
 
 
@@ -804,19 +802,17 @@ def create_tool_executor(
                 return f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
 
             elif tool_name == "search_memory":
-                representation: Representation = await search_memory(
+                mem: Representation = await search_memory(
                     db,
                     workspace_name=workspace_name,
                     observer=observer,
                     observed=observed,
                     query=tool_input["query"],
                 )
-                total_count = len(representation.explicit) + len(
-                    representation.deductive
-                )
+                total_count = mem.len()
                 if total_count == 0:
                     return f"No observations found for query '{tool_input['query']}'"
-                return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{representation}"
+                return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem}"
 
             elif tool_name == "get_observation_context":
                 messages = await get_observation_context(
@@ -838,22 +834,42 @@ def create_tool_executor(
                 )
 
             elif tool_name == "search_messages":
-                results = await search_messages(
+                snippets = await search_messages(
                     db,
                     workspace_name=workspace_name,
                     session_name=session_name,
                     query=tool_input["query"],
                 )
-                if not results:
+                if not snippets:
                     return f"No messages found for query '{tool_input['query']}'"
-                results_text = "\n".join(
-                    [f"- (ID: {r.message_id}) {r.content}" for r in results]
+
+                # Format each snippet with matched messages highlighted
+                snippet_texts: list[str] = []
+                total_matches = sum(len(matches) for matches, _ in snippets)
+                for i, (matches, context) in enumerate(snippets, 1):
+                    matched_ids = {m.id for m in matches}
+                    lines: list[str] = []
+                    for msg in context:
+                        timestamp = msg.created_at.replace(microsecond=0)
+                        prefix = ">>> " if msg.id in matched_ids else "    "
+                        lines.append(
+                            f"{prefix}[{msg.peer_name} at {timestamp}]: {msg.content}"
+                        )
+                    # Get session name from context (first message)
+                    sess = context[0].session_name if context else "unknown"
+                    snippet_texts.append(
+                        f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+                        + "\n".join(lines)
+                    )
+
+                return (
+                    f"Found {total_matches} matching messages in {len(snippets)} conversation snippets for query '{tool_input['query']}':\n\n"
+                    + "\n\n".join(snippet_texts)
                 )
-                return f"Found {len(results)} messages for query '{tool_input['query']}':\n{results_text}"
 
             elif tool_name == "get_recent_observations":
                 session_only = tool_input.get("session_only", False)
-                representation = await get_recent_observations(
+                representation: Representation = await get_recent_observations(
                     db,
                     workspace_name=workspace_name,
                     observer=observer,

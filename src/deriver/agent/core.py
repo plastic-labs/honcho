@@ -126,9 +126,9 @@ class Agent:
             prompt="",  # Ignored since we pass messages
             max_tokens=32_768,  # TODO config
             tools=self._tools,
-            tool_choice="required",
+            # tool_choice="required",
             tool_executor=tool_executor,
-            max_tool_iterations=10,
+            max_tool_iterations=5,
             messages=self.messages,
             track_name="Deriver Agent",
         )
@@ -140,11 +140,10 @@ class Agent:
         for i, tc in enumerate(response.tool_calls_made, 1):
             tool_name = tc.get("tool_name", "unknown")
             tool_input = tc.get("tool_input", {})
-            tool_result = tc.get("tool_result", "")
             accumulate_metric(
                 task_name,
                 f"tool_{i}_{tool_name}",
-                f"INPUT: {tool_input}\nOUTPUT: {tool_result}",
+                f"INPUT: {tool_input}",  # \nOUTPUT: {tool_result}",
                 "blob",
             )
 

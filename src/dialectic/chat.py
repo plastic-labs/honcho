@@ -407,10 +407,6 @@ async def chat(
 
     elapsed = (time.perf_counter() - start_time) * 1000
 
-    accumulate_metric(
-        f"dialectic_chat_{dialectic_chat_uuid}", "total_duration", elapsed, "ms"
-    )
-
     log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
     return response
 
@@ -459,7 +455,7 @@ async def agentic_chat(
                 )
 
     # Create and run the agentic dialectic
-    metric_key = f"agentic_dialectic_chat_{agentic_chat_uuid}"
+    metric_key = f"dialectic_chat_{agentic_chat_uuid}"
     async with tracked_db("agentic_chat.agent") as db:
         agent = DialecticAgent(
             db=db,
@@ -479,5 +475,5 @@ async def agentic_chat(
     # Update total_duration to include peer card fetch time (overwrites agent's duration)
     accumulate_metric(metric_key, "total_duration", elapsed, "ms")
 
-    log_performance_metrics("agentic_dialectic_chat", agentic_chat_uuid)
+    log_performance_metrics("dialectic_chat", agentic_chat_uuid)
     return response

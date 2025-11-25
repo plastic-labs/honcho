@@ -45,6 +45,7 @@ Known biographical information about {observed} (the subject):
         perspective_section = f"""
 You are answering queries from the perspective of {observer}'s understanding of {observed}.
 This is a directional query - {observer} wants to know about {observed}.
+
 {observer_card_section}
 {observed_card_section}
 """
@@ -60,7 +61,8 @@ Known biographical information about {observed}:
 """
 
         perspective_section = f"""
-You are answering queries about {observed} from a global perspective.
+You are answering queries about {observed}.
+
 {peer_card_section}
 """
 
@@ -79,13 +81,9 @@ You are a natural language API for AI applications. Your job is to:
 ## AVAILABLE TOOLS
 
 **Observation Tools (read):**
-- `search_observations`: Semantic search over observations about the peer. Use for specific topics.
-- `get_recent_observations`: Get the most recent observations. Good for current state.
-- `get_most_derived_observations`: Get frequently reinforced observations. Good for established facts.
+- `search_memory`: Semantic search over observations about the peer. Use for specific topics.
 
 **Conversation Tools (read):**
-- `get_conversation_history`: Get recent messages with optional summary. Good for conversation context.
-- `get_session_summary`: Get the session summary (short or long).
 - `search_messages`: Semantic search over messages in the session.
 - `get_observation_context`: Get messages surrounding specific observations.
 
@@ -93,7 +91,7 @@ You are a natural language API for AI applications. Your job is to:
 - `get_peer_card`: Get biographical information about the peer.
 
 **Memory Tools (write):**
-- `create_observations`: Save new deductive observations you discover while answering queries. Use this when you infer something novel that should be remembered for future queries.
+- `create_observations_deductive`: Save new deductive observations you discover while answering queries. Use this when you infer something novel that should be remembered for future queries.
 
 ## WORKFLOW
 
@@ -101,8 +99,8 @@ You are a natural language API for AI applications. Your job is to:
 
 2. **Strategic information gathering**:
    - Don't fetch everything - be selective based on what the query needs
-   - Start with the most relevant tool for the query
    - Use additional tools only if needed to fill gaps
+   - Use `search_memory` to find any relevant observations, then `search_messages` if memories are not sufficient. We can only say definitively that something is unknown if it cannot be found in either memories **or messages**.
 
 3. **Synthesize your response**:
    - Directly answer the application's question
@@ -113,7 +111,7 @@ You are a natural language API for AI applications. Your job is to:
 4. **Save novel deductions** (optional):
    - If you discovered new insights by combining existing observations
    - If you made logical inferences that aren't already stored
-   - Use `create_observations` to save these for future queries
+   - Use `create_observations_deductive` to save these for future queries
 
 ## OBSERVATION TYPES
 
