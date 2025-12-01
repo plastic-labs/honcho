@@ -26,64 +26,41 @@
                 "group": "Introduction",
                 "pages": [
                   "v2/documentation/introduction/overview",
-                  "v2/documentation/introduction/architecture",
                   "v2/documentation/introduction/vibecoding"
                 ]
               },
               {
-                "group": "Honcho Context",
+                "group": "Core Concepts",
                 "pages": [
-                  "v2/documentation/honcho-context/quickstart",
-                  {
-                    "group": "Storage",
-                    "expanded": true,
-                    "pages": [
-                      "v2/documentation/honcho-context/storage/storing-data",
-                      "v2/documentation/honcho-context/storage/file-uploads"
-                    ]
-                  },
-                  {
-                    "group": "Retrieval",
-                    "expanded": true,
-                    "pages": [
-                      "v2/documentation/honcho-context/retrieval/using-filters",
-                      "v2/documentation/honcho-context/retrieval/search",
-                      "v2/documentation/honcho-context/retrieval/get-context"
-                    ]
-                  }
+                  "v2/documentation/reference/storage",
+                  "v2/documentation/core-concepts/deriver",
+                  "v2/documentation/core-concepts/representation"
                 ]
               },
               {
-                "group": "Honcho Memory",
+                "group": "Features",
                 "pages": [
-                  "v2/documentation/honcho-memory/quickstart",
-                  {
-                    "group": "Advanced Storage",
-                    "expanded": true,
-                    "pages": [
-                      "v2/documentation/core-concepts/features/queue-status",
-                      "v2/documentation/core-concepts/features/working-rep"
-                    ]
-                  },
-                  {
-                    "group": "Advanced Retrieval",
-                    "expanded": true,
-                    "pages": [
-                      "v2/documentation/honcho-memory/advanced-retrieval/get-context",
-                      "v2/documentation/core-concepts/summarizer",
-                      "v2/documentation/core-concepts/features/dialectic-endpoint",
-                      "v2/documentation/core-concepts/features/streaming-response"
-                    ]
-                  }
+                  "v2/documentation/features/get-context",
+                  "v2/documentation/features/dialectic-endpoint",
+                  "v2/documentation/features/summarizer",
+                  "v2/documentation/features/working-rep",
+                  "v2/documentation/features/local-vs-global"
+                ]
+              },
+              {
+                "group": "Advanced",
+                "pages": [
+                  "v2/documentation/advanced/configuration",
+                  "v2/documentation/advanced/queue-status",
+                  "v2/documentation/advanced/streaming-response",
+                  "v2/documentation/advanced/file-uploads",
+                  "v2/documentation/advanced/search",
+                  "v2/documentation/advanced/using-filters"
                 ]
               },
               {
                 "group": "Reference",
                 "pages": [
-                  "v2/documentation/core-concepts/architecture",
-                  "v2/documentation/core-concepts/configuration",
-                  "v2/documentation/core-concepts/features/local-vs-global",
-                  "v2/documentation/core-concepts/glossary",
                   "v2/documentation/reference/platform",
                   "v2/documentation/reference/sdk"
                 ]
