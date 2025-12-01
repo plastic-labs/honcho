@@ -235,8 +235,9 @@ class TestAnthropicClient:
         # Set up the async iterator (same as working test_streaming_call)
         mock_stream.__aiter__.return_value = iter(mock_chunks)
 
-        # Mock final message
-        mock_final_message = Mock(stop_reason="stop")
+        # Mock final message with usage tokens
+        mock_usage = Mock(output_tokens=42)
+        mock_final_message = Mock(stop_reason="stop", usage=mock_usage)
         mock_stream.get_final_message.return_value = mock_final_message
 
         mock_client.messages.stream.return_value = mock_stream
@@ -632,10 +633,15 @@ class TestGoogleClient:
         # Mock streaming chunks
         mock_finish_reason = Mock()
         mock_finish_reason.name = "STOP"
+        mock_usage_metadata = Mock(candidates_token_count=35)
         mock_chunks = [
             Mock(text="Hello"),
             Mock(text=" world"),
-            Mock(text="", candidates=[Mock(finish_reason=mock_finish_reason)]),
+            Mock(
+                text="",
+                candidates=[Mock(finish_reason=mock_finish_reason)],
+                usage_metadata=mock_usage_metadata,
+            ),
         ]
 
         # Create async iterator for the chunks
@@ -956,8 +962,9 @@ class TestMainLLMCallFunction:
         mock_stream.__aenter__.return_value = mock_stream
         mock_stream.__aiter__.return_value = iter(mock_chunks)
 
-        # Mock final message
-        mock_final_message = Mock(stop_reason="stop")
+        # Mock final message with usage tokens
+        mock_usage = Mock(output_tokens=28)
+        mock_final_message = Mock(stop_reason="stop", usage=mock_usage)
         mock_stream.get_final_message.return_value = mock_final_message
 
         mock_client.messages.stream.return_value = mock_stream

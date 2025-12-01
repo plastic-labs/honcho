@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import text
 
 from migrations.utils import constraint_exists, get_schema
 
@@ -27,13 +28,18 @@ def upgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
 
-    # Drop CHECK constraint for level
+    # Drop CHECK constraint for level (check both naming convention and plain names)
+    # On old databases: "level_valid"
+    # On new databases with naming convention: "ck_documents_level_valid"
     if constraint_exists("documents", "level_valid", "check", inspector):
-        op.drop_constraint(
-            "level_valid",
-            "documents",
-            type_="check",
-            schema=schema,
+        connection.execute(
+            text(f'ALTER TABLE {schema}.documents DROP CONSTRAINT "level_valid"')
+        )
+    elif constraint_exists("documents", "ck_documents_level_valid", "check", inspector):
+        connection.execute(
+            text(
+                f'ALTER TABLE {schema}.documents DROP CONSTRAINT "ck_documents_level_valid"'
+            )
         )
 
 
@@ -66,11 +72,14 @@ def downgrade() -> None:
         if result.rowcount == 0:
             break
 
-    # Recreate CHECK constraint for level
+    # Recreate CHECK constraint for level (use plain name to match original migration)
     if not constraint_exists("documents", "level_valid", "check", inspector):
-        op.create_check_constraint(
-            "level_valid",
-            "documents",
-            "level IN ('explicit', 'deductive')",
-            schema=schema,
+        connection.execute(
+            text(
+                f"""
+                ALTER TABLE {schema}.documents
+                ADD CONSTRAINT level_valid
+                CHECK (level IN ('explicit', 'deductive'))
+                """
+            )
         )

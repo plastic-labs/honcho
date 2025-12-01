@@ -27,7 +27,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v2.4.2 (Current)">
+        <Update label="v2.4.3 (Current)">
+        ### Added
+
+        - Redis caching to improve DB IO
+        - Backup LLM provider to avoid failures when a provider is down
+
+        ### Changed
+
+        - QueueItems to use standardized columns
+        - Improved Deduplication logic for Representation Tasks
+        - More finegrained metrics for representation, summary, and peer card tasks
+        - DB constraint to follow standard naming conventions
+        </Update>
+
+        <Update label="v2.4.2">
         ### Fixed
 
         - Langfuse tracing to have readable waterfalls
