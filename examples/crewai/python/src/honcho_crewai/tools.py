@@ -76,7 +76,7 @@ class HonchoGetContextTool(BaseTool):
     _session_id: str = PrivateAttr()
     _peer_id: str = PrivateAttr()
 
-    def __init__(self, honcho: Honcho, session_id: str, peer_id: str):
+    def __init__(self, honcho: Honcho, session_id: str, peer_id: str) -> None:
         """
         Initialize the get_context tool.
 
@@ -123,19 +123,19 @@ class HonchoGetContextTool(BaseTool):
 
             # Add summary if present
             if context.summary:
-                result.append(f"=== Session Summary ===")
+                result.append("=== Session Summary ===")
                 result.append(context.summary.content)
                 result.append("")
 
             # Add peer representation if present
             if context.peer_representation:
-                result.append(f"=== Peer Representation ===")
+                result.append("=== Peer Representation ===")
                 result.append(context.peer_representation)
                 result.append("")
 
             # Add peer card if present
             if context.peer_card:
-                result.append(f"=== Peer Card ===")
+                result.append("=== Peer Card ===")
                 result.extend(context.peer_card)
                 result.append("")
 
@@ -148,8 +148,8 @@ class HonchoGetContextTool(BaseTool):
             return "\n".join(result) if result else "No context available"
 
         except Exception as e:
-            logger.error(f"Error retrieving context: {e}")
-            return f"Error retrieving context: {str(e)}"
+            logger.exception("Error retrieving context: %s", e)
+            return f"Error retrieving context: {e!s}"
 
 
 class HonchoDialecticTool(BaseTool):
@@ -173,7 +173,7 @@ class HonchoDialecticTool(BaseTool):
     _session_id: str = PrivateAttr()
     _peer_id: str = PrivateAttr()
 
-    def __init__(self, honcho: Honcho, session_id: str, peer_id: str):
+    def __init__(self, honcho: Honcho, session_id: str, peer_id: str) -> None:
         """
         Initialize the dialectic tool.
 
@@ -225,8 +225,8 @@ class HonchoDialecticTool(BaseTool):
                 return "No relevant information found."
 
         except Exception as e:
-            logger.error(f"Error querying dialectic API: {e}")
-            return f"Error querying peer knowledge: {str(e)}"
+            logger.exception("Error querying dialectic API: %s", e)
+            return f"Error querying peer knowledge: {e!s}"
 
 
 class HonchoSearchTool(BaseTool):
@@ -249,7 +249,7 @@ class HonchoSearchTool(BaseTool):
     _honcho: Honcho = PrivateAttr()
     _session_id: str = PrivateAttr()
 
-    def __init__(self, honcho: Honcho, session_id: str):
+    def __init__(self, honcho: Honcho, session_id: str) -> None:
         """
         Initialize the search tool.
 
@@ -292,8 +292,8 @@ class HonchoSearchTool(BaseTool):
             return "\n".join(result)
 
         except Exception as e:
-            logger.error(f"Error searching messages: {e}")
-            return f"Error searching messages: {str(e)}"
+            logger.exception("Error searching messages: %s", e)
+            return f"Error searching messages: {e!s}"
 
 
 # Factory Functions

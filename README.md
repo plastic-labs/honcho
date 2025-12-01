@@ -637,7 +637,7 @@ A developer's application can treat Honcho as an oracle to the `Peer` and
 consult it when necessary. Some examples of how to leverage the Dialectic
 API include:
 
-- Asking Honcho for a generic or specific insight about the `Peer` 
+- Asking Honcho for a generic or specific insight about the `Peer`
 - Asking Honcho to hydrate a prompt with data about the `Peer`s behavior
 - Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
 - Getting personalized responses that incorporate long-term facts and context

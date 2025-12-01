@@ -47,7 +47,7 @@ class HonchoStorage(Storage):
         user_id: str,
         session_id: Optional[str] = None,
         honcho_client: Optional[Honcho] = None,
-    ):
+    ) -> None:
         """
         Initialize Honcho storage for a specific user and session.
 
@@ -94,10 +94,12 @@ class HonchoStorage(Storage):
             self.session.add_messages([peer.message(content_str, metadata=metadata)])
 
             logger.debug(
-                f"Saved message from {metadata.get('name', role)}: {content_str[:100]}..."
+                "Saved message from %s: %s...",
+                metadata.get("name", role),
+                content_str[:100],
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error saving to Honcho")
             raise
 
@@ -153,10 +155,10 @@ class HonchoStorage(Storage):
                     }
                 )
 
-            logger.debug(f"Search for '{query}' returned {len(results)} results")
+            logger.debug("Search for '%s' returned %d results", query, len(results))
             return results
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error searching Honcho")
             raise
 
@@ -172,8 +174,8 @@ class HonchoStorage(Storage):
             self.session = self.honcho.session(new_session_id)
             self.session_id = new_session_id
 
-            logger.debug(f"Reset session. New session ID: {new_session_id}")
+            logger.debug("Reset session. New session ID: %s", new_session_id)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error resetting Honcho session")
             raise

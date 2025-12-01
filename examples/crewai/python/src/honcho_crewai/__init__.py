@@ -51,12 +51,12 @@ from honcho_crewai.tools import (
 
 __version__ = "0.1.0"
 __all__ = [
-    "HonchoStorage",
-    "HonchoGetContextTool",
-    "HonchoDialecticTool",
-    "HonchoSearchTool",
-    "create_get_context_tool",
-    "create_dialectic_tool",
-    "create_search_tool",
     "HonchoDependencyError",
+    "HonchoDialecticTool",
+    "HonchoGetContextTool",
+    "HonchoSearchTool",
+    "HonchoStorage",
+    "create_dialectic_tool",
+    "create_get_context_tool",
+    "create_search_tool",
 ]
