@@ -8,17 +8,17 @@ Transferring data from Mem0 to Honcho is straightforward. This guide covers why 
 
 ## Why Honcho?
 
-**Inference, Not Just Storage** - Honcho builds evolving profiles of each participant through rich reasoning. Rather than retrieving facts, Honcho infers communication styles, values, patterns, and relationships - adapting to how users interact, not just what they say.
+**Inference, Not Just Storage** - Honcho builds evolving profiles of each participant through rich logic-based reasoning. Rather than retrieving facts, Honcho infers communication styles, values, patterns, and relationships - adapting to how users interact, not just what they say.
 
-**Superior Performance** - Higher benchmark scores with optimized retrieval and more contextually relevant responses. Efficient HNSW indexing, batched background processing, and no markup on LLM costs make Honcho cost-effective at scale.
+**Superior Performance** - Higher benchmark scores (more comming)
 
-**Competitive Pricing** - (it is cheaper for XYZ)
+**Competitive Pricing** -
 
 **Multi-Peer Sessions** - Native support for group conversations with multiple users and AI agents in a single session with configurable observation settings.
 
-**Rich Context Management** - Multi-tier summarization, (maybe dialectic API?)
-
 ## Quick Comparison
+
+### Multi-Peer Sessions
 
 <CodeGroup>
 ```python Mem0
@@ -26,15 +26,51 @@ from mem0 import MemoryClient
 
 client = MemoryClient(api_key="your-api-key")
 
-messages = [
-    {"role": "user", "content": "I'm a vegetarian and allergic to nuts."}
-]
-client.add(messages, user_id="user123")
+# Single-user focus - no group context
+client.add("data", user_id="user123")
+```
 
-results = client.search(
-    "What are my dietary restrictions?",
-    filters={"user_id": "user123"}
-)
+```python Honcho
+from honcho import Honcho
+from honcho.session import SessionPeerConfig
+
+honcho = Honcho(api_key="your-api-key", environment="production")
+
+# Create peers and session
+user_a = honcho.peer("user_a")
+user_b = honcho.peer("user_b")
+ai_agent = honcho.peer("ai_agent")
+session = honcho.session("group-chat")
+
+# Add peers with observation config
+session.add_peers([
+    (user_a, SessionPeerConfig(observe_others=True, observe_me=True)),
+    (user_b, SessionPeerConfig(observe_others=True, observe_me=True)),
+    (ai_agent, SessionPeerConfig(observe_others=False, observe_me=False)),
+])
+
+# Native group conversation support
+session.add_messages([
+    user_a.message("Let's focus on revenue"),
+    user_b.message("I agree with the revenue goal"),
+    ai_agent.message("Revenue strategy recommended...")
+])
+# Honcho tracks individual preferences + group dynamics
+```
+</CodeGroup>
+
+### Rich Behavioral Inference
+
+<CodeGroup>
+```python Mem0
+from mem0 import MemoryClient
+
+client = MemoryClient(api_key="your-api-key")
+
+# Simple fact retrieval
+client.add("User prefers short emails", user_id="user123")
+results = client.search("communication style", user_id="user123")
+# Returns exact text matches
 ```
 
 ```python Honcho
@@ -42,22 +78,39 @@ from honcho import Honcho
 
 honcho = Honcho(api_key="your-api-key", environment="production")
 
+# Rich behavioral inference
 user = honcho.peer("user123")
-session = honcho.session("session_1")
+session = honcho.session("current-session")
 session.add_peers([user])
 
-session.add_messages([
-    user.message("I'm a vegetarian and allergic to nuts.")
-])
+session.add_messages([user.message("I prefer quick updates")])
+# Automatically infers: "Values efficiency, prefers concise communication"
 
-response = user.chat("What are my dietary restrictions?")
+# Query what Honcho has learned about the user
+insights = user.chat("How should I communicate with this user?")
 ```
 </CodeGroup>
 
-**Key concept mapping:**
-- `user_id` → `peer` (supports both users and agents)
-- `client.add()` → `session.add_messages()` (session-scoped)
-- `client.search()` → `peer.chat()` (inference-powered)
+### Concept Mapping
+
+| Mem0 | Honcho | Notes |
+|------|--------|-------|
+| `user_id` | `peer` | Supports both users and AI agents |
+| `client.add()` | `session.add_messages()` | Session-scoped message storage |
+| `client.search()` | `peer.search()` | Semantic search across messages |
+
+### Honcho-Only Features
+
+These capabilities have no direct Mem0 equivalent:
+
+| Honcho | Description |
+|--------|-------------|
+| `peer.chat()` | Query the representation of the peer, what it knows about its peers, nuanced preferences or general questions. Based on learned patterns, not just stored facts. |
+| `peer.card()` | Get stable biographical facts about a peer (name, preferences, background) - the "who they are" profile |
+| `session.working_rep()` | Get cached psychological analysis for a peer in this session (mental state, intentions, conclusions) - "what they're thinking now" |
+| `session.get_context()` | Retrieve optimized context with auto-summaries for LLM prompts |
+| `session.get_summaries()` | Access auto-generated short and long session summaries |
+| `SessionPeerConfig` | Configure observation settings (who learns about whom) |
 
 ## Migration Steps
 
@@ -75,11 +128,15 @@ memories = client.get_all(filters={"user_id": "user123"}, page_size=100)
 ### 2. Install and Initialize Honcho
 
 <CodeGroup>
-```bash Python
+```bash pip
 pip install honcho-ai
 ```
 
-```bash TypeScript
+```bash uv
+uv add honcho-ai
+```
+
+```bash npm
 npm install @honcho-ai/sdk
 ```
 </CodeGroup>
@@ -129,31 +186,41 @@ for memory in memories:
 ```python
 # Before: Mem0
 client.add(messages, user_id="user123")
-results = client.search("query", filters={"user_id": "user123"})
+results = client.search("query", user_id="user123")
 
-# After: Honcho
+# After: Honcho (direct migration)
 user = honcho.peer("user123")
 session = honcho.session("current-session")
 session.add_peers([user])
 session.add_messages([user.message("content")])
-response = user.chat("query")
+results = user.search("query")  # Semantic search across messages
+
+# Upgrade: Use Honcho's inference-powered dialectic API
+insights = user.chat("What communication style does this user prefer?")
 ```
 
-## TODO Advanced Features
+## Advanced Features
 
 Honcho enables capabilities not available in Mem0:
 
 ```python
 # Multi-peer sessions
-alice, bob = honcho.peer("alice"), honcho.peer("bob")
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
 session = honcho.session("group-chat")
 session.add_peers([alice, bob])
 
-# Working representation
-rep = user.get_working_representation(session_id="session_1")
+# Get cached working representation for a peer in this session
+working_rep = session.working_rep(alice)
 
-# Session context with summaries
+# Get biographical peer card
+peer_card = alice.card()
+
+# Session context with summaries for LLM prompts
 context = session.get_context()
+
+# Inference-powered queries (dialectic API)
+insights = alice.chat("What communication style does Alice prefer?")
 ```
 
 ## Next Steps
