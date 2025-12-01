@@ -23,7 +23,7 @@ Honcho streamlines the agent building process by offering elegant, flexible prim
   - Re-engineer your entire RAG solution
   - Repeat
 
-All the while usage dwindles, customers churn, and motivation to solve the problem wanes. Break free from this cycle. Honcho is a general solution to solving context engineering, memory, and statefulness. 
+All the while usage dwindles, customers churn, and motivation to solve the problem wanes. Break free from this cycle. Honcho is a general solution to solving context engineering, memory, and statefulness.
 
 ### Context Engineering
 
@@ -53,21 +53,21 @@ A [Peer](https://blog.plasticlabs.ai/blog/Beyond-the-User-Assistant-Paradigm;-In
 
 ### Memory
 
-Honcho is built around custom models that are selectively reasoning about context written to it. These models produce formal logic that powers the memory system. Each peer is the container for a *representation*(TODO: link to concept page)--the collection of reasoning that's been done over context written to it. 
+Honcho is built around custom models that are selectively reasoning about context written to it. These models produce formal logic that power the memory system. Each peer is the container for a *representation*(TODO: link to concept page)--the collection of reasoning that's been done over context written to it.
 
 <Frame>
   <img src="/images/reasoning.png" style={{ borderRadius: '0.5rem' }} />
 </Frame>
 
 
-The *deriver* (TODO: link to concept page) orchestrates all this reasoning in the background when you write messages to sessions or peers. 
+The *deriver* (TODO: link to concept page) orchestrates all this reasoning in the background when you write messages to sessions or peers.
 
-Let's start with a simple implementation. 
+Let's start with a simple implementation.
 
 ## Quickstart
 
 <Note>
-Running the code below requires an API key. Create and account and get your API key at [app.honcho.dev](https://app.honcho.dev) under "API KEYS". 
+Running the code below requires an API key. Create and account and get your API key at [app.honcho.dev](https://app.honcho.dev) under "API KEYS".
 
 Every new tenant gets \$100.00 in free credits on sign up. The code below costs ~\$0.04 to run, so don't worry--still plenty of free credits for iterating.
 </Note>
@@ -241,7 +241,7 @@ with open("conversation.json", "r") as f:
 for session_data in data["sessions"]:
     session = honcho.session(session_data["id"])
     session.add_peers([user, assistant])
-    
+
     # Add messages with correct roles
     messages = []
     for msg in session_data["messages"]:
@@ -249,7 +249,7 @@ for session_data in data["sessions"]:
             messages.append(user.message(msg["content"]))
         elif msg["role"] == "assistant":
             messages.append(assistant.message(msg["content"]))
-    
+
     session.add_messages(messages)
 ```
 
@@ -261,11 +261,11 @@ const data = JSON.parse(fs.readFileSync("conversation.json", "utf-8"));
 for (const sessionData of data.sessions) {
     const session = honcho.session(sessionData.id);
     session.addPeers([user, assistant]);
-    
-    const messages = sessionData.messages.map((msg: any) => 
+
+    const messages = sessionData.messages.map((msg: any) =>
         msg.role === "user" ? user.message(msg.content) : assistant.message(msg.content)
     );
-    
+
     session.addMessages(messages);
 }
 ```
@@ -306,7 +306,7 @@ This is rich personal context for domain-specific agents to do what they want wi
 Honcho acts almost like a detective--it reasons about new and existing evidence in order to form conclusions that can be used to make a *case*. These conclusions wait to be composed dynamically based on how you, the ~~judge~~ developer, query it. This approach is what drives our [pareto-frontier](TODO: link to evals page here) performance on memory benchmarks, and our custom models allow us to optimize speed and cost.
 
 
-## Recap 
+## Recap
 
 Let's go over what we covered and implemented:
 
@@ -443,7 +443,7 @@ console.log(response);
 
 </Accordion>
 
-We're just scratching the surface. The data objects have a number of cool features that make building stateful agents easier. There are several ways to query both context and reasoning in order to power memory for agents. And everything has been built with the intention of giving the developer maximum control--leverage as much or as little of the reasoning as you want, tightly control token usage, latency, and more. 
+We're just scratching the surface. The data objects have a number of cool features that make building stateful agents easier. There are several ways to query both context and reasoning in order to power memory for agents. And everything has been built with the intention of giving the developer maximum control--leverage as much or as little of the reasoning as you want, tightly control token usage, latency, and more.
 
 Welcome to Honcho. We're excited to have you at the frontier of AI with us 🫡.
 
