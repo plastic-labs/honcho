@@ -146,16 +146,16 @@ class DialecticAgent:
         accumulate_metric(
             task_name, "tool_calls", len(response.tool_calls_made), "count"
         )
-        for i, tc in enumerate(response.tool_calls_made, 1):
-            tool_name = tc.get("tool_name", "unknown")
-            tool_input = tc.get("tool_input", {})
-            tool_result = tc.get("tool_result", "")
-            accumulate_metric(
-                task_name,
-                f"tool_{i}_{tool_name}",
-                f"INPUT: {tool_input}\nOUTPUT: {tool_result}",
-                "blob",
-            )
+        # for i, tc in enumerate(response.tool_calls_made, 1):
+        #     tool_name = tc.get("tool_name", "unknown")
+        #     tool_input = tc.get("tool_input", {})
+        #     tool_result = tc.get("tool_result", "")
+        #     accumulate_metric(
+        #         task_name,
+        #         f"tool_{i}_{tool_name}",
+        #         f"INPUT: {tool_input}\nOUTPUT: {tool_result}",
+        #         "blob",
+        #     )
 
         # Log output
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "tokens")

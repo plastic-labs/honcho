@@ -216,6 +216,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
+    AGENTIC: bool = False
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -236,6 +237,8 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=100, gt=0, le=1000)
@@ -319,7 +322,7 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
-    ENABLED_TYPES: list[str] = ["agent"]
+    ENABLED_TYPES: list[str] = ["consolidate"]
 
     # LLM settings for dream processing
     PROVIDER: SupportedProviders = "anthropic"

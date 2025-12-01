@@ -22,6 +22,7 @@ from src.dependencies import tracked_db
 from src.deriver.consumer import (
     process_item,
     process_representation_agent_batch,
+    process_representation_batch,
 )
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
@@ -438,18 +439,20 @@ class QueueManager:
                                 break
 
                             try:
-                                # await process_representation_batch(
-                                #     messages_context,
-                                #     message_level_configuration,
-                                #     observer=work_unit.observer,
-                                #     observed=work_unit.observed,
-                                # )
-                                await process_representation_agent_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observer=work_unit.observer,
-                                    observed=work_unit.observed,
-                                )
+                                if settings.DERIVER.AGENTIC:
+                                    await process_representation_agent_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
+                                else:
+                                    await process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )

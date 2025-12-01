@@ -316,7 +316,6 @@ class BEAMRunner:
         question: str,
         rubric: list[str],
         actual_response: str,
-        memory_ability: str,
     ) -> dict[str, Any]:
         """
         Use an LLM to judge a response using nugget-based evaluation.
@@ -336,28 +335,100 @@ class BEAMRunner:
                 [f"{i + 1}. {nugget}" for i, nugget in enumerate(rubric)]
             )
 
-            system_prompt = f"""You are an expert judge evaluating AI responses for the {memory_ability} memory ability in the BEAM benchmark.
+            system_prompt = """You are an expert evaluator tasked with judging whether the LLM's response demonstrates compliance with the specified RUBRIC CRITERIA.
 
-Your task is to evaluate whether the AI's response satisfies each atomic criterion (nugget) from the rubric.
+## EVALUATION RUBRIC:
 
-SCORING INSTRUCTIONS:
-For each nugget, assign a score:
-- 1.0: The response fully satisfies this criterion
-- 0.5: The response partially satisfies this criterion
-- 0.0: The response does not satisfy this criterion
+The rubric defines specific requirements, constraints, or expected behaviors that the LLM response should demonstrate.
 
-Be strict but fair in your evaluation. Focus on whether the response contains the required information or demonstrates the required behavior.
+**IMPORTANT**: Pay careful attention to whether each rubric criterion specifies:
 
-Use the `evaluate_response` tool to submit your evaluation."""
+- **Positive requirements** (things the response SHOULD include/do)
 
-            user_prompt = f"""Question: "{question}"
+- **Negative constraints** (things the response SHOULD NOT include/do, often indicated by "no", "not", "avoid", "absent")
 
-Rubric (atomic criteria to check):
+## RESPONSIVENESS REQUIREMENT (anchored to the QUESTION)
+
+A compliant response must be **on-topic with respect to the QUESTION** and attempt to answer it.
+
+- If the response does not address the QUESTION, score **0.0** for all criteria and stop.
+
+- For negative constraints, both must hold: (a) the response is responsive to the QUESTION, and (b) the prohibited element is absent.
+
+## SEMANTIC TOLERANCE RULES:
+
+Judge by meaning, not exact wording.
+
+- Accept **paraphrases** and **synonyms** that preserve intent.
+
+- **Case/punctuation/whitespace** differences must be ignored.
+
+- **Numbers/currencies/dates** may appear in equivalent forms (e.g., "$68,000", "68k", "68,000 USD", or "sixty-eight thousand dollars"). Treat them as equal when numerically equivalent.
+
+- If the rubric expects a number or duration, prefer **normalized comparison** (extract and compare values) over string matching.
+
+## STYLE NEUTRALITY (prevents style contamination):
+
+Ignore tone, politeness, length, and flourish unless the rubric explicitly requires a format/structure (e.g., "itemized list", "no citations", "one sentence").
+
+- Do **not** penalize hedging, voice, or verbosity if content satisfies the rubric.
+
+- Only evaluate format when the rubric **explicitly** mandates it.
+
+## SCORING SCALE:
+
+- **1.0 (Complete Compliance)**: Fully complies with the rubric criterion.
+
+  - Positive: required element present, accurate, properly executed (allowing semantic equivalents).
+
+  - Negative: prohibited element **absent** AND response is **responsive**.
+
+- **0.5 (Partial Compliance)**: Partially complies.
+
+  - Positive: element present but minor inaccuracies/incomplete execution.
+
+  - Negative: generally responsive and mostly avoids the prohibited element but with minor/edge violations.
+
+- **0.0 (No Compliance)**: Fails to comply.
+
+  - Positive: required element missing or incorrect.
+
+  - Negative: prohibited element present **or** response is non-responsive/evasive even if the element is absent.
+
+## EVALUATION INSTRUCTIONS:
+
+1. **Understand the Requirement**: For each rubric criterion, determine if it is asking for something to be present (positive) or absent (negative/constraint).
+
+2. **Parse Compound Statements**: If a rubric criterion contains multiple elements connected by "and" or commas, evaluate whether:
+
+   - **All elements** must be present for full compliance (1.0)
+
+   - **Some elements** present indicates partial compliance (0.5)
+
+   - **No elements** present indicates no compliance (0.0)
+
+3. **Check Compliance**: For each criterion:
+
+   - For positive requirements: Look for the presence and quality of the required element
+
+   - For negative constraints: Look for the absence of the prohibited element
+
+4. **Assign Score**: Based on compliance with each specific rubric criterion according to the scoring scale above.
+
+5. **Provide Reasoning**: For each criterion, explain whether it was satisfied and justify the score.
+
+Use the `evaluate_response` tool to submit your evaluation with scores and reasoning for each rubric criterion."""
+
+            user_prompt = f"""## EVALUATION INPUTS
+
+- QUESTION (what the user asked): {question}
+
+- RUBRIC CRITERIA (what to check):
 {nuggets_formatted}
 
-Actual Response: "{actual_response}"
+- RESPONSE TO EVALUATE: {actual_response}
 
-Evaluate the response against each nugget in the rubric. Provide a score for each nugget and calculate the overall score as the average of all nugget scores."""
+Evaluate the response against each rubric criterion. Provide a score and reasoning for each criterion, and calculate the overall score as the average of all criterion scores."""
 
             tool_definition: ToolParam = {
                 "name": "evaluate_response",
@@ -597,7 +668,9 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             print(f"  [{ability}] Q{q_idx + 1}: {question[:100]}...")
 
             # Execute question using dialectic
-            if self.use_get_context:
+            # For instruction_following, always use get_context + Anthropic API
+            # so the LLM can follow user-specified instructions from Honcho context
+            if self.use_get_context or ability == "instruction_following":
                 context = await session.get_context(
                     summary=True,
                     peer_target="user",
@@ -606,9 +679,25 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                 context_messages = context.to_anthropic(assistant="assistant")
                 context_messages.append({"role": "user", "content": question})
 
+                # For instruction_following, add a system prompt that tells the LLM
+                # to follow any stored user preferences/instructions in the context
+                system_prompt = None
+                if ability == "instruction_following":
+                    system_prompt = """You are a helpful assistant with memory of the user's preferences and instructions from previous conversations.
+
+The context provided includes observations about the user, which may contain their stated preferences, instructions, or requirements for how you should respond.
+
+IMPORTANT: You MUST follow any instructions or preferences the user has previously stated. For example:
+- If the user said "always include X when discussing Y", you must include X when discussing Y
+- If the user said "I prefer responses that are Z", format your response accordingly
+- If the user gave any standing instructions, follow them
+
+Review the context carefully for any such instructions before responding."""
+
                 response = await self.anthropic_client.messages.create(
                     model="claude-sonnet-4-5",
-                    max_tokens=2048,
+                    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                    system=system_prompt if system_prompt else "",
                     messages=cast(list[MessageParam], context_messages),
                 )
 
@@ -631,7 +720,7 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                 nugget_scores = None
             else:
                 judgment = await self.judge_nugget_based(
-                    question, rubric, actual_response, ability
+                    question, rubric, actual_response
                 )
                 nugget_scores = judgment.get("nugget_scores")
 
@@ -652,6 +741,8 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
 
             status = "PASS" if score >= 0.5 else "FAIL"
             print(f"    [{ability}] Q{q_idx + 1} Score: {score:.2f} [{status}]")
+            if score < 0.5 and reasoning:
+                print(f"      Reasoning: {reasoning}")
 
             return question_result
 
@@ -1050,7 +1141,7 @@ async def main() -> int:
         "--context-length",
         type=str,
         default="100K",
-        choices=["100K", "500K", "1M", "10M"],
+        choices=["1K", "100K", "500K", "1M", "10M"],
         help="Context length subset to test (default: 100K)",
     )
 

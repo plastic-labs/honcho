@@ -48,7 +48,7 @@ Optional arguments:
 ```
 
 ## Other notes
-- Judge is Claude Sonnet 4
+- Judge is Claude Sonnet 4.5
 - If processing lots of data, set timeout very high or all will be lost
 """
 

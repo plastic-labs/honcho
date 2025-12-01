@@ -7,8 +7,7 @@ from sqlalchemy import select
 from src import models
 from src.dependencies import tracked_db
 from src.deriver.agent.worker import process_agent_task_batch
-
-# from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.non_agent.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
 from src.models import Message
 from src.schemas import ResolvedConfiguration
@@ -109,40 +108,40 @@ async def process_item(queue_item: models.QueueItem) -> None:
         raise ValueError(f"Invalid task type: {task_type}")
 
 
-# async def process_representation_batch(
-#     messages: list[Message],
-#     message_level_configuration: ResolvedConfiguration | None,
-#     *,
-#     observer: str | None,
-#     observed: str | None,
-# ) -> None:
-#     """
-#     Prepares and processes a batch of messages for representation tasks.
+async def process_representation_batch(
+    messages: list[Message],
+    message_level_configuration: ResolvedConfiguration | None,
+    *,
+    observer: str | None,
+    observed: str | None,
+) -> None:
+    """
+    Prepares and processes a batch of messages for representation tasks.
 
-#     Args:
-#         messages: List of messages to process
-#         message_level_configuration: Resolved configuration for this batch
-#         observer: The observer of the messages
-#         observed: The observed of the messages
-#     """
-#     if not messages or not messages[0]:
-#         logger.debug("process_representation_batch received no messages")
-#         return
+    Args:
+        messages: List of messages to process
+        message_level_configuration: Resolved configuration for this batch
+        observer: The observer of the messages
+        observed: The observed of the messages
+    """
+    if not messages or not messages[0]:
+        logger.debug("process_representation_batch received no messages")
+        return
 
-#     if observed is None or observer is None:
-#         raise ValueError("observed and observer are required for representation tasks")
+    if observed is None or observer is None:
+        raise ValueError("observed and observer are required for representation tasks")
 
-#     logger.debug(
-#         "process_representation_batch received %s messages",
-#         len(messages),
-#     )
+    logger.debug(
+        "process_representation_batch received %s messages",
+        len(messages),
+    )
 
-#     await process_representation_tasks_batch(
-#         messages,
-#         message_level_configuration,
-#         observer=observer,
-#         observed=observed,
-#     )
+    await process_representation_tasks_batch(
+        messages,
+        message_level_configuration,
+        observer=observer,
+        observed=observed,
+    )
 
 
 async def process_representation_agent_batch(
