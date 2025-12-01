@@ -29,6 +29,13 @@ Example:
         tools=[search_tool, context_tool, dialectic_tool],
     )
 
+    # Define a task for the crew
+    task = Task(
+        description="Help the user with their request",
+        expected_output="A helpful response",
+        agent=agent,
+    )
+
     # Create crew with external memory
     crew = Crew(
         agents=[agent],

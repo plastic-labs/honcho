@@ -100,6 +100,7 @@ class HonchoGetContextTool(BaseTool):
         self,
         tokens: Optional[int] = None,
         peer_target: Optional[str] = None,
+        *,
         summary: bool = True,
         peer_perspective: Optional[str] = None,
     ) -> str:
@@ -154,7 +155,7 @@ class HonchoGetContextTool(BaseTool):
             return "\n".join(result) if result else "No context available"
 
         except Exception as e:
-            logger.exception("Error retrieving context: %s", e)
+            logger.exception("Error retrieving context")
             return f"Error retrieving context: {e!s}"
 
 
@@ -231,7 +232,7 @@ class HonchoDialecticTool(BaseTool):
                 return "No relevant information found."
 
         except Exception as e:
-            logger.exception("Error querying dialectic API: %s", e)
+            logger.exception("Error querying dialectic API")
             return f"Error querying peer knowledge: {e!s}"
 
 
@@ -300,5 +301,3 @@ class HonchoSearchTool(BaseTool):
         except Exception as e:
             logger.exception("Error searching messages: %s", e)
             return f"Error searching messages: {e!s}"
-
-
