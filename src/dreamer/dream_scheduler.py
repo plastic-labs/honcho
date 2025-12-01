@@ -198,12 +198,33 @@ class DreamScheduler:
         # Import here to avoid circular dependency
         from src.deriver.enqueue import enqueue_dream
 
+        # Find the most recent session for this observer/observed pair
+        async with tracked_db("dream_session_lookup") as db:
+            stmt = (
+                select(models.Document.session_name)
+                .where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                )
+                .order_by(models.Document.created_at.desc())
+                .limit(1)
+            )
+            session_name = await db.scalar(stmt)
+
+        if not session_name:
+            logger.warning(
+                f"No documents found for {workspace_name}/{observer}/{observed}, skipping dream"
+            )
+            return
+
         await enqueue_dream(
             workspace_name,
             observer=observer,
             observed=observed,
             dream_type=dream_type,
             document_count=document_count,
+            session_name=session_name,
         )
 
     async def shutdown(self) -> None:

@@ -9,6 +9,7 @@ from src.utils.formatting import parse_datetime_iso
 
 
 class ObservationMetadata(BaseModel):
+    id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
     message_ids: list[int]
     session_name: str
@@ -47,6 +48,11 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
     def __str__(self) -> str:
         return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
 
+    def str_with_id(self) -> str:
+        """Format with ID prefix for use by agents that need to reference observations."""
+        id_prefix = f"[id:{self.id}] " if self.id else ""
+        return f"{id_prefix}[{self.created_at.replace(microsecond=0)}] {self.content}"
+
     def __hash__(self) -> int:
         """
         Make ExplicitObservation hashable for use in sets.
@@ -73,6 +79,12 @@ class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
     def __str__(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
         return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
+
+    def str_with_id(self) -> str:
+        """Format with ID prefix for use by agents that need to reference observations."""
+        id_prefix = f"[id:{self.id}] " if self.id else ""
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"{id_prefix}[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
 
     def str_no_timestamps(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
@@ -203,6 +215,35 @@ class Representation(BaseModel):
 
         return "\n".join(parts)
 
+    def str_with_ids(self) -> str:
+        """
+        Format representation with observation IDs for agents that need to reference/delete observations.
+
+        Returns:
+            Formatted string with IDs included
+            Example:
+            EXPLICIT:
+            1. [id:abc123] [2025-01-01 12:00:00] The user has a dog named Rover
+            2. [id:def456] [2025-01-01 12:01:00] The user's dog is 5 years old
+            DEDUCTIVE:
+            1. [id:ghi789] [2025-01-01 12:01:00] Rover is 5 years old
+                - The user has a dog named Rover
+                - The user's dog is 5 years old
+        """
+        parts: list[str] = []
+
+        parts.append("EXPLICIT:\n")
+        for i, observation in enumerate(self.explicit, 1):
+            parts.append(f"{i}. {observation.str_with_id()}")
+        parts.append("")
+
+        parts.append("DEDUCTIVE:\n")
+        for i, observation in enumerate(self.deductive, 1):
+            parts.append(f"{i}. {observation.str_with_id()}")
+        parts.append("")
+
+        return "\n".join(parts)
+
     def str_no_timestamps(self) -> str:
         """
         Format representation into a clean, readable string for LLM prompts... but without timestamps.
@@ -269,6 +310,7 @@ class Representation(BaseModel):
         return cls(
             explicit=[
                 ExplicitObservation(
+                    id=doc.id,
                     created_at=_safe_datetime_from_metadata(
                         doc.internal_metadata, doc.created_at
                     ),
@@ -281,6 +323,7 @@ class Representation(BaseModel):
             ],
             deductive=[
                 DeductiveObservation(
+                    id=doc.id,
                     created_at=_safe_datetime_from_metadata(
                         doc.internal_metadata, doc.created_at
                     ),

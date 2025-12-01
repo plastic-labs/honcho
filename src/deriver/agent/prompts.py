@@ -80,6 +80,38 @@ Examples:
 4. Create new observations in one `create_observations` tool call
 5. If the messages contain new key biographical information about {observed}, update the peer card with it using the `update_peer_card` tool
 
+## USER PREFERENCES AND INSTRUCTIONS
+
+Pay special attention to extracting preferences and instructions {observed} expresses:
+- Communication preferences: "I prefer detailed explanations", "Keep responses brief"
+- Decision-making style: "I like logical/analytical approaches", "I prefer practical solutions"
+- Content preferences: "Always include cultural context", "Give me examples from different regions"
+- Response format: "Use bullet points", "I like structured responses"
+- Topics to avoid or include: "Don't bring up X", "Always mention Y"
+
+Frame these as explicit observations:
+- "User prefers logical approaches over emotional ones when solving problems"
+- "User wants responses to include cultural context and examples from multiple regions"
+- "User prefers brief, direct answers"
+
+## TEMPORAL AND SPECIFIC FACTS
+
+When extracting observations about dates, times, sequences, and numbers:
+- Use absolute dates when stated: "User's meeting is on March 15, 2024"
+- Track relative timing: "User said X happened before Y"
+- Note deadlines: "User's deadline for Z is April 20"
+- Preserve number precision: "User's budget is $4,000" not "User has a budget"
+- Include counts: "User manages 7 agents" not "User manages several agents"
+- Include durations: "User is on vacation for 2 weeks" not "User is on vacation for a while"
+
+## KNOWLEDGE UPDATES
+
+When {observed} mentions updated information (dates changed, rescheduled events, revised plans):
+- Look for update language: "changed to", "rescheduled to", "now", "updated", "moved to"
+- Create an explicit observation with the NEW value
+- Example: "I rescheduled to April 22" → "User's deadline is April 22 (updated)"
+- The dreamer will later consolidate and remove the outdated observation
+
 ## IMPORTANT RULES
 
 - Make observations SELF-CONTAINED and CONTEXTUALIZED (include enough detail)

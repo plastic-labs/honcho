@@ -193,14 +193,14 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "delete_observations": {
         "name": "delete_observations",
-        "description": "Delete observations by their IDs. Use this to remove redundant, outdated, or low-quality observations during consolidation.",
+        "description": "Delete observations by their IDs. Use the exact ID shown in [id:xxx] format from search results. Example: if observation shows '[id:abc123XYZ]', pass 'abc123XYZ' to delete it.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "observation_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of observation IDs to delete",
+                    "description": "List of observation IDs to delete (use the exact ID from [id:xxx] in search results)",
                 },
             },
             "required": ["observation_ids"],
@@ -225,7 +225,7 @@ DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations_deductive"],
 ]
 
-# Tools for the dreamer agent (consolidation)
+# Tools for the dreamer agent (consolidation + peer card + deduplication)
 DREAMER_TOOLS: list[dict[str, Any]] = [
     TOOLS["get_recent_observations"],
     TOOLS["get_most_derived_observations"],
@@ -233,6 +233,9 @@ DREAMER_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations"],
     TOOLS["delete_observations"],
     TOOLS["update_peer_card"],
+    # Message access tools for context verification
+    TOOLS["search_messages"],
+    TOOLS["get_observation_context"],
 ]
 
 
@@ -682,6 +685,7 @@ def create_tool_executor(
     observed: str,
     session_name: str | None = None,
     current_messages: list[models.Message] | None = None,
+    include_observation_ids: bool = False,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -696,6 +700,7 @@ def create_tool_executor(
         observed: The peer being observed/queried about
         session_name: Session identifier (optional for global queries)
         current_messages: List of current messages being processed (optional, for deriver)
+        include_observation_ids: If True, include observation IDs in output (for dreamer agent)
 
     Returns:
         An async callable that executes tools with the captured context
@@ -812,7 +817,8 @@ def create_tool_executor(
                 total_count = mem.len()
                 if total_count == 0:
                     return f"No observations found for query '{tool_input['query']}'"
-                return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem}"
+                mem_str = mem.str_with_ids() if include_observation_ids else str(mem)
+                return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
 
             elif tool_name == "get_observation_context":
                 messages = await get_observation_context(
@@ -884,7 +890,12 @@ def create_tool_executor(
                 if total_count == 0:
                     return "No recent observations found"
                 scope = "this session" if session_only else "all sessions"
-                return f"Found {total_count} recent observations from {scope}:\n\n{representation}"
+                repr_str = (
+                    representation.str_with_ids()
+                    if include_observation_ids
+                    else str(representation)
+                )
+                return f"Found {total_count} recent observations from {scope}:\n\n{repr_str}"
 
             elif tool_name == "get_most_derived_observations":
                 representation = await get_most_derived_observations(
@@ -899,7 +910,12 @@ def create_tool_executor(
                 )
                 if total_count == 0:
                     return "No established observations found"
-                return f"Found {total_count} established (frequently reinforced) observations:\n\n{representation}"
+                repr_str = (
+                    representation.str_with_ids()
+                    if include_observation_ids
+                    else str(representation)
+                )
+                return f"Found {total_count} established (frequently reinforced) observations:\n\n{repr_str}"
 
             elif tool_name == "get_session_summary":
                 if not session_name:

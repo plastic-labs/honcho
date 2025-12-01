@@ -1151,7 +1151,9 @@ async def honcho_llm_call_inner(
                             {
                                 "id": tool_call.id,
                                 "name": tool_call.function.name,
-                                "input": json.loads(tool_call.function.arguments),
+                                "input": json.loads(tool_call.function.arguments)
+                                if tool_call.function.arguments
+                                else {},
                             }
                         )
 
@@ -1177,7 +1179,9 @@ async def honcho_llm_call_inner(
                             {
                                 "id": tool_call.id,  # pyright: ignore
                                 "name": tool_call.function.name,  # pyright: ignore
-                                "input": json.loads(tool_call.function.arguments),  # pyright: ignore
+                                "input": json.loads(tool_call.function.arguments)  # pyright: ignore
+                                if tool_call.function.arguments  # pyright: ignore
+                                else {},
                             }
                         )
 

@@ -217,6 +217,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     ENABLED: bool = True
     AGENTIC: bool = False
+    USE_LEGACY: bool = False  # Set to True to use legacy deriver with peer card updates
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -327,7 +328,7 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     # LLM settings for dream processing
     PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-haiku-4-5"
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=0, le=10_000)] = 4000
 
 
 class AppSettings(HonchoSettings):

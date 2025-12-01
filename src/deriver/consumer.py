@@ -5,9 +5,15 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from src import models
+from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.agent.worker import process_agent_task_batch
-from src.deriver.non_agent.deriver import process_representation_tasks_batch
+from src.deriver.legacy_deriver.deriver import (
+    process_representation_tasks_batch as legacy_process_representation_batch,
+)
+from src.deriver.non_agent.deriver import (
+    process_representation_tasks_batch as minimal_process_representation_batch,
+)
 from src.dreamer.dreamer import process_dream
 from src.models import Message
 from src.schemas import ResolvedConfiguration
@@ -118,6 +124,10 @@ async def process_representation_batch(
     """
     Prepares and processes a batch of messages for representation tasks.
 
+    Routes to minimal or legacy deriver based on settings.DERIVER.USE_LEGACY.
+    - Minimal deriver: Fast single LLM call, no peer card updates
+    - Legacy deriver: Full processing with peer card updates
+
     Args:
         messages: List of messages to process
         message_level_configuration: Resolved configuration for this batch
@@ -132,16 +142,25 @@ async def process_representation_batch(
         raise ValueError("observed and observer are required for representation tasks")
 
     logger.debug(
-        "process_representation_batch received %s messages",
+        "process_representation_batch received %s messages (use_legacy=%s)",
         len(messages),
+        settings.DERIVER.USE_LEGACY,
     )
 
-    await process_representation_tasks_batch(
-        messages,
-        message_level_configuration,
-        observer=observer,
-        observed=observed,
-    )
+    if settings.DERIVER.USE_LEGACY:
+        await legacy_process_representation_batch(
+            messages,
+            message_level_configuration,
+            observer=observer,
+            observed=observed,
+        )
+    else:
+        await minimal_process_representation_batch(
+            messages,
+            message_level_configuration,
+            observer=observer,
+            observed=observed,
+        )
 
 
 async def process_representation_agent_batch(

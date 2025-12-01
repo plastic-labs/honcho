@@ -668,6 +668,7 @@ class TriggerDreamRequest(BaseModel):
         None, description="Observed peer name (defaults to observer if not specified)"
     )
     dream_type: DreamType = Field(..., description="Type of dream to trigger")
+    session_id: str = Field(..., description="Session ID to scope the dream to")
 
 
 # Webhook endpoint schemas

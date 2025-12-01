@@ -56,6 +56,7 @@ class DreamPayload(BasePayload):
     dream_type: DreamType
     observer: str
     observed: str
+    session_name: str
 
 
 def create_webhook_payload(
@@ -73,12 +74,14 @@ def create_dream_payload(
     *,
     observer: str,
     observed: str,
+    session_name: str,
 ) -> dict[str, Any]:
     """Create a dream payload."""
     return DreamPayload(
         dream_type=dream_type,
         observer=observer,
         observed=observed,
+        session_name=session_name,
     ).model_dump(mode="json", exclude_none=True)
 
 

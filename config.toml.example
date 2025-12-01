@@ -63,6 +63,7 @@ EMBEDDING_PROVIDER = "openai"
 # Deriver settings
 [deriver]
 ENABLED = true
+USE_LEGACY = false
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
 STALE_SESSION_TIMEOUT_MINUTES = 5
@@ -112,7 +113,7 @@ MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["consolidate"]
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-4-5"
-MAX_OUTPUT_TOKENS = 2000
+MAX_OUTPUT_TOKENS = 4000
 # BACKUP_PROVIDER = "google"
 # BACKUP_MODEL = "gemini-2.5-flash"
 

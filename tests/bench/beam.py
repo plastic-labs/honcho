@@ -47,8 +47,7 @@ Optional arguments:
 ```
 --context-length: Context length subset to test (100K, 500K, 1M, 10M) (default: 100K)
 --conversation-ids: Comma-separated list of conversation IDs to test (default: all in context length)
---anthropic-api-key: Anthropic API key for response judging (can be set in .env as LLM_ANTHROPIC_API_KEY)
-    --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))
+--timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))
 --base-api-port: Base port for Honcho API instances (default: 8000)
 --pool-size: Number of Honcho instances in the pool (default: 1)
 --batch-size: Number of conversations to run concurrently in each batch (default: 1)
@@ -58,7 +57,8 @@ Optional arguments:
 ```
 
 ## Other notes
-- Judge is Claude Sonnet 4.5
+- Judge uses OpenRouter (configured via LLM_OPENAI_COMPATIBLE_API_KEY and LLM_OPENAI_COMPATIBLE_BASE_URL in tests/bench/.env)
+- Default judge model is anthropic/claude-sonnet-4.5 (can be overridden with BEAM_JUDGE_MODEL env var)
 - Evaluation follows the paper's nugget-based methodology with 0/0.5/1 scoring
 - Event ordering uses Kendall tau-b coefficient
 """
@@ -74,21 +74,22 @@ from pathlib import Path
 from typing import Any, cast
 
 import tiktoken
-from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam, ToolParam
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from openai import AsyncOpenAI
 from scipy.stats import kendalltau  # pyright: ignore[reportUnknownVariableType]
 from typing_extensions import TypedDict
 
 from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
 
-load_dotenv()
+# Load .env from bench directory
+bench_dir = Path(__file__).parent
+load_dotenv(bench_dir / ".env")
 
 
 class QuestionResult(TypedDict):
@@ -132,7 +133,6 @@ class BEAMRunner:
         data_dir: Path,
         base_api_port: int = 8000,
         pool_size: int = 1,
-        anthropic_api_key: str | None = None,
         timeout_seconds: int | None = None,
         cleanup_workspace: bool = True,
         use_get_context: bool = False,
@@ -144,7 +144,6 @@ class BEAMRunner:
             data_dir: Path to the BEAM data directory
             base_api_port: Base port for Honcho API instances (default: 8000)
             pool_size: Number of Honcho instances in the pool (default: 1)
-            anthropic_api_key: Anthropic API key for judging responses
             timeout_seconds: Timeout for deriver queue in seconds
             cleanup_workspace: If True, delete workspace after executing conversation
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
@@ -152,7 +151,6 @@ class BEAMRunner:
         self.data_dir: Path = data_dir
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
-        self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 600
         )
@@ -175,15 +173,26 @@ class BEAMRunner:
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("httpcore").setLevel(logging.ERROR)
 
-        if self.anthropic_api_key:
-            self.anthropic_client: AsyncAnthropic = AsyncAnthropic(
-                api_key=self.anthropic_api_key
+        # Initialize OpenRouter client for judging
+        openrouter_api_key = os.getenv("LLM_OPENAI_COMPATIBLE_API_KEY")
+        openrouter_base_url = os.getenv(
+            "LLM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1"
+        )
+
+        if not openrouter_api_key:
+            raise ValueError(
+                "LLM_OPENAI_COMPATIBLE_API_KEY is not set in tests/bench/.env"
             )
-        else:
-            api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
-            self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+        self.openrouter_client: AsyncOpenAI = AsyncOpenAI(
+            api_key=openrouter_api_key,
+            base_url=openrouter_base_url,
+        )
+
+        # Model to use for judging (OpenRouter format)
+        self.judge_model: str = os.getenv(
+            "BEAM_JUDGE_MODEL", "anthropic/claude-sonnet-4.5"
+        )
 
     def get_honcho_url_for_index(self, conversation_index: int) -> str:
         """
@@ -311,6 +320,74 @@ class BEAMRunner:
                 return False
             await asyncio.sleep(1)
 
+    async def trigger_dream_and_wait(
+        self,
+        honcho_client: AsyncHoncho,
+        workspace_id: str,
+        observer: str,
+        observed: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
+        """
+        Trigger a dream task and wait for it to complete.
+
+        Args:
+            honcho_client: Honcho client instance
+            workspace_id: Workspace identifier
+            observer: Observer peer name
+            observed: Observed peer name (defaults to observer)
+            session_id: Session ID to scope the dream to
+
+        Returns:
+            True if dream completed successfully, False on timeout
+        """
+        import httpx
+
+        observed = observed or observer
+        honcho_url = self.get_honcho_url_for_index(0)
+
+        url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
+        payload = {
+            "observer": observer,
+            "observed": observed,
+            "dream_type": "consolidate",
+            "session_id": session_id or f"{workspace_id}_session",
+        }
+
+        print(f"[{workspace_id}] Triggering dream at {url}")
+
+        # Trigger the dream via API
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    timeout=30.0,
+                )
+                if response.status_code != 204:
+                    print(
+                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
+                    )
+                    print(f"[{workspace_id}] Response body: {response.text}")
+                    return False
+        except Exception as e:
+            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
+            return False
+
+        print(
+            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
+        )
+
+        # Wait for dream queue to empty
+        print(f"[{workspace_id}] Waiting for dream to complete...")
+        await asyncio.sleep(2)  # Give time for dream to be enqueued
+        success = await self.wait_for_deriver_queue_empty(honcho_client)
+        if success:
+            print(f"[{workspace_id}] Dream queue empty")
+        else:
+            print(f"[{workspace_id}] Dream queue timeout")
+        return success
+
     async def judge_nugget_based(
         self,
         question: str,
@@ -430,60 +507,77 @@ Use the `evaluate_response` tool to submit your evaluation with scores and reaso
 
 Evaluate the response against each rubric criterion. Provide a score and reasoning for each criterion, and calculate the overall score as the average of all criterion scores."""
 
-            tool_definition: ToolParam = {
-                "name": "evaluate_response",
-                "description": "Submit the evaluation results for the response based on the rubric.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "nugget_scores": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "nugget_index": {"type": "integer"},
-                                    "score": {"type": "number"},
-                                    "reasoning": {"type": "string"},
+            tool_definition = {
+                "type": "function",
+                "function": {
+                    "name": "evaluate_response",
+                    "description": "Submit the evaluation results for the response based on the rubric.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "nugget_scores": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "nugget_index": {"type": "integer"},
+                                        "score": {"type": "number"},
+                                        "reasoning": {"type": "string"},
+                                    },
+                                    "required": ["nugget_index", "score", "reasoning"],
                                 },
-                                "required": ["nugget_index", "score", "reasoning"],
                             },
+                            "overall_score": {"type": "number"},
+                            "overall_reasoning": {"type": "string"},
                         },
-                        "overall_score": {"type": "number"},
-                        "overall_reasoning": {"type": "string"},
+                        "required": [
+                            "nugget_scores",
+                            "overall_score",
+                            "overall_reasoning",
+                        ],
                     },
-                    "required": ["nugget_scores", "overall_score", "overall_reasoning"],
                 },
             }
 
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
+            messages = cast(
+                list[dict[str, Any]],
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+
+            response = await self.openrouter_client.chat.completions.create(
+                model=self.judge_model,
                 max_tokens=2000,
                 temperature=0.0,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
-                ],
-                tools=[tool_definition],
-                tool_choice={"type": "tool", "name": "evaluate_response"},
+                messages=cast(Any, messages),  # type: ignore[arg-type]
+                tools=cast(Any, [tool_definition]),  # type: ignore[arg-type]
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "evaluate_response"},
+                },
             )
 
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
+            if not response.choices or not response.choices[0].message:
+                raise ValueError("OpenRouter returned empty response")
 
-            # Find the tool use block
-            tool_use_block = next(
-                (block for block in response.content if block.type == "tool_use"), None
-            )
+            message = response.choices[0].message
 
-            if not tool_use_block:
-                raise ValueError("No tool use block found in response")
+            if not message.tool_calls or len(message.tool_calls) == 0:
+                raise ValueError("No tool calls found in response")
 
-            judgment: object = tool_use_block.input
+            tool_call = message.tool_calls[0]
+            # Access function tool call attributes (OpenAI format)
+            if tool_call.function.name != "evaluate_response":  # pyright: ignore
+                raise ValueError(f"Unexpected tool call: {tool_call.function.name}")  # pyright: ignore
+
+            # Parse the JSON arguments
+            judgment = json.loads(tool_call.function.arguments)  # pyright: ignore
             if not isinstance(judgment, dict):
-                raise ValueError(f"Tool input is not a dictionary: {type(judgment)}")
+                raise ValueError(
+                    f"Tool arguments is not a dictionary: {type(judgment)}"
+                )
 
             return cast(dict[str, Any], judgment)
 
@@ -527,52 +621,65 @@ Response: "{actual_response}"
 
 Extract the ordered list of events or items mentioned in the response. Preserve the order as stated in the response."""
 
-            tool_definition: ToolParam = {
-                "name": "extract_ordered_events",
-                "description": "Submit the ordered list of events extracted from the response.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "extracted_events": {
-                            "type": "array",
-                            "items": {"type": "string"},
+            tool_definition = {
+                "type": "function",
+                "function": {
+                    "name": "extract_ordered_events",
+                    "description": "Submit the ordered list of events extracted from the response.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "extracted_events": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
+                        "required": ["extracted_events"],
                     },
-                    "required": ["extracted_events"],
                 },
             }
 
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
+            messages = cast(
+                list[dict[str, Any]],
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+
+            response = await self.openrouter_client.chat.completions.create(
+                model=self.judge_model,
                 max_tokens=1000,
                 temperature=0.0,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
-                ],
-                tools=[tool_definition],
-                tool_choice={"type": "tool", "name": "extract_ordered_events"},
+                messages=cast(Any, messages),  # type: ignore[arg-type]
+                tools=cast(Any, [tool_definition]),  # type: ignore[arg-type]
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "extract_ordered_events"},
+                },
             )
 
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
+            if not response.choices or not response.choices[0].message:
+                raise ValueError("OpenRouter returned empty response")
 
-            # Find the tool use block
-            tool_use_block = next(
-                (block for block in response.content if block.type == "tool_use"), None
-            )
+            message = response.choices[0].message
 
-            if not tool_use_block:
-                raise ValueError("No tool use block found in response")
+            if not message.tool_calls or len(message.tool_calls) == 0:
+                raise ValueError("No tool calls found in response")
 
-            extracted = tool_use_block.input
-            if not isinstance(extracted, dict):
-                raise ValueError(f"Tool input is not a dictionary: {type(extracted)}")
+            tool_call = message.tool_calls[0]
+            # Access function tool call attributes (OpenAI format)
+            if tool_call.function.name != "extract_ordered_events":  # pyright: ignore
+                raise ValueError(f"Unexpected tool call: {tool_call.function.name}")  # pyright: ignore
 
-            extracted_dict = cast(dict[str, Any], extracted)
+            # Parse the JSON arguments
+            extracted_dict = json.loads(tool_call.function.arguments)  # pyright: ignore
+            if not isinstance(extracted_dict, dict):
+                raise ValueError(
+                    f"Tool arguments is not a dictionary: {type(extracted_dict)}"
+                )
+
+            extracted_dict = cast(dict[str, Any], extracted_dict)
             raw_events: list[str] = extracted_dict.get("extracted_events", [])
             extracted_events = [str(e) for e in raw_events]
 
@@ -668,7 +775,7 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             print(f"  [{ability}] Q{q_idx + 1}: {question[:100]}...")
 
             # Execute question using dialectic
-            # For instruction_following, always use get_context + Anthropic API
+            # For instruction_following, always use get_context + OpenRouter API
             # so the LLM can follow user-specified instructions from Honcho context
             if self.use_get_context or ability == "instruction_following":
                 context = await session.get_context(
@@ -676,7 +783,7 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                     peer_target="user",
                     last_user_message=question,
                 )
-                context_messages = context.to_anthropic(assistant="assistant")
+                context_messages = context.to_openai(assistant="assistant")
                 context_messages.append({"role": "user", "content": question})
 
                 # For instruction_following, add a system prompt that tells the LLM
@@ -694,18 +801,22 @@ IMPORTANT: You MUST follow any instructions or preferences the user has previous
 
 Review the context carefully for any such instructions before responding."""
 
-                response = await self.anthropic_client.messages.create(
-                    model="claude-sonnet-4-5",
+                # Prepare messages: OpenAI format uses system role in messages array
+                messages: list[dict[str, Any]] = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.extend(cast(list[dict[str, Any]], context_messages))
+
+                response = await self.openrouter_client.chat.completions.create(
+                    model=self.judge_model,
                     max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-                    system=system_prompt if system_prompt else "",
-                    messages=cast(list[MessageParam], context_messages),
+                    messages=cast(Any, messages),  # type: ignore[arg-type]
                 )
 
-                if not response.content:
+                if not response.choices or not response.choices[0].message:
                     actual_response = ""
                 else:
-                    content_block = response.content[0]
-                    actual_response = getattr(content_block, "text", "")
+                    actual_response = response.choices[0].message.content or ""
             else:
                 actual_response = await user_peer.chat(question)
                 actual_response = (
@@ -743,6 +854,13 @@ Review the context carefully for any such instructions before responding."""
             print(f"    [{ability}] Q{q_idx + 1} Score: {score:.2f} [{status}]")
             if score < 0.5 and reasoning:
                 print(f"      Reasoning: {reasoning}")
+                if rubric:
+                    print("      Rubric:")
+                    for i, rubric_item in enumerate(rubric, 1):
+                        print(f"        {i}. {rubric_item}")
+                if answer:
+                    print(f"      Ideal Response: {answer}")
+                print(f"      Our Response: {actual_response}")
 
             return question_result
 
@@ -907,7 +1025,24 @@ Review the context carefully for any such instructions before responding."""
                 )
                 return result
 
-            print(f"[{workspace_id}] Deriver queue empty. Executing questions...")
+            print(
+                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation..."
+            )
+
+            # Trigger dream for memory consolidation before questions
+            dream_success = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer="user",  # Main peer being observed
+                session_id=session_id,
+            )
+
+            if not dream_success:
+                print(
+                    f"[{workspace_id}] Warning: Dream did not complete, proceeding anyway"
+                )
+            else:
+                print(f"[{workspace_id}] Dream completed. Executing questions...")
 
             # Execute questions for each memory ability
             question_tasks: list[Any] = []
@@ -1166,12 +1301,6 @@ async def main() -> int:
     )
 
     parser.add_argument(
-        "--anthropic-api-key",
-        type=str,
-        help="Anthropic API key for response judging (optional)",
-    )
-
-    parser.add_argument(
         "--timeout",
         type=int,
         default=None,
@@ -1216,7 +1345,6 @@ async def main() -> int:
         data_dir=data_dir,
         base_api_port=args.base_api_port,
         pool_size=args.pool_size,
-        anthropic_api_key=args.anthropic_api_key,
         timeout_seconds=args.timeout,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
