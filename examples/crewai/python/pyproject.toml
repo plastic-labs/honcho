@@ -35,7 +35,6 @@ classifiers = [
 dependencies = [
     "crewai>=0.134.0",
     "honcho-ai>=0.2.0",
-    "nanoid>=2.0.0",
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
 ]

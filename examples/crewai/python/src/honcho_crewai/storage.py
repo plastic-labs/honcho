@@ -6,11 +6,11 @@ system, enabling AI agents to maintain persistent conversation memory across ses
 """
 
 import logging
+import uuid
 from typing import Any, Optional
 
 from crewai.memory.storage.interface import Storage
 from honcho import Honcho
-from nanoid import generate as generate_nanoid
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class HonchoStorage(Storage):
 
         # Create or use existing session
         if not session_id:
-            session_id = generate_nanoid()
+            session_id = str(uuid.uuid4())
         self.session = self.honcho.session(session_id)
         self.session_id = session_id
 
@@ -166,11 +166,11 @@ class HonchoStorage(Storage):
         """
         Create a new session, effectively resetting memory.
 
-        This creates a new Honcho session with a fresh nanoid, allowing the agent
+        This creates a new Honcho session with a fresh UUID, allowing the agent
         to start a new conversation without the previous context.
         """
         try:
-            new_session_id = generate_nanoid()
+            new_session_id = str(uuid.uuid4())
             self.session = self.honcho.session(new_session_id)
             self.session_id = new_session_id
 

@@ -61,7 +61,7 @@ Before proceeding, it's important to understand Honcho's core concepts (`Peers` 
 ```python
 storage = HonchoStorage(
     user_id="demo-user",           # Required: Honcho `peer` ID for the user
-    session_id=None,               # Optional: Specific `session` ID (auto-generated using nanoid if None)
+    session_id=None,               # Optional: Specific `session` ID (auto-generated UUID if None)
     honcho_client=None,            # Optional: Pre-configured Honcho client instance
 )
 ```
