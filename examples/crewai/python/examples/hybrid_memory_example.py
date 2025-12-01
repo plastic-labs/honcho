@@ -34,9 +34,6 @@ def main():
     external_memory = ExternalMemory(storage=storage)
 
     # Add conversation history
-    user = honcho.peer(user_id)
-    session = honcho.session(session_id)
-
     messages = [
         ("user", "I'm planning a trip to Japan next spring"),
         ("assistant", "How exciting! Japan is beautiful in spring."),
@@ -49,8 +46,6 @@ def main():
 
     for role, message in messages:
         external_memory.save(message, metadata={"agent": role})
-        if role == "user":
-            session.add_messages([user.message(message)])
 
     # Create memory tools for targeted queries
     search_tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
