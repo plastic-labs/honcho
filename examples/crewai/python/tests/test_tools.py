@@ -10,9 +10,6 @@ from honcho_crewai import (
     HonchoDialecticTool,
     HonchoGetContextTool,
     HonchoSearchTool,
-    create_dialectic_tool,
-    create_get_context_tool,
-    create_search_tool,
 )
 
 
@@ -31,16 +28,6 @@ class TestGetContextTool:
         assert tool.description is not None
         assert tool.args_schema is not None
 
-    def test_factory_function(self):
-        """Test that factory function creates tool correctly."""
-        honcho = Honcho()
-        tool = create_get_context_tool(
-            honcho=honcho, session_id="test_session", peer_id="test_peer"
-        )
-
-        assert isinstance(tool, HonchoGetContextTool)
-        assert tool.name == "get_session_context"
-
     def test_returns_formatted_context(self):
         """Test that tool returns formatted context string."""
         honcho = Honcho()
@@ -52,7 +39,7 @@ class TestGetContextTool:
         session.add_messages([peer.message("Test message for context")])
 
         # Create and execute tool
-        tool = create_get_context_tool(
+        tool = HonchoGetContextTool(
             honcho=honcho, session_id=session_id, peer_id="context_test_user"
         )
         result = tool._run()
@@ -76,16 +63,6 @@ class TestDialecticTool:
         assert tool.name == "query_peer_knowledge"
         assert tool.description is not None
 
-    def test_factory_function(self):
-        """Test that factory function creates tool correctly."""
-        honcho = Honcho()
-        tool = create_dialectic_tool(
-            honcho=honcho, session_id="test_session", peer_id="test_peer"
-        )
-
-        assert isinstance(tool, HonchoDialecticTool)
-        assert tool.name == "query_peer_knowledge"
-
     def test_returns_response(self):
         """Test that tool returns a response string."""
         honcho = Honcho()
@@ -97,7 +74,7 @@ class TestDialecticTool:
         session.add_messages([peer.message("I love pizza and Italian food")])
 
         # Create and execute tool
-        tool = create_dialectic_tool(
+        tool = HonchoDialecticTool(
             honcho=honcho, session_id=session_id, peer_id="dialectic_test_user"
         )
         result = tool._run(query="What does the user like?")
@@ -119,14 +96,6 @@ class TestSearchTool:
         assert tool.name == "search_session_messages"
         assert tool.description is not None
 
-    def test_factory_function(self):
-        """Test that factory function creates tool correctly."""
-        honcho = Honcho()
-        tool = create_search_tool(honcho=honcho, session_id="test_session")
-
-        assert isinstance(tool, HonchoSearchTool)
-        assert tool.name == "search_session_messages"
-
     def test_returns_formatted_results(self):
         """Test that tool returns formatted search results."""
         honcho = Honcho()
@@ -138,7 +107,7 @@ class TestSearchTool:
         session.add_messages([peer.message("I love pizza and pasta")])
 
         # Create and execute tool
-        tool = create_search_tool(honcho=honcho, session_id=session_id)
+        tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
         result = tool._run(query="food", limit=5)
 
         # Verify result is a formatted string
@@ -158,7 +127,7 @@ class TestSearchTool:
         session.add_messages([peer.message("Important message about Python")])
 
         # Create and execute tool with filters
-        tool = create_search_tool(honcho=honcho, session_id=session_id)
+        tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
         result = tool._run(
             query="Python",
             limit=5,
@@ -180,7 +149,7 @@ class TestSearchTool:
         session.add_messages([peer.message("High priority task", metadata={"priority": "high"})])
 
         # Create and execute tool with metadata filter
-        tool = create_search_tool(honcho=honcho, session_id=session_id)
+        tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
         result = tool._run(
             query="task",
             limit=5,
@@ -206,13 +175,13 @@ class TestToolsWorkTogether:
         session.add_messages([peer.message("I enjoy coding in Python")])
 
         # Create all tools
-        context_tool = create_get_context_tool(
+        context_tool = HonchoGetContextTool(
             honcho=honcho, session_id=session_id, peer_id="combo_test_user"
         )
-        dialectic_tool = create_dialectic_tool(
+        dialectic_tool = HonchoDialecticTool(
             honcho=honcho, session_id=session_id, peer_id="combo_test_user"
         )
-        search_tool = create_search_tool(honcho=honcho, session_id=session_id)
+        search_tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
 
         # Execute all tools
         context_result = context_tool._run()

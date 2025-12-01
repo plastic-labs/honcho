@@ -34,19 +34,6 @@ def test_tools_import():
     assert HonchoSearchTool is not None
 
 
-def test_factory_functions_import():
-    """Test that factory functions can be imported."""
-    from honcho_crewai import (
-        create_get_context_tool,
-        create_dialectic_tool,
-        create_search_tool,
-    )
-
-    assert create_get_context_tool is not None
-    assert create_dialectic_tool is not None
-    assert create_search_tool is not None
-
-
 class TestPackageMetadata:
     """Test package metadata and structure."""
 
@@ -68,9 +55,6 @@ class TestPackageMetadata:
             "HonchoGetContextTool",
             "HonchoDialecticTool",
             "HonchoSearchTool",
-            "create_get_context_tool",
-            "create_dialectic_tool",
-            "create_search_tool",
             "HonchoDependencyError",
         ]
 

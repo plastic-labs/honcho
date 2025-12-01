@@ -14,9 +14,9 @@ from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process
 from honcho import Honcho
 from honcho_crewai import (
-    create_get_context_tool,
-    create_dialectic_tool,
-    create_search_tool,
+    HonchoGetContextTool,
+    HonchoDialecticTool,
+    HonchoSearchTool,
 )
 
 load_dotenv()
@@ -56,17 +56,17 @@ def main():
     # Step 2: Create Honcho tools
     print("2. Creating Honcho memory tools...\n")
 
-    context_tool = create_get_context_tool(
+    context_tool = HonchoGetContextTool(
         honcho=honcho, session_id=session_id, peer_id=user_id
     )
     print("   ✓ get_session_context - Retrieve conversation context")
 
-    dialectic_tool = create_dialectic_tool(
+    dialectic_tool = HonchoDialecticTool(
         honcho=honcho, session_id=session_id, peer_id=user_id
     )
     print("   ✓ query_peer_knowledge - Ask about user preferences")
 
-    search_tool = create_search_tool(honcho=honcho, session_id=session_id)
+    search_tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
     print("   ✓ search_session_messages - Semantic search messages\n")
 
     # Step 3: Create agent with tools

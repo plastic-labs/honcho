@@ -6,7 +6,7 @@ enabling AI agents to maintain persistent memory across conversations.
 
 Example:
     ```python
-    from honcho_crewai import HonchoStorage
+    from honcho_crewai import HonchoStorage, HonchoSearchTool, HonchoGetContextTool, HonchoDialecticTool
     from crewai.memory.external.external_memory import ExternalMemory
     from crewai import Agent, Task, Crew
     from honcho import Honcho
@@ -17,9 +17,9 @@ Example:
     external_memory = ExternalMemory(storage=storage)
 
     # Create tools for agents
-    search_tool = create_search_tool(honcho, session_id=storage.session_id)
-    context_tool = create_get_context_tool(honcho, session_id=storage.session_id, peer_id="user123")
-    dialectic_tool = create_dialectic_tool(honcho, session_id=storage.session_id, peer_id="user123")
+    search_tool = HonchoSearchTool(honcho=honcho, session_id=storage.session_id)
+    context_tool = HonchoGetContextTool(honcho=honcho, session_id=storage.session_id, peer_id="user123")
+    dialectic_tool = HonchoDialecticTool(honcho=honcho, session_id=storage.session_id, peer_id="user123")
 
     # Create agent with memory and tools
     agent = Agent(
@@ -44,9 +44,6 @@ from honcho_crewai.tools import (
     HonchoDialecticTool,
     HonchoGetContextTool,
     HonchoSearchTool,
-    create_dialectic_tool,
-    create_get_context_tool,
-    create_search_tool,
 )
 
 __version__ = "0.1.0"
@@ -56,7 +53,4 @@ __all__ = [
     "HonchoGetContextTool",
     "HonchoSearchTool",
     "HonchoStorage",
-    "create_dialectic_tool",
-    "create_get_context_tool",
-    "create_search_tool",
 ]
