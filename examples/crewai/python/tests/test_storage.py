@@ -111,3 +111,64 @@ class TestHonchoStorage:
 
         # Verify new session ID was created
         assert storage.session_id != original_session_id
+
+    def test_search_with_filters(self):
+        """Test that search accepts and uses filters parameter."""
+        storage = HonchoStorage(user_id="test_user_filters")
+
+        # Add messages with different metadata
+        storage.save("User question about Python", metadata={"agent": "user", "topic": "python"})
+        storage.save("Assistant answer about Python", metadata={"agent": "assistant", "topic": "python"})
+        storage.save("User question about JavaScript", metadata={"agent": "user", "topic": "javascript"})
+
+        # Search with peer_id filter - filter to only user messages
+        results = storage.search(
+            "programming",
+            limit=10,
+            filters={"peer_id": storage.user.id}
+        )
+
+        # Verify results are returned and in correct format
+        assert isinstance(results, list)
+        for result in results:
+            assert "memory" in result
+            assert "content" in result
+            assert "context" in result
+            assert "metadata" in result
+
+    def test_search_with_metadata_filters(self):
+        """Test that search works with metadata filters."""
+        storage = HonchoStorage(user_id="test_user_metadata_filters")
+
+        # Add messages with specific metadata
+        storage.save("Important message", metadata={"agent": "user", "priority": "high"})
+        storage.save("Regular message", metadata={"agent": "user", "priority": "low"})
+
+        # Search with metadata filter
+        results = storage.search(
+            "message",
+            limit=10,
+            filters={"metadata": {"priority": "high"}}
+        )
+
+        # Verify results are in correct format
+        assert isinstance(results, list)
+        for result in results:
+            assert "memory" in result
+            assert "metadata" in result
+
+    def test_search_without_filters(self):
+        """Test that search works without filters."""
+        storage = HonchoStorage(user_id="test_user_no_filters")
+
+        # Add a message
+        storage.save("Test message for search", metadata={"agent": "user"})
+
+        # Search without filters
+        results = storage.search("test", limit=5)
+
+        # Verify it works and returns correct format
+        assert isinstance(results, list)
+        for result in results:
+            assert "memory" in result
+            assert "content" in result

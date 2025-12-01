@@ -147,6 +147,50 @@ class TestSearchTool:
         # Should have either results or "No messages found"
         assert "Search Results" in result or "No messages found" in result
 
+    def test_search_with_filters(self):
+        """Test that search tool accepts and uses filters parameter."""
+        honcho = Honcho()
+        peer = honcho.peer("search_filter_test_user")
+        session_id = "search_filter_test_session"
+        session = honcho.session(session_id)
+
+        # Add test messages
+        session.add_messages([peer.message("Important message about Python")])
+
+        # Create and execute tool with filters
+        tool = create_search_tool(honcho=honcho, session_id=session_id)
+        result = tool._run(
+            query="Python",
+            limit=5,
+            filters={"peer_id": peer.id}
+        )
+
+        # Verify result is a formatted string
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_search_with_metadata_filters(self):
+        """Test that search tool works with metadata filters."""
+        honcho = Honcho()
+        peer = honcho.peer("search_metadata_filter_user")
+        session_id = "search_metadata_filter_session"
+        session = honcho.session(session_id)
+
+        # Add test messages with metadata
+        session.add_messages([peer.message("High priority task", metadata={"priority": "high"})])
+
+        # Create and execute tool with metadata filter
+        tool = create_search_tool(honcho=honcho, session_id=session_id)
+        result = tool._run(
+            query="task",
+            limit=5,
+            filters={"metadata": {"priority": "high"}}
+        )
+
+        # Verify result is a formatted string
+        assert isinstance(result, str)
+        assert len(result) > 0
+
 
 class TestToolsWorkTogether:
     """Test that all tools can work together."""

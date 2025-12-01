@@ -69,10 +69,35 @@ storage = HonchoStorage(
 The `HonchoStorage` class implements three key methods:
 
 - **`save()`** - Stores messages in Honcho's `session`, associating them with the appropriate `peer` (user or assistant)
-- **`search()`** - Performs semantic vector search using `session.search()` to find messages most relevant to the query.
+- **`search()`** - Performs semantic vector search using `session.search()` to find messages most relevant to the query. Supports optional `filters` parameter for fine-grained scoping.
 - **`reset()`** - Creates a new `session` to start fresh conversations
 
 CrewAI automatically calls these methods when agents need to store or retrieve memory, creating a seamless integration.
+
+### Search with Filters
+
+The `search()` method supports an optional `filters` parameter for fine-grained scoping of search results:
+
+```python
+# Search with peer_id filter (only messages from a specific peer)
+results = storage.search("query", filters={"peer_id": "user123"})
+
+# Search with metadata filter
+results = storage.search("query", filters={"metadata": {"priority": "high"}})
+
+# Search with time range filter
+results = storage.search("query", filters={"created_at": {"gte": "2024-01-01"}})
+
+# Complex filter with logical operators
+results = storage.search("query", filters={
+    "AND": [
+        {"peer_id": "user123"},
+        {"metadata": {"topic": "python"}}
+    ]
+})
+```
+
+For the full filter syntax including logical operators (AND, OR, NOT), comparison operators, and metadata filtering, see the [Using Filters](https://docs.honcho.dev/v2/documentation/core-concepts/features/using-filters) documentation.
 
 <Note>
 For comprehensive details about CrewAI's memory system, see the [official CrewAI Memory documentation](https://docs.crewai.com/en/concepts/memory).
@@ -138,7 +163,7 @@ Honcho provides specialized tools that give CrewAI agents explicit control over 
 
 - **`HonchoGetContextTool`** - Retrieves comprehensive conversation history with token limits. Use for tasks needing broad conversation understanding.
 - **`HonchoDialecticTool`** - Queries representations about `peer`s. Use for understanding user preferences and characteristics without full message history.
-- **`HonchoSearchTool`** - Performs semantic search for specific information. Use for targeted queries like "what did the user say about budget?"
+- **`HonchoSearchTool`** - Performs semantic search for specific information. Supports optional `filters` parameter for fine-grained scoping. Use for targeted queries like "what did the user say about budget?"
 
 <Tip>
 Agents can use multiple tools in sequence: search for topics, query dialectic for preferences, then get full context for generation.
@@ -185,6 +210,9 @@ dialectic_tool = create_dialectic_tool(
 )
 
 search_tool = create_search_tool(honcho=honcho, session_id=session_id)
+
+# Note: The search tool supports optional filters for fine-grained scoping
+# Agents can use filters like {"peer_id": "user123"} or {"metadata": {"priority": "high"}}
 
 travel_agent = Agent(
     role="Travel Planning Specialist",

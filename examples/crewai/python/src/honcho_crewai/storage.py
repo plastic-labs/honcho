@@ -53,8 +53,9 @@ class HonchoStorage(Storage):
 
         Args:
             user_id: Unique identifier for the user
-            session_id: Optional session ID. If not provided, one will be generated
-            honcho_client: Optional Honcho client instance. If not provided, creates a new one
+            session_id: Optional session ID. If not provided, a UUID will be generated
+            honcho_client: Optional Honcho client instance. If not provided, creates one
+                using the demo environment (https://demo.honcho.dev)
         """
         self.honcho = honcho_client or Honcho()
 
@@ -108,6 +109,7 @@ class HonchoStorage(Storage):
         query: str,
         limit: int = 10,
         score_threshold: float = 0.5,
+        filters: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """
         Search for relevant messages using semantic search.
@@ -119,6 +121,11 @@ class HonchoStorage(Storage):
             query: Search query used for semantic matching
             limit: Maximum number of messages to retrieve
             score_threshold: Minimum relevance score (not currently used by Honcho API)
+            filters: Optional filters to scope the search. Supports Honcho's filter syntax
+                including logical operators (AND, OR, NOT), comparison operators
+                (gt, gte, lt, lte, eq, ne), and metadata filtering.
+                Example: {"peer_id": "user123"} or {"metadata": {"type": "important"}}
+                See: https://docs.honcho.dev/v2/documentation/core-concepts/features/using-filters
 
         Returns:
             List of message dictionaries in CrewAI expected format.
@@ -132,7 +139,7 @@ class HonchoStorage(Storage):
             results = []
             # Use semantic search to find relevant messages
             # This performs vector similarity search on message content
-            messages = self.session.search(query=query, limit=limit)
+            messages = self.session.search(query=query, filters=filters, limit=limit)
 
             # Convert to CrewAI expected format
             for msg in messages:

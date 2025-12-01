@@ -51,7 +51,13 @@ class SearchInput(BaseModel):
     query: str = Field(..., min_length=1, description="Search query for semantic matching")
     limit: int = Field(default=10, ge=1, le=100, description="Number of results to return (1-100)")
     filters: Optional[dict[str, Any]] = Field(
-        default=None, description="Optional filters to apply to search results"
+        default=None,
+        description=(
+            "Optional filters to scope the search. Supports Honcho's filter syntax including "
+            "logical operators (AND, OR, NOT), comparison operators (gt, gte, lt, lte, eq, ne), "
+            "and metadata filtering. Examples: {'peer_id': 'user123'}, {'metadata': {'priority': 'high'}}, "
+            "{'created_at': {'gte': '2024-01-01'}}"
+        ),
     )
 
 
