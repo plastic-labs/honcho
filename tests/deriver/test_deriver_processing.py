@@ -170,7 +170,10 @@ class TestDeriverProcessing:
             await db_session.refresh(message)
 
         await process_representation_tasks_batch(
-            observer=alice.name, observed=alice.name, messages=messages
+            observer=alice.name,
+            message_level_configuration=None,
+            observed=alice.name,
+            messages=messages,
         )
 
         # Verify that the earliest message ID was used as the cutoff

@@ -13,7 +13,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
-from src.schemas import ResolvedSessionConfiguration
+from src.schemas import ResolvedConfiguration
 from src.utils.formatting import format_datetime_utc
 from src.utils.logging import accumulate_metric
 from src.utils.representation import (
@@ -45,10 +45,10 @@ class RepresentationManager:
     async def save_representation(
         self,
         representation: Representation,
-        message_id_range: tuple[int, int],
+        message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
-        session_level_configuration: ResolvedSessionConfiguration,
+        message_level_configuration: ResolvedConfiguration,
     ) -> int:
         """
         Save Representation objects to the collection as a set of documents.
@@ -87,7 +87,7 @@ class RepresentationManager:
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id_range[1]}_{self.observer}",
+            f"deriver_{message_ids[-1]}_{self.observer}",
             "embed_new_observations",
             batch_embed_duration,
             "ms",
@@ -100,15 +100,15 @@ class RepresentationManager:
                 db,
                 all_observations,
                 embeddings,
-                message_id_range,
+                message_ids,
                 session_name,
                 message_created_at,
-                session_level_configuration,
+                message_level_configuration,
             )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id_range[1]}_{self.observer}",
+            f"deriver_{message_ids[-1]}_{self.observer}",
             "save_new_observations",
             create_document_duration,
             "ms",
@@ -121,10 +121,10 @@ class RepresentationManager:
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
         embeddings: list[list[float]],
-        message_id_range: tuple[int, int],
+        message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
-        session_level_configuration: ResolvedSessionConfiguration,
+        message_level_configuration: ResolvedConfiguration,
     ) -> int:
         # get_or_create_collection already handles IntegrityError with rollback and a retry
         collection = await crud.get_or_create_collection(
@@ -148,7 +148,7 @@ class RepresentationManager:
                 obs_premises = None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
-                message_ids=[message_id_range],
+                message_ids=message_ids,
                 premises=obs_premises,
                 message_created_at=format_datetime_utc(message_created_at),
             )
@@ -173,7 +173,7 @@ class RepresentationManager:
             deduplicate=settings.DERIVER.DEDUPLICATE,
         )
 
-        if session_level_configuration.dreams_enabled:
+        if message_level_configuration.dream.enabled:
             try:
                 await check_and_schedule_dream(db, collection)
             except Exception as e:

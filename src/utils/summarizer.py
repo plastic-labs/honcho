@@ -16,7 +16,6 @@ from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
-from src.utils.config_helpers import get_configuration
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric, conditional_observe
 from src.utils.tokens import estimate_tokens, track_input_tokens
@@ -238,6 +237,7 @@ async def summarize_if_needed(
     message_id: int,
     message_seq_in_session: int,
     message_public_id: str,
+    configuration: schemas.ResolvedConfiguration,
 ) -> None:
     """
     Create short/long summaries if thresholds met.
@@ -251,23 +251,16 @@ async def summarize_if_needed(
         message_id: The message ID
         message_seq_in_session: The sequence number of the message in the session
         message_public_id: The public ID of the message
+        configuration: The resolved configuration for the message
     """
-    # Resolve summary configuration with hierarchical fallback
-    async with tracked_db("resolve_summary_config") as db:
-        session = await crud.get_session(db, session_name, workspace_name)
-        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
-        session_level_configuration = get_configuration(session, workspace)
-
-    if session_level_configuration.summaries_enabled is False:
+    if configuration.summary.enabled is False:
         return
 
     should_create_long: bool = (
-        message_seq_in_session % session_level_configuration.messages_per_long_summary
-        == 0
+        message_seq_in_session % configuration.summary.messages_per_long_summary == 0
     )
     should_create_short: bool = (
-        message_seq_in_session % session_level_configuration.messages_per_short_summary
-        == 0
+        message_seq_in_session % configuration.summary.messages_per_short_summary == 0
     )
 
     if should_create_long is False and should_create_short is False:

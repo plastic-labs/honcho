@@ -1,0 +1,91 @@
+{
+  "description": "Test that disabling deriver prevents any derived data generation",
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_1",
+      "config": {
+        "deriver": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_1",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "Message 1"
+        },
+        {
+          "peer_id": "alice",
+          "content": "Message 2"
+        },
+        {
+          "peer_id": "alice",
+          "content": "Message 3"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_peer_card",
+      "observer_peer_id": "alice",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "peer_card": null
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "session_id": "session_1",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_context",
+      "session_id": "session_1",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "Message 1"
+        },
+        {
+          "assertion_type": "contains",
+          "text": "Message 2"
+        },
+        {
+          "assertion_type": "contains",
+          "text": "Message 3"
+        },
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "summary": null,
+            "peer_representation": null,
+            "peer_card": null
+          }
+        }
+      ]
+    }
+  ]
+}

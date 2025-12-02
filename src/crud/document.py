@@ -264,28 +264,25 @@ async def delete_document(
         )
 
 
-async def delete_document_by_session(
+async def delete_document_by_id(
     db: AsyncSession,
     workspace_name: str,
     document_id: str,
-    session_name: str,
 ) -> None:
     """
-    Delete a single document by ID, workspace, and session.
+    Delete a single document by ID and workspace.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         document_id: ID of the document to delete
-        session_name: Name of the session (for authorization)
 
     Raises:
-        ResourceNotFoundException: If document not found or doesn't belong to the session
+        ResourceNotFoundException: If document not found or doesn't belong to the workspace
     """
     stmt = delete(models.Document).where(
         models.Document.id == document_id,
         models.Document.workspace_name == workspace_name,
-        models.Document.session_name == session_name,
     )
 
     result = await db.execute(stmt)
@@ -293,7 +290,7 @@ async def delete_document_by_session(
 
     if result.rowcount == 0:
         raise ResourceNotFoundException(
-            f"Document {document_id} not found or does not belong to session {session_name}"
+            f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
 
 

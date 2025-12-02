@@ -218,7 +218,7 @@ class TestDocumentCRUD:
                 embedding=[0.1] * 1536,
                 level="explicit",
                 metadata=schemas.DocumentMetadata(
-                    message_ids=[(1, 5)],
+                    message_ids=[1, 2, 3, 4, 5],
                     message_created_at="2024-01-01T00:00:00Z",
                 ),
             ),
@@ -228,7 +228,7 @@ class TestDocumentCRUD:
                 embedding=[0.2] * 1536,
                 level="deductive",
                 metadata=schemas.DocumentMetadata(
-                    message_ids=[(6, 10)],
+                    message_ids=[6, 7, 8, 9, 10],
                     message_created_at="2024-01-01T00:01:00Z",
                     premises=["Premise 1", "Premise 2"],
                 ),

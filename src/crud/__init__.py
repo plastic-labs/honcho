@@ -3,7 +3,7 @@ from .deriver import get_deriver_status
 from .document import (
     create_documents,
     delete_document,
-    delete_document_by_session,
+    delete_document_by_id,
     get_all_documents,
     get_documents_with_filters,
     query_documents,
@@ -66,7 +66,7 @@ __all__ = [
     "get_documents_with_filters",
     "query_documents",
     "delete_document",
-    "delete_document_by_session",
+    "delete_document_by_id",
     # Message
     "create_messages",
     "get_messages",

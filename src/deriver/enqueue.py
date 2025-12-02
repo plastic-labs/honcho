@@ -1,17 +1,19 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import insert
+from sqlalchemy import insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import get_affected_dream_keys, get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
+from src.schemas import MessageConfiguration, ResolvedConfiguration
 from src.utils.config_helpers import get_configuration
-from src.utils.queue_payload import create_payload
+from src.utils.queue_payload import create_dream_payload, create_payload
 from src.utils.work_unit import construct_work_unit_key
 
 logger = logging.getLogger(__name__)
@@ -97,7 +99,7 @@ async def handle_session(
     workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
 
     # Resolve summary configuration with hierarchical fallback
-    session_level_configuration = get_configuration(session, workspace)
+    session_level_configuration = get_configuration(None, session, workspace)
 
     peers_with_configuration = await get_peers_with_configuration(
         db_session, workspace_name, session_name
@@ -106,16 +108,20 @@ async def handle_session(
     queue_records: list[dict[str, Any]] = []
 
     for message in payload:
+        message_config: MessageConfiguration | None = message.get("configuration")
+        if message_config is not None:
+            message_level_configuration = get_configuration(
+                message_config, session, workspace
+            )
+        else:
+            message_level_configuration = session_level_configuration
         queue_records.extend(
             await generate_queue_records(
                 db_session,
                 message,
                 peers_with_configuration,
                 session.id,
-                deriver_enabled=session_level_configuration.deriver_enabled,
-                summaries_enabled=session_level_configuration.summaries_enabled,
-                messages_per_short_summary=session_level_configuration.messages_per_short_summary,
-                messages_per_long_summary=session_level_configuration.messages_per_long_summary,
+                message_level_configuration,
             )
         )
     return queue_records
@@ -152,6 +158,7 @@ async def get_peers_with_configuration(
 
 def create_representation_record(
     message: dict[str, Any],
+    conf: ResolvedConfiguration,
     session_id: str | None = None,
     *,
     observer: str,
@@ -162,9 +169,10 @@ def create_representation_record(
 
     Args:
         message: The message payload
+        conf: Resolved configuration for this particular message
+        session_id: Optional session ID
         observed: Name of the sender
         observer: Name of the target
-        session_id: Optional session ID
 
     Returns:
         Queue record dictionary with workspace_name and message_id as separate fields
@@ -177,8 +185,9 @@ def create_representation_record(
     if not isinstance(message_id, int):
         raise TypeError("message_id is required and must be an integer")
 
-    processed_payload = create_payload(
+    processed_payload: dict[str, Any] = create_payload(
         message=message,
+        configuration=conf,
         task_type="representation",
         observer=observer,
         observed=observed,
@@ -195,6 +204,7 @@ def create_representation_record(
 
 def create_summary_record(
     message: dict[str, Any],
+    configuration: ResolvedConfiguration,
     session_id: str,
     message_seq_in_session: int,
 ) -> dict[str, Any]:
@@ -219,6 +229,7 @@ def create_summary_record(
 
     processed_payload = create_payload(
         message=message,
+        configuration=configuration,
         task_type="summary",
         message_seq_in_session=message_seq_in_session,
     )
@@ -263,7 +274,11 @@ def get_effective_observe_me(
         return sender_session_peer_config.observe_me
 
     # Otherwise use peer config
-    return sender_peer_config.observe_me
+    return (
+        sender_peer_config.observe_me
+        if sender_peer_config.observe_me is not None
+        else True
+    )
 
 
 async def generate_queue_records(
@@ -271,11 +286,7 @@ async def generate_queue_records(
     message: dict[str, Any],
     peers_with_configuration: dict[str, list[dict[str, Any]]],
     session_id: str,
-    *,
-    deriver_enabled: bool,
-    summaries_enabled: bool,
-    messages_per_short_summary: int,
-    messages_per_long_summary: int,
+    conf: ResolvedConfiguration,
 ) -> list[dict[str, Any]]:
     """
     Process a single message and generate queue records based on configurations.
@@ -283,11 +294,9 @@ async def generate_queue_records(
     Args:
         db_session: The database session
         message: The message payload
-        deriver_enabled: Whether deriver is enabled for the session
         peers_with_configuration: Dictionary of peer configurations
         session_id: Session ID
-        messages_per_short_summary: Number of messages per short summary
-        messages_per_long_summary: Number of messages per long summary
+        configuration: Resolved configuration for this particular message
 
     Returns:
         List of queue records for this message
@@ -307,19 +316,20 @@ async def generate_queue_records(
 
     records: list[dict[str, Any]] = []
 
-    if summaries_enabled and (
-        message_seq_in_session % messages_per_short_summary == 0
-        or message_seq_in_session % messages_per_long_summary == 0
+    if conf.summary.enabled and (
+        message_seq_in_session % conf.summary.messages_per_short_summary == 0
+        or message_seq_in_session % conf.summary.messages_per_long_summary == 0
     ):
         records.append(
             create_summary_record(
                 message,
+                configuration=conf,
                 session_id=session_id,
                 message_seq_in_session=message_seq_in_session,
             )
         )
 
-    if deriver_enabled is False:
+    if not conf.deriver.enabled:
         return records
 
     if get_effective_observe_me(observed, peers_with_configuration):
@@ -327,24 +337,23 @@ async def generate_queue_records(
         records.append(
             create_representation_record(
                 message,
+                conf,
                 observed=observed,
                 observer=observed,
                 session_id=session_id,
             )
         )
 
-        for peer_name, configuration in peers_with_configuration.items():
+        for peer_name, peer_conf in peers_with_configuration.items():
             if peer_name == observed:
                 continue
 
             # If the observer peer has left the session, we don't need to enqueue a representation task for them.
-            if not configuration[2]:
+            if not peer_conf[2]:
                 continue
 
             session_peer_config = (
-                schemas.SessionPeerConfig(**configuration[1])
-                if configuration[1]
-                else None
+                schemas.SessionPeerConfig(**peer_conf[1]) if peer_conf[1] else None
             )
 
             if session_peer_config is None or not session_peer_config.observe_others:
@@ -354,6 +363,7 @@ async def generate_queue_records(
                 # peer representation task
                 create_representation_record(
                     message,
+                    conf,
                     observed=observed,
                     observer=peer_name,
                     session_id=session_id,
@@ -373,3 +383,109 @@ async def generate_queue_records(
     )
 
     return records
+
+
+def create_dream_record(
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    dream_type: schemas.DreamType,
+) -> dict[str, Any]:
+    """
+    Create a queue record for a dream task.
+
+    Args:
+        workspace_name: Name of the workspace
+        observer: Name of the observer peer
+        observed: Name of the observed peer
+        dream_type: Type of dream to execute
+
+    Returns:
+        Queue record dictionary with workspace_name and other fields
+    """
+    dream_payload = create_dream_payload(
+        dream_type,
+        observer=observer,
+        observed=observed,
+    )
+
+    return {
+        "work_unit_key": construct_work_unit_key(workspace_name, dream_payload),
+        "payload": dream_payload,
+        "session_id": None,
+        "task_type": "dream",
+        "workspace_name": workspace_name,
+        "message_id": None,
+    }
+
+
+async def enqueue_dream(
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    dream_type: schemas.DreamType,
+    document_count: int,
+) -> None:
+    """
+    Enqueue a dream task for immediate processing by the deriver.
+
+    Args:
+        workspace_name: Name of the workspace
+        observer: Name of the observer peer
+        observed: Name of the observed peer
+        dream_type: Type of dream to execute
+        document_count: Current document count for metadata update
+    """
+    async with tracked_db("dream_enqueue") as db_session:
+        try:
+            # Create the dream queue record
+            dream_record = create_dream_record(
+                workspace_name,
+                observer=observer,
+                observed=observed,
+                dream_type=dream_type,
+            )
+
+            # Insert into queue
+            stmt = insert(QueueItem).returning(QueueItem)
+            await db_session.execute(stmt, [dream_record])
+
+            # Update collection metadata
+            now_iso = datetime.now(timezone.utc).isoformat()
+            update_stmt = (
+                update(models.Collection)
+                .where(
+                    models.Collection.workspace_name == workspace_name,
+                    models.Collection.observer == observer,
+                    models.Collection.observed == observed,
+                )
+                .values(
+                    internal_metadata=models.Collection.internal_metadata.op("||")(
+                        {
+                            "dream": {
+                                "last_dream_document_count": document_count,
+                                "last_dream_at": now_iso,
+                            }
+                        }
+                    )
+                )
+            )
+            await db_session.execute(update_stmt)
+            await db_session.commit()
+
+            logger.info(
+                "Enqueued dream task for %s/%s/%s (type: %s)",
+                workspace_name,
+                observer,
+                observed,
+                dream_type.value,
+            )
+
+        except Exception as e:
+            logger.exception("Failed to enqueue dream task!")
+            if settings.SENTRY.ENABLED:
+                import sentry_sdk
+
+                sentry_sdk.capture_exception(e)
+            raise

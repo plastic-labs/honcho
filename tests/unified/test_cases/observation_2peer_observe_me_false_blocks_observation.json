@@ -1,0 +1,81 @@
+{
+  "description": "Test that observe_me=false prevents local representation creation even when other peer has observe_others=true",
+  "workspace_config": {
+    "deriver": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_no_observe_bob",
+      "peer_configs": {
+        "alice": {
+          "observe_me": false,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_no_observe_bob",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "What do you like to do for fun?"
+        },
+        {
+          "peer_id": "bob",
+          "content": "I enjoy photography and traveling."
+        },
+        {
+          "peer_id": "alice",
+          "content": "Sounds exciting!"
+        },
+        {
+          "peer_id": "bob",
+          "content": "I recently visited Iceland to photograph the northern lights."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_no_observe_bob",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "session_id": "session_no_observe_bob",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

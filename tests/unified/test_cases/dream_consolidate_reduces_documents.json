@@ -1,0 +1,144 @@
+{
+  "description": "Test that manually triggering consolidate dream reduces document count by merging repetitive facts",
+  "workspace_config": {
+    "deriver": {
+      "enabled": true
+    },
+    "dream": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_dream_test",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_dream_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "My favorite color is blue."
+        },
+        {
+          "peer_id": "user",
+          "content": "I really love the color blue."
+        },
+        {
+          "peer_id": "user",
+          "content": "Blue is my preferred color."
+        },
+        {
+          "peer_id": "user",
+          "content": "I have a dog named Max."
+        },
+        {
+          "peer_id": "user",
+          "content": "My dog's name is Max."
+        },
+        {
+          "peer_id": "user",
+          "content": "I own a dog called Max."
+        },
+        {
+          "peer_id": "user",
+          "content": "I live in San Francisco."
+        },
+        {
+          "peer_id": "user",
+          "content": "My home is in San Francisco."
+        },
+        {
+          "peer_id": "user",
+          "content": "San Francisco is where I live."
+        },
+        {
+          "peer_id": "user",
+          "content": "I work as a software engineer."
+        },
+        {
+          "peer_id": "user",
+          "content": "My job is software engineering."
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm employed as a software engineer."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "user",
+      "session_id": "session_dream_test",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check that the representation contains facts about blue being favorite color, having a dog named Max, living in San Francisco, and working as a software engineer. There should be multiple explicit observations since we added repetitive messages. Confirm there are at least 8 explicit observations.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "trigger_dream",
+      "observer": "user",
+      "dream_type": "consolidate"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "user",
+      "session_id": "session_dream_test",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check that the representation still contains the core facts (blue favorite color, dog named Max, lives in San Francisco, works as software engineer) BUT now with FEWER explicit observations than before the consolidation. The consolidation should have merged repetitive facts. Confirm there are significantly fewer explicit observations.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "user",
+      "session_id": "session_dream_test",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "blue",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "contains",
+          "text": "max",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "contains",
+          "text": "san francisco",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "contains",
+          "text": "software engineer",
+          "case_sensitive": false
+        }
+      ]
+    }
+  ]
+}

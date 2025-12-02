@@ -1,5 +1,6 @@
 import datetime
 import ipaddress
+from enum import Enum
 from typing import Annotated, Any, Self
 from urllib.parse import urlparse
 
@@ -20,45 +21,40 @@ from src.utils.types import DocumentLevel
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
-class ResolvedSessionConfiguration(BaseModel):
-    """
-    Like a SessionConfiguration, but with all fields resolved.
-    """
+class DreamType(str, Enum):
+    """Types of dreams that can be triggered."""
 
-    deriver_enabled: bool
-    peer_cards_enabled: bool
-    summaries_enabled: bool
-    dreams_enabled: bool
-    messages_per_short_summary: int
-    messages_per_long_summary: int
+    CONSOLIDATE = "consolidate"
+    AGENT = "agent"
 
 
-class SessionConfiguration(BaseModel):
-    """
-    The set of options that can be in a session DB-level configuration dictionary.
-
-    All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
-    """
-
-    model_config = ConfigDict(extra="allow")  # pyright: ignore
-
-    deriver_enabled: bool | None = Field(
+class DeriverConfiguration(BaseModel):
+    enabled: bool | None = Field(
         default=None,
         description="Whether to enable deriver functionality.",
     )
-    peer_cards_enabled: bool | None = Field(
+    custom_instructions: str | None = Field(
         default=None,
-        description="Whether to enable peer card functionality. If deriver is disabled, peer cards will also be disabled and this setting will be ignored.",
+        description="TODO: currently unused. Custom instructions to use for the deriver on this workspace/session/message.",
     )
-    summaries_enabled: bool | None = Field(
+
+
+class PeerCardConfiguration(BaseModel):
+    use: bool | None = Field(
+        default=None,
+        description="Whether to use peer card related to this peer during deriver process.",
+    )
+    create: bool | None = Field(
+        default=None,
+        description="Whether to generate peer card based on content.",
+    )
+
+
+class SummaryConfiguration(BaseModel):
+    enabled: bool | None = Field(
         default=None,
         description="Whether to enable summary functionality.",
     )
-    dreams_enabled: bool | None = Field(
-        default=None,
-        description="Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored.",
-    )
-
     messages_per_short_summary: int | None = Field(
         default=None,
         ge=10,
@@ -84,14 +80,110 @@ class SessionConfiguration(BaseModel):
         return self
 
 
-class WorkspaceConfiguration(SessionConfiguration):
+class DreamConfiguration(BaseModel):
+    enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored.",
+    )
+
+
+class WorkspaceConfiguration(BaseModel):
     """
     The set of options that can be in a workspace DB-level configuration dictionary.
 
     All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
     """
 
+    model_config = ConfigDict(extra="allow")  # pyright: ignore
+
+    deriver: DeriverConfiguration | None = Field(
+        default=None,
+        description="Configuration for deriver functionality.",
+    )
+    peer_card: PeerCardConfiguration | None = Field(
+        default=None,
+        description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
+    )
+    summary: SummaryConfiguration | None = Field(
+        default=None,
+        description="Configuration for summary functionality.",
+    )
+    dream: DreamConfiguration | None = Field(
+        default=None,
+        description="Configuration for dream functionality. If deriver is disabled, dreams will also be disabled and these settings will be ignored.",
+    )
+
+
+class SessionConfiguration(WorkspaceConfiguration):
+    """
+    The set of options that can be in a session DB-level configuration dictionary.
+
+    All fields are optional. Session-level configuration overrides workspace-level configuration, which overrides global configuration.
+    """
+
     pass
+
+
+class MessageConfiguration(BaseModel):
+    """
+    The set of options that can be in a message DB-level configuration dictionary.
+
+    All fields are optional. Message-level configuration overrides all other configurations.
+    """
+
+    deriver: DeriverConfiguration | None = Field(
+        default=None,
+        description="Configuration for deriver functionality.",
+    )
+    peer_card: PeerCardConfiguration | None = Field(
+        default=None,
+        description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
+    )
+
+
+class ResolvedDeriverConfiguration(BaseModel):
+    enabled: bool
+
+
+class ResolvedPeerCardConfiguration(BaseModel):
+    use: bool
+    create: bool
+
+
+class ResolvedSummaryConfiguration(BaseModel):
+    enabled: bool
+    messages_per_short_summary: int
+    messages_per_long_summary: int
+
+
+class ResolvedDreamConfiguration(BaseModel):
+    enabled: bool
+
+
+class ResolvedConfiguration(BaseModel):
+    """
+    The final resolved configuration for a given message.
+    Hierarchy: message > session > workspace > global configuration
+    """
+
+    deriver: ResolvedDeriverConfiguration
+    peer_card: ResolvedPeerCardConfiguration
+    summary: ResolvedSummaryConfiguration
+    dream: ResolvedDreamConfiguration
+
+
+class PeerConfig(BaseModel):
+    observe_me: bool | None = Field(
+        default=None,
+        description="Whether honcho should form a global theory-of-mind representation of this peer",
+    )
+
+
+class SessionPeerConfig(PeerConfig):
+    observe_others: bool | None = Field(
+        default=None,
+        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
+    )
 
 
 class WorkspaceBase(BaseModel):
@@ -213,11 +305,8 @@ class PeerCardResponse(BaseModel):
     )
 
 
-class PeerConfig(BaseModel):
-    observe_me: bool = Field(
-        default=True,
-        description="Whether honcho should form a global theory-of-mind representation of this peer",
-    )
+class PeerCardSet(BaseModel):
+    peer_card: list[str] = Field(..., description="The peer card content to set")
 
 
 class MessageBase(BaseModel):
@@ -228,6 +317,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=settings.MAX_MESSAGE_SIZE)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+    configuration: MessageConfiguration | None = None
     created_at: datetime.datetime | None = None
 
     _encoded_message: list[int] = PrivateAttr(default=[])
@@ -286,17 +376,6 @@ class MessageUploadCreate(BaseModel):
 
 class SessionBase(BaseModel):
     pass
-
-
-class SessionPeerConfig(BaseModel):
-    observe_others: bool = Field(
-        default=False,
-        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
-    )
-    observe_me: bool | None = Field(
-        default=None,
-        description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
-    )
 
 
 class SessionCreate(SessionBase):
@@ -391,7 +470,7 @@ class DocumentBase(BaseModel):
 
 
 class DocumentMetadata(BaseModel):
-    message_ids: list[tuple[int, int]] = Field(
+    message_ids: list[int] = Field(
         description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
     )
     message_created_at: str = Field(
@@ -545,14 +624,6 @@ class QueueStatusRow(BaseModel):
     session_pending: int
 
 
-class PeerConfigResult(BaseModel):
-    """Result from querying peer configuration data."""
-
-    peer_name: str
-    peer_configuration: dict[str, Any]
-    session_peer_configuration: dict[str, Any]
-
-
 class SessionPeerData(BaseModel):
     """Data for managing session peer relationships."""
 
@@ -589,6 +660,15 @@ class DeriverStatus(BaseModel):
     sessions: dict[str, SessionDeriverStatus] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )
+
+
+# Dream trigger schema
+class TriggerDreamRequest(BaseModel):
+    observer: str = Field(..., description="Observer peer name")
+    observed: str | None = Field(
+        None, description="Observed peer name (defaults to observer if not specified)"
+    )
+    dream_type: DreamType = Field(..., description="Type of dream to trigger")
 
 
 # Webhook endpoint schemas
