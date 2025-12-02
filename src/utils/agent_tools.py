@@ -94,13 +94,18 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_memory": {
         "name": "search_memory",
-        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
+        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details. For enumeration questions, call this MULTIPLE times with different query terms.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
                     "description": "Search query text",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Number of results to return (default: 5, max: 20). Use higher values for enumeration questions.",
+                    "default": 5,
                 },
             },
             "required": ["query"],
@@ -807,12 +812,14 @@ def create_tool_executor(
                 return f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
 
             elif tool_name == "search_memory":
+                top_k = min(tool_input.get("top_k", 5), 20)  # Cap at 20
                 mem: Representation = await search_memory(
                     db,
                     workspace_name=workspace_name,
                     observer=observer,
                     observed=observed,
                     query=tool_input["query"],
+                    limit=top_k,
                 )
                 total_count = mem.len()
                 if total_count == 0:

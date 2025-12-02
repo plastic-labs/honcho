@@ -268,7 +268,7 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
 
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 4096
 
 
 class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):

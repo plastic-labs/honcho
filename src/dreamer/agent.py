@@ -263,7 +263,7 @@ class DreamerAgent:
             tools=DREAMER_TOOLS,
             tool_choice=None,
             tool_executor=tool_executor,
-            max_tool_iterations=10,  # TODO config
+            max_tool_iterations=15,  # TODO config
             messages=self.messages,
             track_name="Dreamer Agent",
         )

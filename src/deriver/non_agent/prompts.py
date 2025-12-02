@@ -15,8 +15,7 @@ from src.utils.tokens import estimate_tokens
 def minimal_deriver_prompt(
     peer_id: str,
     message_created_at: datetime.datetime,
-    history: str,
-    new_turns: list[str],
+    messages: str,
 ) -> str:
     """
     Generate minimal prompt for fast observation extraction.
@@ -24,14 +23,11 @@ def minimal_deriver_prompt(
     Args:
         peer_id: The ID of the user being analyzed.
         message_created_at: Timestamp of the message.
-        history: Recent conversation history.
-        new_turns: New conversation turns to analyze.
+        messages: All messages in the range (interleaving messages and new turns combined).
 
     Returns:
         Formatted prompt string for observation extraction.
     """
-    new_turns_section = "\n".join(new_turns)
-
     return c(
         f"""
 You analyze messages from {peer_id} to extract observations through explicit and deductive reasoning.
@@ -52,7 +48,7 @@ OBSERVATION TYPES:
 RULES:
 - Start each observation with {peer_id}'s name (e.g. "Maria is 25 years old")
 - NEVER use generic phrases like "The user..."
-- Extract ALL observations from new turns
+- Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
@@ -60,15 +56,10 @@ EXAMPLES:
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
 - DEDUCTIVE: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
 
-Recent conversation for context:
-<history>
-{history}
-</history>
-
-New turns to analyze:
-<new_turns>
-{new_turns_section}
-</new_turns>
+Messages to analyze:
+<messages>
+{messages}
+</messages>
 """
     )
 
@@ -80,8 +71,7 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
         prompt = minimal_deriver_prompt(
             peer_id="",
             message_created_at=datetime.datetime.now(datetime.timezone.utc),
-            history="",
-            new_turns=[],
+            messages="",
         )
         return estimate_tokens(prompt)
     except Exception:

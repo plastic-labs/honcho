@@ -137,9 +137,10 @@ class DialecticAgent:
             tools=DIALECTIC_TOOLS,
             tool_choice=None,
             tool_executor=tool_executor,
-            max_tool_iterations=10,
+            max_tool_iterations=20,
             messages=self.messages,
             track_name="Dialectic Agent",
+            thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS,
         )
 
         # Log tool calls made with inputs and outputs
@@ -156,6 +157,10 @@ class DialecticAgent:
         #         f"INPUT: {tool_input}\nOUTPUT: {tool_result}",
         #         "blob",
         #     )
+
+        # Log thinking trace if present
+        if response.thinking_content:
+            accumulate_metric(task_name, "thinking", response.thinking_content, "blob")
 
         # Log output
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "tokens")

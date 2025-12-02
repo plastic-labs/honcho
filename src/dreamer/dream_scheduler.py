@@ -156,7 +156,7 @@ class DreamScheduler:
                 )
 
         except asyncio.CancelledError:
-            logger.info(f"Dream task cancelled for {work_unit_key}")
+            logger.debug(f"Dream task cancelled for {work_unit_key}")
         except Exception as e:
             logger.error(f"Error in delayed dream for {work_unit_key}: {str(e)}")
             if settings.SENTRY.ENABLED:
@@ -276,7 +276,7 @@ async def check_and_schedule_dream(
     # Calculate documents added since last dream
     documents_since_last_dream = current_document_count - last_dream_document_count
 
-    logger.info(
+    logger.debug(
         "Dream check",
         extra={
             "workspace_name": collection.workspace_name,
@@ -332,7 +332,7 @@ async def check_and_schedule_dream(
                     observer=collection.observer,
                     observed=collection.observed,
                 )
-                logger.info(
+                logger.debug(
                     "Scheduled dream",
                     extra={
                         "workspace_name": collection.workspace_name,

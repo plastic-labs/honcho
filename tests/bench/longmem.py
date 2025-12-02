@@ -8,7 +8,8 @@ This script:
 3. Creates sessions with haystack conversations
 4. Adds the answer session if present
 5. Waits for the deriver queue to be empty
-6. Executes the question and judges the response using an LLM
+6. Triggers a dream for memory consolidation
+7. Executes the question and judges the response using an LLM
 
 ## To use
 
@@ -45,6 +46,7 @@ Optional arguments:
 --merge-sessions: Merge all sessions within a question into a single session (default: False)
 --cleanup-workspace: Delete workspace after executing each question (default: False)
 --use-get-context: Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)
+--question-id: Run only the question with this question_id (skips all others)
 ```
 
 ## Other notes
@@ -62,6 +64,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import tiktoken
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
@@ -362,6 +365,72 @@ class LongMemEvalRunner:
                 return False
             await asyncio.sleep(1)
 
+    async def trigger_dream_and_wait(
+        self,
+        honcho_client: AsyncHoncho,
+        workspace_id: str,
+        observer: str,
+        observed: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
+        """
+        Trigger a dream task and wait for it to complete.
+
+        Args:
+            honcho_client: Honcho client instance
+            workspace_id: Workspace identifier
+            observer: Observer peer name
+            observed: Observed peer name (defaults to observer)
+            session_id: Session ID to scope the dream to
+
+        Returns:
+            True if dream completed successfully, False on timeout
+        """
+        observed = observed or observer
+        honcho_url = self.get_honcho_url_for_index(0)
+
+        url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
+        payload = {
+            "observer": observer,
+            "observed": observed,
+            "dream_type": "consolidate",
+            "session_id": session_id or f"{workspace_id}_session",
+        }
+
+        print(f"[{workspace_id}] Triggering dream at {url}")
+
+        # Trigger the dream via API
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    timeout=30.0,
+                )
+                if response.status_code != 204:
+                    print(
+                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
+                    )
+                    print(f"[{workspace_id}] Response body: {response.text}")
+                    return False
+        except Exception as e:
+            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
+            return False
+
+        print(
+            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
+        )
+
+        # Wait for dream queue to empty
+        print(f"[{workspace_id}] Waiting for dream to complete...")
+        await asyncio.sleep(2)  # Give time for dream to be enqueued
+        success = await self.wait_for_deriver_queue_empty(honcho_client)
+        if success:
+            print(f"[{workspace_id}] Dream queue empty")
+        else:
+            print(f"[{workspace_id}] Dream queue timeout")
+        return success
+
     async def judge_response(
         self, question: str, expected_answer: str, actual_response: str
     ) -> dict[str, Any]:
@@ -381,11 +450,10 @@ class LongMemEvalRunner:
 You are an expert judge evaluating AI responses to memory questions. Your task is to determine if an actual response contains the correct answer from long-term memory.
 
 CRITICAL JUDGING PRINCIPLES:
-1. SEMANTIC UNDERSTANDING: Focus on whether the actual response conveys the same core factual information as expected, even if expressed differently
+1. SEMANTIC UNDERSTANDING: Focus on whether the actual response conveys the same core factual information as expected, even if expressed differently (i.e. 1 hour is the same as 60 minutes, and if today's date is 2025-12-02, then 'yesterday' and '2025-12-01' are equivalent)
 2. FLEXIBLE INTERPRETATION: Accept responses that are longer, more detailed, or use different phrasing as long as they contain the correct answer
 3. MEMORY ACCURACY: The key is whether the AI correctly recalled and stated the factual information from memory
-4. PARTIAL CREDIT: If the response shows the AI accessed relevant memories but made minor errors in details, consider partial credit
-5. IMPLICIT vs EXPLICIT: Accept responses that clearly imply the correct answer through context
+4. IMPLICIT vs EXPLICIT: Accept responses that clearly imply the correct answer through context
 
 ONLY FAIL when:
 - The core factual answer is demonstrably wrong
@@ -533,6 +601,9 @@ Evaluate whether the actual response correctly answers the question based on the
             # Determine which peer should be observed based on question type
             is_assistant_type = question_type == "single-session-assistant"
 
+            # Initialize merged_session_id for potential use in dream trigger
+            merged_session_id: str | None = None
+
             if self.merge_sessions:
                 # Create a single merged session for all messages
                 merged_session_id = f"{workspace_id}_merged"
@@ -626,7 +697,6 @@ Evaluate whether the actual response correctly answers the question based on the
                     )
                 )
             else:
-                merged_session_id = None
                 # create separate sessions
                 # Zip together dates, session IDs, and session content
                 for session_date, session_id, session_messages in zip(
@@ -733,6 +803,39 @@ Evaluate whether the actual response correctly answers the question based on the
                 output_lines.append("Deriver queue never emptied!!!")
                 results["error"] = "Deriver queue timeout"
                 return results
+
+            # Trigger dream for memory consolidation before questions
+            print(
+                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation..."
+            )
+
+            # Determine session_id for dream
+            dream_session_id = (
+                merged_session_id
+                if self.merge_sessions and merged_session_id
+                else (
+                    haystack_session_ids[0]
+                    if haystack_session_ids
+                    else f"{workspace_id}_session"
+                )
+            )
+
+            # Determine observer based on question type
+            observer_peer = "assistant" if is_assistant_type else "user"
+
+            dream_success = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer=observer_peer,
+                session_id=dream_session_id,
+            )
+
+            if not dream_success:
+                print(
+                    f"[{workspace_id}] Warning: Dream did not complete, proceeding anyway"
+                )
+            else:
+                print(f"[{workspace_id}] Dream completed. Executing question...")
 
             # Execute the question
             output_lines.append(f"\nAsking question: {question_with_date}")
@@ -870,7 +973,11 @@ Evaluate whether the actual response correctly answers the question based on the
         return results
 
     async def run_all_questions(
-        self, test_file: Path, batch_size: int = 10, test_count: int | None = None
+        self,
+        test_file: Path,
+        batch_size: int = 10,
+        test_count: int | None = None,
+        question_id: str | None = None,
     ) -> tuple[list[TestResult], float]:
         """
         Run all questions in a longmemeval test file.
@@ -879,11 +986,25 @@ Evaluate whether the actual response correctly answers the question based on the
             test_file: Path to the longmemeval JSON file
             batch_size: Number of questions to run concurrently in each batch
             test_count: Optional number of tests to run (runs first N tests)
+            question_id: Optional question_id to run (skips all others)
 
         Returns:
             Tuple of (list of test results, total duration)
         """
         questions = self.load_test_file(test_file)
+
+        # Filter by question_id if specified
+        if question_id is not None:
+            original_count = len(questions)
+            questions = [q for q in questions if q.get("question_id") == question_id]
+            if not questions:
+                print(
+                    f"Error: No question found with question_id '{question_id}' in {test_file}"
+                )
+                return [], 0.0
+            print(
+                f"filtering to question_id '{question_id}' ({len(questions)}/{original_count} {'question' if len(questions) == 1 else 'questions'})"
+            )
 
         # Limit to first N questions if test_count is specified
         if test_count is not None and test_count > 0:
@@ -1150,6 +1271,7 @@ Examples:
   %(prog)s --test-file test.json --pool-size 4                            # Use 4 Honcho instances
   %(prog)s --test-file test.json --base-api-port 8000 --pool-size 4       # Custom base port with pool
   %(prog)s --test-file test.json --test-count 50                          # Run only first 50 tests
+  %(prog)s --test-file test.json --question-id "q123"                    # Run only question with ID "q123"
         """,
     )
 
@@ -1224,6 +1346,12 @@ Examples:
         help="Number of tests to run from the test file (default: all tests)",
     )
 
+    parser.add_argument(
+        "--question-id",
+        type=str,
+        help="Run only the question with this question_id (skips all others)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -1257,7 +1385,7 @@ Examples:
     try:
         # Run all questions
         results, total_elapsed = await runner.run_all_questions(
-            args.test_file, args.batch_size, args.test_count
+            args.test_file, args.batch_size, args.test_count, args.question_id
         )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
 

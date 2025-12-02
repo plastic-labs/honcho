@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
-from anthropic.types import TextBlock, ToolUseBlock
+from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
 from google import genai
 from google.genai.types import (
@@ -173,6 +173,7 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     output_tokens: int
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
+    thinking_content: str | None = None
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -968,12 +969,15 @@ async def honcho_llm_call_inner(
                 **anthropic_params
             )
 
-            # Extract text content and tool use blocks from content blocks
+            # Extract text content, thinking blocks, and tool use blocks from content blocks
             text_blocks: list[str] = []
+            thinking_blocks: list[str] = []
             tool_calls: list[dict[str, Any]] = []
             for block in anthropic_response.content:  # pyright: ignore
                 if isinstance(block, TextBlock):
                     text_blocks.append(block.text)
+                elif isinstance(block, ThinkingBlock):
+                    thinking_blocks.append(block.thinking)
                 elif isinstance(block, ToolUseBlock):
                     tool_calls.append(
                         {
@@ -988,6 +992,7 @@ async def honcho_llm_call_inner(
             stop_reason = anthropic_response.stop_reason  # pyright: ignore
 
             text_content = "\n".join(text_blocks)
+            thinking_content = "\n".join(thinking_blocks) if thinking_blocks else None
 
             # If using response_model, parse the JSON response
             if response_model:
@@ -1002,6 +1007,7 @@ async def honcho_llm_call_inner(
                         output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                         finish_reasons=[stop_reason] if stop_reason else [],
                         tool_calls_made=tool_calls,
+                        thinking_content=thinking_content,
                     )
                 except (json.JSONDecodeError, ValidationError, ValueError) as e:
                     raise ValueError(
@@ -1013,6 +1019,7 @@ async def honcho_llm_call_inner(
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
                 tool_calls_made=tool_calls,
+                thinking_content=thinking_content,
             )
 
         case AsyncOpenAI():

@@ -1,23 +1,13 @@
-"""
-Minimal deriver implementation optimized for benchmark speed.
-
-Key differences from legacy:
-- Single LLM call (no peer card call)
-- No working representation fetching
-- No peer card fetching/updating
-- Minimal token accounting
-"""
-
 import logging
 import time
 
 from src import prometheus
 from src.config import settings
+from src.crud import message as message_crud
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
-from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
@@ -89,44 +79,70 @@ async def process_representation_tasks_batch(
     if message_level_configuration.deriver.enabled is False:
         return
 
-    # Prepare new turns
-    new_turns = [
-        format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
-        for m in messages
-    ]
-
-    # Calculate available tokens for history context
+    # Calculate available tokens for messages
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
-    new_turns_tokens = estimate_tokens(new_turns)
     safety_buffer = 500
     available_context_tokens = max(
         0,
-        settings.DERIVER.MAX_INPUT_TOKENS
-        - prompt_tokens
-        - new_turns_tokens
-        - safety_buffer,
+        settings.DERIVER.MAX_INPUT_TOKENS - prompt_tokens - safety_buffer,
     )
 
-    # Get minimal history context
-    async with tracked_db("minimal_deriver.get_session_context") as db:
-        formatted_history = await summarizer.get_session_context_formatted(
+    # Get interleaving messages from starting_message_id to ending_message_id (inclusive)
+    async with tracked_db("minimal_deriver.get_interleaving_messages") as db:
+        starting_message_id = earliest_message.id
+        ending_message_id = latest_message.id
+
+        # Get all messages in the range (inclusive on both ends)
+        # Note: get_messages_id_range uses exclusive end_id, so we pass ending_message_id + 1
+        interleaving_messages = await message_crud.get_messages_id_range(
             db,
             latest_message.workspace_name,
             latest_message.session_name,
+            start_id=starting_message_id,
+            end_id=ending_message_id + 1,
             token_limit=available_context_tokens,
-            cutoff=earliest_message.id,
-            include_summary=True,
         )
 
-    session_context_tokens = estimate_tokens(formatted_history)
+        # Create a dict of messages being processed for quick lookup and deduplication
+        processing_messages_dict: dict[int, Message] = {m.id: m for m in messages}
+
+        # Combine interleaving messages with messages being processed
+        # Messages from DB may not include the ones being processed if they're not yet committed
+        # Use processing messages when available (they're more up-to-date), otherwise use DB messages
+        all_message_ids = {msg.id for msg in interleaving_messages} | {
+            m.id for m in messages
+        }
+
+        # Build combined list sorted by ID for contiguous presentation
+        combined_messages: list[Message] = []
+        for msg_id in sorted(all_message_ids):
+            if msg_id in processing_messages_dict:
+                combined_messages.append(processing_messages_dict[msg_id])
+            else:
+                # Find the message in interleaving_messages
+                for msg in interleaving_messages:
+                    if msg.id == msg_id:
+                        combined_messages.append(msg)
+                        break
+
+        # Format all messages with timestamps for contiguous presentation
+        formatted_messages = "\n".join(
+            [
+                format_new_turn_with_timestamp(
+                    msg.content, msg.created_at, msg.peer_name
+                )
+                for msg in combined_messages
+            ]
+        )
+
+    messages_tokens = estimate_tokens(formatted_messages)
 
     # Track input tokens
     track_input_tokens(
         task_type="minimal_representation",
         components={
             "prompt": prompt_tokens,
-            "new_turns": new_turns_tokens,
-            "session_context": session_context_tokens,
+            "messages": messages_tokens,
         },
     )
 
@@ -134,8 +150,7 @@ async def process_representation_tasks_batch(
     prompt = minimal_deriver_prompt(
         peer_id=observed,
         message_created_at=latest_message.created_at,
-        history=formatted_history,
-        new_turns=new_turns,
+        messages=formatted_messages,
     )
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
