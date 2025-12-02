@@ -95,7 +95,7 @@ class DialecticAgent:
             task_name = self.metric_key
         else:
             run_id = str(uuid.uuid4())[:8]
-            task_name = f"dialectic_agent_{run_id}"
+            task_name = f"dialectic_chat_{run_id}"
         start_time = time.perf_counter()
 
         # Log input context
@@ -163,7 +163,13 @@ class DialecticAgent:
             accumulate_metric(task_name, "thinking", response.thinking_content, "blob")
 
         # Log output
+        accumulate_metric(task_name, "input_tokens", response.input_tokens, "tokens")
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "tokens")
+        # Total tokens used for efficiency tracking
+        tokens_used_estimate = response.input_tokens + response.output_tokens
+        accumulate_metric(
+            task_name, "tokens_used_estimate", tokens_used_estimate, "tokens"
+        )
         accumulate_metric(task_name, "response", response.content, "blob")
 
         # Log timing
@@ -172,6 +178,6 @@ class DialecticAgent:
 
         # Only log metrics here if we're not using a caller-provided metric_key
         if not self.metric_key and run_id is not None:
-            log_performance_metrics("dialectic_agent", run_id)
+            log_performance_metrics("dialectic_chat", run_id)
 
         return response.content

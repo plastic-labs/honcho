@@ -164,12 +164,14 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     Args:
         content: The response content. When a response_model is provided, this will be
                 the parsed object of that type. Otherwise, it will be a string.
+        input_tokens: Number of tokens in the input/prompt.
         output_tokens: Number of tokens generated in the response.
         finish_reasons: List of finish reasons for the response.
         tool_calls_made: Optional list of all tool calls executed during the request.
     """
 
     content: T
+    input_tokens: int = 0
     output_tokens: int
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
@@ -460,6 +462,7 @@ async def honcho_llm_call(
 
     iteration = 0
     all_tool_calls: list[dict[str, Any]] = []
+    total_input_tokens = 0  # Accumulate input tokens across all tool iterations
     total_output_tokens = 0  # Accumulate output tokens across all tool iterations
     # Track effective tool_choice - switches from "required" to "auto" after first iteration
     effective_tool_choice = tool_choice
@@ -545,7 +548,8 @@ async def honcho_llm_call(
         # Make the call
         response = await call_func()
 
-        # Accumulate output tokens from this iteration
+        # Accumulate tokens from this iteration
+        total_input_tokens += response.input_tokens
         total_output_tokens += response.output_tokens
 
         # Check if there are tool calls
@@ -553,6 +557,7 @@ async def honcho_llm_call(
             # No tool calls, return final response
             logger.debug("No tool calls in response, finishing")
             response.tool_calls_made = all_tool_calls
+            response.input_tokens = total_input_tokens
             response.output_tokens = total_output_tokens
             return response
 
@@ -787,7 +792,8 @@ async def honcho_llm_call(
 
     final_response = await final_call_func()
     final_response.tool_calls_made = all_tool_calls
-    # Include accumulated output tokens from all iterations plus the final call
+    # Include accumulated tokens from all iterations plus the final call
+    final_response.input_tokens = total_input_tokens + final_response.input_tokens
     final_response.output_tokens = total_output_tokens + final_response.output_tokens
     return final_response
 
@@ -1004,6 +1010,7 @@ async def honcho_llm_call_inner(
 
                     return HonchoLLMCallResponse(
                         content=parsed_content,
+                        input_tokens=usage.input_tokens if usage else 0,  # pyright: ignore
                         output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                         finish_reasons=[stop_reason] if stop_reason else [],
                         tool_calls_made=tool_calls,
@@ -1016,6 +1023,7 @@ async def honcho_llm_call_inner(
 
             return HonchoLLMCallResponse(
                 content=text_content,
+                input_tokens=usage.input_tokens if usage else 0,  # pyright: ignore
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
                 tool_calls_made=tool_calls,
@@ -1124,6 +1132,7 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=response_obj,
+                    input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=[],
@@ -1166,6 +1175,7 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=parsed_content,
+                    input_tokens=usage.prompt_tokens if usage else 0,
                     output_tokens=usage.completion_tokens if usage else 0,
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=parsed_tool_calls,
@@ -1194,6 +1204,7 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=response.choices[0].message.content or "",  # pyright: ignore
+                    input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=tool_calls_list,
@@ -1320,7 +1331,12 @@ async def honcho_llm_call_inner(
                             gemini_tool_calls.append(tool_call_data)
 
                 text_content = "\n".join(text_parts) if text_parts else ""
-                token_count = (
+                input_token_count = (
+                    gemini_response.usage_metadata.prompt_token_count or 0
+                    if gemini_response.usage_metadata
+                    else 0
+                )
+                output_token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
                     if gemini_response.usage_metadata
                     else 0
@@ -1334,7 +1350,8 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=text_content,
-                    output_tokens=token_count,
+                    input_tokens=input_token_count,
+                    output_tokens=output_token_count,
                     finish_reasons=[finish_reason],
                     tool_calls_made=gemini_tool_calls,
                 )
@@ -1349,7 +1366,12 @@ async def honcho_llm_call_inner(
                     config=cast(GenerateContentConfigDict, gemini_config),  # pyright: ignore[reportInvalidCast]
                 )
 
-                token_count = (
+                input_token_count = (
+                    gemini_response.usage_metadata.prompt_token_count or 0
+                    if gemini_response.usage_metadata
+                    else 0
+                )
+                output_token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
                     if gemini_response.usage_metadata
                     else 0
@@ -1369,7 +1391,8 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=gemini_response.parsed,
-                    output_tokens=token_count,
+                    input_tokens=input_token_count,
+                    output_tokens=output_token_count,
                     finish_reasons=[finish_reason],
                     tool_calls_made=[],
                 )
@@ -1405,6 +1428,7 @@ async def honcho_llm_call_inner(
 
                     return HonchoLLMCallResponse(
                         content=parsed_content,
+                        input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                         output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                         finish_reasons=[finish_reason] if finish_reason else [],
                         tool_calls_made=[],
@@ -1416,6 +1440,7 @@ async def honcho_llm_call_inner(
             else:
                 return HonchoLLMCallResponse(
                     content=response.choices[0].message.content,  # pyright: ignore
+                    input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=[],

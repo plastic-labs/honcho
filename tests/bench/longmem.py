@@ -65,7 +65,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-import tiktoken
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
@@ -78,6 +77,18 @@ from typing_extensions import TypedDict
 
 from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
+
+from .longmem_common import (
+    calculate_timing_statistics,
+    calculate_total_tokens,
+    calculate_type_statistics,
+    filter_questions,
+    format_duration,
+    judge_response,
+    load_test_file,
+    parse_longmemeval_date,
+    write_json_summary,
+)
 
 load_dotenv()
 
@@ -192,62 +203,6 @@ class LongMemEvalRunner:
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
 
-    def _format_duration(self, total_seconds: float) -> str:
-        """Format a duration in seconds into a human-readable string.
-
-        If the duration is at least one minute, this returns a string in the
-        form "XmYYs" with zero-padded seconds. Otherwise, it returns the
-        duration in seconds with two decimal places, e.g., "12.34s".
-
-        Args:
-            total_seconds: The duration in seconds.
-
-        Returns:
-            A formatted duration string.
-        """
-        minutes = int(total_seconds // 60)
-        if minutes > 0:
-            seconds_rounded = int(round(total_seconds - minutes * 60))
-            if seconds_rounded == 60:
-                minutes += 1
-                seconds_rounded = 0
-            return f"{minutes}m{seconds_rounded:02d}s"
-        return f"{total_seconds:.2f}s"
-
-    def _calculate_total_tokens(
-        self, haystack_sessions: list[list[dict[str, str]]]
-    ) -> int:
-        """Calculate total tokens from all messages in all sessions.
-
-        Args:
-            haystack_sessions: List of sessions, each containing messages
-
-        Returns:
-            Total number of tokens across all messages
-        """
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        total_tokens = 0
-
-        for session_messages in haystack_sessions:
-            for msg in session_messages:
-                content = msg.get("content", "")
-                try:
-                    total_tokens += len(
-                        tokenizer.encode(
-                            content,
-                            disallowed_special=(
-                                tokenizer.special_tokens_set - {"<|endoftext|>"}
-                            ),
-                        )
-                    )
-                except Exception:
-                    total_tokens += len(content) // 4
-                    self.logger.warning(
-                        f"Error tokenizing content. Using rough estimate of {len(content) // 4} tokens"
-                    )
-
-        return total_tokens
-
     def _get_latest_tokens_used(self) -> int | None:
         """Get the tokens_used_estimate from the most recent dialectic_chat metric.
 
@@ -282,47 +237,6 @@ class LongMemEvalRunner:
             self.logger.warning(f"Error reading metrics file: {e}")
 
         return None
-
-    def _parse_date(self, date_str: str) -> datetime:
-        """Parse longmemeval date format to datetime.
-
-        Args:
-            date_str: Date string in format "YYYY/MM/DD (Day) HH:MM"
-
-        Returns:
-            Parsed datetime object
-
-        Raises:
-            ValueError: If date format is invalid
-        """
-        try:
-            # Extract the date and time parts, ignoring the day name in parentheses
-            # Format: "2023/05/20 (Sat) 02:21"
-            parts = date_str.split(") ")
-            if len(parts) != 2:
-                raise ValueError(f"Invalid date format: {date_str}")
-
-            date_part = parts[0].split(" (")[0]  # "2023/05/20"
-            time_part = parts[1]  # "02:21"
-
-            # Combine and parse
-            datetime_str = f"{date_part} {time_part}"
-            return datetime.strptime(datetime_str, "%Y/%m/%d %H:%M")
-        except (ValueError, IndexError) as e:
-            raise ValueError(f"Failed to parse date '{date_str}': {e}") from e
-
-    def load_test_file(self, test_file: Path) -> list[dict[str, Any]]:
-        """
-        Load longmemeval test definitions from a JSON file.
-
-        Args:
-            test_file: Path to the JSON test file
-
-        Returns:
-            List of test question dictionaries
-        """
-        with open(test_file) as f:
-            return json.load(f)
 
     async def create_honcho_client(
         self, workspace_id: str, honcho_url: str
@@ -431,88 +345,6 @@ class LongMemEvalRunner:
             print(f"[{workspace_id}] Dream queue timeout")
         return success
 
-    async def judge_response(
-        self, question: str, expected_answer: str, actual_response: str
-    ) -> dict[str, Any]:
-        """
-        Use an LLM to judge if the actual response matches the expected answer.
-
-        Args:
-            question: The question asked
-            expected_answer: Expected answer from the test
-            actual_response: Actual response from Honcho
-
-        Returns:
-            Judgment result with pass/fail and reasoning
-        """
-        try:
-            system_prompt = """
-You are an expert judge evaluating AI responses to memory questions. Your task is to determine if an actual response contains the correct answer from long-term memory.
-
-CRITICAL JUDGING PRINCIPLES:
-1. SEMANTIC UNDERSTANDING: Focus on whether the actual response conveys the same core factual information as expected, even if expressed differently (i.e. 1 hour is the same as 60 minutes, and if today's date is 2025-12-02, then 'yesterday' and '2025-12-01' are equivalent)
-2. FLEXIBLE INTERPRETATION: Accept responses that are longer, more detailed, or use different phrasing as long as they contain the correct answer
-3. MEMORY ACCURACY: The key is whether the AI correctly recalled and stated the factual information from memory
-4. IMPLICIT vs EXPLICIT: Accept responses that clearly imply the correct answer through context
-
-ONLY FAIL when:
-- The core factual answer is demonstrably wrong
-- The response shows no evidence of accessing the relevant memory
-- The AI explicitly states incorrect information that contradicts the expected answer
-
-Always respond with valid JSON: {"passed": boolean, "reasoning": "short (1-3 sentences) explanation of why the response is correct or incorrect"}"""
-
-            user_prompt = f"""Question: "{question}"
-Expected answer: "{expected_answer}"
-Actual response: "{actual_response}"
-
-Evaluate whether the actual response correctly answers the question based on the expected answer. Focus on factual accuracy and evidence that the AI accessed the correct memory."""
-
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=300,
-                temperature=0.0,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
-                ],
-            )
-
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
-
-            content_block = response.content[0]
-            judgment_text = getattr(content_block, "text", None)
-            if judgment_text is None:
-                raise ValueError(
-                    f"No text content in response block: {type(content_block)}"
-                )
-
-            # Extract JSON from the response if it's wrapped in markdown
-            if "```json" in judgment_text:
-                json_start = judgment_text.find("```json") + 7
-                json_end = judgment_text.find("```", json_start)
-                judgment_text = judgment_text[json_start:json_end].strip()
-            elif "```" in judgment_text:
-                json_start = judgment_text.find("```") + 3
-                json_end = judgment_text.find("```", json_start)
-                judgment_text = judgment_text[json_start:json_end].strip()
-
-            judgment = json.loads(judgment_text)
-            return judgment
-
-        except Exception as e:
-            self.logger.error(f"Error judging response: {e}")
-            # Fallback to simple string matching
-            is_correct = expected_answer.lower() in actual_response.lower()
-            return {
-                "passed": is_correct,
-                "reasoning": f"Fallback string matching due to error: {'Match found' if is_correct else 'No match found'}",
-            }
-
     async def execute_question(
         self, question_data: dict[str, Any], honcho_url: str
     ) -> TestResult:
@@ -585,14 +417,14 @@ Evaluate whether the actual response correctly answers the question based on the
             parsed_dates: list[datetime] = []
             for date_str in haystack_dates:
                 try:
-                    parsed_dates.append(self._parse_date(date_str))
+                    parsed_dates.append(parse_longmemeval_date(date_str))
                 except ValueError as e:
                     raise ValueError(f"Error parsing date '{date_str}': {e}") from e
 
             haystack_total_messages = sum(len(session) for session in haystack_sessions)
 
             # Calculate total tokens available in the sessions for this question
-            total_available_tokens = self._calculate_total_tokens(haystack_sessions)
+            total_available_tokens = calculate_total_tokens(haystack_sessions)
 
             print(
                 f"[{workspace_id}] processing {len(haystack_sessions)} sessions with {haystack_total_messages} total messages ({total_available_tokens} total tokens)"
@@ -913,8 +745,11 @@ Evaluate whether the actual response correctly answers the question based on the
                         f"  token efficiency: {efficiency_ratio:.4f} ({tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
                     )
 
-                judgment = await self.judge_response(
-                    question_with_date, expected_answer, actual_response
+                judgment = await judge_response(
+                    self.anthropic_client,
+                    question_with_date,
+                    expected_answer,
+                    actual_response,
                 )
 
                 query_result: QueryResult = {
@@ -959,7 +794,7 @@ Evaluate whether the actual response correctly answers the question based on the
             results["duration_seconds"] = results["end_time"] - results["start_time"]
 
             output_lines.append(
-                f"\nQuestion {question_id} completed. Status: {'PASS' if results['passed'] else 'FAIL'} (Duration: {self._format_duration(results['duration_seconds'])})"
+                f"\nQuestion {question_id} completed. Status: {'PASS' if results['passed'] else 'FAIL'} (Duration: {format_duration(results['duration_seconds'])})"
             )
 
         except Exception as e:
@@ -991,27 +826,10 @@ Evaluate whether the actual response correctly answers the question based on the
         Returns:
             Tuple of (list of test results, total duration)
         """
-        questions = self.load_test_file(test_file)
-
-        # Filter by question_id if specified
-        if question_id is not None:
-            original_count = len(questions)
-            questions = [q for q in questions if q.get("question_id") == question_id]
-            if not questions:
-                print(
-                    f"Error: No question found with question_id '{question_id}' in {test_file}"
-                )
-                return [], 0.0
-            print(
-                f"filtering to question_id '{question_id}' ({len(questions)}/{original_count} {'question' if len(questions) == 1 else 'questions'})"
-            )
-
-        # Limit to first N questions if test_count is specified
-        if test_count is not None and test_count > 0:
-            questions = questions[:test_count]
-            print(
-                f"limiting to first {len(questions)} {'question' if len(questions) == 1 else 'questions'} from {test_file}"
-            )
+        questions = load_test_file(test_file)
+        questions = filter_questions(questions, test_file, question_id, test_count)
+        if not questions:
+            return [], 0.0
 
         print(
             f"found {len(questions)} {'question' if len(questions) == 1 else 'questions'} in {test_file}"
@@ -1088,7 +906,7 @@ Evaluate whether the actual response correctly answers the question based on the
         print(f"Passed: {passed_questions}")
         print(f"Failed: {failed_questions}")
         print(f"Success Rate: {(passed_questions / total_questions) * 100:.1f}%")
-        print(f"Total Test Time: {self._format_duration(total_test_time)}")
+        print(f"Total Test Time: {format_duration(total_test_time)}")
 
         efficiency_ratios: list[float] = []
         for result in results:
@@ -1119,7 +937,7 @@ Evaluate whether the actual response correctly answers the question based on the
             question_id = result["question_id"]
             question_type = result["question_type"]
             status = "PASS" if result.get("passed", False) else "FAIL"
-            duration = self._format_duration(result["duration_seconds"])
+            duration = format_duration(result["duration_seconds"])
             workspace = result["workspace_id"]
 
             print(
@@ -1149,37 +967,10 @@ Evaluate whether the actual response correctly answers the question based on the
         failed_questions = total_questions - passed_questions
 
         # Calculate statistics by question type
-        type_stats: dict[str, dict[str, int | float]] = {}
-        for result in results:
-            q_type = result["question_type"]
-            if q_type not in type_stats:
-                type_stats[q_type] = {"total": 0, "passed": 0, "failed": 0}
-            type_stats[q_type]["total"] += 1
-            if result.get("passed", False):
-                type_stats[q_type]["passed"] += 1
-            else:
-                type_stats[q_type]["failed"] += 1
-
-        # Add success rates to type stats
-        for q_type in type_stats:
-            stats = type_stats[q_type]
-            stats["success_rate"] = (
-                (stats["passed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
-            )
+        type_stats = calculate_type_statistics(results)
 
         # Calculate timing statistics
-        durations = [r["duration_seconds"] for r in results]
-        timing_stats = {
-            "total_duration_seconds": total_elapsed_seconds,
-            "individual_test_durations": {
-                "min_seconds": min(durations) if durations else 0,
-                "max_seconds": max(durations) if durations else 0,
-                "mean_seconds": sum(durations) / len(durations) if durations else 0,
-                "median_seconds": sorted(durations)[len(durations) // 2]
-                if durations
-                else 0,
-            },
-        }
+        timing_stats = calculate_timing_statistics(results, total_elapsed_seconds)
 
         # Calculate token efficiency statistics
         efficiency_ratios: list[float] = []
@@ -1252,10 +1043,7 @@ Evaluate whether the actual response correctly answers the question based on the
         }
 
         if output_file:
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_file, "w") as f:
-                json.dump(summary, f, indent=2, default=str)
-            print(f"\nJSON summary written to: {output_file}")
+            write_json_summary(summary, output_file)
 
 
 async def main() -> int:
