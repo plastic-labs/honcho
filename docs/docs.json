@@ -32,7 +32,6 @@
               {
                 "group": "Core Concepts",
                 "pages": [
-                  "v2/documentation/reference/storage",
                   "v2/documentation/core-concepts/deriver",
                   "v2/documentation/core-concepts/representation"
                 ]
@@ -41,21 +40,37 @@
                 "group": "Features",
                 "pages": [
                   "v2/documentation/features/get-context",
-                  "v2/documentation/features/dialectic-endpoint",
-                  "v2/documentation/features/summarizer",
-                  "v2/documentation/features/working-rep",
-                  "v2/documentation/features/local-vs-global"
+                  "v2/documentation/features/chat",
+                  {
+                    "group": "Advanced",
+                    "pages": [
+                      "v2/documentation/features/advanced/overview",
+                      "v2/documentation/features/advanced/queue-status",
+                      "v2/documentation/features/advanced/configuration",
+                      "v2/documentation/features/advanced/summarizer",
+                      "v2/documentation/features/advanced/search",
+                      "v2/documentation/features/advanced/using-filters",
+                      "v2/documentation/features/advanced/streaming-response"
+                    ]
+                  }
                 ]
               },
               {
-                "group": "Advanced",
+                "group": "Guides",
                 "pages": [
-                  "v2/documentation/advanced/configuration",
-                  "v2/documentation/advanced/queue-status",
-                  "v2/documentation/advanced/streaming-response",
-                  "v2/documentation/advanced/file-uploads",
-                  "v2/documentation/advanced/search",
-                  "v2/documentation/advanced/using-filters"
+                  "v2/guides/file-uploads",
+                  {
+                    "group": "Integrations",
+                    "pages": [
+                      "v2/guides/integrations/mcp"
+                    ]
+                  },
+                  {
+                    "group": "Migrations",
+                    "pages": [
+                      "v2/guides/migrations/mem0"
+                    ]
+                  }
                 ]
               },
               {
@@ -68,25 +83,13 @@
             ]
           },
           {
-            "tab": "Integrations",
-            "groups": [
-              {
-                "group": "Getting Started",
-                "pages": ["v2/guides/overview", "v2/guides/mcp"]
-              },
-              {
-                "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
-              }
-            ]
-          },
-          {
             "tab": "Cookbooks",
             "groups": [
               {
-                "group": "Cookbooks",
+                "group": "Chatbots",
                 "pages": [
-                  "v2/cookbooks/placeholder"
+                  "v2/cookbooks/discord",
+                  "v2/cookbooks/telegram"
                 ]
               }
             ]

@@ -1,7 +1,7 @@
 ---
 title: 'Summarizer'
 description: 'How Honcho creates summaries of conversations'
-icon: 'code'
+icon: 'compress'
 ---
 
 Almost all agents require, in addition to personalization and memory, a way to quickly prime a context window with a summary of the conversation (in Honcho, this is equivalent to a `session`). The general strategy for summarization is to combine a list of recent messages verbatim with a compressed LLM-generated summary of the older messages not included. Implementing this correctly, in such a way that the resulting context is:

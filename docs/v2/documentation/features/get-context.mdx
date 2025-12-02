@@ -1,7 +1,7 @@
 ---
 title: 'Get Context'
 description: 'Learn how to use get_context() to retrieve and format conversation context for LLM integration'
-icon: 'messages'
+icon: 'list-timeline'
 ---
 
 The `get_context()` method is your one-stop-shop for solving memory in LLM applications. It curates the LLM's context window with everything needed for contextually-aware conversations: recent messages, relevant historical context, and conversation summaries. When you add a `peer_target`, it also includes peer cards and Honcho's reasoning about participants.
@@ -217,7 +217,7 @@ context = session.get_context(peer_target=user, tokens=4000)  # Larger models
 ```
 </CodeGroup>
 
-Adjust token limits when you're hitting model context limits or want more/less conversation history.
+**When to adjust:** When you're hitting model context limits or want more/less conversation history.
 
 ### Disabling Summaries
 
@@ -241,7 +241,7 @@ context = session.get_context(peer_target=user, summary=False, tokens=2000)
 ```
 </CodeGroup>
 
-This is useful for short conversations where full message history fits in context, or when you prefer verbatim exchanges over summarized history.
+**When to use:** Short conversations where full message history fits in context, or when you prefer verbatim exchanges over summarized history.
 
 ### Removing Personalization
 
@@ -263,7 +263,7 @@ messages = context.to_openai(assistant=assistant)
 ```
 </CodeGroup>
 
-Use this when you explicitly don't want personalization or need to reduce context size. Most applications benefit from including `peer_target`.
+**When to use:** When you explicitly don't want personalization or need to reduce context size. Most applications benefit from including `peer_target`.
 
 ## Complete Integration Examples
 
