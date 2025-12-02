@@ -954,6 +954,10 @@ export class Session {
    *   - Buffer or Uint8Array with filename and content_type
    *   - { filename: string, content: Buffer | Uint8Array, content_type: string }
    * @param peerId - The peer ID to attribute the created messages to
+   * @param options - Optional parameters for the uploaded messages
+   * @param options.metadata - Optional metadata dictionary to associate with the messages
+   * @param options.configuration - Optional configuration dictionary to associate with the messages
+   * @param options.created_at - Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
    * @returns Promise resolving to a list of Message objects representing the created messages
    *
    * @note Supported file types include PDFs, text files, and JSON documents.
@@ -965,17 +969,58 @@ export class Session {
    * // Upload a file
    * const messages = await session.uploadFile(fileInput.files[0], 'user123')
    * console.log(`Created ${messages.length} messages from file`)
+   *
+   * // Upload a file with metadata and timestamp
+   * const messages = await session.uploadFile(fileInput.files[0], 'user123', {
+   *   metadata: { source: 'upload' },
+   *   created_at: '2021-01-01T00:00:00.000Z'
+   * })
    * ```
    */
-  async uploadFile(file: Uploadable, peerId: string): Promise<Message[]> {
-    const uploadParams = FileUploadSchema.parse({ file, peerId })
+  async uploadFile(
+    file: Uploadable,
+    peerId: string,
+    options?: {
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+      created_at?: string | Date
+    }
+  ): Promise<Message[]> {
+    const createdAt =
+      options?.created_at instanceof Date
+        ? options.created_at.toISOString()
+        : options?.created_at
+
+    const uploadParams = FileUploadSchema.parse({
+      file,
+      peerId,
+      metadata: options?.metadata,
+      configuration: options?.configuration,
+      created_at: createdAt,
+    })
+
+    // Build body with file and peer_id, plus optional fields as JSON strings
+    // Type assertion needed because MessageUploadParams doesn't include metadata/configuration/created_at yet
+    const body = {
+      file: uploadParams.file,
+      peer_id: uploadParams.peerId,
+      ...(uploadParams.metadata !== undefined && uploadParams.metadata !== null
+        ? { metadata: JSON.stringify(uploadParams.metadata) }
+        : {}),
+      ...(uploadParams.configuration !== undefined &&
+      uploadParams.configuration !== null
+        ? { configuration: JSON.stringify(uploadParams.configuration) }
+        : {}),
+      ...(uploadParams.created_at !== undefined &&
+      uploadParams.created_at !== null
+        ? { created_at: uploadParams.created_at }
+        : {}),
+    } as any
+
     const response = await this._client.workspaces.sessions.messages.upload(
       this.workspaceId,
       this.id,
-      {
-        file: uploadParams.file,
-        peer_id: uploadParams.peerId,
-      }
+      body
     )
 
     return response

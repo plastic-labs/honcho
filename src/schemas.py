@@ -370,6 +370,9 @@ class MessageUploadCreate(BaseModel):
     """Schema for message creation from file uploads"""
 
     peer_id: str = Field(..., description="ID of the peer creating the message")
+    metadata: dict[str, Any] | None = None
+    configuration: MessageConfiguration | None = None
+    created_at: datetime.datetime | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 

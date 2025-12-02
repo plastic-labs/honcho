@@ -9,6 +9,7 @@ from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
+from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
@@ -717,6 +718,18 @@ class Session(BaseModel):
             description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
         ),
         peer_id: str = Field(..., description="ID of the peer creating the messages"),
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with the messages",
+        ),
+        configuration: Configuration | None = Field(
+            None,
+            description="Optional configuration dictionary to associate with the messages",
+        ),
+        created_at: str | None = Field(
+            None,
+            description="Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.",
+        ),
     ) -> list[Message]:
         """
         Upload file to create message(s) in this session.
@@ -734,6 +747,9 @@ class Session(BaseModel):
                 - a tuple (filename, bytes, content_type)
                 - a tuple (filename, fileobj, content_type)
             peer_id: ID of the peer who will be attributed as the creator of the messages
+            metadata: Optional metadata dictionary to associate with the messages
+            configuration: Optional configuration dictionary to associate with the messages
+            created_at: Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
 
         Returns:
             A list of Message objects representing the created messages
@@ -747,12 +763,29 @@ class Session(BaseModel):
         # Prepare file for upload using shared utility
         filename, content_bytes, content_type = prepare_file_for_upload(file)
 
-        # Call the upload endpoint
+        # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
+        import json
+        from datetime import datetime
+
+        extra_body_data: dict[str, str] = {}
+        if metadata is not None:
+            extra_body_data["metadata"] = json.dumps(metadata)
+        if configuration is not None:
+            extra_body_data["configuration"] = json.dumps(configuration)
+        if created_at is not None:
+            # Ensure created_at is a string (ISO format)
+            if isinstance(created_at, datetime):
+                extra_body_data["created_at"] = created_at.isoformat()
+            else:
+                extra_body_data["created_at"] = created_at
+
+        # Call the upload endpoint with extra_body for the additional form fields
         response = self._client.workspaces.sessions.messages.upload(
             session_id=self.id,
             workspace_id=self.workspace_id,
             file=(filename, content_bytes, content_type),
             peer_id=peer_id,
+            extra_body=extra_body_data if extra_body_data else None,
         )
 
         return [Message.model_validate(msg) for msg in response]

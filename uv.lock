@@ -710,7 +710,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "2.4.3"
+version = "2.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -848,7 +848,7 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { filename = "honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:7cfac7e44d83bb172408e66a36b854963e4cedfb88e83814e91803f3c394fea6" },
+    { filename = "honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:db008d6975a990af7e3387a04e2972578953931d5bb9399accb70c020a8356a9" },
 ]
 
 [package.metadata]

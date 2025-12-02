@@ -243,6 +243,9 @@ export const FileUploadSchema = z.object({
       ),
   ]),
   peerId: PeerIdSchema,
+  metadata: MessageMetadataSchema,
+  configuration: z.record(z.string(), z.unknown()).optional(),
+  created_at: z.string().nullable().optional(),
 })
 
 /**

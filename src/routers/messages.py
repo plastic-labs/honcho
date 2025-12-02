@@ -35,9 +35,48 @@ router = APIRouter(
 )
 
 
-async def parse_upload_form(peer_id: str = Form(...)) -> schemas.MessageUploadCreate:
+async def parse_upload_form(
+    peer_id: str = Form(...),
+    metadata: str | None = Form(None),
+    configuration: str | None = Form(None),
+    created_at: str | None = Form(None),
+) -> schemas.MessageUploadCreate:
     """Parse form data for file upload requests"""
-    return schemas.MessageUploadCreate(peer_id=peer_id)
+    import json
+    from datetime import datetime
+
+    parsed_metadata = None
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse metadata JSON: {metadata}")
+            parsed_metadata = None
+
+    parsed_configuration = None
+    if configuration:
+        try:
+            parsed_configuration = json.loads(configuration)
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse configuration JSON: {configuration}")
+            parsed_configuration = None
+
+    parsed_created_at = None
+    if created_at:
+        try:
+            parsed_created_at = datetime.fromisoformat(
+                created_at.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            logger.warning(f"Failed to parse created_at: {created_at}")
+            parsed_created_at = None
+
+    return schemas.MessageUploadCreate(
+        peer_id=peer_id,
+        metadata=parsed_metadata,
+        configuration=parsed_configuration,
+        created_at=parsed_created_at,
+    )
 
 
 @router.post("/", response_model=list[schemas.Message])
@@ -109,6 +148,9 @@ async def create_messages_with_file(
     all_message_data = await process_file_uploads_for_messages(
         file=file,
         peer_id=form_data.peer_id,
+        metadata=form_data.metadata,
+        configuration=form_data.configuration,
+        created_at=form_data.created_at,
     )
 
     # Create messages
@@ -139,6 +181,7 @@ async def create_messages_with_file(
             "created_at": message.created_at,
             "message_public_id": message.public_id,
             "seq_in_session": message.seq_in_session,
+            "configuration": form_data.configuration,
         }
         for message in created_messages
     ]
