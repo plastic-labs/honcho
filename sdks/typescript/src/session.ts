@@ -553,6 +553,44 @@ export class Session {
   }
 
   /**
+   * Clone this session, optionally up to a specific message.
+   *
+   * Makes an API call to create a copy of this session with a new ID.
+   * All messages and peers from the original session are copied to the new session.
+   * If a messageId is provided, only messages up to and including that message
+   * are copied.
+   *
+   * @param messageId - Optional message ID to cut off the clone at. If provided,
+   *                    the cloned session will only contain messages up to and
+   *                    including this message.
+   * @returns Promise resolving to a new Session object representing the cloned session
+   *
+   * @example
+   * ```typescript
+   * // Clone entire session
+   * const cloned = await session.clone()
+   *
+   * // Clone session up to a specific message
+   * const cloned = await session.clone('msg_abc123')
+   * ```
+   */
+  async clone(messageId?: string): Promise<Session> {
+    const clonedSessionData = await this._client.workspaces.sessions.clone(
+      this.workspaceId,
+      this.id,
+      messageId ? { message_id: messageId } : {}
+    )
+
+    return new Session(
+      clonedSessionData.id,
+      this.workspaceId,
+      this._client,
+      clonedSessionData.metadata ?? undefined,
+      clonedSessionData.configuration ?? undefined
+    )
+  }
+
+  /**
    * Get optimized context for this session within a token limit.
    *
    * Makes an API call to retrieve a curated list of messages that provides

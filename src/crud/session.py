@@ -480,8 +480,16 @@ async def clone_session(
     cutoff_message_id: str | None = None,
 ) -> models.Session:
     """
-    Clone a session and its messages. If cutoff_message_id is provided,
+    Clone a session and its data. If cutoff_message_id is provided,
     only clone messages up to and including that message.
+
+    The following data is copied to the new session:
+    - Session metadata
+    - Session configuration
+    - All messages (or up to cutoff_message_id) with their content, metadata, and peer associations
+    - Session-peer associations with their configurations (observe_me, observe_others)
+
+    The new session gets a unique ID (nanoid) and fresh timestamps.
 
     Args:
         db: SQLAlchemy session
@@ -522,6 +530,7 @@ async def clone_session(
         workspace_name=workspace_name,
         name=generate_nanoid(),
         h_metadata=original_session.h_metadata,
+        configuration=original_session.configuration,
     )
     db.add(new_session)
     await db.flush()  # Flush to get the new session ID
@@ -557,7 +566,7 @@ async def clone_session(
     insert_stmt = insert(models.Message).returning(models.Message)
     result = await db.execute(insert_stmt, new_messages)
 
-    # Clone peers from original session to new session
+    # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == original_session_name
     )
@@ -568,6 +577,7 @@ async def clone_session(
             session_name=new_session.name,
             peer_name=session_peer.peer_name,
             workspace_name=workspace_name,
+            configuration=session_peer.configuration,
         )
         db.add(new_session_peer)
 
