@@ -44,11 +44,11 @@ export class Peer {
   /**
    * Private cached metadata for this peer.
    */
-  private _metadata?: Record<string, unknown> | null
+  private _metadata?: Record<string, unknown>
   /**
    * Private cached configuration for this peer.
    */
-  private _configuration?: Record<string, unknown> | null
+  private _configuration?: Record<string, unknown>
 
   /**
    * Cached metadata for this peer. May be stale if the peer
@@ -57,7 +57,7 @@ export class Peer {
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  get metadata(): Record<string, unknown> | null | undefined {
+  get metadata(): Record<string, unknown> | undefined {
     return this._metadata
   }
 
@@ -68,7 +68,7 @@ export class Peer {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get configuration(): Record<string, unknown> | null | undefined {
+  get configuration(): Record<string, unknown> | undefined {
     return this._configuration
   }
 
@@ -85,8 +85,8 @@ export class Peer {
     id: string,
     workspaceId: string,
     client: HonchoCore,
-    metadata?: Record<string, unknown> | null,
-    configuration?: Record<string, unknown> | null
+    metadata?: Record<string, unknown>,
+    configuration?: Record<string, unknown>
   ) {
     this.id = id
     this.workspaceId = workspaceId

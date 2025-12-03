@@ -304,8 +304,8 @@ describe('Metadata and Configuration Caching', () => {
         const peersPage = await honcho.getPeers();
         const peers = peersPage.items;
 
-        expect(peers[0].metadata).toBeNull();
-        expect(peers[0].configuration).toBeNull();
+        expect(peers[0].metadata).toBeUndefined();
+        expect(peers[0].configuration).toBeUndefined();
       });
     });
   });
@@ -475,8 +475,8 @@ describe('Metadata and Configuration Caching', () => {
         const sessionsPage = await honcho.getSessions();
         const sessions = sessionsPage.items;
 
-        expect(sessions[0].metadata).toBeNull();
-        expect(sessions[0].configuration).toBeNull();
+        expect(sessions[0].metadata).toBeUndefined();
+        expect(sessions[0].configuration).toBeUndefined();
       });
     });
   });

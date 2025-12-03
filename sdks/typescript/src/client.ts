@@ -201,8 +201,8 @@ export class Honcho {
         validatedId,
         this.workspaceId,
         this._client,
-        peerData.metadata,
-        peerData.configuration
+        peerData.metadata ?? undefined,
+        peerData.configuration ?? undefined
       )
     }
 
@@ -231,8 +231,8 @@ export class Honcho {
           peer.id,
           this.workspaceId,
           this._client,
-          peer.metadata,
-          peer.configuration
+          peer.metadata ?? undefined,
+          peer.configuration ?? undefined
         )
     )
   }
@@ -286,8 +286,8 @@ export class Honcho {
         validatedId,
         this.workspaceId,
         this._client,
-        sessionData.metadata,
-        sessionData.configuration
+        sessionData.metadata ?? undefined,
+        sessionData.configuration ?? undefined
       )
     }
 
@@ -317,8 +317,8 @@ export class Honcho {
           session.id,
           this.workspaceId,
           this._client,
-          session.metadata,
-          session.configuration
+          session.metadata ?? undefined,
+          session.configuration ?? undefined
         )
     )
   }
