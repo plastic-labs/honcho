@@ -56,17 +56,19 @@ class AsyncSession(BaseModel):
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
     )
-    metadata: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached metadata for this session. May be stale. Use get_metadata() for fresh data.",
-    )
-    configuration: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached configuration for this session. May be stale. Use get_config() for fresh data.",
-    )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: AsyncHonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this session. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this session. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -97,10 +99,10 @@ class AsyncSession(BaseModel):
         super().__init__(
             id=session_id,
             workspace_id=workspace_id,
-            metadata=metadata,
-            configuration=config,
         )
         self._client = client
+        self._metadata = metadata
+        self._configuration = config
 
     @classmethod
     async def create(
@@ -428,9 +430,8 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = session.metadata or {}
-        object.__setattr__(self, "metadata", metadata)
-        return metadata
+        self._metadata = session.metadata or {}
+        return self._metadata
 
     @validate_call
     async def set_metadata(
@@ -455,7 +456,7 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        object.__setattr__(self, "metadata", metadata)
+        self._metadata = metadata
 
     async def get_config(self) -> dict[str, object]:
         """
@@ -473,9 +474,8 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        configuration = session.configuration or {}
-        object.__setattr__(self, "configuration", configuration)
-        return configuration
+        self._configuration = session.configuration or {}
+        return self._configuration
 
     @validate_call
     async def set_config(
@@ -500,7 +500,7 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             configuration=configuration,
         )
-        object.__setattr__(self, "configuration", configuration)
+        self._configuration = configuration
 
     async def refresh(self) -> None:
         """
@@ -513,10 +513,8 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = session.metadata or {}
-        configuration = session.configuration or {}
-        object.__setattr__(self, "metadata", metadata)
-        object.__setattr__(self, "configuration", configuration)
+        self._metadata = session.metadata or {}
+        self._configuration = session.configuration or {}
 
     @validate_call
     async def get_context(

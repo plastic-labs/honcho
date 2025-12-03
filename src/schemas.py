@@ -454,6 +454,21 @@ class SessionContext(SessionBase):
     )
 
 
+class PeerContext(BaseModel):
+    """Context for a peer, including representation and peer card."""
+
+    peer_id: str = Field(description="The ID of the peer")
+    target_id: str = Field(description="The ID of the target peer being observed")
+    representation: Representation | None = Field(
+        default=None,
+        description="The working representation of the target peer from the observer's perspective",
+    )
+    peer_card: list[str] | None = Field(
+        default=None,
+        description="The peer card for the target peer from the observer's perspective",
+    )
+
+
 class SessionSummaries(SessionBase):
     name: str = Field(serialization_alias="id")
     short_summary: Summary | None = Field(

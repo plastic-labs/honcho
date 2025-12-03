@@ -46,17 +46,19 @@ class Honcho(BaseModel):
         min_length=1,
         description="Workspace ID for scoping operations",
     )
-    metadata: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached metadata for this workspace. May be stale. Use get_metadata() for fresh data.",
-    )
-    configuration: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached configuration for this workspace. May be stale. Use get_config() for fresh data.",
-    )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: HonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this workspace. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this workspace. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @property
     def core(self) -> HonchoCore:
@@ -310,9 +312,8 @@ class Honcho(BaseModel):
             dictionary if no metadata is set
         """
         workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
-        metadata = workspace.metadata or {}
-        object.__setattr__(self, "metadata", metadata)
-        return metadata
+        self._metadata = workspace.metadata or {}
+        return self._metadata
 
     @validate_call
     def set_metadata(
@@ -331,7 +332,7 @@ class Honcho(BaseModel):
                       Keys must be strings, values can be any JSON-serializable type
         """
         self._client.workspaces.update(self.workspace_id, metadata=metadata)
-        object.__setattr__(self, "metadata", metadata)
+        self._metadata = metadata
 
     def get_config(self) -> dict[str, object]:
         """
@@ -346,9 +347,8 @@ class Honcho(BaseModel):
             dictionary if no configuration is set
         """
         workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
-        configuration = workspace.configuration or {}
-        object.__setattr__(self, "configuration", configuration)
-        return configuration
+        self._configuration = workspace.configuration or {}
+        return self._configuration
 
     @validate_call
     def set_config(
@@ -369,7 +369,7 @@ class Honcho(BaseModel):
                           Keys must be strings, values can be any JSON-serializable type
         """
         self._client.workspaces.update(self.workspace_id, configuration=configuration)
-        object.__setattr__(self, "configuration", configuration)
+        self._configuration = configuration
 
     def refresh(self) -> None:
         """
@@ -379,10 +379,8 @@ class Honcho(BaseModel):
         associated with the current workspace and updates the cached attributes.
         """
         workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
-        metadata = workspace.metadata or {}
-        configuration = workspace.configuration or {}
-        object.__setattr__(self, "metadata", metadata)
-        object.__setattr__(self, "configuration", configuration)
+        self._metadata = workspace.metadata or {}
+        self._configuration = workspace.configuration or {}
 
     def get_workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
         """

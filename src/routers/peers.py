@@ -344,6 +344,94 @@ async def set_peer_card(
     return schemas.PeerCardResponse(peer_card=peer_card)
 
 
+@router.get(
+    "/{peer_id}/context",
+    response_model=schemas.PeerContext,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def get_peer_context(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer (observer)"),
+    target: str | None = Query(
+        None,
+        description="The target peer to get context for. If not provided, returns the peer's own context (self-observation)",
+    ),
+    search_query: str | None = Query(
+        None,
+        description="Optional query to curate the representation around semantic search results",
+    ),
+    search_top_k: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Only used if `search_query` is provided. Number of semantic-search-retrieved observations to include",
+    ),
+    search_max_distance: float | None = Query(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Only used if `search_query` is provided. Maximum distance for semantically relevant observations",
+    ),
+    include_most_derived: bool = Query(
+        default=True,
+        description="Whether to include the most derived observations in the representation",
+    ),
+    max_observations: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Maximum number of observations to include in the representation",
+    ),
+    db: AsyncSession = db,
+):
+    """
+    Get context for a peer, including their representation and peer card.
+
+    This endpoint returns the working representation and peer card for a peer.
+    If a target is specified, returns the context for the target from the
+    observer peer's perspective. If no target is specified, returns the
+    peer's own context (self-observation).
+
+    This is useful for getting all the context needed about a peer without
+    making multiple API calls.
+    """
+    # If no target specified, get the peer's own context (self-observation)
+    observed = target if target is not None else peer_id
+
+    try:
+        # Get the working representation
+        representation = await crud.get_working_representation(
+            workspace_id,
+            observer=peer_id,
+            observed=observed,
+            session_name=None,  # Peer context is global, not session-scoped
+            include_semantic_query=search_query,
+            semantic_search_top_k=search_top_k,
+            semantic_search_max_distance=search_max_distance,
+            include_most_derived=include_most_derived,
+            max_observations=max_observations
+            if max_observations is not None
+            else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        )
+
+        # Get the peer card
+        peer_card = await crud.get_peer_card(
+            db, workspace_id, observer=peer_id, observed=observed
+        )
+
+        return schemas.PeerContext(
+            peer_id=peer_id,
+            target_id=observed,
+            representation=representation,
+            peer_card=peer_card,
+        )
+    except ValueError as e:
+        logger.warning(f"Failed to get context for peer {peer_id}: {str(e)}")
+        raise ResourceNotFoundException("Peer not found") from e
+
+
 @router.post(
     "/{peer_id}/search",
     response_model=list[schemas.Message],

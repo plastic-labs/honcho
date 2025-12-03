@@ -58,6 +58,14 @@ class DreamPayload(BasePayload):
     observed: str
 
 
+class DeletionPayload(BasePayload):
+    """Payload for deletion tasks."""
+
+    task_type: Literal["deletion"] = "deletion"
+    deletion_type: Literal["session", "observation"]
+    resource_id: str
+
+
 def create_webhook_payload(
     event_type: str,
     data: dict[str, Any],
@@ -79,6 +87,17 @@ def create_dream_payload(
         dream_type=dream_type,
         observer=observer,
         observed=observed,
+    ).model_dump(mode="json", exclude_none=True)
+
+
+def create_deletion_payload(
+    deletion_type: Literal["session", "observation"],
+    resource_id: str,
+) -> dict[str, Any]:
+    """Create a deletion payload."""
+    return DeletionPayload(
+        deletion_type=deletion_type,
+        resource_id=resource_id,
     ).model_dump(mode="json", exclude_none=True)
 
 

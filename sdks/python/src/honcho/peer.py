@@ -17,8 +17,9 @@ from .pagination import SyncPage
 from .types import DialecticStreamResponse
 
 if TYPE_CHECKING:
+    from .observations import ObservationScope
     from .session import Session
-    from .types import Representation
+    from .types import PeerContext, Representation
 
 
 class Peer(BaseModel):
@@ -42,17 +43,19 @@ class Peer(BaseModel):
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
     )
-    metadata: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
-    )
-    configuration: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
-    )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: HonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this peer. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this peer. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -96,10 +99,10 @@ class Peer(BaseModel):
         super().__init__(
             id=peer_id,
             workspace_id=workspace_id,
-            metadata=metadata,
-            configuration=config,
         )
         self._client = client
+        self._metadata = metadata
+        self._configuration = config
 
         if config is not None or metadata is not None:
             peer_data = self._client.workspaces.peers.get_or_create(
@@ -109,8 +112,8 @@ class Peer(BaseModel):
                 metadata=metadata if metadata is not None else omit,
             )
             # Update cached values with API response
-            object.__setattr__(self, "metadata", peer_data.metadata)
-            object.__setattr__(self, "configuration", peer_data.configuration)
+            self._metadata = peer_data.metadata
+            self._configuration = peer_data.configuration
 
     def chat(
         self,
@@ -270,9 +273,8 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = peer.metadata or {}
-        object.__setattr__(self, "metadata", metadata)
-        return metadata
+        self._metadata = peer.metadata or {}
+        return self._metadata
 
     @validate_call
     def set_metadata(
@@ -297,7 +299,7 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        object.__setattr__(self, "metadata", metadata)
+        self._metadata = metadata
 
     def get_config(self) -> dict[str, object]:
         """
@@ -314,9 +316,8 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        configuration = peer.configuration or {}
-        object.__setattr__(self, "configuration", configuration)
-        return configuration
+        self._configuration = peer.configuration or {}
+        return self._configuration
 
     @validate_call
     def set_config(
@@ -343,7 +344,7 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
-        object.__setattr__(self, "configuration", config)
+        self._configuration = config
 
     def get_peer_config(self) -> dict[str, object]:
         """
@@ -386,10 +387,8 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = peer.metadata or {}
-        configuration = peer.configuration or {}
-        object.__setattr__(self, "metadata", metadata)
-        object.__setattr__(self, "configuration", configuration)
+        self._metadata = peer.metadata or {}
+        self._configuration = peer.configuration or {}
 
     @validate_call
     def search(
@@ -531,6 +530,132 @@ class Peer(BaseModel):
             return _Representation.from_dict(cast(dict[str, object], representation))
         else:
             return _Representation.from_dict(data)
+
+    def get_context(
+        self,
+        target: str | Peer | None = None,
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
+    ) -> "PeerContext":
+        """
+        Get context for this peer, including representation and peer card.
+
+        This is a convenience method that retrieves both the working representation
+        and peer card in a single API call.
+
+        Args:
+            target: Optional target peer to get context for. If provided, returns
+                   the context for the target from this peer's perspective.
+                   Can be a Peer object or peer ID string.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
+
+        Returns:
+            A PeerContext object containing the representation and peer card
+
+        Example:
+            ```python
+            # Get own context
+            context = peer.get_context()
+            print(context.representation)
+            print(context.peer_card)
+
+            # Get context for another peer
+            context = peer.get_context(target='other-peer-id')
+
+            # Get context with semantic search
+            context = peer.get_context(
+                search_query='preferences',
+                search_top_k=10
+            )
+            ```
+        """
+        from .types import PeerContext as _PeerContext
+
+        target_id = str(target.id) if isinstance(target, Peer) else target
+
+        response = self._client.workspaces.peers.get_context(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            target=target_id,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
+        )
+
+        return _PeerContext.from_api_response(response)
+
+    @property
+    def observations(self) -> "ObservationScope":
+        """
+        Access this peer's self-observations (where observer == observed == self).
+
+        This property provides a convenient way to access observations that this peer
+        has made about themselves. Use this for self-observation scenarios.
+
+        Returns:
+            An ObservationScope scoped to this peer's self-observations
+
+        Example:
+            ```python
+            # List self-observations
+            obs_list = peer.observations.list()
+
+            # Search self-observations
+            results = peer.observations.query("preferences")
+
+            # Delete a self-observation
+            peer.observations.delete("obs-123")
+            ```
+        """
+        from .observations import ObservationScope as _ObservationScope
+
+        return _ObservationScope(self._client, self.workspace_id, self.id, self.id)
+
+    def observations_of(self, target: str | Peer) -> "ObservationScope":
+        """
+        Access observations this peer has made about another peer.
+
+        This method provides scoped access to observations where this peer is the
+        observer and the target is the observed peer.
+
+        Args:
+            target: The target peer (either a Peer object or peer ID string)
+
+        Returns:
+            An ObservationScope scoped to this peer's observations of the target
+
+        Example:
+            ```python
+            # Get observations about another peer
+            bob_observations = peer.observations_of("bob")
+
+            # List observations
+            obs_list = bob_observations.list()
+
+            # Search observations
+            results = bob_observations.query("work history")
+
+            # Get the representation from these observations
+            rep = bob_observations.get_representation()
+            ```
+        """
+        from .observations import ObservationScope as _ObservationScope
+
+        target_id = target.id if isinstance(target, Peer) else target
+        return _ObservationScope(self._client, self.workspace_id, self.id, target_id)
 
     def __repr__(self) -> str:
         """

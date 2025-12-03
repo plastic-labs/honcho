@@ -51,6 +51,11 @@ def construct_work_unit_key(
     if task_type == "webhook":
         return f"webhook:{workspace_name}"
 
+    if task_type == "deletion":
+        deletion_type = payload.get("deletion_type", "unknown")
+        resource_id = payload.get("resource_id", "unknown")
+        return f"deletion:{workspace_name}:{deletion_type}:{resource_id}"
+
     raise ValueError(f"Invalid task type: {task_type}")
 
 
@@ -98,6 +103,19 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
 
     if task_type == "webhook":
         if len(parts) != 2:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=None,
+            observer=None,
+            observed=None,
+        )
+
+    if task_type == "deletion":
+        if len(parts) != 4:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
             )

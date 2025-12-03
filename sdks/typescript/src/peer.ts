@@ -1,5 +1,6 @@
 import type HonchoCore from '@honcho-ai/core'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
+import { ObservationScope } from './observations'
 import { Page } from './pagination'
 import {
   Representation,
@@ -530,11 +531,201 @@ export class Peer {
   }
 
   /**
+   * Get context for this peer, including representation and peer card.
+   *
+   * This is a convenience method that retrieves both the working representation
+   * and peer card in a single API call.
+   *
+   * @param target - Optional target peer to get context for. If provided, returns
+   *                 the context for the target from this peer's perspective.
+   * @param options - Optional representation options to filter and configure the results
+   * @returns Promise resolving to a PeerContext object containing representation and peer card
+   *
+   * @example
+   * ```typescript
+   * // Get own context
+   * const context = await peer.getContext()
+   * console.log(context.representation?.toString())
+   * console.log(context.peerCard)
+   *
+   * // Get context for another peer
+   * const context = await peer.getContext('other-peer-id')
+   *
+   * // Get context with semantic search
+   * const context = await peer.getContext(undefined, {
+   *   searchQuery: 'preferences',
+   *   searchTopK: 10
+   * })
+   * ```
+   */
+  async getContext(
+    target?: string | Peer,
+    options?: RepresentationOptions
+  ): Promise<PeerContext> {
+    const targetId = target
+      ? typeof target === 'string'
+        ? target
+        : target.id
+      : undefined
+
+    const response = await this._client.workspaces.peers.getContext(
+      this.workspaceId,
+      this.id,
+      {
+        target: targetId,
+        search_query: options?.searchQuery,
+        search_top_k: options?.searchTopK,
+        search_max_distance: options?.searchMaxDistance,
+        include_most_derived: options?.includeMostDerived,
+        max_observations: options?.maxObservations,
+      }
+    )
+
+    return PeerContext.fromApiResponse(response)
+  }
+
+  /**
+   * Access this peer's self-observations (where observer == observed == self).
+   *
+   * This property provides a convenient way to access observations that this peer
+   * has made about themselves. Use this for self-observation scenarios.
+   *
+   * @returns An ObservationScope scoped to this peer's self-observations
+   *
+   * @example
+   * ```typescript
+   * // List self-observations
+   * const obsList = await peer.observations.list()
+   *
+   * // Search self-observations
+   * const results = await peer.observations.query('preferences')
+   *
+   * // Delete a self-observation
+   * await peer.observations.delete('obs-123')
+   * ```
+   */
+  get observations(): ObservationScope {
+    return new ObservationScope(
+      this._client,
+      this.workspaceId,
+      this.id,
+      this.id
+    )
+  }
+
+  /**
+   * Access observations this peer has made about another peer.
+   *
+   * This method provides scoped access to observations where this peer is the
+   * observer and the target is the observed peer.
+   *
+   * @param target - The target peer (either a Peer object or peer ID string)
+   * @returns An ObservationScope scoped to this peer's observations of the target
+   *
+   * @example
+   * ```typescript
+   * // Get observations about another peer
+   * const bobObservations = peer.observationsOf('bob')
+   *
+   * // List observations
+   * const obsList = await bobObservations.list()
+   *
+   * // Search observations
+   * const results = await bobObservations.query('work history')
+   *
+   * // Get the representation from these observations
+   * const rep = await bobObservations.getRepresentation()
+   * ```
+   */
+  observationsOf(target: string | Peer): ObservationScope {
+    const targetId = typeof target === 'string' ? target : target.id
+    return new ObservationScope(
+      this._client,
+      this.workspaceId,
+      this.id,
+      targetId
+    )
+  }
+
+  /**
    * Return a string representation of the Peer.
    *
    * @returns A string representation suitable for debugging
    */
   toString(): string {
     return `Peer(id='${this.id}')`
+  }
+}
+
+/**
+ * Context for a peer, including representation and peer card.
+ *
+ * This class holds both the working representation and peer card for a peer,
+ * typically returned from the getContext API call.
+ */
+export class PeerContext {
+  /**
+   * The ID of the observer peer.
+   */
+  readonly peerId: string
+
+  /**
+   * The ID of the target peer being observed.
+   */
+  readonly targetId: string
+
+  /**
+   * The working representation (may be null if no observations exist).
+   */
+  readonly representation: Representation | null
+
+  /**
+   * List of peer card strings (may be null if no card exists).
+   */
+  readonly peerCard: string[] | null
+
+  constructor(
+    peerId: string,
+    targetId: string,
+    representation: Representation | null,
+    peerCard: string[] | null
+  ) {
+    this.peerId = peerId
+    this.targetId = targetId
+    this.representation = representation
+    this.peerCard = peerCard
+  }
+
+  /**
+   * Create a PeerContext from an API response.
+   *
+   * @param response - API response object with peer_id, target_id, representation, and peer_card
+   * @returns A new PeerContext instance
+   */
+  static fromApiResponse(response: any): PeerContext {
+    const peerId = response.peer_id ?? ''
+    const targetId = response.target_id ?? ''
+
+    let representation: Representation | null = null
+    if (response.representation) {
+      representation = Representation.fromData(
+        response.representation as RepresentationData
+      )
+    }
+
+    const peerCard = response.peer_card ?? null
+
+    return new PeerContext(peerId, targetId, representation, peerCard)
+  }
+
+  /**
+   * Return a string representation of the PeerContext.
+   *
+   * @returns A string representation suitable for debugging
+   */
+  toString(): string {
+    const hasRep = this.representation !== null
+    const hasCard = this.peerCard !== null && this.peerCard.length > 0
+    return `PeerContext(peerId='${this.peerId}', targetId='${this.targetId}', hasRepresentation=${hasRep}, hasPeerCard=${hasCard})`
   }
 }

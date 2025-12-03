@@ -8,6 +8,24 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
+# Re-export observation types from dedicated module
+from .observations import AsyncObservationScope, Observation, ObservationScope
+
+__all__ = [
+    "AsyncObservationScope",
+    "DeductiveObservation",
+    "DeductiveObservationBase",
+    "DialecticStreamResponse",
+    "ExplicitObservation",
+    "ExplicitObservationBase",
+    "Observation",
+    "ObservationMetadata",
+    "ObservationScope",
+    "PeerContext",
+    "Representation",
+    "RepresentationOptions",
+]
+
 
 class RepresentationOptions(BaseModel):
     """Options for configuring representation retrieval behavior."""
@@ -422,3 +440,79 @@ class DialecticStreamResponse:
     def is_complete(self) -> bool:
         """Check if the stream has finished."""
         return self._is_complete
+
+
+class PeerContext:
+    """
+    Context for a peer, including representation and peer card.
+
+    This class holds both the working representation and peer card for a peer,
+    typically returned from the get_context API call.
+
+    Attributes:
+        peer_id: The ID of the observer peer
+        target_id: The ID of the target peer being observed
+        representation: The working representation (may be None if no observations exist)
+        peer_card: List of peer card strings (may be None if no card exists)
+    """
+
+    peer_id: str
+    target_id: str
+    representation: Representation | None
+    peer_card: list[str] | None
+
+    def __init__(
+        self,
+        peer_id: str,
+        target_id: str,
+        representation: Representation | None = None,
+        peer_card: list[str] | None = None,
+    ):
+        self.peer_id = peer_id
+        self.target_id = target_id
+        self.representation = representation
+        self.peer_card = peer_card
+
+    @classmethod
+    def from_api_response(cls, response: Any) -> "PeerContext":
+        """
+        Create a PeerContext from an API response.
+
+        Args:
+            response: API response object with peer_id, target_id, representation, and peer_card
+
+        Returns:
+            A new PeerContext instance
+        """
+        peer_id = getattr(response, "peer_id", "") or ""
+        target_id = getattr(response, "target_id", "") or ""
+
+        representation = None
+        rep_data = getattr(response, "representation", None)
+        if rep_data is not None:
+            if isinstance(rep_data, dict):
+                representation = Representation.from_dict(rep_data)
+            elif hasattr(rep_data, "explicit") and hasattr(rep_data, "deductive"):
+                representation = Representation.from_dict(
+                    {
+                        "explicit": rep_data.explicit,
+                        "deductive": rep_data.deductive,
+                    }
+                )
+
+        peer_card = getattr(response, "peer_card", None)
+
+        return cls(
+            peer_id=peer_id,
+            target_id=target_id,
+            representation=representation,
+            peer_card=peer_card,
+        )
+
+    def __repr__(self) -> str:
+        has_rep = self.representation is not None
+        has_card = self.peer_card is not None and len(self.peer_card) > 0
+        return (
+            f"PeerContext(peer_id={self.peer_id!r}, target_id={self.target_id!r}, "
+            f"has_representation={has_rep}, has_peer_card={has_card})"
+        )

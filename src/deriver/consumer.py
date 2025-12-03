@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from rich.console import Console
 from sqlalchemy import select
 
-from src import models
+from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
@@ -14,6 +14,7 @@ from src.schemas import ResolvedConfiguration
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
 from src.utils.queue_payload import (
+    DeletionPayload,
     DreamPayload,
     SummaryPayload,
     WebhookPayload,
@@ -106,6 +107,20 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_dream(validated, workspace_name)
+
+    elif task_type == "deletion":
+        with sentry_sdk.start_transaction(name="process_deletion_task", op="deriver"):
+            try:
+                validated = DeletionPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid deletion payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_deletion(validated, workspace_name)
+
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
@@ -141,3 +156,71 @@ async def process_representation_batch(
         observer=observer,
         observed=observed,
     )
+
+
+async def process_deletion(
+    payload: DeletionPayload,
+    workspace_name: str,
+) -> None:
+    """
+    Process a deletion task from the queue.
+
+    This function handles the actual deletion of resources based on the deletion type.
+    It is designed to be idempotent - deleting an already-deleted resource is a no-op.
+
+    Args:
+        payload: The deletion payload containing deletion_type and resource_id
+        workspace_name: The workspace name for scoping the deletion
+
+    Raises:
+        ValueError: If the deletion type is not supported
+    """
+    deletion_type = payload.deletion_type
+    resource_id = payload.resource_id
+
+    logger.info(
+        "Processing deletion task: type=%s, resource_id=%s, workspace=%s",
+        deletion_type,
+        resource_id,
+        workspace_name,
+    )
+
+    async with tracked_db("process_deletion") as db:
+        if deletion_type == "session":
+            try:
+                await crud.delete_session(
+                    db, workspace_name=workspace_name, session_name=resource_id
+                )
+                logger.info(
+                    "Successfully deleted session %s in workspace %s",
+                    resource_id,
+                    workspace_name,
+                )
+            except ValueError as e:
+                # Session not found - may have already been deleted, treat as success
+                logger.warning(
+                    "Session %s not found during deletion (may already be deleted): %s",
+                    resource_id,
+                    str(e),
+                )
+
+        elif deletion_type == "observation":
+            try:
+                await crud.delete_document_by_id(
+                    db, workspace_name=workspace_name, document_id=resource_id
+                )
+                logger.info(
+                    "Successfully deleted observation %s in workspace %s",
+                    resource_id,
+                    workspace_name,
+                )
+            except Exception as e:
+                # Document not found - may have already been deleted, treat as success
+                logger.warning(
+                    "Observation %s not found during deletion (may already be deleted): %s",
+                    resource_id,
+                    str(e),
+                )
+
+        else:
+            raise ValueError(f"Unsupported deletion type: {deletion_type}")

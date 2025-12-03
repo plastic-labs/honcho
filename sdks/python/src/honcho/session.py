@@ -55,17 +55,19 @@ class Session(BaseModel):
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
     )
-    metadata: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached metadata for this session. May be stale. Use get_metadata() for fresh data.",
-    )
-    configuration: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached configuration for this session. May be stale. Use get_config() for fresh data.",
-    )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: HonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this session. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this session. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -107,10 +109,10 @@ class Session(BaseModel):
         super().__init__(
             id=session_id,
             workspace_id=workspace_id,
-            metadata=metadata,
-            configuration=config,
         )
         self._client = client
+        self._metadata = metadata
+        self._configuration = config
 
         if config is not None or metadata is not None:
             session_data = self._client.workspaces.sessions.get_or_create(
@@ -120,8 +122,8 @@ class Session(BaseModel):
                 metadata=metadata if metadata is not None else omit,
             )
             # Update cached values with API response
-            object.__setattr__(self, "metadata", session_data.metadata)
-            object.__setattr__(self, "configuration", session_data.configuration)
+            self._metadata = session_data.metadata
+            self._configuration = session_data.configuration
 
     def add_peers(
         self,
@@ -381,9 +383,8 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = session_data.metadata or {}
-        object.__setattr__(self, "metadata", metadata)
-        return metadata
+        self._metadata = session_data.metadata or {}
+        return self._metadata
 
     def delete(self) -> None:
         """
@@ -426,7 +427,7 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        object.__setattr__(self, "metadata", metadata)
+        self._metadata = metadata
 
     def get_config(self) -> dict[str, object]:
         """
@@ -444,9 +445,8 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        configuration = session_data.configuration or {}
-        object.__setattr__(self, "configuration", configuration)
-        return configuration
+        self._configuration = session_data.configuration or {}
+        return self._configuration
 
     @validate_call
     def set_config(
@@ -471,7 +471,7 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             configuration=configuration,
         )
-        object.__setattr__(self, "configuration", configuration)
+        self._configuration = configuration
 
     def refresh(self) -> None:
         """
@@ -484,10 +484,8 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = session_data.metadata or {}
-        configuration = session_data.configuration or {}
-        object.__setattr__(self, "metadata", metadata)
-        object.__setattr__(self, "configuration", configuration)
+        self._metadata = session_data.metadata or {}
+        self._configuration = session_data.configuration or {}
 
     @validate_call
     def get_context(
