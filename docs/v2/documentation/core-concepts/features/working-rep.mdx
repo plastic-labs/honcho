@@ -22,7 +22,7 @@ Working representations are automatically generated and cached through Honcho's 
 
 ## Basic Usage
 
-Working representations are accessed through the `working_rep()` method on Session objects:
+Working representations are accessed through the `working_rep()` method on Session or Peer objects:
 
 <CodeGroup>
 ```python Python
@@ -50,6 +50,9 @@ response = user.chat("What is this user's main concern right now?", session_id=s
 # Retrieve the cached working representation for the user
 user_representation = session.working_rep("user-123")
 print("Cached user representation:", user_representation)
+
+# Or access from the peer directly
+peer_representation = user.working_rep()
 ```
 
 ```typescript TypeScript
@@ -77,7 +80,76 @@ const response = await user.chat("What is this user's main concern right now?", 
 // Retrieve the cached working representation for the user
 const userRepresentation = await session.workingRep("user-123");
 console.log("Cached user representation:", userRepresentation);
-// Returns: { representation: Object }
+
+// Or access from the peer directly
+const peerRepresentation = await user.workingRep();
+```
+</CodeGroup>
+
+## Semantic Search in Representations
+
+Working representations support semantic search to retrieve the most relevant observations for a given query. This is useful when you want to focus the representation on specific topics.
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `search_query` | `str` | Semantic search query to filter relevant observations |
+| `search_top_k` | `int` | Number of semantic search results to include (1-100) |
+| `search_max_distance` | `float` | Maximum semantic distance threshold (0.0-1.0) |
+| `include_most_derived` | `bool` | Whether to include the most recently derived observations |
+| `max_observations` | `int` | Maximum number of observations to include (1-100) |
+
+<CodeGroup>
+```python Python
+# Get representation focused on a specific topic
+billing_rep = session.working_rep(
+    "user-123",
+    search_query="billing and payment issues",
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_derived=True,
+    max_observations=25
+)
+
+# Get representation from peer with target
+# What user-123 knows about the assistant
+local_rep = session.working_rep(
+    "user-123",
+    target="ai-assistant",
+    search_query="support interactions"
+)
+
+# Access from peer object with semantic search
+user_rep = user.working_rep(
+    session=session,
+    search_query="preferences",
+    search_top_k=5
+)
+```
+
+```typescript TypeScript
+// Get representation focused on a specific topic
+const billingRep = await session.workingRep("user-123", {
+  searchQuery: "billing and payment issues",
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostDerived: true,
+  maxObservations: 25
+});
+
+// Get representation from peer with target
+// What user-123 knows about the assistant
+const localRep = await session.workingRep("user-123", {
+  target: "ai-assistant",
+  searchQuery: "support interactions"
+});
+
+// Access from peer object with semantic search
+const userRep = await user.workingRep(session, undefined, {
+  searchQuery: "preferences",
+  searchTopK: 5
+});
 ```
 </CodeGroup>
 
