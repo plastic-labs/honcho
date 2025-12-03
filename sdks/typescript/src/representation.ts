@@ -1,8 +1,30 @@
+/**
+ * Options for representation retrieval.
+ */
 export interface RepresentationOptions {
+  /**
+   * Semantic search query to filter relevant observations.
+   */
   searchQuery?: string
+
+  /**
+   * Number of semantically relevant facts to return.
+   */
   searchTopK?: number
+
+  /**
+   * Maximum semantic distance for search results (0.0-1.0).
+   */
   searchMaxDistance?: number
+
+  /**
+   * Whether to include the most derived observations.
+   */
   includeMostDerived?: boolean
+
+  /**
+   * Maximum number of observations to include.
+   */
   maxObservations?: number
 }
 

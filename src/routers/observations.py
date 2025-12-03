@@ -22,7 +22,6 @@ router = APIRouter(
 @router.post(
     "/list",
     response_model=Page[schemas.Observation],
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def list_observations(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -61,7 +60,6 @@ async def list_observations(
 @router.post(
     "/query",
     response_model=list[schemas.Observation],
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def query_observations(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -106,7 +104,6 @@ async def query_observations(
 
 @router.delete(
     "/{observation_id}",
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def delete_observation(
     workspace_id: str = Path(..., description="ID of the workspace"),

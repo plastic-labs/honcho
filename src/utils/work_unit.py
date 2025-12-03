@@ -52,8 +52,12 @@ def construct_work_unit_key(
         return f"webhook:{workspace_name}"
 
     if task_type == "deletion":
-        deletion_type = payload.get("deletion_type", "unknown")
-        resource_id = payload.get("resource_id", "unknown")
+        deletion_type = payload.get("deletion_type")
+        resource_id = payload.get("resource_id")
+        if not deletion_type or not resource_id:
+            raise ValueError(
+                "deletion_type and resource_id are required for deletion tasks"
+            )
         return f"deletion:{workspace_name}:{deletion_type}:{resource_id}"
 
     raise ValueError(f"Invalid task type: {task_type}")

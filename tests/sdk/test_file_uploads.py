@@ -373,7 +373,7 @@ async def test_file_upload_with_created_at(
         messages = session.upload_file(
             file=text_file,
             peer_id=user.id,
-            created_at=created_at_str,
+            created_at=test_timestamp.isoformat(),
         )
     else:
         session = await honcho_client.session(id="test-session-timestamp")
@@ -476,17 +476,13 @@ async def test_file_upload_with_datetime_object(
         session = honcho_client.session(id="test-session-datetime")
         user = honcho_client.peer(id="user-datetime")
         messages = session.upload_file(
-            file=text_file,
-            peer_id=user.id,
-            created_at=test_timestamp.isoformat(),  # Convert to ISO string
+            file=text_file, peer_id=user.id, created_at=test_timestamp
         )
     else:
         session = await honcho_client.session(id="test-session-datetime")
         user = await honcho_client.peer(id="user-datetime")
         messages = await session.upload_file(
-            file=text_file,
-            peer_id=user.id,
-            created_at=test_timestamp.isoformat(),  # Convert to ISO string
+            file=text_file, peer_id=user.id, created_at=test_timestamp
         )
 
     assert len(messages) >= 1

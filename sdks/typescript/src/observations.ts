@@ -1,5 +1,12 @@
 import type HonchoCore from '@honcho-ai/core'
-import { Representation, type RepresentationData } from './representation'
+import {
+  Representation,
+  type RepresentationData,
+  type RepresentationOptions,
+} from './representation'
+
+// Re-export for consumers who import from this module
+export type { RepresentationOptions }
 
 /**
  * An observation from the theory-of-mind system.
@@ -81,36 +88,6 @@ export class Observation {
         : this.content
     return `Observation(id='${this.id}', content='${truncatedContent}')`
   }
-}
-
-/**
- * Options for representation retrieval.
- */
-export interface RepresentationOptions {
-  /**
-   * Semantic search query to filter relevant observations.
-   */
-  searchQuery?: string
-
-  /**
-   * Number of semantically relevant facts to return.
-   */
-  searchTopK?: number
-
-  /**
-   * Maximum semantic distance for search results (0.0-1.0).
-   */
-  searchMaxDistance?: number
-
-  /**
-   * Whether to include the most derived observations.
-   */
-  includeMostDerived?: boolean
-
-  /**
-   * Maximum number of observations to include.
-   */
-  maxObservations?: number
 }
 
 /**

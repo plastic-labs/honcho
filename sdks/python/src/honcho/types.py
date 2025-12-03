@@ -94,7 +94,8 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
     def __eq__(self, other: object) -> bool:
         """
         Define equality for ExplicitObservation objects.
-        Two observations are equal if all their fields match.
+        Two observations are equal if content, created_at, and session_name match.
+        NOTE: message_ids are not included in the equality check.
         """
         if not isinstance(other, ExplicitObservation):
             return False
@@ -324,6 +325,9 @@ class Representation(BaseModel):
 
         Returns:
             A new Representation instance
+
+        Raises:
+            ValidationError: If observation data is missing required fields
         """
         explicit_data: Any = data.get("explicit", [])
         deductive_data: Any = data.get("deductive", [])

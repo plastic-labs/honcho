@@ -60,7 +60,10 @@ class Observation:
         )
 
     def __repr__(self) -> str:
-        return f"Observation(id={self.id!r}, content={self.content[:50]!r}...)"
+        truncated = (
+            f"{self.content[:50]}..." if len(self.content) > 50 else self.content
+        )
+        return f"Observation(id={self.id!r}, content={truncated!r})"
 
 
 class ObservationScope:

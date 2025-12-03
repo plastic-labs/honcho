@@ -244,14 +244,16 @@ export class Peer {
    * The created message object can then be added to sessions or used in other operations.
    *
    * @param content - The text content for the message
-   * @param metadata - Optional metadata to associate with the message
-   * @param created_at - Optional ISO 8601 timestamp for the message
+   * @param options.metadata - Optional metadata to associate with the message
+   * @param options.configuration - Optional message-level configuration (e.g., deriver settings)
+   * @param options.created_at - Optional ISO 8601 timestamp for the message
    * @returns A new message object with this peer's ID and the provided content
    */
   message(
     content: string,
     options?: {
       metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
       created_at?: string | Date
     }
   ): ValidatedMessageCreate {
@@ -269,6 +271,7 @@ export class Peer {
       peer_id: this.id,
       content: validatedContent,
       metadata: validatedMetadata,
+      configuration: options?.configuration,
       created_at: createdAt,
     }
   }

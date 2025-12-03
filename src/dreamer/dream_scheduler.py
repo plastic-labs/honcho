@@ -47,17 +47,21 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
     if not workspace_name or not peer_name:
         return []
 
-    # Generate dream work unit key for this peer's collection
-    dream_key = construct_work_unit_key(
-        workspace_name,
-        {
-            "task_type": "dream",
-            "observer": peer_name,
-            "observed": peer_name,
-        },
-    )
+    # Generate dream work unit keys for each enabled dream type
+    dream_keys: list[str] = []
+    for dream_type in settings.DREAM.ENABLED_TYPES:
+        dream_key = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": peer_name,
+                "observed": peer_name,
+                "dream_type": dream_type,
+            },
+        )
+        dream_keys.append(dream_key)
 
-    return [dream_key]
+    return dream_keys
 
 
 class DreamScheduler:
@@ -291,19 +295,20 @@ async def check_and_schedule_dream(
 
         dream_scheduler = get_dream_scheduler()
         if dream_scheduler:
-            collection_work_unit_key = construct_work_unit_key(
-                collection.workspace_name,
-                {
-                    "task_type": "dream",
-                    "observer": collection.observer,
-                    "observed": collection.observed,
-                },
-            )
-
             enabled_dream_types = settings.DREAM.ENABLED_TYPES
             for dream_type in enabled_dream_types:
+                # Include dream_type in key so each dream type can be tracked independently
+                dream_work_unit_key = construct_work_unit_key(
+                    collection.workspace_name,
+                    {
+                        "task_type": "dream",
+                        "observer": collection.observer,
+                        "observed": collection.observed,
+                        "dream_type": dream_type,
+                    },
+                )
                 await dream_scheduler.schedule_dream(
-                    collection_work_unit_key,
+                    dream_work_unit_key,
                     collection.workspace_name,
                     current_document_count,
                     settings.DREAM.IDLE_TIMEOUT_MINUTES,

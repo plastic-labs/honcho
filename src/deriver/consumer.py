@@ -9,6 +9,7 @@ from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
+from src.exceptions import ResourceNotFoundException
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.utils import summarizer
@@ -214,7 +215,7 @@ async def process_deletion(
                     resource_id,
                     workspace_name,
                 )
-            except Exception as e:
+            except ResourceNotFoundException as e:
                 # Document not found - may have already been deleted, treat as success
                 logger.warning(
                     "Observation %s not found during deletion (may already be deleted): %s",

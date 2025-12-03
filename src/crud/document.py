@@ -16,7 +16,7 @@ from src.utils.filter import apply_filter
 logger = getLogger(__name__)
 
 
-async def get_all_documents(
+def get_all_documents(
     workspace_name: str,
     *,
     observer: str,

@@ -89,12 +89,22 @@ export const MessageMetadataSchema = z
   .optional()
 
 /**
+ * Schema for message configuration.
+ * Configuration can include deriver and peer_card settings.
+ */
+export const MessageConfigurationSchema = z
+  .record(z.string(), z.unknown())
+  .nullable()
+  .optional()
+
+/**
  * Schema for message creation.
  */
 export const MessageCreateSchema = z.object({
   peer_id: PeerIdSchema,
   content: MessageContentSchema,
   metadata: MessageMetadataSchema,
+  configuration: MessageConfigurationSchema,
   created_at: z.string().nullable().optional(),
 })
 

@@ -4,6 +4,8 @@ import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+import json
+from datetime import datetime
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
@@ -753,7 +755,7 @@ class AsyncSession(BaseModel):
             None,
             description="Optional configuration dictionary to associate with the messages",
         ),
-        created_at: str | None = Field(
+        created_at: str | datetime | None = Field(
             None,
             description="Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.",
         ),
@@ -791,9 +793,6 @@ class AsyncSession(BaseModel):
         filename, content_bytes, content_type = prepare_file_for_upload(file)
 
         # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
-        import json
-        from datetime import datetime
-
         extra_body_data: dict[str, str] = {}
         if metadata is not None:
             extra_body_data["metadata"] = json.dumps(metadata)

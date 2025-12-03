@@ -30,7 +30,7 @@ def consolidation_prompt(
         representation: The user representation to consolidate
 
     Returns:
-        A consolidated user representation
+        A prompt string for the LLM to consolidate the representation
     """
     representation_as_json = representation.model_dump_json(indent=2)
 
@@ -68,9 +68,6 @@ async def process_consolidate_dream(payload: DreamPayload, workspace_name: str) 
 
     Consolidation means taking all the documents in a collection and merging
     similar observations into a single, best-quality observation document.
-
-    TODO: need to determine a way to do this on a subset of documents since
-    collections will grow very large.
     """
 
     logger.info(
@@ -108,7 +105,7 @@ async def process_consolidate_dream(payload: DreamPayload, workspace_name: str) 
             )
             return
 
-        documents_query = await crud.get_all_documents(
+        documents_query = crud.get_all_documents(
             workspace_name,
             observer=payload.observer,
             observed=payload.observed,
@@ -177,9 +174,23 @@ async def _consolidate_cluster(
         *consolidated_representation.deductive,
     ]
 
+    if not new_documents:
+        return
+
+    # Collect all contents for batch embedding
+    contents: list[str] = []
+    for obs in new_documents:
+        if isinstance(obs, ExplicitObservation):
+            contents.append(obs.content)
+        else:
+            contents.append(obs.conclusion)
+
+    # Batch embed all contents at once for better performance
+    embeddings = await embedding_client.simple_batch_embed(contents)
+
     documents_to_create: list[schemas.DocumentCreate] = []
 
-    for obs in new_documents:
+    for i, obs in enumerate(new_documents):
         if isinstance(obs, ExplicitObservation):
             content = obs.content
             level = "explicit"
@@ -196,8 +207,6 @@ async def _consolidate_cluster(
             premises=premises,
         )
 
-        embedding = await embedding_client.embed(content)
-
         documents_to_create.append(
             schemas.DocumentCreate(
                 content=content,
@@ -205,7 +214,7 @@ async def _consolidate_cluster(
                 level=level,
                 times_derived=total_times_derived,
                 metadata=metadata,
-                embedding=embedding,
+                embedding=embeddings[i],
             )
         )
 
