@@ -18,14 +18,14 @@ Got lots of data to migrate? Contact us at hello@plasticlabs.ai. We would love t
 
 **Competitive Pricing** - Flexible pricing with generous free tier and volume discounts for high-throughput applications.
 
-**Multi-Peer Sessions** - Native support for group conversations with multiple users and AI agents in a single session with configurable observation settings.
+**Advanced Multi-Peer Sessions** - Honcho offers configurable observation settings (who build's memories about whom), representation based queries between participants, and first-class peer objects.
 
 ## Quick Migration
 
 Migrate a single user's memories from Mem0 to Honcho in one script:
 
 <Info>
-Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys). New accounts start with $100 credits. Plenty to start.
+Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys). New accounts start with $100 credits (plenty to get you going).
 </Info>
 
 <CodeGroup>
@@ -201,51 +201,58 @@ for (const memory of memories) {
 
 ### 5. Update Your Application Code
 
-Replace your Mem0 API calls with Honcho equivalents. See the [API Comparison](#api-comparison) and [Advanced Features](#advanced-features) sections below.
+Replace your Mem0 API calls with Honcho equivalents. See the [API Comparison](#api-comparison) section below.
 
 ## API Comparison
 
-| Mem0 | Honcho | Notes |
-|------|--------|-------|
-| `user_id` | `peer` | Supports both users and AI agents |
-| `client.add()` | `session.add_messages()` | Session-scoped message storage |
-| `client.search()` | `peer.search()` | Semantic & filter search |
+### Core Operations
 
-These capabilities have no direct Mem0 equivalent:
+| Operation | Mem0 | Honcho | Notes |
+|-----------|------|--------|-------|
+| **Initialize** | `MemoryClient(api_key=...)` | `Honcho(api_key=...)` |  |
+| **Identity** | `user_id` string param | `peer = honcho.peer("id")` | Peers can be users or AI agents |
+| **Add data** | `client.add(messages, user_id=...)` | `session.add_messages([peer.message(...)])` | Session-scoped, preserves conversation order |
+| **Search** | `client.search(query, user_id=...)` | `peer.search(query)` or `session.search(query)` | Scoped to peer or session |
+| **List all** | `client.get_all(user_id=...)` | `session.get_messages()` | Paginated results |
+| **Update** | `client.update(memory_id, data=...)` | `honcho.update_message(message, metadata=...)` | Metadata updates only |
+| **Delete** | `client.delete(memory_id)` | `session.delete()` | Session-level deletion |
 
-| Honcho | Description |
-|--------|-------------|
-| `peer.chat()` | Query the representation of the peer, what it knows about its peers, nuanced preferences or general questions. Based on learned patterns, not just stored facts. |
-| `peer.card()` | Get stable biographical facts about a peer (name, preferences, background) |
-| `session.get_context()` | Retrieve optimized context with auto-summaries for LLM prompts |
-| `session.working_rep()` | Get cached psychological analysis for a peer in this session (mental state, intentions, conclusions) |
-| `session.get_summaries()` | Access auto-generated short and long session summaries |
-| `SessionPeerConfig` | Configure observation settings (who learns about whom) |
+### Honcho-Only Capabilities
+
+Mem0 requires manual assembly of context from `search()` results. Honcho's `session.get_context()` returns a ready-to-use `SessionContext` object with built-in token limits, auto-included summaries, and format helpers (`.to_openai()`, `.to_anthropic()`).
+
+<Card title="Get Context" icon="window-restore" href="/v2/documentation/core-concepts/features/get-context">
+  Learn more about token-optimized context retrieval
+</Card>
 
 
-## Advanced Features
+Mem0's `search()` returns basic vector or semantic or raw memory matches. Honcho's `peer.chat()` enables your agent to *reason* about what it knows—returning synthesized natural language insights with streaming support and scoped queries.
 
-Honcho enables capabilities not available in Mem0:
+<Card title="Dialectic Endpoint" icon="brain" href="/v2/documentation/core-concepts/features/dialectic-endpoint">
+  Learn more about inference-powered queries
+</Card>
 
-```python
-# Multi-peer sessions
-alice = honcho.peer("alice")
-bob = honcho.peer("bob")
-session = honcho.session("group-chat")
-session.add_peers([alice, bob])
+Additional features with **no Mem0 equivalent**:
 
-# Get cached working representation for a peer in this session
-working_rep = session.working_rep(alice)
+| Honcho Method | Description | Use Case |
+|---------------|-------------|----------|
+| `peer.card()` | Stable biographical facts (name, preferences, background) | User profiles, personalization |
+| `session.working_rep(peer)` | Cached psychological analysis (mental state, intentions) | Real-time adaptation |
+| `session.get_summaries()` | Auto-generated short/long session summaries | Conversation continuity |
+| `SessionPeerConfig` | Configure observation settings (who learns about whom) | Privacy controls, role-based learning |
 
-# Get biographical peer card
-peer_card = alice.card()
+### Multi-Peer / Group Chat Comparison
 
-# Session context with summaries for LLM prompts
-context = session.get_context()
+Both platforms support multi-participant conversations, but with different approaches:
 
-# Inference-powered queries (dialectic API)
-insights = alice.chat("What communication style does Alice prefer?")
-```
+| Capability | Mem0 | Honcho |
+|------------|------|--------|
+| **Participant identity** | `name` field in messages | First-class `Peer` objects |
+| **Attribution** | Auto-extracts to `user_id`/`agent_id` | Explicit `peer.message()` attribution |
+| **Session grouping** | `run_id` parameter | `session` object with `add_peers()` |
+| **Observation control** | None | `SessionPeerConfig` (who learns about whom) |
+| **Inference powered queries** | Not supported | `peer.chat(query, target=other_peer)` |
+| **Peer relationships** | Flat attribution | Bidirectional representation building |
 
 ## Next Steps
 
