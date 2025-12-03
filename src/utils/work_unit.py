@@ -13,6 +13,7 @@ class ParsedWorkUnit(BaseModel):
     session_name: str | None
     observer: str | None
     observed: str | None
+    dream_type: str | None = None
 
 
 def construct_work_unit_key(
@@ -45,7 +46,10 @@ def construct_work_unit_key(
         observed = payload.get("observed", "None")
         session_name = payload.get("session_name", "None")
         if task_type == "dream":
-            return f"{task_type}:{workspace_name}:{observer}:{observed}"
+            dream_type = payload.get("dream_type")
+            if not dream_type:
+                raise ValueError("dream_type is required for dream tasks")
+            return f"{task_type}:{dream_type}:{workspace_name}:{observer}:{observed}"
         return f"{task_type}:{workspace_name}:{session_name}:{observer}:{observed}"
 
     if task_type == "webhook":
@@ -93,16 +97,17 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
         )
 
     if task_type == "dream":
-        if len(parts) != 4:
+        if len(parts) != 5:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
             )
         return ParsedWorkUnit(
             task_type=task_type,
-            workspace_name=parts[1],
+            workspace_name=parts[2],
             session_name=None,
-            observer=parts[2],
-            observed=parts[3],
+            observer=parts[3],
+            observed=parts[4],
+            dream_type=parts[1],
         )
 
     if task_type == "webhook":
