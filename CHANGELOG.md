@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.5.0] - 2025-12-03
+
+### Added
+
+- Message level configurations
+- Endpoints to directly query observations
+- An Endpoint to (hard) delete sessions
+- An Endpoint to delete observations
+- Comprehensive test cases for harness
+- Peer level get_context
+- Set Peer Card Method
+- Manual dreaming trigger endpoint
+
+### Changed
+
+- Configurations to support more flags for fine-grained control of the deriver, peer cards, summaries, etc.
+- Working Representations to support more fine-grained parameters
+
+### Fixed
+
+- File uploads to match `MessageCreate` structure
+
 ## [2.4.3] - 2025-11-20
 
 ### Added

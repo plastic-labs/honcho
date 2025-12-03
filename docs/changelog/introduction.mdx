@@ -27,7 +27,29 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v2.4.3 (Current)">
+        <Update label="v2.5.0 (Current)">
+        ### Added
+
+        - Message level configurations
+        - Endpoints to directly query observations
+        - An Endpoint to (hard) delete sessions
+        - An Endpoint to delete observations
+        - Comprehensive test cases for harness
+        - Peer level get_context
+        - Set Peer Card Method
+        - Manual dreaming trigger endpoint
+
+        ### Changed
+
+        - Configurations to support more flags for fine-grained control of the deriver, peer cards, summaries, etc.
+        - Working Representations to support more fine-grained parameters
+
+        ### Fixed
+
+        - File uploads to match `MessageCreate` structure
+        </Update>
+
+        <Update label="v2.4.3">
         ### Added
 
         - Redis caching to improve DB IO
@@ -379,6 +401,15 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
+        <Update label="v1.6.0 (Current)">
+            ### Added
+
+            - metadata and configuration fields to Workspace, Peer, Session, and Message objects
+            - Session Clone methods
+            - Peer level get_context method
+            - `ObservationScope` object to query and delete observations
+            - Representation object for WorkingRepresentations
+        </Update>
         <Update label="v1.5.0">
         ### Added
 
@@ -453,6 +484,15 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
+        <Update label="v1.6.0 (Current)">
+            ### Added
+
+            - metadata and configuration fields to Workspace, Peer, Session, and Message objects
+            - Session Clone methods
+            - Peer level get_context method
+            - `ObservationScope` object to query and delete observations
+            - Representation object for WorkingRepresentations
+        </Update>
         <Update label="v1.5.0">
         ### Added
 

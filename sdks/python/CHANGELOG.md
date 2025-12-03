@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.6.0] - 2025-12-03
+
+### Added
+
+- metadata and configuration fields to Workspace, Peer, Session, and Message objects
+- Session Clone methods
+- Peer level get_context method
+- `ObservationScope` object to query and delete observations
+- Representation object for WorkingRepresentations
+
 ## [1.5.0] - 2025-10-09
 
 ### Added
