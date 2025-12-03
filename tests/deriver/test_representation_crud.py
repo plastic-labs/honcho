@@ -17,13 +17,13 @@ def test_representation_is_empty_and_diff():
     exp_shared_1 = ExplicitObservation(
         content="A",
         created_at=shared_time,
-        message_ids=[(1, 1)],
+        message_ids=[1],
         session_name="s",
     )
     exp_shared_2 = ExplicitObservation(
         content="B",
         created_at=shared_time,
-        message_ids=[(1, 1)],
+        message_ids=[1],
         session_name="s",
     )
     rep1 = Representation(explicit=[exp_shared_1], deductive=[])
@@ -32,7 +32,7 @@ def test_representation_is_empty_and_diff():
             ExplicitObservation(
                 content="A",
                 created_at=shared_time,
-                message_ids=[(1, 1)],
+                message_ids=[1],
                 session_name="s",
             ),
             exp_shared_2,
@@ -53,12 +53,12 @@ def test_representation_formatting_methods():
     e = ExplicitObservation(
         content="has a dog",
         created_at=now,
-        message_ids=[(1, 1)],
+        message_ids=[1],
         session_name="s",
     )
     d = DeductiveObservation(
         created_at=now,
-        message_ids=[(1, 1)],
+        message_ids=[1],
         session_name="s",
         conclusion="owns a pet",
         premises=[e.content],
@@ -85,7 +85,7 @@ def test_prompt_representation_conversion():
     timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
     rep = Representation.from_prompt_representation(
         pr,
-        message_ids=(1, 1),
+        message_ids=[1],
         session_name="s",
         created_at=timestamp,
     )

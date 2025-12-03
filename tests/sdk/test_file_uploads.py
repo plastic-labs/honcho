@@ -252,3 +252,244 @@ async def test_file_upload_with_tuple_input(
     assert content in messages[0].content
     assert messages[0].peer_id == user.id
     assert messages[0].session_id == session.id
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_metadata(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests uploading a file with metadata parameter.
+    """
+    honcho_client, _client_type = client_fixture
+
+    text_content = "Test file with metadata"
+    from io import BytesIO
+
+    text_file = BytesIO(text_content.encode("utf-8"))
+    text_file.name = "test_metadata.txt"
+
+    metadata: dict[str, object] = {
+        "source": "sdk_test",
+        "category": "upload",
+        "priority": 1,
+    }
+
+    if isinstance(honcho_client, Honcho):
+        session = honcho_client.session(id="test-session-metadata")
+        user = honcho_client.peer(id="user-metadata")
+        messages = session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            metadata=metadata,
+        )
+    else:
+        session = await honcho_client.session(id="test-session-metadata")
+        user = await honcho_client.peer(id="user-metadata")
+        messages = await session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            metadata=metadata,
+        )
+
+    assert len(messages) >= 1
+    assert text_content in messages[0].content
+    assert messages[0].peer_id == user.id
+    assert messages[0].session_id == session.id
+    # Check that metadata was applied
+    assert messages[0].metadata == metadata
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_configuration(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests uploading a file with configuration parameter.
+    """
+    honcho_client, _client_type = client_fixture
+
+    text_content = "Test file with configuration"
+    from io import BytesIO
+
+    text_file = BytesIO(text_content.encode("utf-8"))
+    text_file.name = "test_config.txt"
+
+    from typing import cast
+
+    from honcho_core.types.workspaces.sessions.message_create_param import Configuration
+
+    configuration = cast(
+        Configuration, cast(object, {"skip_deriver": True, "custom_flag": "test"})
+    )
+
+    if isinstance(honcho_client, Honcho):
+        session = honcho_client.session(id="test-session-config")
+        user = honcho_client.peer(id="user-config")
+        messages = session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            configuration=configuration,
+        )
+    else:
+        session = await honcho_client.session(id="test-session-config")
+        user = await honcho_client.peer(id="user-config")
+        messages = await session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            configuration=configuration,
+        )
+
+    assert len(messages) >= 1
+    assert text_content in messages[0].content
+    assert messages[0].peer_id == user.id
+    assert messages[0].session_id == session.id
+    # Configuration is used during processing, not directly stored in message
+    # This test confirms the endpoint accepts it without error
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_created_at(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests uploading a file with created_at parameter.
+    """
+    honcho_client, _client_type = client_fixture
+
+    text_content = "Test file with created_at"
+    from datetime import datetime, timezone
+    from io import BytesIO
+
+    text_file = BytesIO(text_content.encode("utf-8"))
+    text_file.name = "test_timestamp.txt"
+
+    test_timestamp = datetime(2023, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+    created_at_str = test_timestamp.isoformat()
+
+    if isinstance(honcho_client, Honcho):
+        session = honcho_client.session(id="test-session-timestamp")
+        user = honcho_client.peer(id="user-timestamp")
+        messages = session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            created_at=test_timestamp.isoformat(),
+        )
+    else:
+        session = await honcho_client.session(id="test-session-timestamp")
+        user = await honcho_client.peer(id="user-timestamp")
+        messages = await session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            created_at=created_at_str,
+        )
+
+    assert len(messages) >= 1
+    assert text_content in messages[0].content
+    assert messages[0].peer_id == user.id
+    assert messages[0].session_id == session.id
+    # Check that created_at was applied (compare timestamps, allowing for small differences)
+    # Message.created_at from honcho_core is a datetime object
+    message_timestamp = messages[0].created_at
+    assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_all_parameters(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests uploading a file with metadata, configuration, and created_at all together.
+    """
+    honcho_client, _client_type = client_fixture
+
+    text_content = "Test file with all parameters"
+    from datetime import datetime, timezone
+    from io import BytesIO
+
+    text_file = BytesIO(text_content.encode("utf-8"))
+    text_file.name = "test_all_params.txt"
+
+    from typing import cast
+
+    from honcho_core.types.workspaces.sessions.message_create_param import Configuration
+
+    metadata: dict[str, object] = {"source": "comprehensive_test", "version": "1.0"}
+    configuration = cast(
+        Configuration, cast(object, {"skip_deriver": False, "test_mode": True})
+    )
+    test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=timezone.utc)
+    created_at_str = test_timestamp.isoformat()
+
+    if isinstance(honcho_client, Honcho):
+        session = honcho_client.session(id="test-session-all")
+        user = honcho_client.peer(id="user-all")
+        messages = session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            metadata=metadata,
+            configuration=configuration,
+            created_at=created_at_str,
+        )
+    else:
+        session = await honcho_client.session(id="test-session-all")
+        user = await honcho_client.peer(id="user-all")
+        messages = await session.upload_file(
+            file=text_file,
+            peer_id=user.id,
+            metadata=metadata,
+            configuration=configuration,
+            created_at=created_at_str,
+        )
+
+    assert len(messages) >= 1
+    assert text_content in messages[0].content
+    assert messages[0].peer_id == user.id
+    assert messages[0].session_id == session.id
+    # Check metadata
+    assert messages[0].metadata == metadata
+    # Check created_at
+    # Message.created_at from honcho_core is a datetime object
+    message_timestamp = messages[0].created_at
+    assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_datetime_object(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests uploading a file with created_at as a datetime object (Python only).
+    """
+    honcho_client, _client_type = client_fixture
+
+    text_content = "Test file with datetime object"
+    from datetime import datetime, timezone
+    from io import BytesIO
+
+    text_file = BytesIO(text_content.encode("utf-8"))
+    text_file.name = "test_datetime.txt"
+
+    test_timestamp = datetime(2023, 3, 10, 8, 45, 20, tzinfo=timezone.utc)
+
+    if isinstance(honcho_client, Honcho):
+        session = honcho_client.session(id="test-session-datetime")
+        user = honcho_client.peer(id="user-datetime")
+        messages = session.upload_file(
+            file=text_file, peer_id=user.id, created_at=test_timestamp
+        )
+    else:
+        session = await honcho_client.session(id="test-session-datetime")
+        user = await honcho_client.peer(id="user-datetime")
+        messages = await session.upload_file(
+            file=text_file, peer_id=user.id, created_at=test_timestamp
+        )
+
+    assert len(messages) >= 1
+    assert text_content in messages[0].content
+    assert messages[0].peer_id == user.id
+    assert messages[0].session_id == session.id
+    # Check that created_at was applied
+    # Message.created_at from honcho_core is a datetime object
+    message_timestamp = messages[0].created_at
+    assert abs((message_timestamp - test_timestamp).total_seconds()) < 1

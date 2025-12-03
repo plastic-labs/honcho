@@ -1,0 +1,177 @@
+{
+  "description": "LongMemEval test: temporal-reasoning question",
+  "workspace_config": {
+    "deriver": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "answer_9793daa4_2",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "answer_9793daa4_1",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "answer_9793daa4_2",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "I'm looking for some healthy meal prep ideas for my fitness journey. I shared a recipe for vegan chili using #FoodieAdventures yesterday that got a lot of attention. Do you have any suggestions for high-protein meals that are easy to prepare?",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Congratulations on your fitness journey and the success of your vegan chili recipe! I'd be happy to help you with some high-protein meal prep ideas that are easy to prepare and perfect for your fitness goals.\n\nHere are some delicious and nutritious options:\n\n1. **Protein-Packed Salads**:\n\t* Quinoa and Black Bean Salad with roasted chicken or tofu, mixed veggies, and a citrus vinaigrette.\n\t* Spinach and Feta Salad with grilled chicken, cherry tomatoes, and a balsamic vinaigrette.\n2. **Grilled Chicken or Tofu Bowls**:\n\t* Brown rice, roasted veggies, and grilled chicken or tofu, topped with a fried egg or avocado.\n\t* Quinoa, black beans, diced tomatoes, and grilled chicken or tofu, finished with a drizzle of tahini sauce.\n3. **Lentil or Chickpea Soups**:\n\t* Lentil soup with diced veggies and lean ground turkey or vegan sausage.\n\t* Chickpea and Spinach Soup with a swirl of olive oil and crusty bread for dipping.\n4. **High-Protein Wraps**:\n\t* Whole wheat wrap with sliced turkey breast, avocado, mixed greens, and a fried egg.\n\t* Vegan wrap with hummus, roasted veggies, and marinated tofu or tempeh.\n5. **Meal Prep Containers**:\n\t* Brown rice, grilled chicken or tofu, steamed broccoli, and a side of quinoa bites or energy balls.\n\t* Roasted sweet potatoes, black beans, diced chicken or tofu, and a sprinkle of almonds.\n6. **Breakfast Ideas**:\n\t* Greek yogurt with berries, granola, and a scoop of protein powder.\n\t* Overnight oats with almond milk, chia seeds, and sliced banana.\n7. **Snacks**:\n\t* Hard-boiled eggs or energy balls made with oats, nuts, and seeds.\n\t* Apple slices with almond butter or cashew butter.\n\nRemember to stay hydrated by drinking plenty of water throughout the day. You can also experiment with different seasonings and spices to keep your meals interesting and flavorful.\n\nShare your favorite meal prep ideas and tag me on Instagram using #FoodieAdventures! I'd love to see what you're cooking up!",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm really interested in trying out those protein-packed salads, especially the quinoa and black bean one. Can you give me some tips on how to cook quinoa perfectly? I've had some issues with it being too mushy in the past.",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Quinoa can be a bit finicky, but with some simple tips, you'll be a pro in no time! \n\n**The Secret to Perfectly Cooked Quinoa:**\n\n1. **Rinse, Rinse, Rinse**: Quinoa has a natural coating called saponin that can give it a bitter taste. Rinsing the quinoa before cooking can help remove some of this coating and give it a milder flavor. Rinse the quinoa in a fine-mesh strainer under cold running water for about 30 seconds.\n2. **Use the Right Ratio**: Use a 2:1 ratio of water to quinoa. This means if you're using 1 cup of quinoa, use 2 cups of water.\n3. **Soak or Not to Soak**: Some people swear by soaking quinoa for 30 minutes to an hour before cooking, but it's not necessary. If you do choose to soak, make sure to drain and rinse the quinoa again before cooking.\n4. **Use a Medium Heat**: Cooking quinoa on high heat can cause it to cook unevenly and become mushy. Medium heat will help the quinoa cook slowly and evenly.\n5. **Don't Overcook**: Quinoa is done when the water is absorbed and the quinoa is tender, but still slightly crunchy in the center. This should take about 15-20 minutes. Overcooking will make the quinoa mushy.\n6. **Fluff with a Fork**: Once the quinoa is cooked, remove it from the heat and fluff it with a fork to separate the grains. This will help it cool down and prevent it from becoming clumpy.\n\n**Additional Tips:**\n\n* Use a pot with a heavy bottom, as it will help distribute the heat evenly.\n* Add a pinch of salt to the water, as it will help bring out the natural flavors of the quinoa.\n* If you're using a quinoa blend, follow the package instructions, as the cooking time may vary.\n\nNow that you know the secrets to perfectly cooked quinoa, go ahead and give it a try! \n\nHere's a simple recipe to get you started:\n\n**Quinoa and Black Bean Salad Recipe:**\n\nIngredients:\n\n* 1 cup quinoa, rinsed and drained\n* 2 cups water\n* 1 can black beans, drained and rinsed\n* 1 red bell pepper, diced\n* 1 small red onion, diced\n* 1/4 cup chopped fresh cilantro\n* 2 tablespoons olive oil\n* 1 tablespoon lime juice\n* Salt and pepper to taste\n\nInstructions:\n\n1. Cook the quinoa according to the instructions above.\n2. In a large bowl, combine the cooked quinoa, black beans, red bell pepper, and red onion.\n3. In a small bowl, whisk together the olive oil and lime juice.\n4. Pour the dressing over the quinoa mixture and toss to combine.\n5. Stir in the chopped cilantro and season with salt and pepper to taste.\n\nEnjoy your delicious and protein-packed quinoa salad!",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'll definitely try out those tips to cook quinoa perfectly. By the way, do you have any recommendations for vegan protein sources that I can add to my salads? I'm looking for something that's high in protein and low in carbs.",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "As a vegan, it's awesome that you're focusing on protein-rich ingredients to support your fitness goals. Here are some high-protein, low-carb vegan options that are perfect for adding to your salads:\n\n1. **Tofu**: A 3-ounce serving of tofu contains about 9-10 grams of protein and only 2-3 grams of carbs. Look for extra-firm or super-firm tofu for the highest protein content.\n2. **Tempeh**: A 3-ounce serving of tempeh contains about 15-16 grams of protein and 6-7 grams of carbs. Tempeh is a fermented soybean product that's rich in probiotics and has a nutty flavor.\n3. **Seitan**: A 3-ounce serving of seitan contains about 21-22 grams of protein and 4-5 grams of carbs. Seitan is made from wheat gluten and has a meat-like texture.\n4. **Lentils**: A 1/2 cup serving of cooked lentils contains about 9-10 grams of protein and 20-22 grams of carbs. While lentils are higher in carbs, they're still a great source of protein and fiber.\n5. **Chickpeas**: A 1/2 cup serving of cooked chickpeas contains about 5-6 grams of protein and 20-22 grams of carbs. Like lentils, chickpeas are higher in carbs, but they're a great source of protein and fiber.\n6. **Vegan Protein Powder**: If you're looking for a convenient way to boost the protein content of your salads, consider adding a scoop of vegan protein powder. Look for a brand that's low in carbs and made from a pea, hemp, or brown rice protein source.\n7. **Mushrooms**: While not as high in protein as the other options, mushrooms are a great source of protein and can add a meaty texture to your salads. A 1-cup serving of mushrooms contains about 2-3 grams of protein and 1-2 grams of carbs.\n8. **Vegan Meat Alternatives**: Some vegan meat alternatives like veggie burgers or vegan sausages can be high in protein and low in carbs. Look for brands that are made from pea protein, rice protein, or soy protein.\n\nWhen adding these protein sources to your salads, be mindful of the portion sizes to keep the carb content in check. You can also experiment with different combinations of protein sources to meet your daily protein goals.",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "That's really helpful! I've been looking for some new vegan protein sources to add to my salads. I'll definitely try out seitan and tempeh. By the way, do you have any recommendations for some healthy and tasty vegan sauces or dressings that I can use on my salads? I'm looking for something that's low in sugar and unhealthy fats.",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Vegan sauces and dressings can make or break a salad, don't you think? I've got some delicious and healthy options that are low in sugar and unhealthy fats. Here are some vegan sauce and dressing recommendations:\n\n1. **Lemon-Tahini Dressing**: Mix together lemon juice, tahini, garlic, and olive oil for a creamy and tangy dressing. This one's low in sugar and rich in healthy fats from the tahini.\n2. **Avocado-Lime Dressing**: Blend together ripe avocado, lime juice, cilantro, and a pinch of salt for a creamy and refreshing dressing. This one's packed with healthy fats from the avocado.\n3. **Ginger-Turmeric Vinaigrette**: Whisk together apple cider vinegar, olive oil, grated ginger, and turmeric powder for a zesty and anti-inflammatory dressing.\n4. **Hummus-Based Dressing**: Mix together hummus, lemon juice, garlic, and water for a creamy and protein-rich dressing. You can also add in some chopped herbs like parsley or cilantro for extra flavor.\n5. **Nutritional Yeast-Based Cheese Sauce**: Yes, you read that right! Nutritional yeast has a nutty, cheesy flavor that's perfect for making a vegan cheese sauce. Blend together nutritional yeast, lemon juice, garlic, and olive oil for a creamy and addictive sauce.\n6. **Miso-Ginger Dressing**: Whisk together miso paste, apple cider vinegar, grated ginger, and olive oil for a savory and umami-rich dressing.\n7. **Citrus-Herb Vinaigrette**: Mix together freshly squeezed orange or grapefruit juice, olive oil, and chopped herbs like parsley, basil, or dill for a light and refreshing dressing.\n\nSome general tips for making healthy and tasty vegan sauces and dressings:\n\n* Use healthy oils like olive oil, avocado oil, or grapeseed oil instead of processed vegetable oils.\n* Opt for natural sweeteners like dates, maple syrup, or coconut sugar instead of refined sugar.\n* Choose vinegars like apple cider vinegar or balsamic vinegar instead of refined white vinegar.\n* Experiment with different spices and herbs to add flavor instead of relying on salt and sugar.\n* Make your own sauces and dressings from scratch to control the ingredients and portion sizes.\n\nFeel free to get creative and experiment with different combinations of ingredients to create your own signature sauces and dressings!",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm so excited to try out these vegan sauces and dressings! I've been looking for some new ideas to spice up my salads. By the way, I recently posted a recipe for vegan chili on Instagram using the hashtag #FoodieAdventures, and it got a lot of attention. Do you have any suggestions for other vegan recipes that I could share on my Instagram account?",
+          "created_at": "2023-03-10T17:06:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Congratulations on the success of your vegan chili recipe! I'd be happy to help you with some more vegan recipe ideas that are perfect for sharing on Instagram. Here are some suggestions:\n\n1. **Vegan Quinoa Stuffed Bell Peppers**: A colorful and nutritious recipe that's perfect for a healthy lunch or dinner. Simply fill bell peppers with a mixture of quinoa, black beans, diced tomatoes, and vegan cheese, and bake until tender.\n2. **Roasted Vegetable Bowl with Turmeric Tahini Sauce**: A vibrant and flavorful bowl filled with roasted vegetables like sweet potatoes, Brussels sprouts, and cauliflower, topped with a creamy turmeric tahini sauce.\n3. **Vegan Black Bean and Sweet Potato Enchiladas**: A delicious and comforting recipe that's perfect for a cozy night in. Simply fill tortillas with a mixture of black beans, roasted sweet potatoes, and vegan cheese, and bake in the oven with enchilada sauce and vegan sour cream.\n4. **Vegan Lentil and Mushroom Curry**: A hearty and aromatic curry made with red or green lentils, mushrooms, and a blend of Indian spices. Serve over rice or with naan bread for a satisfying meal.\n5. **Vegan Chickpea and Avocado Salad**: A refreshing and healthy salad made with chickpeas, diced avocado, red onion, and a squeeze of lemon juice. Perfect for a quick lunch or snack.\n6. **Vegan Banana Bread Oat Pancakes**: A delicious and indulgent breakfast recipe made with mashed bananas, oats, and vegan chocolate chips. Top with maple syrup and fresh fruit for a treat.\n7. **Vegan Spaghetti Squash with Tomato Sauce**: A twist on the classic spaghetti dish, made with roasted spaghetti squash, homemade tomato sauce, and vegan meatballs.\n8. **Vegan Chia Seed Pudding with Berries**: A healthy and filling breakfast or snack made with chia seeds soaked in almond milk, topped with fresh berries and granola.\n\nThese recipes are all Instagram-worthy and perfect for sharing with your followers. Don't forget to use relevant hashtags like #vegan, #plantbased, #foodie, and #healthyrecipe to reach a wider audience. Good luck, and I hope your followers love these recipes!",
+          "created_at": "2023-03-10T17:06:00"
+        }
+      ]
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "answer_9793daa4_1",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "I'm trying to stay consistent with my fitness goals and I was wondering if you could suggest some new workout routines I could try at home. By the way, I participated in a social media challenge called #PlankChallenge today, and it was a great way to stay motivated!",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Congratulations on completing the #PlankChallenge! That's a great way to stay motivated and accountable.\n\nI'd be happy to suggest some new workout routines you can try at home. Here are a few options:\n\n**Bodyweight Workouts**\n\n1. **7-Minute Workout**: A quick and intense circuit workout that targets all major muscle groups.\n2. **Burpees**: A full-body exercise that works your arms, legs, and core.\n3. **Mountain Climbers**: A plyometric exercise that targets your legs, glutes, and core.\n4. **Push-up Variations**: Try diamond push-ups, decline push-ups, or push-up jacks to mix things up.\n\n**Resistance Band Workouts**\n\n1. **Banded Squats**: Works your legs and glutes.\n2. **Banded Chest Press**: Targets your chest and shoulders.\n3. **Banded Lunges**: Works your legs and glutes.\n4. **Banded Rows**: Targets your back and arms.\n\n**High-Intensity Interval Training (HIIT)**\n\n1. **Tabata Workout**: 20 seconds of all-out effort, followed by 10 seconds of rest. Repeat for 4-6 rounds.\n2. **Sprint Intervals**: Warm up, then sprint in place or jog in place for 30 seconds. Rest for 30 seconds, and repeat for 15-20 minutes.\n\n**Yoga and Stretching**\n\n1. **Flow Yoga**: A dynamic and challenging yoga routine that targets strength, flexibility, and balance.\n2. **Dynamic Stretching**: Incorporate movements like leg swings, arm circles, and hip openers into your warm-up or cool-down routine.\n\n**Home Workout Routines**\n\n1. **P90X**: A popular at-home fitness program that offers a variety of workouts, including strength training, cardio, and yoga.\n2. **Insanity**: A high-intensity workout program that focuses on cardio and strength training.\n3. **Fitness Blender**: A free online resource that offers a wide range of workout videos and routines.\n\nRemember to always listen to your body and start slowly, especially if you're new to working out or trying a new routine. It's also essential to warm up before your workout and cool down afterwards to prevent injuries.\n\nWhich type of workout routine are you interested in trying first?",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm interested in trying the bodyweight workouts, especially the 7-Minute Workout. Can you provide more details on how to do each exercise in the circuit and how many rounds I should aim to complete?",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "The 7-Minute Workout is a great choice! It's a quick, effective, and convenient way to fit in a workout at home. Here's a breakdown of the exercises, how to do them, and how to structure your workout:\n\n**The 7-Minute Workout:**\n\n**Warm-up (1 minute):**\n\n* Jumping jacks: 30 seconds\n* Dynamic stretching: 30 seconds (leg swings, arm circles, hip openers)\n\n**Circuit Workout (6 minutes):**\n\n* Complete each exercise for 30 seconds, followed by 10 seconds of rest.\n* Repeat the circuit for 6 minutes, aiming to complete 2-3 rounds.\n\n**Exercise 1: Jumping Jacks**\n\n* Stand with your feet shoulder-width apart.\n* Jump your feet out to the sides while raising your arms above your head.\n* Land softly on the balls of your feet and repeat.\n\n**Exercise 2: Wall Sit**\n\n* Stand with your back against a wall and your feet shoulder-width apart.\n* Slowly slide your back down the wall until your thighs are parallel to the ground.\n* Keep your knees bent at a 90-degree angle and hold for 30 seconds.\n\n**Exercise 3: Push-ups**\n\n* Start in a plank position with your hands shoulder-width apart and your feet hip-width apart.\n* Lower your body until your chest almost touches the ground.\n* Push back up to the starting position.\n\n**Exercise 4: Chest Dips (using a chair or bench)**\n\n* Stand in front of a sturdy chair or bench with your hands gripping the edge.\n* Lower your body by bending your elbows until your arms are bent at a 90-degree angle.\n* Straighten your arms to return to the starting position.\n\n**Exercise 5: Plank Hold**\n\n* Start in a plank position with your hands shoulder-width apart and your feet hip-width apart.\n* Engage your core and hold the position for 30 seconds.\n\n**Exercise 6: Squat**\n\n* Stand with your feet shoulder-width apart.\n* Lower your body down into a squat, keeping your back straight and your knees behind your toes.\n* Push back up to the starting position.\n\n**Exercise 7: Lunges**\n\n* Stand with your feet together.\n* Take a large step forward with one foot and lower your body down into a lunge.\n* Push back up to the starting position and repeat with the other leg.\n\n**Exercise 8: Plank Jacks**\n\n* Start in a plank position with your hands shoulder-width apart and your feet hip-width apart.\n* Jump your feet out to the sides, similar to a jumping jack, while keeping your upper body stable.\n\n**Exercise 9: Burpees**\n\n* Start in a standing position.\n* Drop down into a squat position and place your hands on the ground.\n* From the squat position, kick your feet back into a plank position.\n* From the plank position, do a push-up.\n* Quickly return your feet to the squat position.\n* Stand up from the squat position.\n\n**Exercise 10: Mountain Climbers**\n\n* Start in a plank position with your hands shoulder-width apart and your feet hip-width apart.\n* Bring one knee up towards your chest, then quickly switch to the other knee.\n* Continue alternating legs as quickly as possible.\n\n**Cool-down (1 minute):**\n\n* Static stretching: 30 seconds per muscle group (hamstrings, quadriceps, chest, back, shoulders)\n\n**Tips and Variations:**\n\n* If you're a beginner, start with 2 rounds and gradually increase to 3 rounds as you build endurance.\n* If you're more advanced, try adding more rounds or increasing the intensity by adding weights or resistance bands.\n* Rest for 10-15 seconds between exercises if you need more time to recover.\n* Mix and match exercises to create a customized workout routine that targets your favorite muscle groups.\n\nRemember to listen to your",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm thinking of doing 3 rounds of the 7-Minute Workout, 3 times a week. Do you think that's a good starting point, and how can I track my progress?",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's a great starting point! Doing 3 rounds of the 7-Minute Workout, 3 times a week, is a good way to challenge yourself and make progress towards your fitness goals.\n\n**Tracking Progress:**\n\nTo track your progress, consider the following methods:\n\n1. **Workout Log:** Keep a workout log or journal to record your workouts, including the date, time, and number of rounds you completed. You can also note any modifications you made to the exercises or any challenges you faced.\n2. **Time:** Track the time it takes you to complete each round and the overall workout. Aim to decrease your time as you get more comfortable with the exercises and build endurance.\n3. **Heart Rate:** Monitor your heart rate before, during, and after your workout to track your progress in terms of cardiovascular fitness.\n4. **Perceived Exertion:** Rate your perceived exertion on a scale of 1-10, with 1 being easy and 10 being extremely challenging. This will help you track how you feel during the workout and whether you need to adjust the intensity.\n5. **Weight or Body Fat Percentage:** Track your weight or body fat percentage to monitor changes in your body composition.\n6. **Progress Photos:** Take progress photos at the beginning and end of each month to visualize changes in your physique.\n7. **Mobile Apps:** Utilize mobile apps like Nike Training Club, JEFIT, or 7 Minute Workout that allow you to track your workouts, set reminders, and monitor progress.\n\n**Tips to Enhance Progress:**\n\n1. **Consistency:** Stick to your workout schedule and try to do your workouts at the same time every day.\n2. **Gradual Progression:** Gradually increase the number of rounds, intensity, or weight as you get more comfortable with the exercises.\n3. **Proper Form:** Focus on proper form and technique throughout the exercises to avoid injuries and get the most out of your workout.\n4. **Active Recovery:** Incorporate active recovery days, such as light cardio or yoga, to help your body recover and rebuild.\n5. **Nutrition:** Pay attention to your nutrition and make sure you're fueling your body with a balanced diet that supports your fitness goals.\n\nRemember, consistency and patience are key. Stick to your workout routine, track your progress, and celebrate small victories along the way!",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "Can you suggest some healthy meal prep ideas that can help me fuel my body for my workouts and support my fitness goals?",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Here are some healthy meal prep ideas that can help fuel your body for your workouts and support your fitness goals:\n\n**Protein-Packed Meals:**\n\n1. **Grilled Chicken and Veggies:** Marinate chicken breast in your favorite seasonings and grill with roasted veggies like broccoli, carrots, and bell peppers.\n2. **Salmon and Quinoa Bowl:** Bake salmon fillets with lemon and herbs, served with cooked quinoa, roasted sweet potatoes, and steamed green beans.\n3. **Turkey and Avocado Wrap:** Slice turkey breast and avocado, add mixed greens, and wrap in a whole-grain tortilla. Serve with a side of carrot sticks and hummus.\n\n**Complex Carbohydrates:**\n\n1. **Sweet Potato and Black Bean Bowl:** Bake sweet potatoes and top with black beans, diced tomatoes, and a sprinkle of feta cheese.\n2. **Brown Rice and Lentil Bowl:** Cook brown rice and lentils, then top with roasted vegetables like Brussels sprouts and chickpeas.\n3. **Oatmeal with Banana and Nuts:** Cook steel-cut oats with milk or water, then top with sliced banana, chopped nuts, and a drizzle of honey.\n\n**Healthy Fats:**\n\n1. **Avocado Toast:** Toast whole-grain bread, mash avocado, and sprinkle with salt and pepper. Add a fried egg or turkey bacon for extra protein.\n2. **Greek Yogurt Parfait:** Layer Greek yogurt, mixed berries, and granola in a jar or container.\n3. **Trail Mix:** Mix nuts, seeds, and dried fruit for a healthy and convenient snack.\n\n**Meal Prep Tips:**\n\n1. **Portion Control:** Divide meals into individual portions to avoid overeating and save time during the week.\n2. **Cook in Bulk:** Cook large batches of rice, quinoa, and grains to use throughout the week.\n3. **Label and Store:** Label and store meals in airtight containers to keep them fresh and organized.\n4. **Mix and Match:** Mix and match ingredients to create new meals and avoid boredom.\n5. **Prep on the Weekends:** Dedicate one day on the weekend to meal prep, so you can enjoy healthy meals throughout the week.\n\n**Snack Ideas:**\n\n1. **Fresh Fruit:** Apples, bananas, or berries make for a quick and easy snack.\n2. **Energy Balls:** Mix rolled oats, peanut butter, and honey to create bite-sized energy balls.\n3. **Hard-Boiled Eggs:** Boil eggs and keep them in the fridge for a protein-packed snack.\n4. **Cottage Cheese:** Mix cottage cheese with fruit or honey for a high-protein snack.\n5. **Veggie Sticks:** Keep carrot, celery, and cucumber sticks in the fridge for a crunchy snack.\n\nRemember to stay hydrated by drinking plenty of water throughout the day. Aim to eat a balanced meal with a mix of protein, complex carbohydrates, and healthy fats to fuel your body for your workouts and support your fitness goals.",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm thinking of meal prepping on Sundays to save time during the week. What are some tips for meal prepping and how can I make sure I'm getting the right nutrients for my workouts?",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Meal prepping on Sundays is a great idea! It can save you time, money, and stress during the week. Here are some tips to help you meal prep like a pro and ensure you're getting the right nutrients for your workouts:\n\n**Meal Prep Tips:**\n\n1. **Plan Your Meals:** Decide on the meals you want to prep for the week, considering your dietary needs, preferences, and workout schedule.\n2. **Make a Grocery List:** Write down the ingredients you need and stick to your list when you're at the store.\n3. **Shop Smart:** Buy in bulk, choose seasonal produce, and opt for lean proteins and whole grains.\n4. **Prep in Bulk:** Cook proteins like chicken, rice, and quinoa in bulk to use throughout the week.\n5. **Portion Control:** Divide meals into individual portions to avoid overeating and save time during the week.\n6. **Label and Store:** Label and store meals in airtight containers to keep them fresh and organized.\n7. **Reheat and Reuse:** Reheat meals as needed and reuse ingredients to minimize food waste.\n\n**Nutrient-Dense Foods for Workouts:**\n\n1. **Protein:** Include lean proteins like chicken, turkey, fish, eggs, and legumes in your meal prep to support muscle growth and repair.\n2. **Complex Carbohydrates:** Focus on whole grains like brown rice, quinoa, and whole wheat to provide energy for your workouts.\n3. **Healthy Fats:** Add nuts, seeds, avocado, and olive oil to your meals for sustained energy and recovery.\n4. **Vegetables:** Incorporate a variety of colorful vegetables like leafy greens, bell peppers, and carrots to provide essential vitamins and minerals.\n5. **Hydration:** Drink plenty of water throughout the day, and consider adding electrolyte-rich drinks like coconut water or sports drinks during intense workouts.\n\n**Sample Meal Prep Ideas:**\n\n1. **Grilled Chicken and Veggies:** Marinate chicken breast and grill with roasted vegetables like broccoli, carrots, and bell peppers.\n2. **Quinoa and Black Bean Bowl:** Cook quinoa and black beans, then top with roasted sweet potatoes, avocado, and a fried egg.\n3. **Salmon and Brown Rice:** Bake salmon fillets with lemon and herbs, served with cooked brown rice and steamed green beans.\n4. **Turkey and Avocado Wrap:** Slice turkey breast and avocado, add mixed greens, and wrap in a whole-grain tortilla.\n5. **Overnight Oats:** Mix rolled oats, milk, and nuts, then refrigerate overnight and top with fruit and honey in the morning.\n\n**Meal Prep for Specific Workouts:**\n\n1. **Pre-Workout:** Focus on complex carbohydrates and protein to provide energy and support muscle function. Examples include oatmeal with banana and almond butter or Greek yogurt with berries and honey.\n2. **Post-Workout:** Prioritize protein and healthy fats to aid in recovery and muscle repair. Examples include a protein smoothie with banana and almond milk or grilled chicken with avocado and quinoa.\n\nRemember to listen to your body and adjust your meal prep accordingly. Experiment with different ingredients and portion sizes to find what works best for you and your fitness goals.",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm thinking of meal prepping on Sundays to save time during the week. What are some tips for meal prepping and how can I make sure I'm getting the right nutrients for my workouts?",
+          "created_at": "2023-03-15T15:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Meal prepping on Sundays is a great idea!",
+          "created_at": "2023-03-15T15:37:00"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "user",
+      "input": "[2023/03/20 (Mon) 05:50] What was the social media activity I participated 5 days ago?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response indicate that the user participated in a social media challenge called #PlankChallenge 5 days ago (on March 15)? The expected answer is 'You participated in a social media challenge called #PlankChallenge.' Accept responses that convey this information even if worded differently, and accept responses that correctly identify the PlankChallenge activity from 5 days prior to March 20.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

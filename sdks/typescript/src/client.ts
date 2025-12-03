@@ -28,6 +28,8 @@ import {
   SessionIdSchema,
   type SessionMetadata,
   SessionMetadataSchema,
+  type WorkspaceConfig,
+  WorkspaceConfigSchema,
   type WorkspaceMetadata,
   WorkspaceMetadataSchema,
 } from './validation'
@@ -62,6 +64,36 @@ export class Honcho {
    * Reference to the core Honcho client instance.
    */
   private _client: HonchoCore
+  /**
+   * Private cached metadata for this workspace.
+   */
+  private _metadata?: Record<string, unknown>
+  /**
+   * Private cached configuration for this workspace.
+   */
+  private _configuration?: Record<string, unknown>
+
+  /**
+   * Cached metadata for this workspace. May be stale if the workspace
+   * was not recently fetched from the API.
+   *
+   * Call getMetadata() to get the latest metadata from the server,
+   * which will also update this cached value.
+   */
+  get metadata(): Record<string, unknown> | undefined {
+    return this._metadata
+  }
+
+  /**
+   * Cached configuration for this workspace. May be stale if the workspace
+   * was not recently fetched from the API.
+   *
+   * Call getConfig() to get the latest configuration from the server,
+   * which will also update this cached value.
+   */
+  get configuration(): Record<string, unknown> | undefined {
+    return this._configuration
+  }
 
   /**
    * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
@@ -155,17 +187,26 @@ export class Honcho {
     const validatedConfig = options?.config
       ? PeerConfigSchema.parse(options.config)
       : undefined
-    const peer = new Peer(validatedId, this.workspaceId, this._client)
 
     if (validatedConfig || validatedMetadata) {
-      await this._client.workspaces.peers.getOrCreate(this.workspaceId, {
-        id: peer.id,
-        configuration: validatedConfig,
-        metadata: validatedMetadata,
-      })
+      const peerData = await this._client.workspaces.peers.getOrCreate(
+        this.workspaceId,
+        {
+          id: validatedId,
+          configuration: validatedConfig,
+          metadata: validatedMetadata,
+        }
+      )
+      return new Peer(
+        validatedId,
+        this.workspaceId,
+        this._client,
+        peerData.metadata ?? undefined,
+        peerData.configuration ?? undefined
+      )
     }
 
-    return peer
+    return new Peer(validatedId, this.workspaceId, this._client)
   }
 
   /**
@@ -185,7 +226,14 @@ export class Honcho {
     )
     return new Page(
       peersPage,
-      (peer) => new Peer(peer.id, this.workspaceId, this._client)
+      (peer) =>
+        new Peer(
+          peer.id,
+          this.workspaceId,
+          this._client,
+          peer.metadata ?? undefined,
+          peer.configuration ?? undefined
+        )
     )
   }
 
@@ -224,17 +272,26 @@ export class Honcho {
     const validatedConfig = options?.config
       ? SessionConfigSchema.parse(options.config)
       : undefined
-    const session = new Session(validatedId, this.workspaceId, this._client)
 
     if (validatedConfig || validatedMetadata) {
-      await this._client.workspaces.sessions.getOrCreate(this.workspaceId, {
-        id: session.id,
-        configuration: validatedConfig,
-        metadata: validatedMetadata,
-      })
+      const sessionData = await this._client.workspaces.sessions.getOrCreate(
+        this.workspaceId,
+        {
+          id: validatedId,
+          configuration: validatedConfig,
+          metadata: validatedMetadata,
+        }
+      )
+      return new Session(
+        validatedId,
+        this.workspaceId,
+        this._client,
+        sessionData.metadata ?? undefined,
+        sessionData.configuration ?? undefined
+      )
     }
 
-    return session
+    return new Session(validatedId, this.workspaceId, this._client)
   }
 
   /**
@@ -255,7 +312,14 @@ export class Honcho {
     )
     return new Page(
       sessionsPage,
-      (session) => new Session(session.id, this.workspaceId, this._client)
+      (session) =>
+        new Session(
+          session.id,
+          this.workspaceId,
+          this._client,
+          session.metadata ?? undefined,
+          session.configuration ?? undefined
+        )
     )
   }
 
@@ -264,7 +328,8 @@ export class Honcho {
    *
    * Makes an API call to retrieve metadata associated with the current workspace.
    * Workspace metadata can include settings, configuration, or any other
-   * key-value data associated with the workspace.
+   * key-value data associated with the workspace. This method also updates the
+   * cached metadata property.
    *
    * @returns Promise resolving to a dictionary containing the workspace's metadata.
    *          Returns an empty dictionary if no metadata is set
@@ -273,7 +338,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    return workspace.metadata || {}
+    this._metadata = workspace.metadata || {}
+    return this._metadata
   }
 
   /**
@@ -281,6 +347,7 @@ export class Honcho {
    *
    * Makes an API call to update the metadata associated with the current workspace.
    * This will overwrite any existing metadata with the provided values.
+   * This method also updates the cached metadata property.
    *
    * @param metadata - A dictionary of metadata to associate with the workspace.
    *                   Keys must be strings, values can be any JSON-serializable type
@@ -290,6 +357,57 @@ export class Honcho {
     await this._client.workspaces.update(this.workspaceId, {
       metadata: validatedMetadata,
     })
+    this._metadata = validatedMetadata
+  }
+
+  /**
+   * Get configuration for the current workspace.
+   *
+   * Makes an API call to retrieve configuration associated with the current workspace.
+   * Configuration includes settings that control workspace behavior.
+   * This method also updates the cached configuration property.
+   *
+   * @returns Promise resolving to a dictionary containing the workspace's configuration.
+   *          Returns an empty dictionary if no configuration is set
+   */
+  async getConfig(): Promise<Record<string, unknown>> {
+    const workspace = await this._client.workspaces.getOrCreate({
+      id: this.workspaceId,
+    })
+    this._configuration = workspace.configuration || {}
+    return this._configuration
+  }
+
+  /**
+   * Set configuration for the current workspace.
+   *
+   * Makes an API call to update the configuration associated with the current workspace.
+   * This will overwrite any existing configuration with the provided values.
+   * This method also updates the cached configuration property.
+   *
+   * @param configuration - A dictionary of configuration to associate with the workspace.
+   *                        Keys must be strings, values can be any JSON-serializable type
+   */
+  async setConfig(configuration: WorkspaceConfig): Promise<void> {
+    const validatedConfig = WorkspaceConfigSchema.parse(configuration)
+    await this._client.workspaces.update(this.workspaceId, {
+      configuration: validatedConfig,
+    })
+    this._configuration = validatedConfig
+  }
+
+  /**
+   * Refresh cached metadata and configuration for the current workspace.
+   *
+   * Makes a single API call to retrieve the latest metadata and configuration
+   * associated with the current workspace and updates the cached properties.
+   */
+  async refresh(): Promise<void> {
+    const workspace = await this._client.workspaces.getOrCreate({
+      id: this.workspaceId,
+    })
+    this._metadata = workspace.metadata || {}
+    this._configuration = workspace.configuration || {}
   }
 
   /**

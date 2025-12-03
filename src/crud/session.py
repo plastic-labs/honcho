@@ -3,7 +3,7 @@ from typing import Any
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, case, cast, func, insert, select, update
+from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,9 +83,13 @@ async def get_sessions(
     filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
-    Get all sessions in a workspace.
+    Get all active sessions in a workspace.
     """
-    stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.is_active == True)  # noqa: E712
+    )
 
     stmt = apply_filter(stmt, models.Session, filters)
 
@@ -126,6 +130,12 @@ async def get_or_create_session(
     if honcho_session is not None:
         honcho_session = await db.merge(honcho_session, load=False)
 
+        # Reject operations on inactive sessions (marked for deletion)
+        if not honcho_session.is_active:
+            raise ResourceNotFoundException(
+                f"Session {session.name} not found in workspace {workspace_name}"
+            )
+
     # Track if we need to update cache
     needs_cache_update = False
 
@@ -148,7 +158,9 @@ async def get_or_create_session(
             workspace_name=workspace_name,
             name=session.name,
             h_metadata=session.metadata or {},
-            configuration=session.configuration or {},
+            configuration=session.configuration.model_dump(exclude_none=True)
+            if session.configuration
+            else {},
         )
         try:
             db.add(honcho_session)
@@ -174,12 +186,14 @@ async def get_or_create_session(
         ):
             honcho_session.h_metadata = session.metadata
             needs_cache_update = True
-        if (
-            session.configuration is not None
-            and honcho_session.configuration != session.configuration
-        ):
-            honcho_session.configuration = session.configuration
-            needs_cache_update = True
+        if session.configuration is not None:
+            # Merge configuration instead of replacing to preserve existing keys
+            existing_config = (honcho_session.configuration or {}).copy()
+            incoming_config = session.configuration.model_dump(exclude_none=True)
+            merged_config = {**existing_config, **incoming_config}
+            if honcho_session.configuration != merged_config:
+                honcho_session.configuration = merged_config
+                needs_cache_update = True
 
     # Add all peers to session
     if session.peer_names:
@@ -217,6 +231,8 @@ async def get_session(
     db: AsyncSession,
     session_name: str,
     workspace_name: str,
+    *,
+    include_inactive: bool = False,
 ) -> models.Session:
     """
     Get a session in a workspace.
@@ -225,16 +241,24 @@ async def get_session(
         db: Database session
         session_name: Name of the session
         workspace_name: Name of the workspace
+        include_inactive: If True, return sessions even if they are marked for deletion.
+            This should only be used for internal operations like the deletion task.
 
     Returns:
         The session
 
     Raises:
-        ResourceNotFoundException: If the session does not exist
+        ResourceNotFoundException: If the session does not exist or is inactive
     """
     session = await _fetch_session(db, workspace_name, session_name)
 
     if session is None:
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
+
+    # Check if session is active (unless include_inactive is True)
+    if not include_inactive and not session.is_active:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
@@ -277,12 +301,16 @@ async def update_session(
         honcho_session.h_metadata = session.metadata
         needs_update = True
 
-    if (
-        session.configuration is not None
-        and honcho_session.configuration != session.configuration
-    ):
-        honcho_session.configuration = session.configuration
-        needs_update = True
+    if session.configuration is not None:
+        # Merge configuration instead of replacing to preserve existing keys
+        base_config = (honcho_session.configuration or {}).copy()
+        merged_config = {
+            **base_config,
+            **session.configuration.model_dump(exclude_none=True),
+        }
+        if honcho_session.configuration != merged_config:
+            honcho_session.configuration = merged_config
+            needs_update = True
 
     if not needs_update:
         logger.debug(
@@ -303,11 +331,56 @@ async def update_session(
     return honcho_session
 
 
+async def _batch_delete_matching(
+    db: AsyncSession,
+    model: Any,
+    filter_conditions: list[Any],
+    batch_size: int = 5000,
+) -> int:
+    """
+    Delete records in batches that match the given filter conditions.
+
+    Args:
+        db: Database session
+        model: SQLAlchemy model class
+        filter_conditions: List of SQLAlchemy filter conditions
+        batch_size: Number of records to delete per batch
+
+    Returns:
+        Total number of records deleted
+    """
+    total_deleted = 0
+    primary_key_column = model.__table__.primary_key.columns.values()[0]
+
+    while True:
+        subquery = (
+            select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
+        )
+        delete_stmt = delete(model).where(primary_key_column.in_(subquery))
+        delete_result = await db.execute(delete_stmt)
+        batch_deleted = delete_result.rowcount or 0
+        total_deleted += batch_deleted
+
+        if batch_deleted == 0:
+            break
+
+    return total_deleted
+
+
 async def delete_session(
     db: AsyncSession, workspace_name: str, session_name: str
 ) -> bool:
     """
-    Mark a session as inactive (soft delete).
+    Delete a session and all associated data (hard delete).
+
+    This performs cascading deletes for all session-related data including:
+    - Active queue sessions
+    - Queue items
+    - Message embeddings (batched)
+    - Documents (theory-of-mind data, batched)
+    - Messages (batched)
+    - Session peer associations
+    - The session itself
 
     Args:
         db: Database session
@@ -320,17 +393,83 @@ async def delete_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    honcho_session = await get_session(db, session_name, workspace_name)
+    honcho_session = await get_session(
+        db, session_name, workspace_name, include_inactive=True
+    )
 
-    honcho_session.is_active = False
-    await db.commit()
-    await db.refresh(honcho_session)
+    # Perform cascading deletes in order
+    # Order is important to avoid foreign key constraint violations
+    try:
+        # Delete ActiveQueueSession entries
+        # Work unit keys have format: {task_type}:{workspace_name}:{session_name}:{...}
+        await db.execute(
+            delete(models.ActiveQueueSession).where(
+                and_(
+                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
+                    == workspace_name,
+                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
+                    == session_name,
+                )
+            )
+        )
 
-    # Invalidate cache - read-through pattern
-    cache_key = session_cache_key(workspace_name, session_name)
-    await cache.delete(cache_key)
+        # Delete QueueItem entries
+        await db.execute(
+            delete(models.QueueItem).where(
+                models.QueueItem.session_id == honcho_session.id
+            )
+        )
 
-    logger.debug("Session %s marked as inactive", session_name)
+        # Delete MessageEmbedding entries in batches
+        await _batch_delete_matching(
+            db,
+            models.MessageEmbedding,
+            [
+                models.MessageEmbedding.session_name == session_name,
+                models.MessageEmbedding.workspace_name == workspace_name,
+            ],
+            batch_size=5000,
+        )
+
+        # Delete Document entries associated with this session in batches
+        await _batch_delete_matching(
+            db,
+            models.Document,
+            [
+                models.Document.session_name == session_name,
+                models.Document.workspace_name == workspace_name,
+            ],
+            batch_size=5000,
+        )
+
+        # Delete Message entries in batches
+        await _batch_delete_matching(
+            db,
+            models.Message,
+            [
+                models.Message.session_name == session_name,
+                models.Message.workspace_name == workspace_name,
+            ],
+            batch_size=5000,
+        )
+
+        # Delete SessionPeer associations
+        await db.execute(
+            delete(models.SessionPeer).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+            )
+        )
+
+        # Finally, delete the session itself
+        await db.delete(honcho_session)
+        await db.commit()
+        logger.debug("Session %s and all associated data deleted", session_name)
+    except Exception as e:
+        logger.error("Failed to delete session %s: %s", session_name, e)
+        await db.rollback()
+        raise e
+
     return True
 
 
@@ -353,11 +492,12 @@ async def clone_session(
     Returns:
         The newly created session
     """
-    # Get the original session
+    # Get the original session (must be active)
     stmt = (
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == original_session_name)
+        .where(models.Session.is_active == True)  # noqa: E712
     )
     result = await db.execute(stmt)
     original_session = result.scalar_one_or_none()

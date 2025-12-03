@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -710,7 +710,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "2.4.3"
+version = "2.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -826,7 +826,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.5.1" },
+    { name = "honcho-core", specifier = ">=1.6.0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -837,7 +837,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.5.1"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -847,9 +847,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/9f/6246f02a301a5fa1b9cd00784fafbb3f812feebfaa10a5135104885547da/honcho_core-1.5.1.tar.gz", hash = "sha256:d76da6657707df76ff464ac6874925f31c9e83fe8de51daeb0b10986385e02c7", size = 132626, upload-time = "2025-10-09T20:01:03.07Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/9a/19d48268e9cb3b7968141ac6f7ec9d6e3163d3402838ad3de58e0e77a769/honcho_core-1.6.0.tar.gz", hash = "sha256:1b394c7f9d611892685e815c918b5f0e8313126763c5936609c61e237d7c039b", size = 141235, upload-time = "2025-12-03T18:31:35.646Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/92/87e7c894175fa6aab5e49fac51a234290bc2e46d6723617edc154e0ec675/honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:740cff160e2d9e6dc98ad39f566c1b96f5413ec1abdb415d2fd70f66151cf61a", size = 123292, upload-time = "2025-10-09T20:01:01.57Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/25/7d9d48b6d8a1c9a1f578c76dd4354ef26c4f0704bfcc1d85ed0b2eae32b1/honcho_core-1.6.0-py3-none-any.whl", hash = "sha256:887c04dbff479a529fa4f4b5f774d5498e4dc2860c6438bea63b9964cb5bf6d8", size = 138075, upload-time = "2025-12-03T18:31:34.291Z" },
 ]
 
 [[package]]

@@ -18,7 +18,7 @@ A `Message` is sent by a `Peer` and saved in a `Session`
 
   session = honcho.session("sample-session")
 
-  message = peer.message("Hello, world!", session_id=session.id)
+  message = peer.message("Hello, world!")
 
   session.add_messages([message])
   ```

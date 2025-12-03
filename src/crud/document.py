@@ -2,42 +2,101 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 
 from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
-from src.exceptions import ValidationException
+from src.exceptions import ResourceNotFoundException, ValidationException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
 
 
-async def get_all_documents(
-    db: AsyncSession,
+def get_all_documents(
     workspace_name: str,
     *,
     observer: str,
     observed: str,
-    limit: int = 1000,
-) -> Sequence[models.Document]:
+    filters: dict[str, Any] | None = None,
+    reverse: bool = False,
+    limit: int | None = None,
+) -> Select[tuple[models.Document]]:
     """
     Get all documents in a collection.
 
-    NOTE: Order is nondeterministic. Also this may return a massive amount of documents. Don't use this on large collections.
-    TODO: add pagination and update dreaming logic to deduplicate more effectively
+    Returns a Select query for pagination support via apaginate().
+    Results are ordered by created_at timestamp.
+
+    Args:
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        filters: Optional filters to apply
+        reverse: Whether to reverse the order (oldest first)
+
+    Returns:
+        Select query for documents
     """
     stmt = (
         select(models.Document)
-        .limit(limit)
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
     )
-    result = await db.execute(stmt)
-    return result.scalars().all()
+
+    # Apply additional filters if provided
+    stmt = apply_filter(stmt, models.Document, filters)
+
+    # Order by created_at (newest first by default)
+    if reverse:
+        stmt = stmt.order_by(models.Document.created_at.asc())
+    else:
+        stmt = stmt.order_by(models.Document.created_at.desc())
+
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    return stmt
+
+
+def get_documents_with_filters(
+    workspace_name: str,
+    *,
+    filters: dict[str, Any] | None = None,
+    reverse: bool = False,
+) -> Select[tuple[models.Document]]:
+    """
+    Get all documents using custom filters.
+
+    Returns a Select query for pagination support via apaginate().
+    Results are ordered by created_at timestamp.
+
+    Args:
+        workspace_name: Name of the workspace
+        filters: Optional filters to apply
+        reverse: Whether to reverse the order (oldest first)
+
+    Returns:
+        Select query for documents
+    """
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name
+    )
+
+    # Apply additional filters if provided
+    stmt = apply_filter(stmt, models.Document, filters)
+
+    # Order by created_at (newest first by default)
+    if reverse:
+        stmt = stmt.order_by(models.Document.created_at.asc())
+    else:
+        stmt = stmt.order_by(models.Document.created_at.desc())
+
+    return stmt
 
 
 async def query_documents(
@@ -160,6 +219,79 @@ async def create_documents(
         ) from e
 
     return len(honcho_documents)
+
+
+async def delete_document(
+    db: AsyncSession,
+    workspace_name: str,
+    document_id: str,
+    *,
+    observer: str,
+    observed: str,
+    session_name: str | None = None,
+) -> None:
+    """
+    Delete a single document by ID.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        document_id: ID of the document to delete
+        observer: Name of the observing peer (for authorization)
+        observed: Name of the observed peer (for authorization)
+        session_name: Optional session name to verify document belongs to session
+
+    Raises:
+        ResourceNotFoundException: If document not found or doesn't match criteria
+    """
+    stmt = delete(models.Document).where(
+        models.Document.id == document_id,
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+    )
+
+    # If session is specified, ensure document belongs to that session
+    if session_name is not None:
+        stmt = stmt.where(models.Document.session_name == session_name)
+
+    result = await db.execute(stmt)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise ResourceNotFoundException(
+            f"Document {document_id} not found or does not belong to the specified collection/session"
+        )
+
+
+async def delete_document_by_id(
+    db: AsyncSession,
+    workspace_name: str,
+    document_id: str,
+) -> None:
+    """
+    Delete a single document by ID and workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        document_id: ID of the document to delete
+
+    Raises:
+        ResourceNotFoundException: If document not found or doesn't belong to the workspace
+    """
+    stmt = delete(models.Document).where(
+        models.Document.id == document_id,
+        models.Document.workspace_name == workspace_name,
+    )
+
+    result = await db.execute(stmt)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise ResourceNotFoundException(
+            f"Document {document_id} not found or does not belong to workspace {workspace_name}"
+        )
 
 
 async def is_rejected_duplicate(

@@ -237,6 +237,7 @@ async def summarize_if_needed(
     message_id: int,
     message_seq_in_session: int,
     message_public_id: str,
+    configuration: schemas.ResolvedConfiguration,
 ) -> None:
     """
     Create short/long summaries if thresholds met.
@@ -248,9 +249,22 @@ async def summarize_if_needed(
         workspace_name: The workspace name
         session_name: The session name
         message_id: The message ID
+        message_seq_in_session: The sequence number of the message in the session
+        message_public_id: The public ID of the message
+        configuration: The resolved configuration for the message
     """
-    should_create_long: bool = message_seq_in_session % MESSAGES_PER_LONG_SUMMARY == 0
-    should_create_short: bool = message_seq_in_session % MESSAGES_PER_SHORT_SUMMARY == 0
+    if configuration.summary.enabled is False:
+        return
+
+    should_create_long: bool = (
+        message_seq_in_session % configuration.summary.messages_per_long_summary == 0
+    )
+    should_create_short: bool = (
+        message_seq_in_session % configuration.summary.messages_per_short_summary == 0
+    )
+
+    if should_create_long is False and should_create_short is False:
+        return
 
     # If both summaries need to be created, run them in parallel with separate database sessions
     if should_create_long and should_create_short:

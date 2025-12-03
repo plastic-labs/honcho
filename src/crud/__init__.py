@@ -2,7 +2,10 @@ from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
 from .document import (
     create_documents,
+    delete_document,
+    delete_document_by_id,
     get_all_documents,
+    get_documents_with_filters,
     query_documents,
 )
 from .message import (
@@ -47,6 +50,7 @@ from .workspace import (
     delete_workspace,
     get_all_workspaces,
     get_or_create_workspace,
+    get_workspace,
     update_workspace,
 )
 
@@ -59,7 +63,10 @@ __all__ = [
     # Document
     "create_documents",
     "get_all_documents",
+    "get_documents_with_filters",
     "query_documents",
+    "delete_document",
+    "delete_document_by_id",
     # Message
     "create_messages",
     "get_messages",
@@ -98,6 +105,7 @@ __all__ = [
     # Workspace
     "delete_workspace",
     "get_or_create_workspace",
+    "get_workspace",
     "get_all_workspaces",
     "update_workspace",
 ]

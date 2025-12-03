@@ -3,12 +3,15 @@ from __future__ import annotations
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+import json
+from datetime import datetime
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
+from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
@@ -17,6 +20,7 @@ from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
     from .peer import Peer
+    from .types import Representation
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +46,30 @@ class Session(BaseModel):
 
     Attributes:
         id: Unique identifier for this session
-        _honcho: Reference to the parent Honcho client instance
-        anonymous: Whether this is an anonymous session
-        summarize: Whether automatic summarization is enabled
+        workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this session. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this session. May be stale if not
+            recently fetched. Call get_config() for fresh data.
     """
 
     id: str = Field(..., min_length=1, description="Unique identifier for this session")
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
     )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: HonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this session. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this session. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -95,14 +113,19 @@ class Session(BaseModel):
             workspace_id=workspace_id,
         )
         self._client = client
+        self._metadata = metadata
+        self._configuration = config
 
         if config is not None or metadata is not None:
-            self._client.workspaces.sessions.get_or_create(
+            session_data = self._client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
                 configuration=config if config is not None else omit,
                 metadata=metadata if metadata is not None else omit,
             )
+            # Update cached values with API response
+            self._metadata = session_data.metadata
+            self._configuration = session_data.configuration
 
     def add_peers(
         self,
@@ -292,7 +315,7 @@ class Session(BaseModel):
         messages: MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Messages to add to the session"
         ),
-    ) -> None:
+    ) -> list[Message]:
         """
         Add one or more messages to this session.
 
@@ -308,7 +331,7 @@ class Session(BaseModel):
         if not isinstance(messages, list):
             messages = [messages]
 
-        self._client.workspaces.sessions.messages.create(
+        return self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
             messages=[MessageCreateParam(**message) for message in messages],
@@ -352,24 +375,31 @@ class Session(BaseModel):
 
         Makes an API call to retrieve the current metadata associated with this session.
         Metadata can include custom attributes, settings, or any other key-value data.
+        This method also updates the cached metadata attribute.
 
         Returns:
             A dictionary containing the session's metadata. Returns an empty dictionary
             if no metadata is set
         """
-        return (
-            self._client.workspaces.sessions.get_or_create(
-                workspace_id=self.workspace_id,
-                id=self.id,
-            ).metadata
-            or {}
+        session_data = self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
         )
+        self._metadata = session_data.metadata or {}
+        return self._metadata
 
     def delete(self) -> None:
         """
-        Delete this session
+        Delete this session and all associated data.
 
-        Makes an API call to mark this session as inactive.
+        Makes an API call to permanently delete this session and all related data including:
+        - Messages
+        - Message embeddings
+        - Observations
+        - Session-Peer associations
+        - Background processing queue items
+
+        This action cannot be undone.
         """
         self._client.workspaces.sessions.delete(
             session_id=self.id,
@@ -388,6 +418,7 @@ class Session(BaseModel):
 
         Makes an API call to update the metadata associated with this session.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with this session.
@@ -398,6 +429,65 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
+        self._metadata = metadata
+
+    def get_config(self) -> dict[str, object]:
+        """
+        Get configuration for this session.
+
+        Makes an API call to retrieve the current configuration associated with this session.
+        Configuration includes settings that control session behavior.
+        This method also updates the cached configuration attribute.
+
+        Returns:
+            A dictionary containing the session's configuration. Returns an empty dictionary
+            if no configuration is set
+        """
+        session_data = self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        self._configuration = session_data.configuration or {}
+        return self._configuration
+
+    @validate_call
+    def set_config(
+        self,
+        configuration: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this session"
+        ),
+    ) -> None:
+        """
+        Set configuration for this session.
+
+        Makes an API call to update the configuration associated with this session.
+        This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
+
+        Args:
+            configuration: A dictionary of configuration to associate with this session.
+                          Keys must be strings, values can be any JSON-serializable type
+        """
+        self._client.workspaces.sessions.update(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            configuration=configuration,
+        )
+        self._configuration = configuration
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for this session.
+
+        Makes a single API call to retrieve the latest metadata and configuration
+        associated with this session and updates the cached attributes.
+        """
+        session_data = self._client.workspaces.sessions.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        self._metadata = session_data.metadata or {}
+        self._configuration = session_data.configuration or {}
 
     @validate_call
     def get_context(
@@ -419,6 +509,32 @@ class Session(BaseModel):
             None,
             description="A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.",
         ),
+        limit_to_session: bool = Field(
+            False,
+            description="Whether to limit the representation to this session only. If True, only observations from this session will be included.",
+        ),
+        search_top_k: int | None = Field(
+            None,
+            ge=1,
+            le=100,
+            description="Number of semantically relevant facts to return when searching with `last_user_message`.",
+        ),
+        search_max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=1.0,
+            description="Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.",
+        ),
+        include_most_derived: bool | None = Field(
+            None,
+            description="Whether to include the most derived observations in the representation.",
+        ),
+        max_observations: int | None = Field(
+            None,
+            ge=1,
+            le=100,
+            description="Maximum number of observations to include in the representation.",
+        ),
     ) -> SessionContext:
         """
         Get optimized context for this session within a token limit.
@@ -435,6 +551,11 @@ class Session(BaseModel):
             peer_target: A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.
             last_user_message: The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
             peer_perspective: A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.
+            limit_to_session: Whether to limit the representation to this session only. If True, only observations from this session will be included.
+            search_top_k: Number of semantically relevant facts to return when searching with `last_user_message`.
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.
+            include_most_derived: Whether to include the most derived observations in the representation.
+            max_observations: Maximum number of observations to include in the representation.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -471,6 +592,15 @@ class Session(BaseModel):
             else omit,
             peer_target=peer_target if peer_target is not None else omit,
             peer_perspective=peer_perspective if peer_perspective is not None else omit,
+            limit_to_session=limit_to_session,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
 
         # Convert the honcho_core summary to our Summary if it exists
@@ -588,6 +718,18 @@ class Session(BaseModel):
             description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
         ),
         peer_id: str = Field(..., description="ID of the peer creating the messages"),
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with the messages",
+        ),
+        configuration: Configuration | None = Field(
+            None,
+            description="Optional configuration dictionary to associate with the messages",
+        ),
+        created_at: str | datetime | None = Field(
+            None,
+            description="Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.",
+        ),
     ) -> list[Message]:
         """
         Upload file to create message(s) in this session.
@@ -605,6 +747,9 @@ class Session(BaseModel):
                 - a tuple (filename, bytes, content_type)
                 - a tuple (filename, fileobj, content_type)
             peer_id: ID of the peer who will be attributed as the creator of the messages
+            metadata: Optional metadata dictionary to associate with the messages
+            configuration: Optional configuration dictionary to associate with the messages
+            created_at: Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
 
         Returns:
             A list of Message objects representing the created messages
@@ -618,12 +763,26 @@ class Session(BaseModel):
         # Prepare file for upload using shared utility
         filename, content_bytes, content_type = prepare_file_for_upload(file)
 
-        # Call the upload endpoint
+        # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
+        extra_body_data: dict[str, str] = {}
+        if metadata is not None:
+            extra_body_data["metadata"] = json.dumps(metadata)
+        if configuration is not None:
+            extra_body_data["configuration"] = json.dumps(configuration)
+        if created_at is not None:
+            # Ensure created_at is a string (ISO format)
+            if isinstance(created_at, datetime):
+                extra_body_data["created_at"] = created_at.isoformat()
+            else:
+                extra_body_data["created_at"] = created_at
+
+        # Call the upload endpoint with extra_body for the additional form fields
         response = self._client.workspaces.sessions.messages.upload(
             session_id=self.id,
             workspace_id=self.workspace_id,
             file=(filename, content_bytes, content_type),
             peer_id=peer_id,
+            extra_body=extra_body_data if extra_body_data else None,
         )
 
         return [Message.model_validate(msg) for msg in response]
@@ -633,7 +792,12 @@ class Session(BaseModel):
         peer: str | Peer,
         *,
         target: str | Peer | None = None,
-    ) -> dict[str, object]:
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
+    ) -> "Representation":
         """
         Get the current working representation of the peer in this session.
 
@@ -641,18 +805,51 @@ class Session(BaseModel):
             peer: Peer to get the working representation of.
             target: Optional target peer to get the representation of. If provided,
             queries what `peer` knows about the `target`.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
 
         Returns:
-            A dictionary containing information about the peer.
-        """
-        from .peer import Peer
+            A Representation object containing explicit and deductive observations
 
-        return self._client.workspaces.peers.working_representation(
-            str(peer.id) if isinstance(peer, Peer) else peer,
+        Example:
+            ```python
+            # Get peer's representation in this session
+            rep = session.working_rep('user123')
+            print(rep)
+
+            # Get what user123 knows about assistant in this session
+            local_rep = session.working_rep('user123', target='assistant')
+
+            # Get representation with semantic search
+            searched_rep = session.working_rep(
+                'user123',
+                search_query='preferences',
+                search_top_k=10
+            )
+            ```
+        """
+        from .peer import Peer as _Peer
+        from .types import Representation as _Representation
+
+        data = self._client.workspaces.peers.working_representation(
+            str(peer.id) if isinstance(peer, _Peer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            target=str(target.id) if isinstance(target, Peer) else target,
+            target=str(target.id) if isinstance(target, _Peer) else target,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
         )
+        return _Representation.from_dict(data)  # type: ignore
 
     @validate_call
     def get_deriver_status(

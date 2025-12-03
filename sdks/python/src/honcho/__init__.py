@@ -41,11 +41,18 @@ from .async_client import (
     AsyncSession,
 )
 from .client import Honcho
+from .observations import AsyncObservationScope, Observation, ObservationScope
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
-from .types import DialecticStreamResponse
+from .types import (
+    DeductiveObservation,
+    DialecticStreamResponse,
+    ExplicitObservation,
+    PeerContext,
+    Representation,
+)
 
 __version__ = "1.5.0"
 __author__ = "Plastic Labs"
@@ -53,15 +60,22 @@ __email__ = "hello@plasticlabs.ai"
 
 __all__ = [
     "AsyncHoncho",
+    "AsyncObservationScope",
     "AsyncPeer",
     "AsyncSession",
     "AsyncPage",
     "Honcho",
+    "Observation",
+    "ObservationScope",
     "Peer",
+    "PeerContext",
     "Session",
     "SessionContext",
     "SessionSummaries",
     "Summary",
     "SyncPage",
     "DialecticStreamResponse",
+    "Representation",
+    "ExplicitObservation",
+    "DeductiveObservation",
 ]
