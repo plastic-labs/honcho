@@ -23,32 +23,7 @@ __all__ = [
     "ObservationScope",
     "PeerContext",
     "Representation",
-    "RepresentationOptions",
 ]
-
-
-class RepresentationOptions(BaseModel):
-    """Options for configuring representation retrieval behavior."""
-
-    search_top_k: int | None = Field(
-        None,
-        ge=1,
-        le=100,
-        description="Number of semantically relevant facts to return",
-    )
-    search_max_distance: float | None = Field(
-        None,
-        ge=0.0,
-        le=1.0,
-        description="Maximum semantic distance for search results (0.0-1.0)",
-    )
-    include_most_derived: bool | None = Field(
-        None,
-        description="Whether to include the most derived observations in the representation",
-    )
-    max_observations: int | None = Field(
-        None, ge=1, le=100, description="Maximum number of observations to include"
-    )
 
 
 class ObservationMetadata(BaseModel):

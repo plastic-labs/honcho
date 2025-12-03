@@ -42,13 +42,25 @@ export class Peer {
    */
   private _client: HonchoCore
   /**
+   * Private cached metadata for this peer.
+   */
+  private _metadata?: Record<string, unknown> | null
+  /**
+   * Private cached configuration for this peer.
+   */
+  private _configuration?: Record<string, unknown> | null
+
+  /**
    * Cached metadata for this peer. May be stale if the peer
    * was not recently fetched from the API.
    *
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  public metadata?: Record<string, unknown> | null
+  get metadata(): Record<string, unknown> | null | undefined {
+    return this._metadata
+  }
+
   /**
    * Cached configuration for this peer. May be stale if the peer
    * was not recently fetched from the API.
@@ -56,7 +68,9 @@ export class Peer {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  public configuration?: Record<string, unknown> | null
+  get configuration(): Record<string, unknown> | null | undefined {
+    return this._configuration
+  }
 
   /**
    * Initialize a new Peer. **Do not call this directly, use the client.peer() method instead.**
@@ -77,8 +91,8 @@ export class Peer {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
-    this.metadata = metadata
-    this.configuration = configuration
+    this._metadata = metadata
+    this._configuration = configuration
   }
 
   /**
@@ -291,8 +305,8 @@ export class Peer {
       this.workspaceId,
       { id: this.id }
     )
-    this.metadata = peer.metadata || {}
-    return this.metadata
+    this._metadata = peer.metadata || {}
+    return this._metadata
   }
 
   /**
@@ -309,7 +323,7 @@ export class Peer {
     await this._client.workspaces.peers.update(this.workspaceId, this.id, {
       metadata,
     })
-    this.metadata = metadata
+    this._metadata = metadata
   }
 
   /**
@@ -326,8 +340,8 @@ export class Peer {
       this.workspaceId,
       { id: this.id }
     )
-    this.configuration = peer.configuration || {}
-    return this.configuration
+    this._configuration = peer.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -346,7 +360,7 @@ export class Peer {
     await this._client.workspaces.peers.update(this.workspaceId, this.id, {
       configuration: config,
     })
-    this.configuration = config
+    this._configuration = config
   }
 
   /**
@@ -380,8 +394,8 @@ export class Peer {
       this.workspaceId,
       { id: this.id }
     )
-    this.metadata = peer.metadata || {}
-    this.configuration = peer.configuration || {}
+    this._metadata = peer.metadata || {}
+    this._configuration = peer.configuration || {}
   }
 
   /**

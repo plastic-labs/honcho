@@ -52,7 +52,6 @@ from .types import (
     ExplicitObservation,
     PeerContext,
     Representation,
-    RepresentationOptions,
 )
 
 __version__ = "1.5.0"
@@ -76,7 +75,6 @@ __all__ = [
     "Summary",
     "SyncPage",
     "DialecticStreamResponse",
-    "RepresentationOptions",
     "Representation",
     "ExplicitObservation",
     "DeductiveObservation",

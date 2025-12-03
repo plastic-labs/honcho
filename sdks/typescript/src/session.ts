@@ -121,13 +121,25 @@ export class Session {
    */
   private _client: HonchoCore
   /**
+   * Private cached metadata for this session.
+   */
+  private _metadata?: Record<string, unknown> | null
+  /**
+   * Private cached configuration for this session.
+   */
+  private _configuration?: Record<string, unknown> | null
+
+  /**
    * Cached metadata for this session. May be stale if the session
    * was not recently fetched from the API.
    *
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  public metadata?: Record<string, unknown> | null
+  get metadata(): Record<string, unknown> | null | undefined {
+    return this._metadata
+  }
+
   /**
    * Cached configuration for this session. May be stale if the session
    * was not recently fetched from the API.
@@ -135,7 +147,9 @@ export class Session {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  public configuration?: Record<string, unknown> | null
+  get configuration(): Record<string, unknown> | null | undefined {
+    return this._configuration
+  }
 
   /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
@@ -156,8 +170,8 @@ export class Session {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
-    this.metadata = metadata
-    this.configuration = configuration
+    this._metadata = metadata
+    this._configuration = configuration
   }
 
   /**
@@ -448,8 +462,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    this.metadata = session.metadata || {}
-    return this.metadata
+    this._metadata = session.metadata || {}
+    return this._metadata
   }
 
   /**
@@ -468,7 +482,7 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       metadata,
     })
-    this.metadata = metadata
+    this._metadata = metadata
   }
 
   /**
@@ -486,8 +500,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    this.configuration = session.configuration || {}
-    return this.configuration
+    this._configuration = session.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -504,7 +518,7 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       configuration,
     })
-    this.configuration = configuration
+    this._configuration = configuration
   }
 
   /**
@@ -518,8 +532,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    this.metadata = session.metadata || {}
-    this.configuration = session.configuration || {}
+    this._metadata = session.metadata || {}
+    this._configuration = session.configuration || {}
   }
 
   /**

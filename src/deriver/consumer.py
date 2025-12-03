@@ -197,7 +197,7 @@ async def process_deletion(
                     resource_id,
                     workspace_name,
                 )
-            except ValueError as e:
+            except ResourceNotFoundException as e:
                 # Session not found - may have already been deleted, treat as success
                 logger.warning(
                     "Session %s not found during deletion (may already be deleted): %s",

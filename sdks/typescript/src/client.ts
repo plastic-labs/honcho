@@ -65,13 +65,25 @@ export class Honcho {
    */
   private _client: HonchoCore
   /**
+   * Private cached metadata for this workspace.
+   */
+  private _metadata?: Record<string, unknown>
+  /**
+   * Private cached configuration for this workspace.
+   */
+  private _configuration?: Record<string, unknown>
+
+  /**
    * Cached metadata for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
    *
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  public metadata?: Record<string, unknown>
+  get metadata(): Record<string, unknown> | undefined {
+    return this._metadata
+  }
+
   /**
    * Cached configuration for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
@@ -79,7 +91,9 @@ export class Honcho {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  public configuration?: Record<string, unknown>
+  get configuration(): Record<string, unknown> | undefined {
+    return this._configuration
+  }
 
   /**
    * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
@@ -324,8 +338,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    this.metadata = workspace.metadata || {}
-    return this.metadata
+    this._metadata = workspace.metadata || {}
+    return this._metadata
   }
 
   /**
@@ -343,7 +357,7 @@ export class Honcho {
     await this._client.workspaces.update(this.workspaceId, {
       metadata: validatedMetadata,
     })
-    this.metadata = validatedMetadata
+    this._metadata = validatedMetadata
   }
 
   /**
@@ -360,8 +374,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    this.configuration = workspace.configuration || {}
-    return this.configuration
+    this._configuration = workspace.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -379,7 +393,7 @@ export class Honcho {
     await this._client.workspaces.update(this.workspaceId, {
       configuration: validatedConfig,
     })
-    this.configuration = validatedConfig
+    this._configuration = validatedConfig
   }
 
   /**
@@ -392,8 +406,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    this.metadata = workspace.metadata || {}
-    this.configuration = workspace.configuration || {}
+    this._metadata = workspace.metadata || {}
+    this._configuration = workspace.configuration || {}
   }
 
   /**
