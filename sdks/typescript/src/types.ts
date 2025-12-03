@@ -21,7 +21,7 @@ export interface ObservationQueryParams {
   query: string
   top_k?: number
   distance?: number
-  filters?: Record<string, any>
+  filters?: Record<string, unknown>
 }
 
 /**

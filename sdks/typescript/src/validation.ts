@@ -68,7 +68,7 @@ export const SessionIdSchema = z
  */
 export const SessionPeerConfigSchema = z.object({
   observe_me: z.boolean().nullable().optional(),
-  observe_others: z.boolean().optional(),
+  observe_others: z.boolean().nullable().optional(),
 })
 
 /**

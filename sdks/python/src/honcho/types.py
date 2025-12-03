@@ -491,7 +491,9 @@ class PeerContext:
         rep_data = getattr(response, "representation", None)
         if rep_data is not None:
             if isinstance(rep_data, dict):
-                representation = Representation.from_dict(rep_data)
+                representation = Representation.from_dict(
+                    cast(dict[str, Any], rep_data)
+                )
             elif hasattr(rep_data, "explicit") and hasattr(rep_data, "deductive"):
                 representation = Representation.from_dict(
                     {

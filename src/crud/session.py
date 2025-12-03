@@ -130,6 +130,12 @@ async def get_or_create_session(
     if honcho_session is not None:
         honcho_session = await db.merge(honcho_session, load=False)
 
+        # Reject operations on inactive sessions (marked for deletion)
+        if not honcho_session.is_active:
+            raise ResourceNotFoundException(
+                f"Session {session.name} not found in workspace {workspace_name}"
+            )
+
     # Check if session already exists
     if honcho_session is None:
         if session.peer_names:
@@ -206,6 +212,8 @@ async def get_session(
     db: AsyncSession,
     session_name: str,
     workspace_name: str,
+    *,
+    include_inactive: bool = False,
 ) -> models.Session:
     """
     Get a session in a workspace.
@@ -214,16 +222,24 @@ async def get_session(
         db: Database session
         session_name: Name of the session
         workspace_name: Name of the workspace
+        include_inactive: If True, return sessions even if they are marked for deletion.
+            This should only be used for internal operations like the deletion task.
 
     Returns:
         The session
 
     Raises:
-        ResourceNotFoundException: If the session does not exist
+        ResourceNotFoundException: If the session does not exist or is inactive
     """
     session = await _fetch_session(db, workspace_name, session_name)
 
     if session is None:
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
+
+    # Check if session is active (unless include_inactive is True)
+    if not include_inactive and not session.is_active:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
@@ -343,7 +359,9 @@ async def delete_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    honcho_session = await get_session(db, session_name, workspace_name)
+    honcho_session = await get_session(
+        db, session_name, workspace_name, include_inactive=True
+    )
 
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations

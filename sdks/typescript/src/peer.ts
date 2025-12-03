@@ -524,9 +524,9 @@ export class Peer {
       | RepresentationData
       | { representation?: RepresentationData | null }
       | null
-    const rep = (maybe && 'representation' in (maybe as any)
-      ? (maybe as any).representation
-      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    const rep = (maybe && typeof maybe === 'object' && 'representation' in maybe
+      ? (maybe as { representation?: RepresentationData | null }).representation
+      : maybe) ?? { explicit: [], deductive: [] }
     return Representation.fromData(rep as RepresentationData)
   }
 
@@ -581,7 +581,9 @@ export class Peer {
       }
     )
 
-    return PeerContext.fromApiResponse(response)
+    return PeerContext.fromApiResponse(
+      response as unknown as Record<string, unknown>
+    )
   }
 
   /**
@@ -702,9 +704,9 @@ export class PeerContext {
    * @param response - API response object with peer_id, target_id, representation, and peer_card
    * @returns A new PeerContext instance
    */
-  static fromApiResponse(response: any): PeerContext {
-    const peerId = response.peer_id ?? ''
-    const targetId = response.target_id ?? ''
+  static fromApiResponse(response: Record<string, unknown>): PeerContext {
+    const peerId = (response.peer_id as string | undefined) ?? ''
+    const targetId = (response.target_id as string | undefined) ?? ''
 
     let representation: Representation | null = null
     if (response.representation) {
@@ -713,7 +715,7 @@ export class PeerContext {
       )
     }
 
-    const peerCard = response.peer_card ?? null
+    const peerCard = (response.peer_card as string[] | undefined) ?? null
 
     return new PeerContext(peerId, targetId, representation, peerCard)
   }

@@ -60,14 +60,14 @@ export class Observation {
    * @param data - API response data
    * @returns A new Observation instance
    */
-  static fromApiResponse(data: Record<string, any>): Observation {
+  static fromApiResponse(data: Record<string, unknown>): Observation {
     return new Observation(
-      data.id ?? '',
-      data.content ?? '',
-      data.observer_id ?? '',
-      data.observed_id ?? '',
-      data.session_id ?? '',
-      data.created_at ?? ''
+      (data.id as string) ?? '',
+      (data.content as string) ?? '',
+      (data.observer_id as string) ?? '',
+      (data.observed_id as string) ?? '',
+      (data.session_id as string) ?? '',
+      (data.created_at as string) ?? ''
     )
   }
 
@@ -192,7 +192,7 @@ export class ObservationScope {
     size: number = 50,
     sessionId?: string
   ): Promise<Observation[]> {
-    const filters: Record<string, any> = {
+    const filters: Record<string, unknown> = {
       observer: this.observer,
       observed: this.observed,
     }
@@ -200,7 +200,7 @@ export class ObservationScope {
       filters.session_id = sessionId
     }
 
-    // Note: This requires the core SDK to support observations.list()
+    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
     const response = await (this._client.workspaces as any).observations.list(
       this.workspaceId,
       {
@@ -210,8 +210,8 @@ export class ObservationScope {
       }
     )
 
-    return (response.items ?? []).map((item: any) =>
-      Observation.fromApiResponse(item)
+    return (response.items ?? []).map((item: unknown) =>
+      Observation.fromApiResponse(item as Record<string, unknown>)
     )
   }
 
@@ -228,12 +228,12 @@ export class ObservationScope {
     topK: number = 10,
     distance?: number
   ): Promise<Observation[]> {
-    const filters: Record<string, any> = {
+    const filters: Record<string, unknown> = {
       observer: this.observer,
       observed: this.observed,
     }
 
-    // Note: This requires the core SDK to support observations.query()
+    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
     const response = await (this._client.workspaces as any).observations.query(
       this.workspaceId,
       {
@@ -244,8 +244,8 @@ export class ObservationScope {
       }
     )
 
-    return (response ?? []).map((item: any) =>
-      Observation.fromApiResponse(item)
+    return (response ?? []).map((item: unknown) =>
+      Observation.fromApiResponse(item as Record<string, unknown>)
     )
   }
 
@@ -255,7 +255,7 @@ export class ObservationScope {
    * @param observationId - The ID of the observation to delete
    */
   async delete(observationId: string): Promise<void> {
-    // Note: This requires the core SDK to support observations.delete()
+    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
     await (this._client.workspaces as any).observations.delete(
       this.workspaceId,
       observationId
@@ -291,9 +291,9 @@ export class ObservationScope {
       | RepresentationData
       | { representation?: RepresentationData | null }
       | null
-    const rep = (maybe && 'representation' in (maybe as any)
-      ? (maybe as any).representation
-      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    const rep = (maybe && typeof maybe === 'object' && 'representation' in maybe
+      ? (maybe as { representation?: RepresentationData | null }).representation
+      : maybe) ?? { explicit: [], deductive: [] }
     return Representation.fromData(rep as RepresentationData)
   }
 

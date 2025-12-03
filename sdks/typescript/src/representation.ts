@@ -360,7 +360,7 @@ export class Representation {
       )
       const time = new Date(normalized).getTime()
       // Return 0 if parsing failed (NaN)
-      return isNaN(time) ? 0 : time
+      return Number.isNaN(time) ? 0 : time
     } catch {
       return 0
     }

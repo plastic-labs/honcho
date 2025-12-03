@@ -55,7 +55,7 @@ export class SessionPeerConfig {
    * of other peers in the session. When false, this peer will not build local
    * representations of other peers within this session.
    */
-  observe_others?: boolean
+  observe_others?: boolean | null
 
   /**
    * Initialize SessionPeerConfig with observation settings.
@@ -63,7 +63,7 @@ export class SessionPeerConfig {
    * @param observe_me - Whether other peers should observe this peer in the session
    * @param observe_others - Whether this peer should observe others in the session
    */
-  constructor(observe_me?: boolean | null, observe_others?: boolean) {
+  constructor(observe_me?: boolean | null, observe_others?: boolean | null) {
     const validatedConfig = SessionPeerConfigSchema.parse({
       observe_me,
       observe_others,
@@ -617,6 +617,7 @@ export class Session {
 
     if (
       typeof summaryOrOptions === 'boolean' ||
+      // biome-ignore lint/complexity/noArguments: Need to detect which overload pattern is being used
       (summaryOrOptions === undefined && arguments.length > 1)
     ) {
       // Positional arguments pattern
@@ -1000,7 +1001,6 @@ export class Session {
     })
 
     // Build body with file and peer_id, plus optional fields as JSON strings
-    // Type assertion needed because MessageUploadParams doesn't include metadata/configuration/created_at yet
     const body = {
       file: uploadParams.file,
       peer_id: uploadParams.peerId,
@@ -1015,7 +1015,7 @@ export class Session {
       uploadParams.created_at !== null
         ? { created_at: uploadParams.created_at }
         : {}),
-    } as any
+    }
 
     const response = await this._client.workspaces.sessions.messages.upload(
       this.workspaceId,
@@ -1098,9 +1098,9 @@ export class Session {
       | RepresentationData
       | { representation?: RepresentationData | null }
       | null
-    const rep = (maybe && 'representation' in (maybe as any)
-      ? (maybe as any).representation
-      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    const rep = (maybe && typeof maybe === 'object' && 'representation' in maybe
+      ? (maybe as { representation?: RepresentationData | null }).representation
+      : maybe) ?? { explicit: [], deductive: [] }
     return Representation.fromData(rep as RepresentationData)
   }
 
