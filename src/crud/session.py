@@ -126,6 +126,9 @@ async def get_or_create_session(
     if honcho_session is not None:
         honcho_session = await db.merge(honcho_session, load=False)
 
+    # Track if we need to update cache
+    needs_cache_update = False
+
     # Check if session already exists
     if honcho_session is None:
         if session.peer_names:
@@ -149,8 +152,10 @@ async def get_or_create_session(
         )
         try:
             db.add(honcho_session)
-            # Flush to ensure session exists in DB before adding peers
+            # Flush to ensure session exists in DB before adding peers and set flag to warm cache
             await db.flush()
+            needs_cache_update = True
+
         except IntegrityError:
             await db.rollback()
             logger.debug(
@@ -163,10 +168,18 @@ async def get_or_create_session(
             return await get_or_create_session(db, session, workspace_name, _retry=True)
     else:
         # Update existing session with metadata and feature flags if provided
-        if session.metadata is not None:
+        if (
+            session.metadata is not None
+            and honcho_session.h_metadata != session.metadata
+        ):
             honcho_session.h_metadata = session.metadata
-        if session.configuration is not None:
+            needs_cache_update = True
+        if (
+            session.configuration is not None
+            and honcho_session.configuration != session.configuration
+        ):
             honcho_session.configuration = session.configuration
+            needs_cache_update = True
 
     # Add all peers to session
     if session.peer_names:
@@ -187,10 +200,16 @@ async def get_or_create_session(
     await db.commit()
     await db.refresh(honcho_session)
 
-    cache_key = session_cache_key(workspace_name, session.name)
-    await cache.set(
-        cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
-    )
+    # Only update cache if session data changed or was newly created
+    if needs_cache_update:
+        cache_key = session_cache_key(workspace_name, session.name)
+        await cache.set(
+            cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+        )
+        logger.debug(
+            "Session %s cache updated in workspace %s", session.name, workspace_name
+        )
+
     return honcho_session
 
 
@@ -251,16 +270,32 @@ async def update_session(
         db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
     )
 
-    if session.metadata is not None:
-        honcho_session.h_metadata = session.metadata
+    # Track if anything changed
+    needs_update = False
 
-    if session.configuration is not None:
+    if session.metadata is not None and honcho_session.h_metadata != session.metadata:
+        honcho_session.h_metadata = session.metadata
+        needs_update = True
+
+    if (
+        session.configuration is not None
+        and honcho_session.configuration != session.configuration
+    ):
         honcho_session.configuration = session.configuration
+        needs_update = True
+
+    if not needs_update:
+        logger.debug(
+            "Session %s unchanged in workspace %s, skipping update",
+            session_name,
+            workspace_name,
+        )
+        return honcho_session
 
     await db.commit()
     await db.refresh(honcho_session)
 
-    # Invalidate cache - read-through pattern
+    # Only invalidate if we actually updated
     cache_key = session_cache_key(workspace_name, session_name)
     await cache.delete(cache_key)
 

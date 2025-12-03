@@ -373,7 +373,7 @@ async def _create_and_save_summary(
         message_public_id=message_public_id,
     )
 
-    # Only track tokens if this was a real LLM call
+    # Only track tokens and save summary if this was a real LLM call
     if not is_fallback:
         # Get base prompt tokens based on summary type
         if summary_type == SummaryType.SHORT:
@@ -397,12 +397,13 @@ async def _create_and_save_summary(
             component="total",
         ).inc(new_summary["token_count"])
 
-    await _save_summary(
-        db,
-        new_summary,
-        workspace_name,
-        session_name,
-    )
+        # Save summary to database
+        await _save_summary(
+            db,
+            new_summary,
+            workspace_name,
+            session_name,
+        )
 
     accumulate_metric(
         f"summary_{workspace_name}_{message_id}",
