@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import tiktoken
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
@@ -138,81 +138,154 @@ def load_test_file(test_file: Path) -> list[dict[str, Any]]:
         return json.load(f)
 
 
+def _build_judge_prompt(
+    question_type: str,
+    question: str,
+    answer: str,
+    response: str,
+    question_id: str,
+) -> str:
+    """Build the judge prompt matching the official LongMemEval evaluation code.
+
+    Based on get_anscheck_prompt() from the official LongMemEval repository.
+
+    Args:
+        question_type: Type of question being evaluated
+        question: The question asked
+        answer: Expected answer from the test
+        response: Actual response from the system under test
+        question_id: Question ID (used to detect abstention questions)
+
+    Returns:
+        The complete prompt for the judge model
+    """
+    # Check for abstention questions (have '_abs' in question_id)
+    if "_abs" in question_id:
+        return (
+            "I will give you an unanswerable question, an explanation, and a response "
+            "from a model. Please answer yes if the model correctly identifies the "
+            "question as unanswerable. The model could say that the information is "
+            "incomplete, or some other information is given but the asked information "
+            f"is not.\n\nQuestion: {question}\n\nExplanation: {answer}\n\n"
+            f"Model Response: {response}\n\nDoes the model correctly identify the "
+            "question as unanswerable? Answer yes or no only."
+        )
+
+    # Standard prompts by question type
+    if question_type in (
+        "single-session-user",
+        "single-session-assistant",
+        "multi-session",
+    ):
+        return (
+            "I will give you a question, a correct answer, and a response from a model. "
+            "Please answer yes if the response contains the correct answer. Otherwise, "
+            "answer no. If the response is equivalent to the correct answer or contains "
+            "all the intermediate steps to get the correct answer, you should also answer "
+            "yes. If the response only contains a subset of the information required by "
+            f"the answer, answer no. \n\nQuestion: {question}\n\nCorrect Answer: {answer}"
+            f"\n\nModel Response: {response}\n\nIs the model response correct? Answer yes or no only."
+        )
+    elif question_type == "temporal-reasoning":
+        return (
+            "I will give you a question, a correct answer, and a response from a model. "
+            "Please answer yes if the response contains the correct answer. Otherwise, "
+            "answer no. If the response is equivalent to the correct answer or contains "
+            "all the intermediate steps to get the correct answer, you should also answer "
+            "yes. If the response only contains a subset of the information required by "
+            "the answer, answer no. In addition, do not penalize off-by-one errors for "
+            "the number of days. If the question asks for the number of days/weeks/months, "
+            "etc., and the model makes off-by-one errors (e.g., predicting 19 days when "
+            "the answer is 18), the model's response is still correct. \n\n"
+            f"Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}"
+            "\n\nIs the model response correct? Answer yes or no only."
+        )
+    elif question_type == "knowledge-update":
+        return (
+            "I will give you a question, a correct answer, and a response from a model. "
+            "Please answer yes if the response contains the correct answer. Otherwise, "
+            "answer no. If the response contains some previous information along with an "
+            "updated answer, the response should be considered as correct as long as the "
+            f"updated answer is the required answer.\n\nQuestion: {question}\n\n"
+            f"Correct Answer: {answer}\n\nModel Response: {response}\n\n"
+            "Is the model response correct? Answer yes or no only."
+        )
+    elif question_type == "single-session-preference":
+        return (
+            "I will give you a question, a rubric for desired personalized response, "
+            "and a response from a model. Please answer yes if the response satisfies "
+            "the desired response. Otherwise, answer no. The model does not need to "
+            "reflect all the points in the rubric. The response is correct as long as "
+            "it recalls and utilizes the user's personal information correctly.\n\n"
+            f"Question: {question}\n\nRubric: {answer}\n\nModel Response: {response}"
+            "\n\nIs the model response correct? Answer yes or no only."
+        )
+    else:
+        # Default case (same as multi-session)
+        return (
+            "I will give you a question, a correct answer, and a response from a model. "
+            "Please answer yes if the response contains the correct answer. Otherwise, "
+            "answer no. If the response is equivalent to the correct answer or contains "
+            "all the intermediate steps to get the correct answer, you should also answer "
+            "yes. If the response only contains a subset of the information required by "
+            f"the answer, answer no. \n\nQuestion: {question}\n\nCorrect Answer: {answer}"
+            f"\n\nModel Response: {response}\n\nIs the model response correct? Answer yes or no only."
+        )
+
+
 async def judge_response(
-    anthropic_client: AsyncAnthropic,
+    openai_client: AsyncOpenAI,
     question: str,
     expected_answer: str,
     actual_response: str,
+    question_type: str = "default",
+    question_id: str = "",
 ) -> dict[str, Any]:
-    """Use an LLM to judge if the actual response matches the expected answer.
+    """Use GPT-4o to judge if the actual response matches the expected answer.
+
+    Uses the exact prompt format from the official LongMemEval evaluation code
+    (evaluate_qa.py) to ensure consistent evaluation.
 
     Args:
-        anthropic_client: Anthropic client instance
+        openai_client: OpenAI client instance
         question: The question asked
         expected_answer: Expected answer from the test
         actual_response: Actual response from the system under test
+        question_type: Type of question (temporal-reasoning, knowledge-update,
+                       single-session-preference, single-session-user,
+                       single-session-assistant, multi-session)
+        question_id: Question ID (used to detect abstention questions with '_abs')
 
     Returns:
         Judgment result with pass/fail and reasoning
     """
     try:
-        system_prompt = """
-You are an expert judge evaluating AI responses to memory questions. Your task is to determine if an actual response contains the correct answer from long-term memory.
-
-CRITICAL JUDGING PRINCIPLES:
-1. SEMANTIC UNDERSTANDING: Focus on whether the actual response conveys the same core factual information as expected, even if expressed differently (i.e. 1 hour is the same as 60 minutes, and if today's date is 2025-12-02, then 'yesterday' and '2025-12-01' are equivalent)
-2. FLEXIBLE INTERPRETATION: Accept responses that are longer, more detailed, or use different phrasing as long as they contain the correct answer
-3. MEMORY ACCURACY: The key is whether the AI correctly recalled and stated the factual information from memory
-4. IMPLICIT vs EXPLICIT: Accept responses that clearly imply the correct answer through context
-
-ONLY FAIL when:
-- The core factual answer is demonstrably wrong
-- The response shows no evidence of accessing the relevant memory
-- The AI explicitly states incorrect information that contradicts the expected answer
-
-Always respond with valid JSON: {"passed": boolean, "reasoning": "short (1-3 sentences) explanation of why the response is correct or incorrect"}"""
-
-        user_prompt = f"""Question: "{question}"
-Expected answer: "{expected_answer}"
-Actual response: "{actual_response}"
-
-Evaluate whether the actual response correctly answers the question based on the expected answer. Focus on factual accuracy and evidence that the AI accessed the correct memory."""
-
-        response = await anthropic_client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=300,
-            temperature=0.0,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                }
-            ],
+        prompt = _build_judge_prompt(
+            question_type, question, expected_answer, actual_response, question_id
         )
 
-        if not response.content:
-            raise ValueError("Anthropic returned empty response")
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-2024-08-06",
+            max_tokens=10,
+            temperature=0,
+            n=1,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
-        content_block = response.content[0]
-        judgment_text = getattr(content_block, "text", None)
-        if judgment_text is None:
-            raise ValueError(
-                f"No text content in response block: {type(content_block)}"
-            )
+        if not response.choices:
+            raise ValueError("OpenAI returned empty response")
 
-        # Extract JSON from the response if it's wrapped in markdown
-        if "```json" in judgment_text:
-            json_start = judgment_text.find("```json") + 7
-            json_end = judgment_text.find("```", json_start)
-            judgment_text = judgment_text[json_start:json_end].strip()
-        elif "```" in judgment_text:
-            json_start = judgment_text.find("```") + 3
-            json_end = judgment_text.find("```", json_start)
-            judgment_text = judgment_text[json_start:json_end].strip()
+        eval_response = response.choices[0].message.content
+        if eval_response is None:
+            raise ValueError("No text content in response")
 
-        judgment = json.loads(judgment_text)
-        return judgment
+        # Match official evaluation: check if "yes" appears in lowercased response
+        passed = "yes" in eval_response.lower()
+
+        return {
+            "passed": passed,
+            "reasoning": eval_response.strip(),
+        }
 
     except Exception as e:
         logger.error(f"Error judging response: {e}")

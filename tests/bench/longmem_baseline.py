@@ -40,6 +40,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 from src.config import settings
@@ -117,6 +118,12 @@ class LongMemEvalBaselineRunner:
             if not api_key:
                 raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+        # OpenAI client for GPT-4o judge (per LongMemEval paper)
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set (required for GPT-4o judge)")
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
 
     def _format_conversation_context(
         self,
@@ -261,10 +268,12 @@ Below is a history of past conversations. Use this history to answer the user's 
 
             # Judge the response
             judgment = await judge_response(
-                self.anthropic_client,
+                self.openai_client,
                 question_with_date,
                 expected_answer,
                 actual_response,
+                question_type,
+                question_id,
             )
 
             query_result: QueryResult = {

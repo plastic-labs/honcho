@@ -50,7 +50,7 @@ Optional arguments:
 ```
 
 ## Other notes
-- Judge is Claude Sonnet 4.5
+- Judge is GPT-4o (per LongMemEval paper)
 - If processing lots of data, set timeout very high or all will be lost
 """
 
@@ -73,6 +73,7 @@ from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 from src.config import settings
@@ -188,6 +189,12 @@ class LongMemEvalRunner:
             if not api_key:
                 raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+        # OpenAI client for GPT-4o judge (per LongMemEval paper)
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set (required for GPT-4o judge)")
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
 
     def get_honcho_url_for_index(self, question_index: int) -> str:
         """
@@ -746,10 +753,12 @@ class LongMemEvalRunner:
                     )
 
                 judgment = await judge_response(
-                    self.anthropic_client,
+                    self.openai_client,
                     question_with_date,
                     expected_answer,
                     actual_response,
+                    question_type,
+                    question_id,
                 )
 
                 query_result: QueryResult = {
