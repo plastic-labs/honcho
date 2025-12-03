@@ -58,6 +58,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
 from src.config import settings
 
@@ -112,6 +113,12 @@ class LoCoMoBaselineRunner:
             )
 
         self.anthropic_client: AsyncAnthropic = AsyncAnthropic(api_key=api_key)
+
+        # Initialize OpenAI client for judging responses
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set")
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
 
     def _format_conversation_context(
         self,
@@ -187,7 +194,6 @@ class LoCoMoBaselineRunner:
             "question_results": [],
             "category_scores": {},
             "overall_score": 0.0,
-            "overall_f1": 0.0,
             "error": None,
             "start_time": start_time,
             "end_time": 0.0,
@@ -268,14 +274,14 @@ Below is the history of their past conversations. Use this history to answer the
 
                     # Judge the response
                     judgment = await judge_response(
-                        self.anthropic_client,
+                        self.openai_client,
                         question,
                         str(expected_answer),
                         actual_response,
+                        category=category,
                     )
 
                     passed = judgment.get("passed", False)
-                    score = judgment.get("score", 0.0)
 
                     question_result: QuestionResult = {
                         "question_id": q_idx,
@@ -292,7 +298,7 @@ Below is the history of their past conversations. Use this history to answer the
                     result["question_results"].append(question_result)
 
                     status = "PASS" if passed else "FAIL"
-                    print(f"    Score: {score:.2f} [{status}]")
+                    print(f"    [{status}]")
                     if not passed:
                         print(f"      Expected: {expected_answer}")
                         print(f"      Got: {actual_response[:200]}...")
@@ -307,7 +313,7 @@ Below is the history of their past conversations. Use this history to answer the
                         category=category,
                         category_name=category_name,
                         evidence=evidence,
-                        judgment={"passed": False, "score": 0.0, "reasoning": str(e)},
+                        judgment={"passed": False, "reasoning": str(e)},
                         passed=False,
                     )
                     result["question_results"].append(question_result)
@@ -317,17 +323,12 @@ Below is the history of their past conversations. Use this history to answer the
                 result["question_results"]
             )
 
-            # Calculate overall scores
+            # Calculate overall score (pass rate)
             if result["question_results"]:
-                scores = [
-                    qr["judgment"].get("score", 0.0)
-                    for qr in result["question_results"]
-                ]
-                f1s = [
-                    qr["judgment"].get("f1", 0.0) for qr in result["question_results"]
-                ]
-                result["overall_score"] = sum(scores) / len(scores)
-                result["overall_f1"] = sum(f1s) / len(f1s)
+                passed_count = sum(
+                    1 for qr in result["question_results"] if qr["passed"]
+                )
+                result["overall_score"] = passed_count / len(result["question_results"])
 
             result["end_time"] = time.time()
             result["duration_seconds"] = result["end_time"] - result["start_time"]
@@ -336,7 +337,6 @@ Below is the history of their past conversations. Use this history to answer the
                 f"\n[{workspace_id}] Completed in {format_duration(result['duration_seconds'])}"
             )
             print(f"Overall Score: {result['overall_score']:.3f}")
-            print(f"Overall F1: {result['overall_f1']:.3f}")
 
         except Exception as e:
             self.logger.error(f"Error executing conversation {sample_id}: {e}")

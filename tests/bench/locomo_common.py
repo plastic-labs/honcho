@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import tiktoken
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,6 @@ class ConversationResult(TypedDict):
     question_results: list[QuestionResult]
     category_scores: dict[str, dict[str, Any]]
     overall_score: float
-    overall_f1: float
     error: str | None
     start_time: float
     end_time: float
@@ -238,155 +237,114 @@ def filter_questions(
     return filtered
 
 
-def normalize_answer(answer: Any) -> str:
-    """
-    Normalize an answer for comparison.
+def _build_judge_prompt(
+    category: int,
+    question: str,
+    answer: str,
+    response: str,
+) -> str:
+    """Build the judge prompt for LoCoMo evaluation.
 
     Args:
-        answer: The answer (can be string, int, etc.)
+        category: Question category (1-5)
+        question: The question asked
+        answer: Expected answer from the test
+        response: Actual response from the system under test
 
     Returns:
-        Normalized lowercase string
+        The complete prompt for the judge model
     """
-    if answer is None:
-        return ""
-    return str(answer).lower().strip()
+    # Adversarial questions (category 5) - should identify as unanswerable
+    if category == 5:
+        return (
+            "I will give you an unanswerable question, an explanation, and a response "
+            "from a model. Please answer yes if the model correctly identifies the "
+            "question as unanswerable. The model could say that the information is "
+            "incomplete, or some other information is given but the asked information "
+            f"is not.\n\nQuestion: {question}\n\nExplanation: {answer}\n\n"
+            f"Model Response: {response}\n\nDoes the model correctly identify the "
+            "question as unanswerable? Answer yes or no only."
+        )
 
+    # Temporal questions (category 3) - allow off-by-one errors
+    if category == 3:
+        return (
+            "I will give you a question, a correct answer, and a response from a model. "
+            "Please answer yes if the response contains the correct answer. Otherwise, "
+            "answer no. If the response is equivalent to the correct answer or contains "
+            "all the intermediate steps to get the correct answer, you should also answer "
+            "yes. If the response only contains a subset of the information required by "
+            "the answer, answer no.\n\n"
+            f"Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}"
+            "\n\nIs the model response correct? Answer yes or no only."
+        )
 
-def compute_f1_score(prediction: str, ground_truth: str) -> dict[str, float]:
-    """
-    Compute F1 score between prediction and ground truth.
-
-    This uses token-level F1, which is standard for QA evaluation.
-
-    Args:
-        prediction: The predicted answer
-        ground_truth: The ground truth answer
-
-    Returns:
-        Dictionary with precision, recall, and f1 scores
-    """
-    # Normalize and tokenize
-    pred_tokens = set(normalize_answer(prediction).split())
-    truth_tokens = set(normalize_answer(ground_truth).split())
-
-    # Handle edge cases
-    if len(pred_tokens) == 0 and len(truth_tokens) == 0:
-        return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
-    if len(pred_tokens) == 0 or len(truth_tokens) == 0:
-        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
-
-    # Compute overlap
-    common = pred_tokens & truth_tokens
-
-    precision = len(common) / len(pred_tokens) if pred_tokens else 0.0
-    recall = len(common) / len(truth_tokens) if truth_tokens else 0.0
-
-    if precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
-
-    return {"precision": precision, "recall": recall, "f1": f1}
+    # Default prompt for single-hop, multi-hop, commonsense
+    return (
+        "I will give you a question, a correct answer, and a response from a model. "
+        "Please answer yes if the response contains the correct answer. Otherwise, "
+        "answer no. If the response is equivalent to the correct answer or contains "
+        "all the intermediate steps to get the correct answer, you should also answer "
+        "yes. If the response only contains a subset of the information required by "
+        f"the answer, answer no. \n\nQuestion: {question}\n\nCorrect Answer: {answer}"
+        f"\n\nModel Response: {response}\n\nIs the model response correct? Answer yes or no only."
+    )
 
 
 async def judge_response(
-    anthropic_client: AsyncAnthropic,
+    openai_client: AsyncOpenAI,
     question: str,
     expected_answer: str,
     actual_response: str,
+    category: int = 1,
 ) -> dict[str, Any]:
-    """
-    Use an LLM to judge if the actual response matches the expected answer.
+    """Use GPT-4o to judge if the actual response matches the expected answer.
 
     Args:
-        anthropic_client: Anthropic client instance
+        openai_client: OpenAI client instance
         question: The question asked
         expected_answer: Expected answer from the test
         actual_response: Actual response from the system under test
+        category: Question category (1-5)
 
     Returns:
-        Judgment result with pass/fail, reasoning, and F1 score
+        Judgment result with pass/fail and reasoning
     """
-    # First compute F1 score
-    f1_result = compute_f1_score(actual_response, str(expected_answer))
-
     try:
-        system_prompt = """You are an expert judge evaluating AI responses to memory questions about past conversations. Your task is to determine if an actual response contains the correct answer.
-
-CRITICAL JUDGING PRINCIPLES:
-1. SEMANTIC UNDERSTANDING: Focus on whether the actual response conveys the same core factual information as expected, even if expressed differently
-2. FLEXIBLE INTERPRETATION: Accept responses that are longer, more detailed, or use different phrasing as long as they contain the correct answer
-3. MEMORY ACCURACY: The key is whether the AI correctly recalled and stated the factual information from memory
-4. IMPLICIT vs EXPLICIT: Accept responses that clearly imply the correct answer through context
-5. PARTIAL CREDIT: If the response contains some but not all of the expected information, consider it partially correct
-
-SCORING:
-- 1.0 (PASS): Response contains the correct answer or equivalent
-- 0.5 (PARTIAL): Response contains some correct information but is incomplete or has minor errors
-- 0.0 (FAIL): Response is wrong, doesn't contain the expected information, or is a refusal
-
-Always respond with valid JSON: {"score": number, "passed": boolean, "reasoning": "short explanation"}"""
-
-        user_prompt = f"""Question: "{question}"
-Expected answer: "{expected_answer}"
-Actual response: "{actual_response}"
-
-Evaluate whether the actual response correctly answers the question based on the expected answer. Focus on factual accuracy and evidence that the AI accessed the correct memory."""
-
-        response = await anthropic_client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=300,
-            temperature=0.0,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                }
-            ],
+        prompt = _build_judge_prompt(
+            category, question, expected_answer, actual_response
         )
 
-        if not response.content:
-            raise ValueError("Anthropic returned empty response")
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-2024-08-06",
+            max_tokens=10,
+            temperature=0,
+            n=1,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
-        content_block = response.content[0]
-        judgment_text = getattr(content_block, "text", None)
-        if judgment_text is None:
-            raise ValueError(
-                f"No text content in response block: {type(content_block)}"
-            )
+        if not response.choices:
+            raise ValueError("OpenAI returned empty response")
 
-        # Extract JSON from the response if it's wrapped in markdown
-        if "```json" in judgment_text:
-            json_start = judgment_text.find("```json") + 7
-            json_end = judgment_text.find("```", json_start)
-            judgment_text = judgment_text[json_start:json_end].strip()
-        elif "```" in judgment_text:
-            json_start = judgment_text.find("```") + 3
-            json_end = judgment_text.find("```", json_start)
-            judgment_text = judgment_text[json_start:json_end].strip()
+        eval_response = response.choices[0].message.content
+        if eval_response is None:
+            raise ValueError("No text content in response")
 
-        judgment = json.loads(judgment_text)
+        # Check if "yes" appears in lowercased response
+        passed = "yes" in eval_response.lower()
 
-        # Add F1 metrics
-        judgment["f1"] = f1_result["f1"]
-        judgment["precision"] = f1_result["precision"]
-        judgment["recall"] = f1_result["recall"]
-
-        return judgment
+        return {
+            "passed": passed,
+            "reasoning": eval_response.strip(),
+        }
 
     except Exception as e:
         logger.error(f"Error judging response: {e}")
-        # Fallback to F1-based judgment
-        is_correct = f1_result["f1"] >= 0.5
+        # Fallback to simple string matching
+        is_correct = expected_answer.lower() in actual_response.lower()
         return {
-            "score": f1_result["f1"],
             "passed": is_correct,
-            "reasoning": f"Fallback F1-based judgment: F1={f1_result['f1']:.2f}",
-            "f1": f1_result["f1"],
-            "precision": f1_result["precision"],
-            "recall": f1_result["recall"],
+            "reasoning": f"Fallback string matching due to error: {'Match found' if is_correct else 'No match found'}",
         }
 
 
@@ -410,33 +368,17 @@ def calculate_category_scores(
             category_stats[cat_name] = {
                 "total": 0,
                 "passed": 0,
-                "scores": [],
-                "f1_scores": [],
             }
 
         category_stats[cat_name]["total"] += 1
         if qr["passed"]:
             category_stats[cat_name]["passed"] += 1
 
-        judgment = qr.get("judgment", {})
-        score = judgment.get("score", 0.0)
-        f1 = judgment.get("f1", 0.0)
-        category_stats[cat_name]["scores"].append(score)
-        category_stats[cat_name]["f1_scores"].append(f1)
-
-    # Calculate averages
+    # Calculate success rates
     for cat_name in category_stats:
         stats = category_stats[cat_name]
         stats["success_rate"] = (
             (stats["passed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
-        )
-        stats["avg_score"] = (
-            sum(stats["scores"]) / len(stats["scores"]) if stats["scores"] else 0
-        )
-        stats["avg_f1"] = (
-            sum(stats["f1_scores"]) / len(stats["f1_scores"])
-            if stats["f1_scores"]
-            else 0
         )
 
     return category_stats
@@ -465,38 +407,24 @@ def print_summary(
                 category_totals[cat_name] = {
                     "total": 0,
                     "passed": 0,
-                    "scores": [],
-                    "f1_scores": [],
                 }
             category_totals[cat_name]["total"] += stats["total"]
             category_totals[cat_name]["passed"] += stats["passed"]
-            category_totals[cat_name]["scores"].extend(stats.get("scores", []))
-            category_totals[cat_name]["f1_scores"].extend(stats.get("f1_scores", []))
 
     print("\nScores by Question Category:")
-    print(f"{'Category':<20} {'Total':<8} {'Passed':<8} {'Rate':<10} {'Avg F1':<10}")
-    print(f"{'-' * 20} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10}")
+    print(f"{'Category':<20} {'Total':<8} {'Passed':<8} {'Rate':<10}")
+    print(f"{'-' * 20} {'-' * 8} {'-' * 8} {'-' * 10}")
 
     for cat_name in sorted(category_totals.keys()):
         stats = category_totals[cat_name]
         rate = (stats["passed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
-        avg_f1 = (
-            sum(stats["f1_scores"]) / len(stats["f1_scores"])
-            if stats["f1_scores"]
-            else 0
-        )
-        print(
-            f"{cat_name:<20} {stats['total']:<8} {stats['passed']:<8} {rate:<10.1f}% {avg_f1:<10.3f}"
-        )
+        print(f"{cat_name:<20} {stats['total']:<8} {stats['passed']:<8} {rate:<10.1f}%")
 
     # Overall averages
     overall_scores = [r["overall_score"] for r in results]
-    overall_f1s = [r["overall_f1"] for r in results]
     overall_avg = sum(overall_scores) / len(overall_scores) if overall_scores else 0.0
-    overall_f1_avg = sum(overall_f1s) / len(overall_f1s) if overall_f1s else 0.0
 
     print(f"\n{'Overall Average Score':<30}: {overall_avg:.3f}")
-    print(f"{'Overall Average F1':<30}: {overall_f1_avg:.3f}")
 
     print(f"{'=' * 80}")
 
@@ -519,11 +447,9 @@ def generate_json_summary(
                 category_totals[cat_name] = {
                     "total": 0,
                     "passed": 0,
-                    "f1_scores": [],
                 }
             category_totals[cat_name]["total"] += stats["total"]
             category_totals[cat_name]["passed"] += stats["passed"]
-            category_totals[cat_name]["f1_scores"].extend(stats.get("f1_scores", []))
 
     category_averages = {
         cat: {
@@ -532,18 +458,13 @@ def generate_json_summary(
             "success_rate": (stats["passed"] / stats["total"]) * 100
             if stats["total"] > 0
             else 0,
-            "avg_f1": sum(stats["f1_scores"]) / len(stats["f1_scores"])
-            if stats["f1_scores"]
-            else 0,
         }
         for cat, stats in category_totals.items()
     }
 
     # Overall averages
     overall_scores = [r["overall_score"] for r in results]
-    overall_f1s = [r["overall_f1"] for r in results]
     overall_avg = sum(overall_scores) / len(overall_scores) if overall_scores else 0.0
-    overall_f1_avg = sum(overall_f1s) / len(overall_f1s) if overall_f1s else 0.0
 
     metadata = {
         "benchmark": "LoCoMo",
@@ -559,7 +480,6 @@ def generate_json_summary(
             "total_conversations": total_conversations,
             "total_questions": total_questions,
             "overall_average_score": overall_avg,
-            "overall_average_f1": overall_f1_avg,
             "category_statistics": category_averages,
         },
         "timing": {

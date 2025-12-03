@@ -79,6 +79,7 @@ from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from openai import AsyncOpenAI
 
 from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
@@ -163,6 +164,12 @@ class LoCoMoRunner:
             if not api_key:
                 raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+        # Initialize OpenAI client for judging responses
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set")
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
 
     def get_honcho_url_for_index(self, index: int) -> str:
         """Get the Honcho URL for a given index using round-robin distribution."""
@@ -313,7 +320,6 @@ class LoCoMoRunner:
             "question_results": [],
             "category_scores": {},
             "overall_score": 0.0,
-            "overall_f1": 0.0,
             "error": None,
             "start_time": start_time,
             "end_time": 0.0,
@@ -436,7 +442,7 @@ class LoCoMoRunner:
                 evidence = qa.get("evidence", [])
                 category_name = CATEGORY_NAMES.get(category, f"category_{category}")
 
-                print(f"  Q{q_idx + 1} [{category_name}]: {question[:80]}...")
+                print(f"  Q{q_idx + 1} [{category_name}]: {question}")
 
                 try:
                     if self.use_get_context:
@@ -469,14 +475,14 @@ class LoCoMoRunner:
 
                     # Judge the response
                     judgment = await judge_response(
-                        self.anthropic_client,
+                        self.openai_client,
                         question,
                         str(expected_answer),
                         actual_response,
+                        category=category,
                     )
 
                     passed = judgment.get("passed", False)
-                    score = judgment.get("score", 0.0)
 
                     question_result: QuestionResult = {
                         "question_id": q_idx,
@@ -493,7 +499,7 @@ class LoCoMoRunner:
                     result["question_results"].append(question_result)
 
                     status = "PASS" if passed else "FAIL"
-                    print(f"    Score: {score:.2f} [{status}]")
+                    print(f"    [{status}]")
                     if not passed:
                         print(f"      Expected: {expected_answer}")
                         print(f"      Got: {actual_response[:200]}...")
@@ -508,7 +514,7 @@ class LoCoMoRunner:
                         category=category,
                         category_name=category_name,
                         evidence=evidence,
-                        judgment={"passed": False, "score": 0.0, "reasoning": str(e)},
+                        judgment={"passed": False, "reasoning": str(e)},
                         passed=False,
                     )
                     result["question_results"].append(question_result)
@@ -518,17 +524,12 @@ class LoCoMoRunner:
                 result["question_results"]
             )
 
-            # Calculate overall scores
+            # Calculate overall score (pass rate)
             if result["question_results"]:
-                scores = [
-                    qr["judgment"].get("score", 0.0)
-                    for qr in result["question_results"]
-                ]
-                f1s = [
-                    qr["judgment"].get("f1", 0.0) for qr in result["question_results"]
-                ]
-                result["overall_score"] = sum(scores) / len(scores)
-                result["overall_f1"] = sum(f1s) / len(f1s)
+                passed_count = sum(
+                    1 for qr in result["question_results"] if qr["passed"]
+                )
+                result["overall_score"] = passed_count / len(result["question_results"])
 
             # Cleanup workspace if requested
             if self.cleanup_workspace:
@@ -545,7 +546,6 @@ class LoCoMoRunner:
                 f"\n[{workspace_id}] Completed in {format_duration(result['duration_seconds'])}"
             )
             print(f"Overall Score: {result['overall_score']:.3f}")
-            print(f"Overall F1: {result['overall_f1']:.3f}")
 
         except Exception as e:
             self.logger.error(f"Error executing conversation {sample_id}: {e}")
