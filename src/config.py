@@ -267,6 +267,7 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     MODEL: str = "claude-haiku-4-5"
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 4096
 
@@ -329,6 +330,10 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-haiku-4-5"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=0, le=10_000)] = 4000
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=2048, gt=0, le=8192)] = 2048
+
+    # Agent iteration limit - controls how many tool calling rounds the agent gets
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=8, gt=0, le=30)] = 8
 
 
 class AppSettings(HonchoSettings):

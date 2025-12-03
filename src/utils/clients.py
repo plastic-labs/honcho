@@ -24,11 +24,169 @@ from src.config import LLMComponentSettings, settings
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.logging import conditional_observe
 from src.utils.representation import PromptRepresentation
+from src.utils.tokens import estimate_tokens
 from src.utils.types import SupportedProviders
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+def count_message_tokens(messages: list[dict[str, Any]]) -> int:
+    """Count tokens in a list of messages using tiktoken."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += estimate_tokens(content)
+        elif isinstance(content, list):
+            # Handle Anthropic-style content blocks
+            total += estimate_tokens(json.dumps(content))
+        # Also count parts for Google format
+        if "parts" in msg:
+            total += estimate_tokens(json.dumps(msg["parts"]))
+    return total
+
+
+def _is_tool_use_message(msg: dict[str, Any]) -> bool:
+    """Check if a message contains tool calls (any format)."""
+    # Anthropic format: content is a list with tool_use blocks
+    content = msg.get("content")
+    if isinstance(content, list):
+        for block in cast(list[dict[str, Any]], content):
+            if block.get("type") == "tool_use":
+                return True
+
+    # OpenAI format: tool_calls field on assistant message
+    return bool(msg.get("tool_calls"))
+
+
+def _is_tool_result_message(msg: dict[str, Any]) -> bool:
+    """Check if a message contains tool results (any format)."""
+    # Anthropic format: content is a list with tool_result blocks
+    content = msg.get("content")
+    if isinstance(content, list):
+        for block in cast(list[dict[str, Any]], content):
+            if block.get("type") == "tool_result":
+                return True
+
+    # OpenAI format: role is "tool"
+    return msg.get("role") == "tool"
+
+
+def _group_into_units(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """
+    Group messages into logical conversation units.
+
+    A unit is either:
+    - A tool_use message + ALL consecutive tool_result messages that follow
+    - A single non-tool message
+
+    This ensures tool_use and tool_results stay together.
+    """
+    units: list[list[dict[str, Any]]] = []
+    i = 0
+
+    while i < len(messages):
+        msg = messages[i]
+
+        if _is_tool_use_message(msg):
+            # Collect this tool_use and ALL following tool_results
+            j = i + 1
+            while j < len(messages) and _is_tool_result_message(messages[j]):
+                j += 1
+
+            # Create unit with tool_use + all tool_results
+            unit = messages[i:j]
+            if len(unit) > 1:  # Has at least one tool_result
+                units.append(unit)
+                i = j
+            else:
+                # Orphaned tool_use (no results) - skip it
+                logger.debug(f"Skipping orphaned tool_use at index {i}")
+                i += 1
+        elif _is_tool_result_message(msg):
+            # Orphaned tool_result - skip it
+            logger.debug(f"Skipping orphaned tool_result at index {i}")
+            i += 1
+        else:
+            # Regular message - its own unit
+            units.append([msg])
+            i += 1
+
+    return units
+
+
+def truncate_messages_to_fit(
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    preserve_system: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    Truncate messages to fit within a token limit while maintaining valid structure.
+
+    Strategy:
+    1. Group messages into units (tool_use + results together, or single messages)
+    2. Remove oldest units first to preserve recent context
+    3. Units stay intact so tool_use/tool_result pairs are never broken
+    """
+    current_tokens = count_message_tokens(messages)
+    if current_tokens <= max_tokens:
+        return messages
+
+    logger.info(f"Truncating: {current_tokens} tokens exceeds {max_tokens} limit")
+
+    # Separate system messages from conversation
+    system_messages: list[dict[str, Any]] = []
+    conversation: list[dict[str, Any]] = []
+
+    for msg in messages:
+        if msg.get("role") == "system" and preserve_system:
+            system_messages.append(msg)
+        else:
+            conversation.append(msg)
+
+    system_tokens = count_message_tokens(system_messages)
+    available_tokens = max_tokens - system_tokens
+
+    if available_tokens <= 0:
+        logger.warning("System message exceeds max_input_tokens")
+        return messages
+
+    # Group messages into units
+    units = _group_into_units(conversation)
+
+    if not units:
+        logger.warning("No valid conversation units")
+        return system_messages
+
+    # Remove oldest units until we fit
+    while len(units) > 1:  # Keep at least one unit
+        # Calculate current token count
+        flat_messages = [msg for unit in units for msg in unit]
+        if count_message_tokens(flat_messages) <= available_tokens:
+            break
+
+        # Remove the oldest unit
+        removed_unit = units.pop(0)
+        logger.debug(
+            f"Removed unit with {len(removed_unit)} messages "
+            + f"(~{count_message_tokens(removed_unit)} tokens)"
+        )
+
+    # Flatten remaining units
+    result_conversation = [msg for unit in units for msg in unit]
+
+    result = system_messages + result_conversation
+    result_tokens = count_message_tokens(result)
+    logger.info(
+        f"Truncation complete: {len(messages)} -> {len(result)} messages, "
+        + f"{current_tokens} -> {result_tokens} tokens, "
+        + f"{len(units)} units kept"
+    )
+    return result
+
+
 M = TypeVar("M", bound=BaseModel)
 
 # Context variable to track retry attempts for provider switching
@@ -217,6 +375,7 @@ async def honcho_llm_call(
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
+    max_input_tokens: int | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -241,6 +400,7 @@ async def honcho_llm_call(
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
+    max_input_tokens: int | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -265,6 +425,7 @@ async def honcho_llm_call(
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
+    max_input_tokens: int | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -289,6 +450,7 @@ async def honcho_llm_call(
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
+    max_input_tokens: int | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """
     Make an LLM call with automatic backup provider failover. Backup provider/model
@@ -470,18 +632,16 @@ async def honcho_llm_call(
     while iteration < max_tool_iterations:
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
 
-        # Temporarily override the messages parameter for this call
-        # We need to pass conversation_messages to the inner function
-        # This requires modifying _call_with_provider_selection to accept conversation state
-        # For now, let's create a modified version of the decorated function
-
-        # Call LLM with current conversation
-        # Note: We need to pass the conversation_messages through somehow
-        # The cleanest way is to modify the prompt to be ignored and pass messages via closure
+        # Truncate BEFORE making the API call to avoid context length errors
+        if max_input_tokens is not None:
+            conversation_messages = truncate_messages_to_fit(
+                conversation_messages, max_input_tokens
+            )
 
         # Create a wrapper that injects our messages
         async def _call_with_messages(
             effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
+            conversation_messages: list[dict[str, Any]] = conversation_messages,
         ) -> HonchoLLMCallResponse[Any]:
             # Reimplement provider selection with messages
             attempt = _current_attempt.get()
@@ -924,8 +1084,15 @@ async def honcho_llm_call_inner(
             }
 
             # Add system parameter if there are system messages
+            # Use cache_control for prompt caching
             if system_messages:
-                anthropic_params["system"] = "\n\n".join(system_messages)
+                anthropic_params["system"] = [
+                    {
+                        "type": "text",
+                        "text": "\n\n".join(system_messages),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
 
             # Add tools if provided
             if tools:

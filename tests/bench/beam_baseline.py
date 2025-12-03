@@ -61,6 +61,8 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from src.config import settings
+
 from .beam_common import (
     ConversationResult,
     QuestionResult,
@@ -79,6 +81,8 @@ from .beam_common import (
 # Load .env from bench directory
 bench_dir = Path(__file__).parent
 load_dotenv(bench_dir / ".env")
+
+MODEL_BEING_TESTED = "claude-haiku-4-5"
 
 
 class BEAMBaselineRunner:
@@ -137,7 +141,7 @@ class BEAMBaselineRunner:
         )
 
         # Model to use for answering questions (Anthropic format)
-        self.answer_model: str = "claude-sonnet-4-5"
+        self.answer_model: str = MODEL_BEING_TESTED
 
     def _format_conversation_context(
         self,
@@ -184,19 +188,26 @@ class BEAMBaselineRunner:
 
             print(f"  [{ability}] Q{q_idx + 1}: {question[:100]}...")
 
-            # Build system prompt
+            # Build system prompt with cache control for the conversation context
+            # The context is identical for all questions, so caching saves tokens/latency
             system_prompt = f"""You are a helpful assistant with memory of past conversations.
 
 Below is a history of past conversations. Use this history to answer the user's question accurately.
 
 {conversation_context}"""
 
-            # Call Claude with full context
+            # Call Claude with full context, using prompt caching
             try:
                 response = await self.anthropic_client.messages.create(
                     model=self.answer_model,
-                    max_tokens=1024,
-                    system=system_prompt,
+                    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
                     messages=[
                         {
                             "role": "user",
@@ -509,7 +520,7 @@ async def main() -> int:
             output_file,
             metadata_extra={
                 "runner_type": "baseline_direct_context",
-                "model": "claude-sonnet-4-5",
+                "model": MODEL_BEING_TESTED,
             },
         )
 

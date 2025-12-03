@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -13,6 +14,68 @@ from src.utils.representation import Representation
 from src.utils.types import DocumentLevel
 
 logger = logging.getLogger(__name__)
+
+# Maximum characters for tool output to prevent token explosion
+MAX_TOOL_OUTPUT_CHARS = 30000  # ~7500 tokens
+
+
+def _truncate_tool_output(output: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+    """Truncate tool output to prevent token explosion."""
+    if len(output) <= max_chars:
+        return output
+    truncated = output[:max_chars]
+    return (
+        truncated
+        + f"\n\n[OUTPUT TRUNCATED - showing {max_chars:,} of {len(output):,} characters]"
+    )
+
+
+def _truncate_message_content(content: str, max_chars: int = 2000) -> str:
+    """Truncate individual message content (simple beginning truncation)."""
+    if len(content) <= max_chars:
+        return content
+    return content[:max_chars] + "..."
+
+
+def _extract_pattern_snippet(content: str, pattern: str, max_chars: int = 2000) -> str:
+    """Extract snippet around a regex pattern match.
+
+    For grep/exact text search, finds the pattern and extracts context around it.
+    """
+    import re
+
+    if len(content) <= max_chars:
+        return content
+
+    match = re.search(pattern, content, re.IGNORECASE)
+    if not match:
+        # No match, return beginning
+        return content[:max_chars] + "..."
+
+    match_start = match.start()
+    match_end = match.end()
+
+    # Calculate window around match
+    match_len = match_end - match_start
+    remaining = max_chars - match_len
+    before = remaining // 2
+    after = remaining - before
+
+    start = max(0, match_start - before)
+    end = min(len(content), match_end + after)
+
+    # Adjust if we hit boundaries
+    if start == 0:
+        end = min(len(content), max_chars)
+    elif end == len(content):
+        start = max(0, len(content) - max_chars)
+
+    snippet = content[start:end]
+
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(content) else ""
+
+    return f"{prefix}{snippet}{suffix}"
 
 
 TOOLS: dict[str, dict[str, Any]] = {
@@ -128,13 +191,102 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_messages": {
         "name": "search_messages",
-        "description": "Search for messages using semantic similarity and retrieve conversation snippets. Returns up to 5 matching messages, each with surrounding context (2 messages before and after). Nearby matches within the same session are merged into a single snippet to avoid repetition.",
+        "description": "Search for messages using semantic similarity and retrieve conversation snippets. Returns matching messages with surrounding context (2 messages before and after). Nearby matches within the same session are merged into a single snippet to avoid repetition.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
                     "description": "Search query text to find relevant messages",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of matching messages to return (default: 10, max: 20)",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "grep_messages": {
+        "name": "grep_messages",
+        "description": "Search for messages containing specific text (case-insensitive). Unlike semantic search, this finds EXACT text matches. Use for finding specific names, dates, phrases, or keywords mentioned in conversations. Returns messages with surrounding context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Text to search for (case-insensitive substring match)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum messages to return (default: 10, max: 30)",
+                    "default": 10,
+                },
+                "context_window": {
+                    "type": "integer",
+                    "description": "Number of messages before/after each match to include (default: 2)",
+                    "default": 2,
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    "get_messages_by_date_range": {
+        "name": "get_messages_by_date_range",
+        "description": "Get messages from a specific date range. Use this to find what was discussed during a particular time period, or to compare information before vs after a date. Essential for knowledge update questions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "after_date": {
+                    "type": "string",
+                    "description": "Start date (ISO format, e.g., '2024-01-15'). Returns messages after this date.",
+                },
+                "before_date": {
+                    "type": "string",
+                    "description": "End date (ISO format). Returns messages before this date.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum messages to return (default: 20, max: 50)",
+                    "default": 20,
+                },
+                "order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sort order: 'asc' for oldest first, 'desc' for newest first (default: desc)",
+                    "default": "desc",
+                },
+            },
+        },
+    },
+    "search_messages_temporal": {
+        "name": "search_messages_temporal",
+        "description": "Semantic search for messages with optional date filtering. Combines the power of semantic search with time constraints. Use after_date to find recent mentions of a topic, or before_date to find what was said about something before a certain point. Best for knowledge update questions where you need to find the MOST RECENT discussion of a topic.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Semantic search query",
+                },
+                "after_date": {
+                    "type": "string",
+                    "description": "Only return messages after this date (ISO format, e.g., '2024-01-15')",
+                },
+                "before_date": {
+                    "type": "string",
+                    "description": "Only return messages before this date (ISO format)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum messages to return (default: 10, max: 20)",
+                    "default": 10,
+                },
+                "context_window": {
+                    "type": "integer",
+                    "description": "Messages before/after each match (default: 2)",
+                    "default": 2,
                 },
             },
             "required": ["query"],
@@ -211,6 +363,28 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["observation_ids"],
         },
     },
+    "finish_consolidation": {
+        "name": "finish_consolidation",
+        "description": "Signal that consolidation is complete. Call this when you have finished your consolidation work and are ready to stop. You MUST call this tool when done - do not keep exploring indefinitely.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary of what was accomplished (peer card updates, observations consolidated, observations deleted)",
+                },
+            },
+            "required": ["summary"],
+        },
+    },
+    "extract_preferences": {
+        "name": "extract_preferences",
+        "description": "Extract user preferences and standing instructions from conversation history. This tool performs both semantic and text searches for preferences, instructions, and communication style preferences, then returns them for adding to the peer card. Call this FIRST during consolidation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 }
 
 # Tools for the deriver agent (ingestion)
@@ -228,19 +402,27 @@ DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["get_observation_context"],
     TOOLS["get_peer_card"],
     TOOLS["create_observations_deductive"],
+    TOOLS["grep_messages"],  # For exact text search (names, dates, keywords)
+    TOOLS["get_messages_by_date_range"],  # For temporal/date-based queries
+    TOOLS["search_messages_temporal"],  # Semantic search + date filtering
 ]
 
 # Tools for the dreamer agent (consolidation + peer card + deduplication)
 DREAMER_TOOLS: list[dict[str, Any]] = [
+    # Preference extraction (should be called first)
+    TOOLS["extract_preferences"],
     TOOLS["get_recent_observations"],
     TOOLS["get_most_derived_observations"],
     TOOLS["search_memory"],
+    TOOLS["get_peer_card"],
     TOOLS["create_observations"],
     TOOLS["delete_observations"],
     TOOLS["update_peer_card"],
     # Message access tools for context verification
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
+    # Completion signal
+    TOOLS["finish_consolidation"],
 ]
 
 
@@ -504,6 +686,8 @@ async def search_messages(
     workspace_name: str,
     session_name: str | None,
     query: str,
+    limit: int = 10,
+    context_window: int = 2,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -515,6 +699,8 @@ async def search_messages(
         workspace_name: Workspace identifier
         session_name: Session identifier
         query: Search query text
+        limit: Maximum number of matching messages to return
+        context_window: Number of messages before/after each match
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -525,8 +711,113 @@ async def search_messages(
         workspace_name=workspace_name,
         session_name=session_name,
         query=query,
-        limit=5,
-        context_window=2,
+        limit=limit,
+        context_window=context_window,
+    )
+
+
+async def grep_messages(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None,
+    text: str,
+    limit: int = 10,
+    context_window: int = 2,
+) -> list[tuple[list[models.Message], list[models.Message]]]:
+    """
+    Search for messages containing specific text (case-insensitive).
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        session_name: Session identifier (optional)
+        text: Text to search for
+        limit: Maximum messages to return
+        context_window: Number of messages before/after each match
+
+    Returns:
+        List of tuples: (matched_messages, context_messages)
+    """
+    return await crud.grep_messages(
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        text=text,
+        limit=limit,
+        context_window=context_window,
+    )
+
+
+async def get_messages_by_date_range(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None,
+    after_date: datetime | None = None,
+    before_date: datetime | None = None,
+    limit: int = 20,
+    order: str = "desc",
+) -> list[models.Message]:
+    """
+    Get messages within a date range.
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        session_name: Session identifier (optional)
+        after_date: Return messages after this datetime
+        before_date: Return messages before this datetime
+        limit: Maximum messages to return
+        order: Sort order - 'asc' or 'desc'
+
+    Returns:
+        List of messages within the date range
+    """
+    return await crud.get_messages_by_date_range(
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        order=order,
+    )
+
+
+async def search_messages_temporal(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None,
+    query: str,
+    after_date: datetime | None = None,
+    before_date: datetime | None = None,
+    limit: int = 10,
+    context_window: int = 2,
+) -> list[tuple[list[models.Message], list[models.Message]]]:
+    """
+    Search for messages using semantic similarity with optional date filtering.
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        session_name: Session identifier (optional)
+        query: Search query text
+        after_date: Only return messages after this datetime
+        before_date: Only return messages before this datetime
+        limit: Maximum messages to return
+        context_window: Number of messages before/after each match
+
+    Returns:
+        List of tuples: (matched_messages, context_messages)
+    """
+    return await crud.search_messages_temporal(
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        query=query,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        context_window=context_window,
     )
 
 
@@ -683,6 +974,144 @@ async def delete_observations(
     return deleted_count
 
 
+async def extract_preferences(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None,
+    observed: str,
+) -> dict[str, list[str]]:
+    """
+    Extract user preferences and standing instructions from conversation history.
+
+    Performs both semantic and text searches to find:
+    - Standing instructions ("always do X", "never mention Y")
+    - Communication preferences ("I prefer brief responses")
+    - Content preferences ("include examples", "use bullet points")
+    - Decision-making preferences ("I prefer logical approaches")
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        session_name: Session identifier (optional)
+        observed: The peer whose preferences to extract
+
+    Returns:
+        Dict with 'instructions' and 'preferences' lists
+    """
+    instructions: list[str] = []
+    preferences: list[str] = []
+    seen_content: set[str] = set()  # Dedupe by content hash
+
+    # Text patterns to search for standing instructions
+    instruction_patterns = [
+        "always",
+        "never",
+        "don't ever",
+        "make sure to",
+        "remember to",
+        "when I ask",
+        "whenever I",
+    ]
+
+    # Text patterns for preferences
+    preference_patterns = [
+        "I prefer",
+        "I like",
+        "I want",
+        "I'd rather",
+        "I would rather",
+        "I enjoy",
+    ]
+
+    # Semantic queries for broader coverage
+    semantic_queries = [
+        "user preferences and communication style",
+        "standing instructions and rules to follow",
+        "how user wants responses formatted",
+        "things user always or never wants",
+    ]
+
+    # 1. Text search for instruction patterns
+    for pattern in instruction_patterns:
+        try:
+            snippets = await crud.grep_messages(
+                db,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                text=pattern,
+                limit=10,
+                context_window=0,  # Just the matching message
+            )
+            for matches, _ in snippets:
+                for msg in matches:
+                    if msg.peer_name == observed:
+                        content_key = msg.content[:100].lower()
+                        if content_key not in seen_content:
+                            seen_content.add(content_key)
+                            # Extract the instruction
+                            instructions.append(f"'{msg.content.strip()}'")
+        except Exception as e:
+            logger.warning(f"Error searching for pattern '{pattern}': {e}")
+
+    # 2. Text search for preference patterns
+    for pattern in preference_patterns:
+        try:
+            snippets = await crud.grep_messages(
+                db,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                text=pattern,
+                limit=10,
+                context_window=0,
+            )
+            for matches, _ in snippets:
+                for msg in matches:
+                    if msg.peer_name == observed:
+                        content_key = msg.content[:100].lower()
+                        if content_key not in seen_content:
+                            seen_content.add(content_key)
+                            preferences.append(f"'{msg.content.strip()}'")
+        except Exception as e:
+            logger.warning(f"Error searching for pattern '{pattern}': {e}")
+
+    # 3. Semantic search for broader coverage
+    for query in semantic_queries:
+        try:
+            snippets = await crud.search_messages(
+                db,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                query=query,
+                limit=5,
+                context_window=0,
+            )
+            for matches, _ in snippets:
+                for msg in matches:
+                    if msg.peer_name == observed:
+                        content_lower = msg.content.lower()
+                        # Check if this message contains preference-like content
+                        if any(
+                            p in content_lower
+                            for p in instruction_patterns + preference_patterns
+                        ):
+                            content_key = msg.content[:100].lower()
+                            if content_key not in seen_content:
+                                seen_content.add(content_key)
+                                if any(
+                                    p in content_lower for p in instruction_patterns
+                                ):
+                                    instructions.append(f"'{msg.content.strip()}'")
+                                else:
+                                    preferences.append(f"'{msg.content.strip()}'")
+        except Exception as e:
+            logger.warning(f"Error in semantic search for '{query}': {e}")
+
+    return {
+        "instructions": instructions[:20],  # Cap at 20 each
+        "preferences": preferences[:20],
+    }
+
+
 def create_tool_executor(
     db: AsyncSession,
     workspace_name: str,
@@ -802,14 +1231,18 @@ def create_tool_executor(
                 if not history:
                     return "No conversation history available"
                 history_text = "\n".join(
-                    [f"{m.peer_name}: {m.content}" for m in history]
+                    [
+                        f"{m.peer_name}: {_truncate_message_content(m.content)}"
+                        for m in history
+                    ]
                 )
                 scope = (
                     f"from session {session_name}"
                     if session_name
                     else f"from {observed} across sessions"
                 )
-                return f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
+                output = f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
+                return _truncate_tool_output(output)
 
             elif tool_name == "search_memory":
                 top_k = min(tool_input.get("top_k", 5), 20)  # Cap at 20
@@ -839,24 +1272,30 @@ def create_tool_executor(
                 messages_text = "\n".join(
                     [
                         format_new_turn_with_timestamp(
-                            m.content, m.created_at, m.peer_name
+                            _truncate_message_content(m.content),
+                            m.created_at,
+                            m.peer_name,
                         )
                         for m in messages
                     ]
                 )
-                return (
+                output = (
                     f"Retrieved {len(messages)} messages with context:\n{messages_text}"
                 )
+                return _truncate_tool_output(output)
 
             elif tool_name == "search_messages":
+                query = tool_input["query"]
+                limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
                 snippets = await search_messages(
                     db,
                     workspace_name=workspace_name,
                     session_name=session_name,
-                    query=tool_input["query"],
+                    query=query,
+                    limit=limit,
                 )
                 if not snippets:
-                    return f"No messages found for query '{tool_input['query']}'"
+                    return f"No messages found for query '{query}'"
 
                 # Format each snippet with matched messages highlighted
                 snippet_texts: list[str] = []
@@ -864,9 +1303,10 @@ def create_tool_executor(
                 for i, (matches, context) in enumerate(snippets, 1):
                     lines: list[str] = []
                     for msg in context:
+                        truncated = _truncate_message_content(msg.content)
                         lines.append(
                             format_new_turn_with_timestamp(
-                                msg.content, msg.created_at, msg.peer_name
+                                truncated, msg.created_at, msg.peer_name
                             )
                         )
                     # Get session name from context (first message)
@@ -876,10 +1316,209 @@ def create_tool_executor(
                         + "\n".join(lines)
                     )
 
-                return (
-                    f"Found {total_matches} matching messages in {len(snippets)} conversation snippets for query '{tool_input['query']}':\n\n"
+                output = (
+                    f"Found {total_matches} matching messages in {len(snippets)} conversation snippets for query '{query}':\n\n"
                     + "\n\n".join(snippet_texts)
                 )
+                return _truncate_tool_output(output)
+
+            elif tool_name == "grep_messages":
+                text = tool_input.get("text", "")
+                if not text:
+                    return "ERROR: 'text' parameter is required"
+                limit = min(tool_input.get("limit", 10), 15)  # Cap at 15
+                context_window = min(
+                    tool_input.get("context_window", 2), 2
+                )  # Cap context
+
+                snippets = await grep_messages(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    text=text,
+                    limit=limit,
+                    context_window=context_window,
+                )
+                if not snippets:
+                    return f"No messages found containing '{text}'"
+
+                # Format each snippet with matched messages highlighted
+                snippet_texts = []
+                total_matches = sum(len(matches) for matches, _ in snippets)
+                for i, (matches, context) in enumerate(snippets, 1):
+                    lines = []
+                    for msg in context:
+                        # Use pattern-based snippet extraction for grep
+                        truncated = _extract_pattern_snippet(msg.content, text)
+                        lines.append(
+                            format_new_turn_with_timestamp(
+                                truncated, msg.created_at, msg.peer_name
+                            )
+                        )
+                    sess = context[0].session_name if context else "unknown"
+                    snippet_texts.append(
+                        f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+                        + "\n".join(lines)
+                    )
+
+                output = (
+                    f"Found {total_matches} messages containing '{text}' in {len(snippets)} conversation snippets:\n\n"
+                    + "\n\n".join(snippet_texts)
+                )
+                return _truncate_tool_output(output)
+
+            elif tool_name == "get_messages_by_date_range":
+                # Parse date parameters
+                after_date_str = tool_input.get("after_date")
+                before_date_str = tool_input.get("before_date")
+                limit = min(tool_input.get("limit", 20), 20)  # Cap at 20
+                order = tool_input.get("order", "desc")
+
+                after_date = None
+                before_date = None
+
+                if after_date_str:
+                    try:
+                        after_date = datetime.fromisoformat(
+                            after_date_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return f"ERROR: Invalid after_date format '{after_date_str}'. Use ISO format (e.g., '2024-01-15')"
+
+                if before_date_str:
+                    try:
+                        before_date = datetime.fromisoformat(
+                            before_date_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return f"ERROR: Invalid before_date format '{before_date_str}'. Use ISO format (e.g., '2024-01-15')"
+
+                messages = await get_messages_by_date_range(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    after_date=after_date,
+                    before_date=before_date,
+                    limit=limit,
+                    order=order,
+                )
+
+                date_range: list[Any] = []
+
+                if not messages:
+                    if after_date_str:
+                        date_range.append(f"after {after_date_str}")
+                    if before_date_str:
+                        date_range.append(f"before {before_date_str}")
+                    range_desc = (
+                        " and ".join(date_range) if date_range else "specified range"
+                    )
+                    return f"No messages found {range_desc}"
+
+                # Format messages with timestamps
+                messages_text = "\n".join(
+                    [
+                        format_new_turn_with_timestamp(
+                            _truncate_message_content(m.content),
+                            m.created_at,
+                            m.peer_name,
+                        )
+                        for m in messages
+                    ]
+                )
+
+                if after_date_str:
+                    date_range.append(f"after {after_date_str}")
+                if before_date_str:
+                    date_range.append(f"before {before_date_str}")
+                range_desc = " and ".join(date_range) if date_range else "all time"
+                order_desc = "oldest first" if order == "asc" else "newest first"
+
+                output = f"Found {len(messages)} messages ({range_desc}, {order_desc}):\n\n{messages_text}"
+                return _truncate_tool_output(output)
+
+            elif tool_name == "search_messages_temporal":
+                query = tool_input.get("query", "")
+                if not query:
+                    return "ERROR: 'query' parameter is required"
+
+                # Parse date parameters
+                after_date_str = tool_input.get("after_date")
+                before_date_str = tool_input.get("before_date")
+                limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
+                context_window = min(tool_input.get("context_window", 2), 2)  # Cap at 2
+
+                after_date = None
+                before_date = None
+
+                if after_date_str:
+                    try:
+                        after_date = datetime.fromisoformat(
+                            after_date_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return f"ERROR: Invalid after_date format '{after_date_str}'. Use ISO format (e.g., '2024-01-15')"
+
+                if before_date_str:
+                    try:
+                        before_date = datetime.fromisoformat(
+                            before_date_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return f"ERROR: Invalid before_date format '{before_date_str}'. Use ISO format (e.g., '2024-01-15')"
+
+                snippets = await search_messages_temporal(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    query=query,
+                    after_date=after_date,
+                    before_date=before_date,
+                    limit=limit,
+                    context_window=context_window,
+                )
+
+                if not snippets:
+                    date_filter: list[Any] = []
+                    if after_date_str:
+                        date_filter.append(f"after {after_date_str}")
+                    if before_date_str:
+                        date_filter.append(f"before {before_date_str}")
+                    filter_desc = (
+                        f" ({' and '.join(date_filter)})" if date_filter else ""
+                    )
+                    return f"No messages found for query '{query}'{filter_desc}"
+
+                # Format each snippet with matched messages highlighted
+                snippet_texts = []
+                total_matches = sum(len(matches) for matches, _ in snippets)
+                for i, (matches, context) in enumerate(snippets, 1):
+                    lines = []
+                    for msg in context:
+                        truncated_content = _truncate_message_content(msg.content)
+                        lines.append(
+                            format_new_turn_with_timestamp(
+                                truncated_content, msg.created_at, msg.peer_name
+                            )
+                        )
+                    sess = context[0].session_name if context else "unknown"
+                    snippet_texts.append(
+                        f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+                        + "\n".join(lines)
+                    )
+
+                date_filter = []
+                if after_date_str:
+                    date_filter.append(f"after {after_date_str}")
+                if before_date_str:
+                    date_filter.append(f"before {before_date_str}")
+                filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+
+                output = (
+                    f"Found {total_matches} messages for query '{query}'{filter_desc} in {len(snippets)} conversation snippets:\n\n"
+                    + "\n\n".join(snippet_texts)
+                )
+                return _truncate_tool_output(output)
 
             elif tool_name == "get_recent_observations":
                 session_only = tool_input.get("session_only", False)
@@ -963,6 +1602,47 @@ def create_tool_executor(
                     observation_ids=observation_ids,
                 )
                 return f"Deleted {deleted_count} observations"
+
+            elif tool_name == "finish_consolidation":
+                summary = tool_input.get("summary", "Consolidation complete")
+                # This is a signal tool - it doesn't do anything except signal completion
+                # The LLM loop will see this and can choose to stop
+                return f"CONSOLIDATION_COMPLETE: {summary}"
+
+            elif tool_name == "extract_preferences":
+                results = await extract_preferences(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    observed=observed,
+                )
+
+                instructions = results["instructions"]
+                preferences = results["preferences"]
+
+                if not instructions and not preferences:
+                    return "No preferences or standing instructions found in conversation history."
+
+                output_parts: list[str] = []
+
+                if instructions:
+                    output_parts.append(
+                        f"**Standing Instructions Found ({len(instructions)}):**\n"
+                        + "\n".join(f"- {inst}" for inst in instructions)
+                    )
+
+                if preferences:
+                    output_parts.append(
+                        f"**Preferences Found ({len(preferences)}):**\n"
+                        + "\n".join(f"- {pref}" for pref in preferences)
+                    )
+
+                output_parts.append(
+                    "\n**Action Required:** Review these and add relevant ones to the peer card using `update_peer_card`. "
+                    + "Summarize standing instructions as clear rules (e.g., 'Always include cultural context when discussing social norms')."
+                )
+
+                return "\n\n".join(output_parts)
 
             return f"Unknown tool: {tool_name}"
 

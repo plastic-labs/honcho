@@ -1,7 +1,7 @@
 """
 LongMemEval Baseline Test Runner (Direct Claude Context)
 
-A script that executes longmemeval tests directly against Claude Sonnet 4.5
+A script that executes longmemeval tests directly against a model
 by feeding the entire haystack content into the context window.
 
 This serves as a baseline comparison against Honcho's memory framework.
@@ -42,6 +42,8 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from typing_extensions import TypedDict
 
+from src.config import settings
+
 from .longmem_common import (
     calculate_timing_statistics,
     calculate_total_tokens,
@@ -54,6 +56,9 @@ from .longmem_common import (
 )
 
 load_dotenv()
+
+
+MODEL_BEING_TESTED = "claude-haiku-4-5"
 
 
 class QueryResult(TypedDict):
@@ -84,7 +89,7 @@ class TestResult(TypedDict):
 
 class LongMemEvalBaselineRunner:
     """
-    Executes longmemeval tests directly against Claude Sonnet 4.5.
+    Executes longmemeval tests directly against a model.
     """
 
     def __init__(
@@ -222,11 +227,17 @@ Below is a history of past conversations. Use this history to answer the user's 
 
 {conversation_context}"""
 
-            # Call Claude with full context
+            # Call Claude with full context, using prompt caching for the conversation context
             response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=1024,
-                system=system_prompt,
+                model=MODEL_BEING_TESTED,
+                max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[
                     {
                         "role": "user",
@@ -456,7 +467,7 @@ Below is a history of past conversations. Use this history to answer the user's 
                 "test_file": str(test_file),
                 "execution_timestamp": datetime.now().isoformat(),
                 "runner_type": "baseline_direct_context",
-                "model": "claude-sonnet-4-5",
+                "model": MODEL_BEING_TESTED,
             },
             "summary_statistics": {
                 "total_questions": total_questions,
