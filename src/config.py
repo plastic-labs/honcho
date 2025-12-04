@@ -373,8 +373,6 @@ class VectorStoreSettings(HonchoSettings):
 
     # Turbopuffer-specific settings
     TURBOPUFFER_API_KEY: str | None = None
-    # Turbopuffer region (e.g., "gcp-us-east4", "aws-us-east-1")
-    # Can also be set via TURBOPUFFER_REGION environment variable
     TURBOPUFFER_REGION: str | None = None
 
     # LanceDB-specific settings (local embedded mode)

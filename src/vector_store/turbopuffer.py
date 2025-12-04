@@ -9,7 +9,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from turbopuffer import Turbopuffer
+from turbopuffer import NotFoundError, Turbopuffer
 from turbopuffer.lib.namespace import Namespace
 from turbopuffer.types import Filter
 
@@ -32,8 +32,8 @@ class TurbopufferVectorStore(VectorStore):
 
     Uses Turbopuffer's Python SDK for vector operations.
     Each namespace corresponds to either:
-    - A document collection: {prefix}-{workspace}-{observer}-{observed}
-    - A workspace's message embeddings: {prefix}-{workspace}-messages
+    - A document collection: {prefix}.{workspace}.{observer}.{observed}
+    - A workspace's message embeddings: {prefix}.{workspace}.messages
     """
 
     tpuf: Turbopuffer
@@ -211,6 +211,14 @@ class TurbopufferVectorStore(VectorStore):
             )
             return query_results
 
+        except NotFoundError:
+            # Namespace doesn't exist yet - no vectors have been written
+            # Return empty results (same behavior as LanceDB for missing tables)
+            logger.debug(
+                f"Namespace {namespace} does not exist, returning empty results"
+            )
+            return []
+
         except Exception:
             logger.exception(f"Failed to query namespace {namespace}")
             raise
@@ -262,6 +270,9 @@ class TurbopufferVectorStore(VectorStore):
 
         try:
             ns.write(deletes=ids)
+        except NotFoundError:
+            # Namespace doesn't exist - nothing to delete
+            logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
         except Exception:
             logger.exception(
                 f"Failed to delete {len(ids)} vectors from namespace {namespace}"
@@ -280,6 +291,9 @@ class TurbopufferVectorStore(VectorStore):
         try:
             ns.delete_all()
             logger.debug(f"Deleted all vectors from namespace {namespace}")
+        except NotFoundError:
+            # Namespace doesn't exist - nothing to delete
+            logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
         except Exception:
             logger.exception(f"Failed to delete namespace {namespace}")
             raise

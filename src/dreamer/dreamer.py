@@ -17,6 +17,7 @@ from src.utils.representation import (
     ExplicitObservation,
     Representation,
 )
+from src.vector_store import get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,11 @@ async def _consolidate_cluster(
     # delete old documents
     for doc in cluster:
         await db.delete(doc)
+    doc_ids = [doc.id for doc in cluster]
+
+    vector_store = get_vector_store()
+    namespace = vector_store.get_document_namespace(workspace_name, observer, observed)
+    await vector_store.delete_many(namespace, doc_ids)
 
     await db.commit()
 

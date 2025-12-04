@@ -32,11 +32,12 @@ class VectorStore(ABC):
     Abstract base class for vector store implementations.
 
     All vector operations are namespace-scoped. Namespaces map to:
-    - Document embeddings: {prefix}:{workspace}:{observer}:{observed} (per collection)
-    - Message embeddings: {prefix}:{workspace}:messages (per workspace)
+    - Document embeddings: {prefix}.{workspace}.{observer}.{observed} (per collection)
+    - Message embeddings: {prefix}.{workspace}.messages (per workspace)
 
-    Note: Colon (:) is used as the delimiter to avoid collisions since it's not
-    allowed in workspace/peer IDs (which only allow [A-Za-z0-9_-]).
+    Note: Period (.) is used as the delimiter since vector stores (Turbopuffer, LanceDB)
+    only allow [A-Za-z0-9-_.] in namespace names, and period is not allowed in
+    workspace/peer IDs (which only allow [A-Za-z0-9_-]).
     """
 
     namespace_prefix: str
@@ -60,9 +61,9 @@ class VectorStore(ABC):
             observed: Name of the observed peer
 
         Returns:
-            Namespace string in format: {prefix}:{workspace}:{observer}:{observed}
+            Namespace string in format: {prefix}.{workspace}.{observer}.{observed}
         """
-        return f"{self.namespace_prefix}:{workspace_name}:{observer}:{observed}"
+        return f"{self.namespace_prefix}.{workspace_name}.{observer}.{observed}"
 
     def get_message_namespace(self, workspace_name: str) -> str:
         """
@@ -72,9 +73,9 @@ class VectorStore(ABC):
             workspace_name: Name of the workspace
 
         Returns:
-            Namespace string in format: {prefix}:{workspace}:messages
+            Namespace string in format: {prefix}.{workspace}.messages
         """
-        return f"{self.namespace_prefix}:{workspace_name}:messages"
+        return f"{self.namespace_prefix}.{workspace_name}.messages"
 
     # === Core operations ===
     @abstractmethod

@@ -29,11 +29,6 @@ class LanceDBVectorStore(VectorStore):
 
     Uses LanceDB's embedded mode for local vector storage.
     Each namespace corresponds to a LanceDB table.
-
-    Note: LanceDB table names can only contain alphanumeric characters,
-    underscores, hyphens, and periods. We use '.' as the namespace separator
-    instead of ':' (used by base class) since '.' is not allowed in
-    workspace/peer IDs.
     """
 
     _db: lancedb.DBConnection
@@ -42,25 +37,6 @@ class LanceDBVectorStore(VectorStore):
         """Initialize the LanceDB vector store."""
         super().__init__()
         self._db = lancedb.connect(settings.VECTOR_STORE.LANCEDB_PATH)
-
-    # === Namespace helpers (override to use LanceDB-compatible separator) ===
-    def get_document_namespace(
-        self, workspace_name: str, observer: str, observed: str
-    ) -> str:
-        """
-        Get the namespace for document embeddings (per collection).
-
-        Uses '.' as separator instead of ':' for LanceDB compatibility.
-        """
-        return f"{self.namespace_prefix}.{workspace_name}.{observer}.{observed}"
-
-    def get_message_namespace(self, workspace_name: str) -> str:
-        """
-        Get the namespace for message embeddings (per workspace).
-
-        Uses '.' as separator instead of ':' for LanceDB compatibility.
-        """
-        return f"{self.namespace_prefix}.{workspace_name}.messages"
 
     def _get_table(self, namespace: str) -> lancedb.table.Table | None:
         """Get a table if it exists, otherwise return None."""
@@ -151,7 +127,6 @@ class LanceDBVectorStore(VectorStore):
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
-            print(f"Rows: {rows}")
             table = self._get_or_create_table(namespace, sample_data=rows)
 
             # Use merge_insert for upsert behavior
@@ -307,7 +282,6 @@ class LanceDBVectorStore(VectorStore):
         try:
             if namespace in self._db.table_names():
                 self._db.drop_table(namespace)
-                logger.debug(f"Deleted namespace {namespace}")
             else:
                 logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
         except Exception:

@@ -283,16 +283,15 @@ async def is_rejected_duplicate(
         logger.warning(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
-        # Delete from database
-        await db.delete(existing_doc)
-        await db.flush()  # Flush to make deletion visible in this transaction
-
-        # Delete from vector store
         vector_store = get_vector_store()
         namespace = vector_store.get_document_namespace(
             workspace_name, observer, observed
         )
         await vector_store.delete_many(namespace, [existing_doc.id])
+
+        # Delete from database after vector store succeeds
+        await db.delete(existing_doc)
+        await db.flush()  # Flush to make deletion visible in this transaction
 
         return False  # Don't reject the new document
 
