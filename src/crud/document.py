@@ -10,7 +10,7 @@ from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
-from src.utils.filter import apply_filter
+from src.vector_store import VectorRecord, get_vector_store
 
 logger = getLogger(__name__)
 
@@ -61,7 +61,7 @@ async def query_documents(
         query: Search query text
         observer: Name of the observing peer
         observed: Name of the observed peer
-        filters: Optional filters to apply
+        filters: Optional filters to apply at vector store level (supports: level, session_name)
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
         embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
@@ -78,22 +78,56 @@ async def query_documents(
                 f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
             ) from e
 
+    # Get vector store and namespace for this collection
+    vector_store = get_vector_store()
+    namespace = vector_store.get_document_namespace(workspace_name, observer, observed)
+
+    # Build vector store filters
+    # Convert filter dict to vector store format (handles level, session_name, etc.)
+    vector_filters: dict[str, Any] = {}
+    if filters:
+        # Direct pass-through for simple equality filters
+        # The filters dict can contain: level, session_name, or other document fields
+        # We can push level and session_name to vector store since they're in metadata
+        for key in ["level", "session_name"]:
+            if key in filters:
+                vector_filters[key] = filters[key]
+
+    # Query vector store for similar documents with filters applied
+    vector_results = await vector_store.query(
+        namespace,
+        embedding,
+        top_k=top_k,
+        max_distance=max_distance,
+        filters=vector_filters if vector_filters else None,
+    )
+
+    if not vector_results:
+        return []
+
+    # Get document IDs from vector results (vector ID = document ID for documents)
+    document_ids = [result.id for result in vector_results]
+
+    # Fetch documents from database
+    # No additional filtering needed since vector store already applied all supported filters
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
+        .where(models.Document.id.in_(document_ids))
     )
-    if max_distance is not None:
-        stmt = stmt.where(
-            models.Document.embedding.cosine_distance(embedding) < max_distance
-        )
-    stmt = apply_filter(stmt, models.Document, filters)
-    stmt = stmt.limit(top_k).order_by(
-        models.Document.embedding.cosine_distance(embedding)
-    )
+
     result = await db.execute(stmt)
-    return result.scalars().all()
+    documents = {doc.id: doc for doc in result.scalars().all()}
+
+    # Return documents in order of similarity (preserving vector store order)
+    ordered_docs: list[models.Document] = []
+    for vr in vector_results:
+        if vr.id in documents:
+            ordered_docs.append(documents[vr.id])
+
+    return ordered_docs
 
 
 async def create_documents(
@@ -119,6 +153,8 @@ async def create_documents(
         Count of new documents
     """
     honcho_documents: list[models.Document] = []
+    embeddings_to_store: list[tuple[str, list[float]]] = []  # [(doc_id, embedding)]
+
     for doc in documents:
         try:
             # for each document, if deduplicate is True, perform a process
@@ -132,27 +168,59 @@ async def create_documents(
                     continue
 
             metadata_dict = doc.metadata.model_dump(exclude_none=True)
-            honcho_documents.append(
-                models.Document(
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    content=doc.content,
-                    level=doc.level,
-                    times_derived=doc.times_derived,
-                    internal_metadata=metadata_dict,
-                    embedding=doc.embedding,
-                    session_name=doc.session_name,
-                )
+            new_doc = models.Document(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                content=doc.content,
+                level=doc.level,
+                times_derived=doc.times_derived,
+                internal_metadata=metadata_dict,
+                session_name=doc.session_name,
             )
+            honcho_documents.append(new_doc)
+
+            # Track embedding for vector store (will use document's generated ID)
+            if doc.embedding:
+                embeddings_to_store.append((new_doc.id, doc.embedding))
+
         except Exception as e:
             logger.error(
                 f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
             )
             continue
+
     try:
         db.add_all(honcho_documents)
         await db.commit()
+
+        # Store embeddings in vector store after documents are committed
+        if embeddings_to_store:
+            vector_store = get_vector_store()
+            namespace = vector_store.get_document_namespace(
+                workspace_name, observer, observed
+            )
+
+            # Build vector records with metadata for filtering
+            vector_records: list[VectorRecord] = []
+            doc_lookup = {doc.id: doc for doc in honcho_documents}
+            for doc_id, embedding in embeddings_to_store:
+                doc = doc_lookup[doc_id]
+                vector_records.append(
+                    VectorRecord(
+                        id=doc_id,
+                        embedding=embedding,
+                        metadata={
+                            "workspace_name": workspace_name,
+                            "observer": observer,
+                            "observed": observed,
+                            "session_name": doc.session_name,
+                            "level": doc.level,
+                        },
+                    )
+                )
+            await vector_store.upsert_many(namespace, vector_records)
+
     except IntegrityError as e:
         await db.rollback()
         raise ValidationException(
@@ -216,8 +284,17 @@ async def is_rejected_duplicate(
         logger.warning(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
+        # Delete from database
         await db.delete(existing_doc)
         await db.flush()  # Flush to make deletion visible in this transaction
+
+        # Delete from vector store
+        vector_store = get_vector_store()
+        namespace = vector_store.get_document_namespace(
+            workspace_name, observer, observed
+        )
+        await vector_store.delete(namespace, existing_doc.id)
+
         return False  # Don't reject the new document
 
     # Existing document has more information, reject the new one

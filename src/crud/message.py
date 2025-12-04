@@ -9,6 +9,7 @@ from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
+from src.vector_store import VectorRecord, get_vector_store
 
 from .session import get_or_create_session
 
@@ -136,25 +137,52 @@ async def create_messages(
             }
             embedding_dict = await embedding_client.batch_embed(id_resource_dict)
 
-            # Create MessageEmbedding entries for each embedded message
+            # Get vector store and namespace for this workspace's messages
+            vector_store = get_vector_store()
+            namespace = vector_store.get_message_namespace(workspace_name)
+
+            # Create MessageEmbedding entries and vector records
             embedding_objects: list[models.MessageEmbedding] = []
+            vector_records: list[VectorRecord] = []
+
             for message_obj in message_objects:
                 embeddings = embedding_dict.get(message_obj.public_id, [])
-                for embedding in embeddings:
+                for chunk_index, embedding in enumerate(embeddings):
+                    # Create MessageEmbedding record for metadata tracking
                     embedding_obj = models.MessageEmbedding(
                         content=message_obj.content,
-                        embedding=embedding,
                         message_id=message_obj.public_id,
                         workspace_name=workspace_name,
                         session_name=session_name,
                         peer_name=message_obj.peer_name,
+                        chunk_index=chunk_index,
                     )
                     embedding_objects.append(embedding_obj)
 
-            # Add all embedding objects to the session
+                    # Create vector record for external vector store
+                    vector_id = f"{message_obj.public_id}_{chunk_index}"
+                    vector_records.append(
+                        VectorRecord(
+                            id=vector_id,
+                            embedding=embedding,
+                            metadata={
+                                "message_id": message_obj.public_id,
+                                "session_name": session_name,
+                                "peer_name": message_obj.peer_name,
+                                "chunk_index": chunk_index,
+                            },
+                        )
+                    )
+
+            # Add all embedding metadata objects to the session
             if embedding_objects:
                 db.add_all(embedding_objects)
                 await db.commit()
+
+            # Upsert vectors to external vector store
+            if vector_records:
+                await vector_store.upsert_many(namespace, vector_records)
+
     except Exception:
         logger.exception(
             "Failed to generate message embeddings for %s messages in workspace %s and session %s.",

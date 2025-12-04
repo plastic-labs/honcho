@@ -16,6 +16,7 @@ from src.config import settings
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.utils.filter import apply_filter
+from src.vector_store import get_vector_store
 
 T = TypeVar("T")
 
@@ -65,17 +66,19 @@ def reciprocal_rank_fusion(*ranked_lists: list[T], k: int = 60, limit: int) -> l
 async def _semantic_search(
     db: AsyncSession,
     query: str,
-    stmt: Select[tuple[models.Message]],
+    workspace_name: str,
     limit: int,
+    filters: dict[str, Any] | None = None,
 ) -> list[models.Message]:
     """
-    Perform semantic search using message embeddings.
+    Perform semantic search using external vector store for message embeddings.
 
     Args:
         db: Database session
         query: Search query
-        stmt: Base SQL query conditions
+        workspace_name: Name of the workspace to search in
         limit: Maximum number of results to return
+        filters: Optional filters to apply at vector store level (supports: session_id, peer_id)
 
     Returns:
         list of messages ordered by semantic similarity
@@ -87,16 +90,61 @@ async def _semantic_search(
             f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
         ) from e
 
-    # Use cosine distance for semantic search on MessageEmbedding table
-    semantic_query = stmt.join(
-        models.MessageEmbedding,
-        models.Message.public_id == models.MessageEmbedding.message_id,
-    ).order_by(models.MessageEmbedding.embedding.cosine_distance(embedding_query))
+    # Get vector store and namespace for this workspace's messages
+    vector_store = get_vector_store()
+    namespace = vector_store.get_message_namespace(workspace_name)
 
-    semantic_query = semantic_query.limit(limit)
+    # Build vector store filters from the provided filters
+    vector_filters: dict[str, Any] = {}
+    if filters:
+        # Map external filter keys to vector store metadata keys
+        if "session_id" in filters:
+            vector_filters["session_name"] = filters["session_id"]
+        if "peer_id" in filters:
+            vector_filters["peer_name"] = filters["peer_id"]
+
+    # Query vector store for similar message embeddings
+    # Since all filters are applied at the vector store level, we don't need to oversample
+    vector_results = await vector_store.query(
+        namespace,
+        embedding_query,
+        top_k=limit,
+        filters=vector_filters if vector_filters else None,
+    )
+
+    if not vector_results:
+        return []
+
+    # Extract message IDs from vector results (vector ID format: {message_public_id}_{chunk_index})
+    # Use dict to deduplicate while preserving order (dict keys maintain insertion order in Python 3.7+)
+    seen_message_ids: dict[str, None] = {}
+
+    for result in vector_results:
+        # Vector ID format: {message_public_id}_{chunk_index}
+        parts = result.id.rsplit("_", 1)
+        if len(parts) >= 1:
+            message_id = parts[0]
+            if message_id not in seen_message_ids:
+                seen_message_ids[message_id] = None
+
+    message_ids = list(seen_message_ids.keys())
+
+    # Fetch messages from database by the IDs from vector search
+    # No additional filtering needed since vector store already applied all filters
+    semantic_query = select(models.Message).where(
+        models.Message.public_id.in_(message_ids)
+    )
 
     result = await db.execute(semantic_query)
-    return list(result.scalars().all())
+    messages = {msg.public_id: msg for msg in result.scalars().all()}
+
+    # Return messages in order of similarity (preserving vector store order)
+    ordered_messages: list[models.Message] = []
+    for msg_id in message_ids:
+        if msg_id in messages:
+            ordered_messages.append(messages[msg_id])
+
+    return ordered_messages
 
 
 async def _fulltext_search(
@@ -173,7 +221,7 @@ async def search(
     Args:
         db: Database session
         query: Search query to match against message content
-        filters: Optional filters to scope search
+        filters: Optional filters to scope search (must include workspace_id for semantic search)
         limit: Maximum number of results to return
 
     Returns:
@@ -188,12 +236,18 @@ async def search(
 
     search_results: list[list[models.Message]] = []
 
-    # Perform semantic search if enabled
-    if settings.EMBED_MESSAGES:
+    # Perform semantic search if enabled and we have workspace context
+    # workspace_id is required for semantic search to determine the vector namespace
+    workspace_name = filters.get("workspace_id") if filters else None
+    if settings.EMBED_MESSAGES and workspace_name:
         # Get more results for fusion
         semantic_limit = limit * 2
         semantic_results = await _semantic_search(
-            db=db, query=query, stmt=stmt, limit=semantic_limit
+            db=db,
+            query=query,
+            workspace_name=workspace_name,
+            limit=semantic_limit,
+            filters=filters,
         )
         search_results.append(semantic_results)
 
