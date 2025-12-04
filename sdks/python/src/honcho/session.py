@@ -14,13 +14,14 @@ from honcho_core.types.workspaces.sessions.message import Message
 from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .base import PeerBase, SessionBase
 from .pagination import SyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
-    from .peer import Peer
     from .types import Representation
+    from .peer import Peer
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class SessionPeerConfig(BaseModel):
     )
 
 
-class Session(BaseModel):
+class Session(SessionBase):
     """
     Represents a session in Honcho.
 
@@ -53,10 +54,6 @@ class Session(BaseModel):
             recently fetched. Call get_config() for fresh data.
     """
 
-    id: str = Field(..., min_length=1, description="Unique identifier for this session")
-    workspace_id: str = Field(
-        ..., min_length=1, description="Workspace ID for scoping operations"
-    )
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: HonchoCore = PrivateAttr()
@@ -130,12 +127,12 @@ class Session(BaseModel):
     def add_peers(
         self,
         peers: str
-        | Peer
+        | PeerBase
         | tuple[str, SessionPeerConfig]
-        | tuple[Peer, SessionPeerConfig]
-        | list[Peer | str]
-        | list[tuple[Peer | str, SessionPeerConfig]]
-        | list[Peer | str | tuple[Peer | str, SessionPeerConfig]] = Field(
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]] = Field(
             ..., description="Peers to add to the session"
         ),
     ) -> None:
@@ -180,12 +177,12 @@ class Session(BaseModel):
     def set_peers(
         self,
         peers: str
-        | Peer
+        | PeerBase
         | tuple[str, SessionPeerConfig]
-        | tuple[Peer, SessionPeerConfig]
-        | list[Peer | str]
-        | list[tuple[Peer | str, SessionPeerConfig]]
-        | list[Peer | str | tuple[Peer | str, SessionPeerConfig]] = Field(
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]] = Field(
             ..., description="Peers to set for the session"
         ),
     ) -> None:
@@ -228,7 +225,7 @@ class Session(BaseModel):
 
     def remove_peers(
         self,
-        peers: str | Peer | list[Peer | str] = Field(
+        peers: str | PeerBase | list[PeerBase | str] = Field(
             ..., description="Peers to remove from the session"
         ),
     ) -> None:
@@ -277,14 +274,13 @@ class Session(BaseModel):
             Peer(peer.id, self.workspace_id, self._client) for peer in peers_page.items
         ]
 
-    def get_peer_config(self, peer: str | Peer) -> SessionPeerConfig:
+    def get_peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
-        from .peer import Peer
-
+        peer_id = peer if isinstance(peer, str) else peer.id
         peer_get_config_response = self._client.workspaces.sessions.peers.get_config(
-            peer_id=str(peer.id) if isinstance(peer, Peer) else peer,
+            peer_id=peer_id,
             workspace_id=self.workspace_id,
             session_id=self.id,
         )
@@ -293,14 +289,13 @@ class Session(BaseModel):
             observe_me=peer_get_config_response.observe_me,
         )
 
-    def set_peer_config(self, peer: str | Peer, config: SessionPeerConfig) -> None:
+    def set_peer_config(self, peer: str | PeerBase, config: SessionPeerConfig) -> None:
         """
         Set the configuration for a peer in this session.
         """
-        from .peer import Peer
-
+        peer_id = peer if isinstance(peer, str) else peer.id
         self._client.workspaces.sessions.peers.set_config(
-            peer_id=str(peer.id) if isinstance(peer, Peer) else peer,
+            peer_id=peer_id,
             workspace_id=self.workspace_id,
             session_id=self.id,
             observe_others=omit
@@ -404,6 +399,52 @@ class Session(BaseModel):
         self._client.workspaces.sessions.delete(
             session_id=self.id,
             workspace_id=self.workspace_id,
+        )
+
+    def clone(
+        self,
+        *,
+        message_id: str | None = None,
+    ) -> "Session":
+        """
+        Clone this session, optionally up to a specific message.
+
+        Makes an API call to create a copy of this session with a new ID.
+        All messages and peers from the original session are copied to the new session.
+        If a message_id is provided, only messages up to and including that message
+        are copied.
+
+        Args:
+            message_id: Optional message ID to cut off the clone at. If provided,
+                       the cloned session will only contain messages up to and
+                       including this message.
+
+        Returns:
+            A new Session object representing the cloned session
+
+        Example:
+            ```python
+            # Clone entire session
+            cloned = session.clone()
+
+            # Clone session up to a specific message
+            cloned = session.clone(message_id="msg_abc123")
+            ```
+        """
+        # Make the API call using the core SDK's clone method
+        cloned_session_data = self._client.workspaces.sessions.clone(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            message_id=message_id if message_id is not None else omit,
+        )
+
+        # Return a new Session object with the cloned session's data
+        return Session(
+            cloned_session_data.id,
+            self.workspace_id,
+            self._client,
+            metadata=cloned_session_data.metadata,
+            config=cloned_session_data.configuration,
         )
 
     @validate_call
@@ -710,14 +751,16 @@ class Session(BaseModel):
             limit=limit,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def upload_file(
         self,
         file: tuple[str, bytes, str] | tuple[str, Any, str] | Any = Field(
             ...,
             description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
         ),
-        peer_id: str = Field(..., description="ID of the peer creating the messages"),
+        peer: str | PeerBase = Field(
+            ..., description="The peer creating the messages (ID string or Peer object)"
+        ),
         metadata: dict[str, object] | None = Field(
             None,
             description="Optional metadata dictionary to associate with the messages",
@@ -746,7 +789,8 @@ class Session(BaseModel):
                 - a file object (must have .name and .read())
                 - a tuple (filename, bytes, content_type)
                 - a tuple (filename, fileobj, content_type)
-            peer_id: ID of the peer who will be attributed as the creator of the messages
+            peer: The peer who will be attributed as the creator of the messages.
+                Can be a peer ID string or a Peer object.
             metadata: Optional metadata dictionary to associate with the messages
             configuration: Optional configuration dictionary to associate with the messages
             created_at: Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
@@ -762,6 +806,9 @@ class Session(BaseModel):
 
         # Prepare file for upload using shared utility
         filename, content_bytes, content_type = prepare_file_for_upload(file)
+
+        # Extract peer ID from Peer object if needed
+        resolved_peer_id = peer if isinstance(peer, str) else peer.id
 
         # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
         extra_body_data: dict[str, str] = {}
@@ -781,7 +828,7 @@ class Session(BaseModel):
             session_id=self.id,
             workspace_id=self.workspace_id,
             file=(filename, content_bytes, content_type),
-            peer_id=peer_id,
+            peer_id=resolved_peer_id,
             extra_body=extra_body_data if extra_body_data else None,
         )
 
@@ -789,9 +836,9 @@ class Session(BaseModel):
 
     def working_rep(
         self,
-        peer: str | Peer,
+        peer: str | PeerBase,
         *,
-        target: str | Peer | None = None,
+        target: str | PeerBase | None = None,
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
@@ -831,14 +878,20 @@ class Session(BaseModel):
             )
             ```
         """
-        from .peer import Peer as _Peer
         from .types import Representation as _Representation
 
+        peer_id = peer if isinstance(peer, str) else peer.id
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
+
         data = self._client.workspaces.peers.working_representation(
-            str(peer.id) if isinstance(peer, _Peer) else peer,
+            peer_id,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            target=str(target.id) if isinstance(target, _Peer) else target,
+            target=target_id,
             search_query=search_query if search_query is not None else omit,
             search_top_k=search_top_k if search_top_k is not None else omit,
             search_max_distance=search_max_distance
@@ -851,27 +904,42 @@ class Session(BaseModel):
         )
         return _Representation.from_dict(data)  # type: ignore
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def get_deriver_status(
         self,
-        observer_id: str | None = None,
-        sender_id: str | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
     ) -> DeriverStatus:
         """
-        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+
+        Args:
+            observer: Optional observer (ID string or Peer object) to scope the status check
+            sender: Optional sender (ID string or Peer object) to scope the status check
         """
+        resolved_observer_id = (
+            None
+            if observer is None
+            else (observer if isinstance(observer, str) else observer.id)
+        )
+        resolved_sender_id = (
+            None
+            if sender is None
+            else (sender if isinstance(sender, str) else sender.id)
+        )
+
         return self._client.workspaces.deriver_status(
             workspace_id=self.workspace_id,
-            observer_id=observer_id,
-            sender_id=sender_id,
+            observer_id=resolved_observer_id,
+            sender_id=resolved_sender_id,
             session_id=self.id,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def poll_deriver_status(
         self,
-        observer_id: str | None = None,
-        sender_id: str | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
         timeout: float = Field(
             300.0,
             gt=0,
@@ -886,8 +954,8 @@ class Session(BaseModel):
         The polling estimates sleep time by assuming each work unit takes 1 second.
 
         Args:
-            observer_id: Optional observer ID to scope the status check
-            sender_id: Optional sender ID to scope the status check
+            observer: Optional observer (ID string or Peer object) to scope the status check
+            sender: Optional sender (ID string or Peer object) to scope the status check
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
@@ -901,7 +969,7 @@ class Session(BaseModel):
 
         while True:
             try:
-                status = self.get_deriver_status(observer_id, sender_id)
+                status = self.get_deriver_status(observer, sender)
             except Exception as e:
                 logger.warning(f"Failed to get deriver status: {e}")
                 # Sleep briefly before retrying

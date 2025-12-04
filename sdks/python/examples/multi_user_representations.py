@@ -66,7 +66,7 @@ print(
     "\n\n\033[1m asking bob what alice had for breakfast -- scoped to session 1 \033[0m"
 )
 response = bob.chat(
-    "what did alice have for breakfast today?", target=alice, session_id=session.id
+    "what did alice have for breakfast today?", target=alice, session=session.id
 )
 print("response:", response)
 
@@ -74,7 +74,7 @@ print(
     "\n\n\033[1m asking bob what alice had for breakfast -- scoped to session 2 \033[0m"
 )
 response = bob.chat(
-    "what did alice have for breakfast today?", target=alice, session_id=session2.id
+    "what did alice have for breakfast today?", target=alice, session=session2.id
 )
 print("response:", response)
 

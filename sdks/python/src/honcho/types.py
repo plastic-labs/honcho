@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+from typing_extensions import Required, TypedDict
 
 from pydantic import BaseModel, Field
 
 # Re-export observation types from dedicated module
 from .observations import AsyncObservationScope, Observation, ObservationScope
+
+if TYPE_CHECKING:
+    from .base import SessionBase
 
 __all__ = [
     "AsyncObservationScope",
@@ -19,11 +23,24 @@ __all__ = [
     "ExplicitObservation",
     "ExplicitObservationBase",
     "Observation",
+    "ObservationCreateParam",
     "ObservationMetadata",
     "ObservationScope",
     "PeerContext",
     "Representation",
 ]
+
+
+class ObservationCreateParam(TypedDict, total=False):
+    """Parameters for creating an observation.
+
+    Attributes:
+        content: The observation content/text (required)
+        session_id: The session this observation relates to (ID string or Session object) (required)
+    """
+
+    content: Required[str]
+    session_id: "Required[str | SessionBase]"
 
 
 class ObservationMetadata(BaseModel):

@@ -470,20 +470,18 @@ async def test_session_get_deriver_status(
         assert hasattr(status, "pending_work_units")
         assert status.sessions is None
 
-        # Test with observer_id only
+        # Test with observer only
         peer = await honcho_client.peer(id="test-peer-session-deriver")
         await peer.get_metadata()  # Create the peer
-        status = await session.get_deriver_status(observer_id=peer.id)
+        status = await session.get_deriver_status(observer=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with sender_id only
-        status = await session.get_deriver_status(sender_id=peer.id)
+        # Test with sender only
+        status = await session.get_deriver_status(sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with both observer_id and sender_id
-        status = await session.get_deriver_status(
-            observer_id=peer.id, sender_id=peer.id
-        )
+        # Test with both observer and sender
+        status = await session.get_deriver_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, DeriverStatus)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -499,18 +497,18 @@ async def test_session_get_deriver_status(
         assert hasattr(status, "pending_work_units")
         assert status.sessions is None
 
-        # Test with observer_id only
+        # Test with observer only
         peer = honcho_client.peer(id="test-peer-session-deriver")
         peer.get_metadata()  # Create the peer
-        status = session.get_deriver_status(observer_id=peer.id)
+        status = session.get_deriver_status(observer=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with sender_id only
-        status = session.get_deriver_status(sender_id=peer.id)
+        # Test with sender only
+        status = session.get_deriver_status(sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with both observer_id and sender_id
-        status = session.get_deriver_status(observer_id=peer.id, sender_id=peer.id)
+        # Test with both observer and sender
+        status = session.get_deriver_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
 
@@ -554,9 +552,7 @@ async def test_session_poll_deriver_status(
             "get_deriver_status",
             new=AsyncMock(return_value=completed_status),
         ):
-            status = await session.poll_deriver_status(
-                observer_id=peer.id, sender_id=peer.id
-            )
+            status = await session.poll_deriver_status(observer=peer.id, sender=peer.id)
             assert isinstance(status, DeriverStatus)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -576,5 +572,147 @@ async def test_session_poll_deriver_status(
         with patch.object(
             session.__class__, "get_deriver_status", return_value=completed_status
         ):
-            status = session.poll_deriver_status(observer_id=peer.id, sender_id=peer.id)
+            status = session.poll_deriver_status(observer=peer.id, sender=peer.id)
             assert isinstance(status, DeriverStatus)
+
+
+@pytest.mark.asyncio
+async def test_session_clone(client_fixture: tuple[Honcho | AsyncHoncho, str]):
+    """
+    Tests cloning a session and verifying the cloned session has copied messages.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-clone-async")
+        assert isinstance(session, AsyncSession)
+        user = await honcho_client.peer(id="user-clone-async")
+        assert isinstance(user, AsyncPeer)
+
+        # Add messages to the session (implicitly creates session and adds peer)
+        await session.add_messages(
+            [
+                user.message("First message"),
+                user.message("Second message"),
+            ]
+        )
+
+        # Clone the entire session
+        cloned = await session.clone()
+        assert isinstance(cloned, AsyncSession)
+        assert cloned.id != session.id  # Should have a different ID
+
+        # Verify cloned session has the same messages
+        cloned_messages_page = await cloned.get_messages()
+        cloned_messages = cloned_messages_page.items
+        assert len(cloned_messages) == 2
+
+        # Verify original session still has messages
+        original_messages_page = await session.get_messages()
+        original_messages = original_messages_page.items
+        assert len(original_messages) == 2
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-clone-sync")
+        assert isinstance(session, Session)
+        user = honcho_client.peer(id="user-clone-sync")
+        assert isinstance(user, Peer)
+
+        # Add messages to the session (implicitly creates session and adds peer)
+        session.add_messages(
+            [
+                user.message("First message"),
+                user.message("Second message"),
+            ]
+        )
+
+        # Clone the entire session
+        cloned = session.clone()
+        assert isinstance(cloned, Session)
+        assert cloned.id != session.id  # Should have a different ID
+
+        # Verify cloned session has the same messages
+        cloned_messages_page = cloned.get_messages()
+        cloned_messages = list(cloned_messages_page)
+        assert len(cloned_messages) == 2
+
+        # Verify original session still has messages
+        original_messages_page = session.get_messages()
+        original_messages = list(original_messages_page)
+        assert len(original_messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_session_clone_with_cutoff(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests cloning a session up to a specific message.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-clone-cutoff-async")
+        assert isinstance(session, AsyncSession)
+        user = await honcho_client.peer(id="user-clone-cutoff-async")
+        assert isinstance(user, AsyncPeer)
+
+        # Add messages to the session (implicitly creates session and adds peer)
+        messages = await session.add_messages(
+            [
+                user.message("First message"),
+                user.message("Second message"),
+                user.message("Third message"),
+            ]
+        )
+
+        # Clone up to the first message
+        first_message_id = messages[0].id
+        cloned = await session.clone(message_id=first_message_id)
+        assert isinstance(cloned, AsyncSession)
+        assert cloned.id != session.id
+
+        # Verify cloned session only has 1 message
+        cloned_messages_page = await cloned.get_messages()
+        cloned_messages = cloned_messages_page.items
+        assert len(cloned_messages) == 1
+        assert cloned_messages[0].content == "First message"
+
+        # Verify original session still has all 3 messages
+        original_messages_page = await session.get_messages()
+        original_messages = original_messages_page.items
+        assert len(original_messages) == 3
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-clone-cutoff-sync")
+        assert isinstance(session, Session)
+        user = honcho_client.peer(id="user-clone-cutoff-sync")
+        assert isinstance(user, Peer)
+
+        # Add messages to the session (implicitly creates session and adds peer)
+        messages = session.add_messages(
+            [
+                user.message("First message"),
+                user.message("Second message"),
+                user.message("Third message"),
+            ]
+        )
+
+        # Clone up to the first message
+        first_message_id = messages[0].id
+        cloned = session.clone(message_id=first_message_id)
+        assert isinstance(cloned, Session)
+        assert cloned.id != session.id
+
+        # Verify cloned session only has 1 message
+        cloned_messages_page = cloned.get_messages()
+        cloned_messages = list(cloned_messages_page)
+        assert len(cloned_messages) == 1
+        assert cloned_messages[0].content == "First message"
+
+        # Verify original session still has all 3 messages
+        original_messages_page = session.get_messages()
+        original_messages = list(original_messages_page)
+        assert len(original_messages) == 3

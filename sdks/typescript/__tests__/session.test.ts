@@ -26,6 +26,7 @@ jest.mock('@honcho-ai/core', () => {
         getOrCreate: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
+        clone: jest.fn(),
         getContext: jest.fn(),
         search: jest.fn(),
       },
@@ -1055,6 +1056,74 @@ describe('Session', () => {
     })
   })
 
+  describe('clone', () => {
+    it('should clone the session without messageId', async () => {
+      const mockClonedSession = {
+        id: 'cloned-session-id',
+        workspace_id: 'test-workspace',
+        metadata: { cloned: true },
+        configuration: { test: 'config' },
+      }
+      mockClient.workspaces.sessions.clone.mockResolvedValue(mockClonedSession)
+
+      const clonedSession = await session.clone()
+
+      expect(clonedSession).toBeInstanceOf(Session)
+      expect(clonedSession.id).toBe('cloned-session-id')
+      expect(clonedSession.workspaceId).toBe('test-workspace')
+      expect(clonedSession.metadata).toEqual({ cloned: true })
+      expect(clonedSession.configuration).toEqual({ test: 'config' })
+      expect(mockClient.workspaces.sessions.clone).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {}
+      )
+    })
+
+    it('should clone the session with messageId cutoff', async () => {
+      const mockClonedSession = {
+        id: 'cloned-session-cutoff',
+        workspace_id: 'test-workspace',
+        metadata: null,
+        configuration: null,
+      }
+      mockClient.workspaces.sessions.clone.mockResolvedValue(mockClonedSession)
+
+      const clonedSession = await session.clone('msg-123')
+
+      expect(clonedSession).toBeInstanceOf(Session)
+      expect(clonedSession.id).toBe('cloned-session-cutoff')
+      expect(mockClient.workspaces.sessions.clone).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        { message_id: 'msg-123' }
+      )
+    })
+
+    it('should handle null metadata and configuration', async () => {
+      const mockClonedSession = {
+        id: 'cloned-session-null',
+        workspace_id: 'test-workspace',
+        metadata: null,
+        configuration: null,
+      }
+      mockClient.workspaces.sessions.clone.mockResolvedValue(mockClonedSession)
+
+      const clonedSession = await session.clone()
+
+      expect(clonedSession.metadata).toBeUndefined()
+      expect(clonedSession.configuration).toBeUndefined()
+    })
+
+    it('should handle API errors', async () => {
+      mockClient.workspaces.sessions.clone.mockRejectedValue(
+        new Error('Failed to clone session')
+      )
+
+      await expect(session.clone()).rejects.toThrow('Failed to clone session')
+    })
+  })
+
   describe('getDeriverStatus', () => {
     it('should return deriver status without options', async () => {
       const mockStatus = {
@@ -1091,8 +1160,8 @@ describe('Session', () => {
       mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus)
 
       const status = await session.getDeriverStatus({
-        observerId: 'observer1',
-        senderId: 'sender1',
+        observer: 'observer1',
+        sender: 'sender1',
       })
 
       expect(status).toEqual({

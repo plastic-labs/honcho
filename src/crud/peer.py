@@ -172,7 +172,7 @@ async def get_peer(
         peer: Peer creation schema
 
     Returns:
-        The peer if found or created
+        The peer if found
 
     Raises:
         ResourceNotFoundException: If the peer does not exist

@@ -9,6 +9,9 @@ from sqlalchemy.sql import Select
 
 from src import models, schemas
 from src.config import settings
+from src.crud.collection import get_or_create_collection
+from src.crud.peer import get_peer
+from src.crud.session import get_session
 from src.embedding_client import embedding_client
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.utils.filter import apply_filter
@@ -292,6 +295,101 @@ async def delete_document_by_id(
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
+
+
+async def create_observations(
+    db: AsyncSession,
+    observations: list[schemas.ObservationCreate],
+    workspace_name: str,
+) -> list[models.Document]:
+    """
+    Create multiple observations (documents) from user input.
+
+    This function validates all referenced resources, generates embeddings
+    in batch, and creates the documents.
+
+    Args:
+        db: Database session
+        observations: List of observation creation schemas
+        workspace_name: Name of the workspace
+
+    Returns:
+        List of created Document objects
+
+    Raises:
+        ResourceNotFoundException: If any session or peer is not found
+        ValidationException: If embedding generation fails or integrity constraint is violated
+    """
+    if not observations:
+        return []
+
+    # Collect unique sessions and peer pairs to validate
+    sessions_to_validate: set[str] = set()
+    peers_to_validate: set[str] = set()
+    collection_pairs: set[tuple[str, str]] = set()
+
+    for obs in observations:
+        sessions_to_validate.add(obs.session_id)
+        peers_to_validate.add(obs.observer_id)
+        peers_to_validate.add(obs.observed_id)
+        collection_pairs.add((obs.observer_id, obs.observed_id))
+
+    # Validate all sessions exist
+    for session_name in sessions_to_validate:
+        await get_session(db, session_name, workspace_name)
+
+    # Validate all peers exist
+    for peer_name in peers_to_validate:
+        await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+
+    # Get or create all collections
+    for observer, observed in collection_pairs:
+        await get_or_create_collection(
+            db, workspace_name, observer=observer, observed=observed
+        )
+
+    # Generate embeddings in batch
+    contents = [obs.content for obs in observations]
+    try:
+        embeddings = await embedding_client.simple_batch_embed(contents)
+    except ValueError as e:
+        raise ValidationException(str(e)) from e
+
+    # Create document objects
+    honcho_documents: list[models.Document] = []
+    for obs, embedding in zip(observations, embeddings, strict=True):
+        honcho_documents.append(
+            models.Document(
+                workspace_name=workspace_name,
+                observer=obs.observer_id,
+                observed=obs.observed_id,
+                content=obs.content,
+                level="explicit",  # Manually created observations are always explicit
+                times_derived=1,
+                internal_metadata={},  # No message_ids since not derived from messages
+                embedding=embedding,
+                session_name=obs.session_id,
+            )
+        )
+
+    try:
+        db.add_all(honcho_documents)
+        await db.commit()
+        # Refresh all documents to get generated IDs and timestamps
+        for doc in honcho_documents:
+            await db.refresh(doc)
+    except IntegrityError as e:
+        await db.rollback()
+        raise ValidationException(
+            "Failed to create observations due to integrity constraint violation"
+        ) from e
+
+    logger.debug(
+        "Created %d observations in workspace %s",
+        len(honcho_documents),
+        workspace_name,
+    )
+    return honcho_documents
 
 
 async def is_rejected_duplicate(

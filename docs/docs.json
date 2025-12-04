@@ -159,6 +159,7 @@
               {
                 "group": "observations",
                 "pages": [
+                  "v2/api-reference/endpoint/observations/create-observations",
                   "v2/api-reference/endpoint/observations/list-observations",
                   "v2/api-reference/endpoint/observations/query-observations",
                   "v2/api-reference/endpoint/observations/delete-observation"

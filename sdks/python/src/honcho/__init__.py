@@ -40,6 +40,7 @@ from .async_client import (
     AsyncPeer,
     AsyncSession,
 )
+from .base import PeerBase, SessionBase
 from .client import Honcho
 from .observations import AsyncObservationScope, Observation, ObservationScope
 from .pagination import SyncPage
@@ -68,8 +69,10 @@ __all__ = [
     "Observation",
     "ObservationScope",
     "Peer",
+    "PeerBase",
     "PeerContext",
     "Session",
+    "SessionBase",
     "SessionContext",
     "SessionSummaries",
     "Summary",

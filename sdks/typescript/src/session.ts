@@ -18,7 +18,6 @@ import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
   type DeriverStatusOptions,
-  DeriverStatusOptionsSchema,
   FileUploadSchema,
   FilterSchema,
   type Filters,
@@ -553,6 +552,44 @@ export class Session {
   }
 
   /**
+   * Clone this session, optionally up to a specific message.
+   *
+   * Makes an API call to create a copy of this session with a new ID.
+   * All messages and peers from the original session are copied to the new session.
+   * If a messageId is provided, only messages up to and including that message
+   * are copied.
+   *
+   * @param messageId - Optional message ID to cut off the clone at. If provided,
+   *                    the cloned session will only contain messages up to and
+   *                    including this message.
+   * @returns Promise resolving to a new Session object representing the cloned session
+   *
+   * @example
+   * ```typescript
+   * // Clone entire session
+   * const cloned = await session.clone()
+   *
+   * // Clone session up to a specific message
+   * const cloned = await session.clone('msg_abc123')
+   * ```
+   */
+  async clone(messageId?: string): Promise<Session> {
+    const clonedSessionData = await this._client.workspaces.sessions.clone(
+      this.workspaceId,
+      this.id,
+      messageId ? { message_id: messageId } : {}
+    )
+
+    return new Session(
+      clonedSessionData.id,
+      this.workspaceId,
+      this._client,
+      clonedSessionData.metadata ?? undefined,
+      clonedSessionData.configuration ?? undefined
+    )
+  }
+
+  /**
    * Get optimized context for this session within a token limit.
    *
    * Makes an API call to retrieve a curated list of messages that provides
@@ -858,12 +895,18 @@ export class Session {
    * This method automatically scopes the status to this session.
    *
    * @param options - Configuration options for the status request
-   * @param options.observerId - Optional observer ID to scope the status to
-   * @param options.senderId - Optional sender ID to scope the status to
+   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
+   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @returns Promise resolving to the deriver status information including work unit counts
    */
   async getDeriverStatus(
-    options?: Omit<DeriverStatusOptions, 'sessionId'>
+    options?: Omit<
+      DeriverStatusOptions,
+      'sessionId' | 'observerId' | 'senderId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+    }
   ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
@@ -871,16 +914,22 @@ export class Session {
     pendingWorkUnits: number
     sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options
-      ? DeriverStatusOptionsSchema.parse(options)
+    const resolvedObserverId = options?.observer
+      ? typeof options.observer === 'string'
+        ? options.observer
+        : options.observer.id
       : undefined
+    const resolvedSenderId = options?.sender
+      ? typeof options.sender === 'string'
+        ? options.sender
+        : options.sender.id
+      : undefined
+
     const queryParams: WorkspaceDeriverStatusParams = {
       session_id: this.id, // Always use this session's ID
     }
-    if (validatedOptions?.observerId)
-      queryParams.observer_id = validatedOptions.observerId
-    if (validatedOptions?.senderId)
-      queryParams.sender_id = validatedOptions.senderId
+    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
+    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
 
     const status = await this._client.workspaces.deriverStatus(
       this.workspaceId,
@@ -904,14 +953,20 @@ export class Session {
    * The polling estimates sleep time by assuming each work unit takes 1 second.
    *
    * @param options - Configuration options for the status request
-   * @param options.observerId - Optional observer ID to scope the status to
-   * @param options.senderId - Optional sender ID to scope the status to
+   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
+   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
    * @returns Promise resolving to the final deriver status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
   async pollDeriverStatus(
-    options?: Omit<DeriverStatusOptions, 'sessionId'>
+    options?: Omit<
+      DeriverStatusOptions,
+      'sessionId' | 'observerId' | 'senderId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+    }
   ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
@@ -919,14 +974,11 @@ export class Session {
     pendingWorkUnits: number
     sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options
-      ? DeriverStatusOptionsSchema.parse(options)
-      : undefined
-    const timeoutMs = validatedOptions?.timeoutMs ?? 300000 // Default to 5 minutes
+    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(validatedOptions)
+      const status = await this.getDeriverStatus(options)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
         return status
       }
@@ -968,7 +1020,7 @@ export class Session {
    *   - File objects (browser File API)
    *   - Buffer or Uint8Array with filename and content_type
    *   - { filename: string, content: Buffer | Uint8Array, content_type: string }
-   * @param peerId - The peer ID to attribute the created messages to
+   * @param peer - The peer (ID string or Peer object) to attribute the created messages to
    * @param options - Optional parameters for the uploaded messages
    * @param options.metadata - Optional metadata dictionary to associate with the messages
    * @param options.configuration - Optional configuration dictionary to associate with the messages
@@ -994,7 +1046,7 @@ export class Session {
    */
   async uploadFile(
     file: Uploadable,
-    peerId: string,
+    peer: string | Peer,
     options?: {
       metadata?: Record<string, unknown>
       configuration?: Record<string, unknown>
@@ -1006,9 +1058,11 @@ export class Session {
         ? options.created_at.toISOString()
         : options?.created_at
 
+    const resolvedPeerId = typeof peer === 'string' ? peer : peer.id
+
     const uploadParams = FileUploadSchema.parse({
       file,
-      peerId,
+      peer: resolvedPeerId,
       metadata: options?.metadata,
       configuration: options?.configuration,
       created_at: createdAt,
@@ -1017,7 +1071,7 @@ export class Session {
     // Build body with file and peer_id, plus optional fields as JSON strings
     const body = {
       file: uploadParams.file,
-      peer_id: uploadParams.peerId,
+      peer_id: resolvedPeerId,
       ...(uploadParams.metadata !== undefined && uploadParams.metadata !== null
         ? { metadata: JSON.stringify(uploadParams.metadata) }
         : {}),
