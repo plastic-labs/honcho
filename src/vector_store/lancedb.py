@@ -65,13 +65,13 @@ class LanceDBVectorStore(VectorStore):
             return self._db.create_table(namespace, data=sample_data)
 
         # Create empty table with base schema
-        schema = pa.schema(
+        schema = pa.schema(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
             [
-                pa.field("id", pa.string()),
-                pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSION)),
+                pa.field("id", pa.string()),  # pyright: ignore[reportUnknownMemberType]
+                pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSION)),  # pyright: ignore[reportUnknownMemberType]
             ]
         )
-        return self._db.create_table(namespace, schema=schema)
+        return self._db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
 
     def _row_to_dict(self, vector: VectorRecord) -> dict[str, Any]:
         """Convert a VectorRecord to a dict for LanceDB."""
@@ -168,36 +168,37 @@ class LanceDBVectorStore(VectorStore):
 
         try:
             # Build query (LanceDB types are incomplete, so type checker reports false positive)
-            query = table.search(embedding).distance_type("cosine").limit(top_k)  # pyright: ignore[reportAttributeAccessIssue]
+            query = table.search(embedding).distance_type("cosine").limit(top_k)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType, reportUnknownMemberType]
 
             # Apply filters if provided
             if filters:
                 where_clause = self._build_where_clause(filters)
                 if where_clause:
-                    query = query.where(where_clause)
+                    query = query.where(where_clause)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
 
             # Execute query
-            results = query.to_list()
+            results = query.to_list()  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
 
             # Convert to QueryResult objects
             query_results: list[QueryResult] = []
-            for row in results:
-                dist = float(row.get("_distance", 0.0))
+            for row in results:  # pyright: ignore[reportUnknownVariableType]
+                dist = float(row.get("_distance", 0.0))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
                 # Filter by max_distance if specified
                 if max_distance is not None and dist > max_distance:
                     continue
 
                 # Extract metadata (everything except id, vector, _distance)
+                # Type annotations for dict comprehension to satisfy type checker
                 metadata: dict[str, Any] = {
                     k: v
-                    for k, v in row.items()
+                    for k, v in row.items()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     if k not in ("id", "vector", "_distance")
                 }
 
                 query_results.append(
                     QueryResult(
-                        id=str(row["id"]),
+                        id=str(row["id"]),  # pyright: ignore[reportUnknownArgumentType]
                         score=dist,
                         metadata=metadata,
                     )

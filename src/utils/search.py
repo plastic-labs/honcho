@@ -238,8 +238,9 @@ async def search(
 
     # Perform semantic search if enabled and we have workspace context
     # workspace_id is required for semantic search to determine the vector namespace
-    workspace_name = filters.get("workspace_id") if filters else None
-    if settings.EMBED_MESSAGES and workspace_name:
+    workspace_name: str | None = filters.get("workspace_id") if filters else None
+    if settings.EMBED_MESSAGES and isinstance(workspace_name, str):
+        # Type narrowing: workspace_name is guaranteed to be str in this block
         # Get more results for fusion
         semantic_limit = limit * 2
         semantic_results = await _semantic_search(

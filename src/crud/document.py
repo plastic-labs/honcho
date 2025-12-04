@@ -293,7 +293,7 @@ async def is_rejected_duplicate(
         namespace = vector_store.get_document_namespace(
             workspace_name, observer, observed
         )
-        await vector_store.delete(namespace, existing_doc.id)
+        await vector_store.delete_many(namespace, [existing_doc.id])
 
         return False  # Don't reject the new document
 

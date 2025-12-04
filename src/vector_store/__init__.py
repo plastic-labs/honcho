@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.config import settings
-from src.vector_store.lancedb import LanceDBVectorStore
-from src.vector_store.turbopuffer import TurbopufferVectorStore
 
 
 @dataclass
@@ -34,8 +32,11 @@ class VectorStore(ABC):
     Abstract base class for vector store implementations.
 
     All vector operations are namespace-scoped. Namespaces map to:
-    - Document embeddings: {prefix}-{workspace}-{observer}-{observed} (per collection)
-    - Message embeddings: {prefix}-{workspace}-messages (per workspace)
+    - Document embeddings: {prefix}:{workspace}:{observer}:{observed} (per collection)
+    - Message embeddings: {prefix}:{workspace}:messages (per workspace)
+
+    Note: Colon (:) is used as the delimiter to avoid collisions since it's not
+    allowed in workspace/peer IDs (which only allow [A-Za-z0-9_-]).
     """
 
     namespace_prefix: str
@@ -59,9 +60,9 @@ class VectorStore(ABC):
             observed: Name of the observed peer
 
         Returns:
-            Namespace string in format: {prefix}_{workspace}_{observer}_{observed}
+            Namespace string in format: {prefix}:{workspace}:{observer}:{observed}
         """
-        return f"{self.namespace_prefix}_{workspace_name}_{observer}_{observed}"
+        return f"{self.namespace_prefix}:{workspace_name}:{observer}:{observed}"
 
     def get_message_namespace(self, workspace_name: str) -> str:
         """
@@ -71,9 +72,9 @@ class VectorStore(ABC):
             workspace_name: Name of the workspace
 
         Returns:
-            Namespace string in format: {prefix}_{workspace}_messages
+            Namespace string in format: {prefix}:{workspace}:messages
         """
-        return f"{self.namespace_prefix}_{workspace_name}_messages"
+        return f"{self.namespace_prefix}:{workspace_name}:messages"
 
     # === Core operations ===
     @abstractmethod
@@ -177,8 +178,12 @@ def get_vector_store() -> VectorStore:
     store_type = settings.VECTOR_STORE.TYPE
 
     if store_type == "turbopuffer":
+        from src.vector_store.turbopuffer import TurbopufferVectorStore
+
         _vector_store_instance = TurbopufferVectorStore()
     elif store_type == "lancedb":
+        from src.vector_store.lancedb import LanceDBVectorStore
+
         _vector_store_instance = LanceDBVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
