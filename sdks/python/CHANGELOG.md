@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - metadata and configuration fields to Workspace, Peer, Session, and Message objects
 - Session Clone methods
 - Peer level get_context method
-- `ObservationScope` object to query and delete observations
+- `ObservationScope` object to perform CRUD operations on observations
 - Representation object for WorkingRepresentations
 
 ## [1.5.0] - 2025-10-09

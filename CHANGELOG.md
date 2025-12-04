@@ -10,9 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Message level configurations
-- Endpoints to directly query observations
-- An Endpoint to (hard) delete sessions
-- An Endpoint to delete observations
+- CRUD operations for observations
 - Comprehensive test cases for harness
 - Peer level get_context
 - Set Peer Card Method
