@@ -44,6 +44,10 @@ There are two types of representations:
 
 **Other-representations** are a peer's understanding of another peer, built only from messages they've observed from that peer. If Alice and Bob are in a session together, Bob's other-representation of Alice is based solely on what Alice said in sessions Bob was part of. Bob's representation of Alice might be completely different from Carol's representation of Alice if they've observed different interactions.
 
+![](/images/perspectives.jpeg)
+
+The diagram above shows how perspective-taking works in practice. Each peer can maintain their own representation (self) and representations of other peers they've interacted with, all based on what they've observed.
+
 This perspective-taking ability is configured through the `observe_me` and `observe_others` settings. A peer's `observe_me` configuration controls whether Honcho forms a representation of them at all. The `observe_others` configuration (set at the session level) controls whether a peer should form representations of other peers in that session.
 
 Why would you want this? In multi-agent systems, different agents might need different understandings of the same peer based on their role. A support agent might see a user as frustrated and time-sensitive, while a sales agent in a different context sees the same user as curious and exploratory. Perspective-taking lets you model these different viewpoints accurately.

@@ -89,15 +89,6 @@ When you need context from Honcho, you query through the chat endpoint or get_co
 
 The diagram above shows how agents write messages to Honcho, which triggers reasoning that updates peer representations. Agents can then query representations to get additional context for their next response. Black arrows represent read/write of regular data (messages, storage), while red arrows represent read/write of reasoned-over data (logic, peer representations).
 
-## Perspective Taking
-
-One of Honcho's unique capabilities is modeling how different peers perceive each other based on their interactions. When multiple peers interact in a session, Honcho can build a representation of a peer itself (based on all the messages they've sent across all sessions) and representations of the peers a certain peer has interacted with (built only from messages they've observed from specific peers). It makes architecting the following figure effortless:
-
-![](/images/perspectives.jpeg)
-
-This perspective-taking ability enables sophisticated multi-agent scenarios where each peer maintains distinct representations of the other participants they've interacted with.
-
-
 ## Configuration & Extensibility
 
 Honcho is designed to be flexible. Settings cascade hierarchically from workspace to peer to session, so you can set defaults at the workspace level and override them for specific peers or sessions. Feature flags let you enable or disable reasoning modes, perspective tracking, and other capabilities. You can bring your own LLM provider--OpenAI, Anthropic, or custom endpoints--and metadata fields let you extend any primitive with custom JSONB data. TODO: devs fact check pls-->Batch operations let you create up to 100 messages in a single API call for efficient bulk ingestion.
