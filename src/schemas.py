@@ -112,6 +112,7 @@ class PeerCardResponse(BaseModel):
 
 
 class PeerConfig(BaseModel):
+    # TODO: Update description - should say "Whether honcho forms a representation of the peer itself"
     observe_me: bool = Field(
         default=True,
         description="Whether honcho should form a global theory-of-mind representation of this peer",
@@ -187,10 +188,12 @@ class SessionBase(BaseModel):
 
 
 class SessionPeerConfig(BaseModel):
+    # TODO: Update description - should say "Whether this peer forms representations of other peers in the session"
     observe_others: bool = Field(
         default=False,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
     )
+    # TODO: Update description - should say "Whether other peers in this session form a representation of this peer"
     observe_me: bool | None = Field(
         default=None,
         description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
