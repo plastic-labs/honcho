@@ -55,10 +55,6 @@ Optional arguments:
 --test-count: Number of conversations to run (default: all)
 --question-count: Number of questions per conversation to run (default: all)
 ```
-
-## Other notes
-- Judge is Claude Sonnet 4.5
-- Evaluation uses F1 score following the LoCoMo paper methodology
 """
 
 import argparse
@@ -103,6 +99,39 @@ from .locomo_common import (
 # Load .env from bench directory
 bench_dir = Path(__file__).parent
 load_dotenv(bench_dir / ".env")
+
+
+def determine_question_target(question: str, speaker_a: str, speaker_b: str) -> str:
+    """
+    Determine which speaker a question is asking about based on the question text.
+
+    Args:
+        question: The question text
+        speaker_a: Name of speaker A (e.g., "Caroline")
+        speaker_b: Name of speaker B (e.g., "Melanie")
+
+    Returns:
+        The name of the speaker the question is about (speaker_a or speaker_b)
+    """
+    question_lower = question.lower()
+    speaker_a_lower = speaker_a.lower()
+    speaker_b_lower = speaker_b.lower()
+
+    # Check for possessive forms too (e.g., "Melanie's kids")
+    a_in_question = (
+        speaker_a_lower in question_lower or f"{speaker_a_lower}'s" in question_lower
+    )
+    b_in_question = (
+        speaker_b_lower in question_lower or f"{speaker_b_lower}'s" in question_lower
+    )
+
+    if a_in_question and not b_in_question:
+        return speaker_a
+    elif b_in_question and not a_in_question:
+        return speaker_b
+    else:
+        # Question mentions both or neither - default to speaker_a
+        return speaker_a
 
 
 class LoCoMoRunner:
@@ -327,24 +356,24 @@ class LoCoMoRunner:
         }
 
         try:
-            # Create peers - speaker_a as "user", speaker_b as "assistant"
-            user_peer = await honcho_client.peer(id="user")
-            assistant_peer = await honcho_client.peer(id="assistant")
+            # Create peers using their actual names as IDs
+            peer_a = await honcho_client.peer(id=speaker_a)
+            peer_b = await honcho_client.peer(id=speaker_b)
 
             # Create session for this conversation
             session_id = f"{workspace_id}_session"
             session = await honcho_client.session(id=session_id)
 
-            # Configure peer observation - observe the user peer (speaker_a)
+            # Configure peer observation - observe BOTH peers since questions ask about both speakers
             await session.add_peers(
                 [
                     (
-                        user_peer,
+                        peer_a,
                         SessionPeerConfig(observe_me=True, observe_others=False),
                     ),
                     (
-                        assistant_peer,
-                        SessionPeerConfig(observe_me=False, observe_others=False),
+                        peer_b,
+                        SessionPeerConfig(observe_me=True, observe_others=False),
                     ),
                 ]
             )
@@ -367,21 +396,21 @@ class LoCoMoRunner:
                     result["total_turns"] += 1
                     total_tokens += calculate_tokens(text)
 
-                    # Map speaker to peer
+                    # Map speaker to peer by name
                     if speaker == speaker_a:
                         if session_date:
                             messages.append(
-                                user_peer.message(text, created_at=session_date)
+                                peer_a.message(text, created_at=session_date)
                             )
                         else:
-                            messages.append(user_peer.message(text))
+                            messages.append(peer_a.message(text))
                     elif speaker == speaker_b:
                         if session_date:
                             messages.append(
-                                assistant_peer.message(text, created_at=session_date)
+                                peer_b.message(text, created_at=session_date)
                             )
                         else:
-                            messages.append(assistant_peer.message(text))
+                            messages.append(peer_b.message(text))
 
             result["total_tokens"] = total_tokens
 
@@ -407,23 +436,39 @@ class LoCoMoRunner:
                 return result
 
             print(
-                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation..."
+                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation for both peers..."
             )
 
-            # Trigger dream for memory consolidation
-            dream_success = await self.trigger_dream_and_wait(
+            # Trigger dream for memory consolidation for BOTH peers
+            # Dream for speaker_a
+            dream_success_a = await self.trigger_dream_and_wait(
                 honcho_client,
                 workspace_id,
-                observer="user",
+                observer=speaker_a,
                 session_id=session_id,
             )
 
-            if not dream_success:
+            if not dream_success_a:
                 print(
-                    f"[{workspace_id}] Warning: Dream did not complete, proceeding anyway"
+                    f"[{workspace_id}] Warning: Dream for {speaker_a} did not complete, proceeding anyway"
                 )
             else:
-                print(f"[{workspace_id}] Dream completed. Executing questions...")
+                print(f"[{workspace_id}] Dream for {speaker_a} completed.")
+
+            # Dream for speaker_b
+            dream_success_b = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer=speaker_b,
+                session_id=session_id,
+            )
+
+            if not dream_success_b:
+                print(
+                    f"[{workspace_id}] Warning: Dream for {speaker_b} did not complete, proceeding anyway"
+                )
+            else:
+                print(f"[{workspace_id}] Dream for {speaker_b} completed.")
 
             # Filter questions
             filtered_qa = filter_questions(
@@ -442,14 +487,22 @@ class LoCoMoRunner:
                 evidence = qa.get("evidence", [])
                 category_name = CATEGORY_NAMES.get(category, f"category_{category}")
 
-                print(f"  Q{q_idx + 1} [{category_name}]: {question}")
+                # Determine which peer the question is about (returns speaker name)
+                target_speaker = determine_question_target(
+                    question, speaker_a, speaker_b
+                )
+                target_peer = peer_a if target_speaker == speaker_a else peer_b
+
+                print(
+                    f"  Q{q_idx + 1} [{category_name}] (asking {target_speaker}): {question}"
+                )
 
                 try:
                     if self.use_get_context:
-                        # Use get_context + LLM
+                        # Use get_context + LLM - target the appropriate peer
                         context = await session.get_context(
                             summary=True,
-                            peer_target="user",
+                            peer_target=target_speaker,
                             last_user_message=question,
                         )
                         context_messages = context.to_anthropic(assistant="assistant")
@@ -467,8 +520,8 @@ class LoCoMoRunner:
                         content_block = response.content[0]
                         actual_response = getattr(content_block, "text", "")
                     else:
-                        # Use dialectic .chat endpoint
-                        actual_response = await user_peer.chat(question)
+                        # Use dialectic .chat endpoint on the appropriate peer
+                        actual_response = await target_peer.chat(question)
                         actual_response = (
                             actual_response if isinstance(actual_response, str) else ""
                         )

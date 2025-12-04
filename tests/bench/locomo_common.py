@@ -85,7 +85,7 @@ def format_duration(total_seconds: float) -> str:
 
 def calculate_tokens(text: str) -> int:
     """Calculate tokens for a given text."""
-    tokenizer = tiktoken.get_encoding("cl100k_base")
+    tokenizer = tiktoken.get_encoding("o200k_base")
     try:
         return len(
             tokenizer.encode(

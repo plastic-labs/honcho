@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src import models
 from src.utils.formatting import parse_datetime_iso
@@ -40,6 +40,14 @@ class PromptRepresentation(BaseModel):
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
         default_factory=list,
     )
+
+    @field_validator("explicit", "deductive", mode="before")
+    @classmethod
+    def convert_none_to_empty_list(cls, v: Any) -> Any:
+        """Convert None to empty list - handles LLMs returning null instead of []."""
+        if v is None:
+            return []
+        return v
 
 
 class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):

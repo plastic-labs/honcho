@@ -91,7 +91,7 @@ async def create_embeddings_for_messages(
         return 0
 
     # Initialize tiktoken encoding (same as used in MessageCreate schema)
-    encoding = tiktoken.get_encoding("cl100k_base")
+    encoding = tiktoken.get_encoding("o200k_base")
 
     # Prepare data for batch embedding with proper token encoding
     id_resource_dict = {

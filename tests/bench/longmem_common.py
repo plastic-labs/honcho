@@ -72,7 +72,7 @@ def calculate_total_tokens(haystack_sessions: list[list[dict[str, str]]]) -> int
     Returns:
         Total number of tokens across all messages
     """
-    tokenizer = tiktoken.get_encoding("cl100k_base")
+    tokenizer = tiktoken.get_encoding("o200k_base")
     total_tokens = 0
 
     for session_messages in haystack_sessions:
