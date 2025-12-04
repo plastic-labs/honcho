@@ -18,7 +18,7 @@ A `Message` is sent by a `Peer` and saved in a `Session`
 
   session = honcho.session("sample-session")
 
-  message = peer.message("Hello, world!", session_id=session.id)
+  message = peer.message("Hello, world!")
 
   session.add_messages([message])
   ```
@@ -42,7 +42,7 @@ Once a `Message` is saved in Honcho, it will kick off a background task that
 looks at the new data to generate insights about the `Peer` that sent the `Message`
 
 This is the default behavior of Honcho and can be turned off by [configuring the
-Peer or Session](/v2/documentation/features/advanced/configuration)
+Peer or Session](/v2/documentation/core-concepts/configuration)
 
 This pattern of having a Peer, Session, and Messages is highly flexible and
 works for many different use cases and agent setups. Some use cases may only

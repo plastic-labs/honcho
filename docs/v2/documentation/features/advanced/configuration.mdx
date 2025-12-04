@@ -1,14 +1,146 @@
 ---
 title: 'Configure Reasoning'
-description: 'Customizing how Honcho handles peers and sessions'
+description: 'Customizing how Honcho handles peers, sessions, and messages'
 icon: 'wrench'
 ---
 
-Entities in Honcho can sometimes be configured to change the behavior of the deriver, which is responsible for generating and storing facts, summaries, and user representations.
+TODO: remove deriver references
 
-These configurations can be set at the peer, session, and session-peer level (AKA the state of a peer within a specific session).
+Honcho's reasoning engine can be configured at multiple levels to control how it processes messages, generates facts, creates summaries, and builds peer representations.
 
-### Peer Configuration
+Configuration follows a hierarchy: **message > session > workspace > global defaults**. Settings at lower levels override those at higher levels, giving you fine-grained control over behavior.
+
+## Configuration Hierarchy
+
+Honcho uses a hierarchical configuration system where more specific settings override more general ones:
+
+1. **Global Defaults**: Built-in system defaults
+2. **Workspace Configuration**: Settings that apply to all sessions in a workspace
+3. **Session Configuration**: Settings that apply to all messages in a session
+4. **Message Configuration**: Settings that apply to a specific message
+
+<Info>
+All configuration fields are optional. If not specified, the value is inherited from the next level up in the hierarchy.
+</Info>
+
+## Configuration Options
+
+### Deriver Configuration
+
+Controls the core reasoning engine that extracts facts and insights from messages.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Whether to enable deriver functionality. When disabled, no facts or representations are generated. |
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+
+# Disable deriver at session level
+session = honcho.session("private-session", config={
+    "deriver": {"enabled": False}
+})
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+const honcho = new Honcho({});
+
+// Disable deriver at session level
+const session = await honcho.session("private-session", {
+    config: {
+        deriver: { enabled: false }
+    }
+});
+```
+</CodeGroup>
+
+### Peer Card Configuration
+
+Controls how peer cards (concise summaries of what's known about a peer) are generated and used.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `use` | `bool` | Whether to use peer cards during the deriver process. |
+| `create` | `bool` | Whether to generate peer cards based on message content. |
+
+<CodeGroup>
+```python Python
+# Disable peer card generation but still use existing cards
+session = honcho.session("my-session", config={
+    "peer_card": {"create": False, "use": True}
+})
+```
+```typescript TypeScript
+// Disable peer card generation but still use existing cards
+const session = await honcho.session("my-session", {
+    config: {
+        peer_card: { create: false, use: true }
+    }
+});
+```
+</CodeGroup>
+
+### Summary Configuration
+
+Controls automatic conversation summarization. Available at workspace and session levels only.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Whether to enable summary functionality. |
+| `messages_per_short_summary` | `int` | Number of messages between short summaries. Must be ≥ 10. |
+| `messages_per_long_summary` | `int` | Number of messages between long summaries. Must be ≥ 20 and greater than `messages_per_short_summary`. |
+
+<CodeGroup>
+```python Python
+# Customize summary frequency
+session = honcho.session("verbose-session", config={
+    "summary": {
+        "enabled": True,
+        "messages_per_short_summary": 15,
+        "messages_per_long_summary": 45
+    }
+})
+```
+```typescript TypeScript
+// Customize summary frequency
+const session = await honcho.session("verbose-session", {
+    config: {
+        summary: {
+            enabled: true,
+            messages_per_short_summary: 15,
+            messages_per_long_summary: 45
+        }
+    }
+});
+```
+</CodeGroup>
+
+### Dream Configuration
+
+Controls the "dreaming" process that consolidates and refines representations. Available at workspace and session levels only.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Whether to enable dream functionality. Automatically disabled if deriver is disabled. |
+
+<CodeGroup>
+```python Python
+# Disable dreams for a workspace
+# (done via API when creating/updating workspace)
+```
+```typescript TypeScript
+// Disable dreams for a workspace
+// (done via API when creating/updating workspace)
+```
+</CodeGroup>
+
+---
+
+## Peer Configuration
 
 By default, all peers are "observed" by Honcho. This means that Honcho will derive facts from messages sent by the peer and generate a representation of them. In most cases, this is why you use Honcho! However, sometimes an application requires a peer that should not be observed: for example, an assistant or game NPC that your program will never need to ask questions about.
 
@@ -27,7 +159,7 @@ honcho = Honcho()
 peer = honcho.peer("my-peer", config={"observe_me": False})
 
 # Change peer's configuration
-peer.set_peer_config({"observe_me": True})
+peer.set_config({"observe_me": True})
 
 # Note: creating the same peer again will also replace the configuration
 peer = honcho.peer("my-peer", config={"observe_me": False})
@@ -43,7 +175,7 @@ import { Honcho } from "@honcho-ai/sdk";
     const peer = await honcho.peer("my-peer", { config: { observe_me: false } });
 
     // Change peer's configuration
-    await peer.setPeerConfig({ observe_me: true });
+    await peer.setConfig({ observe_me: true });
 
     // Note: creating the same peer again will also replace the configuration
     await honcho.peer("my-peer", { config: { observe_me: false } });
@@ -51,9 +183,9 @@ import { Honcho } from "@honcho-ai/sdk";
 ```
 </CodeGroup>
 
-### Session Configuration
+## Session Configuration
 
-By default, all sessions have the deriver enabled, much like peers. You may create a session that escapes the deriver's watchful eye by setting the `deriver_disabled` flag to `true`. You can update the flag by calling `get_or_create` on the session with a new configuration.
+Sessions support the full configuration schema. You can disable the deriver entirely for a session, customize summary behavior, or adjust peer card settings.
 
 <CodeGroup>
 ```python Python
@@ -62,8 +194,18 @@ from honcho import Honcho
 # Initialize client
 honcho = Honcho()
 
-# Create session with configuration
-session = honcho.session("my-session", config={"deriver_disabled": True})
+# Create session with deriver disabled
+session = honcho.session("my-session", config={
+    "deriver": {"enabled": False}
+})
+
+# Create session with custom summary settings
+session = honcho.session("detailed-session", config={
+    "summary": {
+        "messages_per_short_summary": 10,
+        "messages_per_long_summary": 30
+    }
+})
 ```
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
@@ -72,15 +214,73 @@ import { Honcho } from "@honcho-ai/sdk";
     // Initialize client
     const honcho = new Honcho({});
 
-    // Create session with configuration
-    const session = await honcho.session("my-session", { config: { deriver_disabled: true } });
+    // Create session with deriver disabled
+    const session = await honcho.session("my-session", {
+        config: { deriver: { enabled: false } }
+    });
+
+    // Create session with custom summary settings
+    const detailedSession = await honcho.session("detailed-session", {
+        config: {
+            summary: {
+                messages_per_short_summary: 10,
+                messages_per_long_summary: 30
+            }
+        }
+    });
 })();
 ```
 </CodeGroup>
 
-### Session-Peer Configuration
+## Message Configuration
 
-Configuration at the session-peer level is the most common use case for configuration flags. You will often want to arrange a session such that certain peers observe others in order to form "local representations" of them. There are two flags that can be set at the session-peer level:
+Individual messages can override session and workspace configuration for fine-grained control. This is useful for excluding specific messages from processing or adjusting behavior on a per-message basis.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+session = honcho.session("my-session")
+user = honcho.peer("user")
+
+# Create a message that skips deriver processing
+session.add_messages([
+    user.message("This message won't be analyzed", config={
+        "deriver": {"enabled": False}
+    })
+])
+
+# Create a message with custom peer card settings
+session.add_messages([
+    user.message("Use existing card but don't update it", config={
+        "peer_card": {"use": True, "create": False}
+    })
+])
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    const honcho = new Honcho({});
+    const session = await honcho.session("my-session");
+    const user = await honcho.peer("user");
+
+    // Create a message that skips deriver processing
+    await session.addMessages([
+        user.message("This message won't be analyzed", {
+            configuration: { deriver: { enabled: false } }
+        })
+    ]);
+})();
+```
+</CodeGroup>
+
+## Session-Peer Configuration
+
+Configuration at the session-peer level controls how peers observe each other within a specific session. This is the most common use case for enabling "local representations" — where one peer forms a model of another peer based only on what they observe in that session.
+
+There are two flags that can be set at the session-peer level:
 
 - `observe_me`: Whether this peer should *be observed* by others in the session. By default, this is `true`. This overrides the peer-level `observe_me` flag.
 
@@ -96,7 +296,7 @@ You can dynamically change the configuration of a session-peer by calling `set_p
 
 <CodeGroup>
 ```python Python
-from honcho import Honcho
+from honcho import Honcho, SessionPeerConfig
 
 # Initialize client
 honcho = Honcho()
@@ -113,11 +313,11 @@ session.add_peers([alice, bob])
 
 # Add another peer to the session with a custom configuration
 charlie = honcho.peer("charlie")
-session.add_peers([charlie, {"observe_me": False, "observe_others": True}])
+session.add_peers([(charlie, SessionPeerConfig(observe_me=False, observe_others=True))])
 
 # Set session-peer configuration
-session.set_peer_config(alice, {"observe_others": True})
-session.set_peer_config(bob, {"observe_me": False})
+session.set_peer_config(alice, SessionPeerConfig(observe_others=True))
+session.set_peer_config(bob, SessionPeerConfig(observe_me=False))
 
 # Get session-peer configuration
 charlie_config = session.get_peer_config(charlie)
@@ -142,7 +342,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
     // Add another peer to the session with a custom configuration
     const charlie = await honcho.peer("charlie");
-    await session.addPeers([charlie, { observe_me: false, observe_others: true }]);
+    await session.addPeers([[charlie, { observe_me: false, observe_others: true }]]);
 
     // Set session-peer configuration
     await session.setPeerConfig(alice, { observe_others: true });
@@ -154,3 +354,45 @@ import { Honcho } from "@honcho-ai/sdk";
 })();
 ```
 </CodeGroup>
+
+## Full Configuration Schema Reference
+
+### Workspace & Session Configuration
+
+```json
+{
+  "deriver": {
+    "enabled": true
+  },
+  "peer_card": {
+    "use": true,
+    "create": true
+  },
+  "summary": {
+    "enabled": true,
+    "messages_per_short_summary": 20,
+    "messages_per_long_summary": 60
+  },
+  "dream": {
+    "enabled": true
+  }
+}
+```
+
+### Message Configuration
+
+```json
+{
+  "deriver": {
+    "enabled": true
+  },
+  "peer_card": {
+    "use": true,
+    "create": true
+  }
+}
+```
+
+<Note>
+Message configuration only supports `deriver` and `peer_card` settings. Summary and dream configurations are session/workspace-level only.
+</Note>
