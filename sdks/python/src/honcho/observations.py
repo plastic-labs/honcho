@@ -262,7 +262,9 @@ class ObservationScope:
         request_observations = [
             {
                 "content": obs["content"],
-                "session_id": obs["session_id"],
+                "session_id": obs["session_id"]
+                if isinstance(obs["session_id"], str)
+                else obs["session_id"].id,
                 "observer_id": self.observer,
                 "observed_id": self.observed,
             }
@@ -511,7 +513,9 @@ class AsyncObservationScope:
         request_observations = [
             {
                 "content": obs["content"],
-                "session_id": obs["session_id"],
+                "session_id": obs["session_id"]
+                if isinstance(obs["session_id"], str)
+                else obs["session_id"].id,
                 "observer_id": self.observer,
                 "observed_id": self.observed,
             }

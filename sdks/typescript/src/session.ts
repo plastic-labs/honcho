@@ -1069,14 +1069,9 @@ export class Session {
     })
 
     // Build body with file and peer_id, plus optional fields as JSON strings
-    // Extract peer ID (peer can be string or {id: string})
-    const peerId =
-      typeof uploadParams.peer === 'string'
-        ? uploadParams.peer
-        : uploadParams.peer.id
     const body = {
       file: uploadParams.file,
-      peer_id: peerId,
+      peer_id: resolvedPeerId,
       ...(uploadParams.metadata !== undefined && uploadParams.metadata !== null
         ? { metadata: JSON.stringify(uploadParams.metadata) }
         : {}),

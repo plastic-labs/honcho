@@ -1,3 +1,5 @@
+import type { Session } from './session'
+
 /**
  * Shared types for the Honcho TypeScript SDK.
  */
@@ -20,8 +22,8 @@ export interface Observation {
 export interface ObservationCreateParam {
   /** The observation content/text */
   content: string
-  /** The session this observation relates to */
-  sessionId: string
+  /** The session this observation relates to (ID string or Session object) */
+  sessionId: string | Session
 }
 
 /**

@@ -50,7 +50,7 @@ class _EmbeddingClient:
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 
-        self.encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base")
+        self.encoding: tiktoken.Encoding = tiktoken.get_encoding("cl200k_base")
         self.max_embedding_tokens_per_request: int = (
             settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )

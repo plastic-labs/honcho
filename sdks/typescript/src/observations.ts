@@ -277,7 +277,8 @@ export class ObservationScope {
     // Build the request body with observer/observed from scope
     const requestObservations = observationArray.map((obs) => ({
       content: obs.content,
-      session_id: obs.sessionId,
+      session_id:
+        typeof obs.sessionId === 'string' ? obs.sessionId : obs.sessionId.id,
       observer_id: this.observer,
       observed_id: this.observed,
     }))
