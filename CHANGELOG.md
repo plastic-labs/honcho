@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 
 - File uploads to match `MessageCreate` structure
+- Cache invalidation strategy
 
 ## [2.4.3] - 2025-11-20
 
