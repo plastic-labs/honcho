@@ -4,9 +4,7 @@ icon: "user-magnifying-glass"
 sidebarTitle: "Representations"
 ---
 
-TODO: this is all ai generated, i haven't reviewed it
-
-A peer representation is the collection of reasoning Honcho has done about a peer over time. It's not a static profile or a snapshot--it's the accumulated output of continuous formal logical reasoning about everything that peer has said and done.
+A peer representation is the collection of reasoning Honcho has done about a peer over time. It's not a static profile or a snapshot--it's the accumulated output of continuous reasoning about every message that's been written to the peer. Representations evolve dynamically as new messages come in, with Honcho reasoning about them in the context of existing conclusions, reconciling contradictions and refining understanding.
 
 When you write messages to Honcho, the reasoning models extract premises, draw conclusions, and generate insights. All of that reasoning--observations, conclusions, summaries, peer cards--gets stored as the peer's representation. Think of it as Honcho's understanding of who that peer is, what they care about, and how they behave, built through formal logic rather than simple storage.
 
@@ -20,59 +18,51 @@ A peer representation is made up of several types of artifacts that Honcho gener
 
 **Summaries** capture the essence of sessions. Short summaries are generated every 20 messages by default, and long summaries every 60 messages. These help compress conversation history into dense, queryable context.
 
-**Peer cards** are personality summaries and psychological profiles. They synthesize multiple conclusions into a cohesive understanding of the peer's characteristics, preferences, and behavioral patterns.
+**Peer cards** contain key biographical information. They essentially cache the most basic information about a peer (name, occupation, interests) to ensure the model never loses its grounding.
 
 The reasoning flows from observations to conclusions to higher-order artifacts. Each layer builds on what came before, creating a rich, queryable representation.
 
-## How Representations Are Built
+<Note>
+For details on how reasoning works (deduction, induction, abduction), see the [Reasoning](/v2/documentation/core-concepts/reasoning) page.
+</Note>
 
-Representations grow and evolve as you write data to Honcho. Here's the process:
+## Observation & Perspective-Taking
 
-Messages come in attributed to a peer and stored in a session. Those messages get enqueued for background reasoning. The reasoning models extract explicit premises from the message content, then use those premises to draw deductive conclusions. Those conclusions become the basis for inductive and abductive reasoning, generating patterns and explanations.
+Honcho can build different representations based on what each peer observes. This enables sophisticated multi-peer scenarios where understanding is relative to what was actually witnessed.
 
-All of these artifacts--observations, conclusions, summaries--are indexed in vector storage as part of the peer's representation. When you query Honcho for context about a peer, it retrieves relevant pieces of that representation and composes them into a response.
+There are two observation modes controlled by configuration:
 
-Representations are containers for reasoning, not just memory storage. They're dynamic--as new messages come in, Honcho reasons about them in the context of existing conclusions, refining and extending its understanding. Contradictions get reconciled, patterns get reinforced or revised, and the representation becomes more accurate over time.
+**Honcho observing peers** (`observe_me`): When enabled (default), Honcho forms a representation of the peer based on all messages they've sent across all sessions. This is Honcho's understanding of that peer, built from everything they've said and done in your system. Set `observe_me: false` if you don't want Honcho to reason about that peer at all.
 
-## Perspective-Taking
-
-Honcho can model how different peers perceive each other based on their interactions. This enables sophisticated multi-peer scenarios where understanding is relative, not absolute.
-
-There are two types of representations:
-
-**Self-representations** are built from all messages a peer has sent across all their sessions. This is Honcho's understanding of the peer itself, informed by everything that peer has said and done in your system.
-
-**Other-representations** are a peer's understanding of another peer, built only from messages they've observed from that peer. If Alice and Bob are in a session together, Bob's other-representation of Alice is based solely on what Alice said in sessions Bob was part of. Bob's representation of Alice might be completely different from Carol's representation of Alice if they've observed different interactions.
+**Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. If Alice and Opus are in a session together and Opus has `observe_others: true`, Opus will form a representation of Alice based solely on what Alice said in sessions Opus participated in. Opus's representation of Alice will be completely different from Carol's representation of Alice if they've observed different interactions.
 
 ![](/images/perspectives.jpeg)
 
-The diagram above shows how perspective-taking works in practice. Each peer can maintain their own representation (self) and representations of other peers they've interacted with, all based on what they've observed.
+The diagram above shows observation in practice. Honcho can observe each peer (forming representations based on everything they say), and individual peers can observe others (forming representations based only on what they witness in shared sessions).
 
-This perspective-taking ability is configured through the `observe_me` and `observe_others` settings. A peer's `observe_me` configuration controls whether Honcho forms a representation of them at all. The `observe_others` configuration (set at the session level) controls whether a peer should form representations of other peers in that session.
+Why would you want peers observing others? In multi-agent systems, different agents have access to different information. If Opus participates in sessions 1 and 2 with Alice, while Sonnet only participates in session 3, Opus's representation of Alice will be built from sessions 1 and 2, while Sonnet's representation will only include what happened in session 3. This information segmentation based on what each agent observed is critical for accurately modeling multi-agent scenarios.
 
-Why would you want this? In multi-agent systems, different agents might need different understandings of the same peer based on their role. A support agent might see a user as frustrated and time-sensitive, while a sales agent in a different context sees the same user as curious and exploratory. Perspective-taking lets you model these different viewpoints accurately.
+<Note>
+By default, `observe_me` is `true` (Honcho observes all peers) and `observe_others` is `false` (peers don't observe each other). You can configure both at the peer and session level depending on your needs.
+</Note>
 
 ## Querying Representations
 
 There are two main ways to access what Honcho knows about a peer:
 
-The **chat endpoint** (`/peers/{peer_id}/chat`) lets you query representations with natural language. You can ask "What should I know about this user?" or "What motivates this peer?" and Honcho will retrieve relevant conclusions from the representation and synthesize an answer. This is useful when you want insights about a peer to inform how your agent should interact with them.
+The **get_context endpoint** (`/sessions/{session_id}/context`) retrieves structured context for a specific session, including recent messages, summaries, and reasoning about the peers involved. This is what you use when building the prompt for your agent's next response. The goal of get_context is to solve statefulness with one method--it gives you everything you need in one call to make your agent feel like it remembers.
 
-The **get_context endpoint** (`/sessions/{session_id}/context`) retrieves structured context for a specific session, including recent messages, summaries, and reasoning about the peers involved. This is what you use when building the prompt for your agent's next response--it gives you everything you need in one call.
+The **chat endpoint** (`/peers/{peer_id}/chat`) lets you query representations with natural language. You can ask "What should I know about this user?" or "What motivates this peer?" and Honcho will retrieve relevant conclusions from the representation and synthesize an answer. Use this when you need super specific context that requires bespoke querying and synthesis--insights that might lie outside the distribution of what get_context provides. This is useful for steering agent behavior based on deep understanding of a peer.
 
-Use the chat endpoint when you want to understand a peer. Use get_context when you want to build a contextualized response.
+Use get_context for standard contextualized responses. Use chat when you need to dig deeper or query for something specific.
 
 ## Why Representations Work
 
-Traditional memory systems store facts and retrieve them when queries are semantically similar. Honcho's representation approach is fundamentally different.
+Statefulness is simulated through reconstruction of the past. Traditional systems reconstruct by retrieving stored facts when queries are semantically similar. Honcho reconstructs through reasoning, which changes everything.
 
-Representations are built through reasoning, which means they can surface insights that were never explicitly stated. If a user mentions they're saving for a house in one session and complains about subscription costs in another, Honcho can conclude they're budget-conscious without anyone saying "I'm budget-conscious." The reasoning connects the dots.
+Reasoning can surface insights never explicitly stated. If a user mentions they're saving for a house in one session and complains about subscription costs in another, Honcho can conclude they're budget-conscious without anyone saying it. Reasoning handles contradictions gracefully--when new information conflicts with old conclusions, it reconciles them instead of just accumulating more data. And reasoning enables prediction under uncertainty, inferring what's likely true based on patterns even when data is incomplete.
 
-Representations handle contradictions gracefully. If new information conflicts with old conclusions, the reasoning process reconciles them. Facts stored in a database just sit there--reasoning adapts.
-
-Representations enable prediction under uncertainty. Traditional systems can only retrieve what was put in. Honcho can infer what's likely to be true based on patterns and logical reasoning, even when data is incomplete.
-
-This is why representations are more powerful than memory--they're not just storage, they're understanding.
+Humans reconstruct the past from imperfect recollections, then act on those reconstructions as if they were complete. Reasoning enables agents to do this perfectly. Representations produce an exhaustive, explicit record of what can be concluded about a peer--giving agents a complete foundation that humans can only pretend to have. That's what makes truly stateful agents possible.
 
 ## Next Steps
 

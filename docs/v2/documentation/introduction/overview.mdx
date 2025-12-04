@@ -43,11 +43,11 @@ Honcho has four core primitives that work together:
 - **Sessions** - Interaction threads between peers with temporal boundaries
 - **Messages** - Units of interaction that trigger reasoning
 
-When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical [*reasoning*](/v2/documentation/core-concepts/reasoning) (deduction, induction, abduction) to generate insights about each peer. These insights--observations, conclusions, summaries--are stored as peer [*representations*](/v2/documentation/core-concepts/representation) that you can query to provide rich context for your agents.
+When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical [*reasoning*](/v2/documentation/core-concepts/reasoning) (deduction, induction, abduction) to generate insights about each peer. These insights--observations, conclusions, summaries--are stored as [*representations*](/v2/documentation/core-concepts/representation) that you can query to provide rich context for your agents.
 
 ![Honcho Architecture](/images/architecture.png)
 
-The diagram above shows the flow: agents write messages to Honcho, which triggers reasoning that updates peer representations. Agents can then query those representations to get additional context for their next response.
+The diagram above shows the flow: agents write messages to Honcho, which triggers reasoning that updates what's stored in representations. Develoers (or agents) can then query to get additional context for their next response.
 
 ## Why Reasoning?
 
@@ -57,7 +57,7 @@ Honcho uses formal logic to generate new insights by combining premises. This re
 
 ## Get Started
 
-Honcho gives you maximum control over your agent's context and memory. The data model is flexible and composable, the reasoning backend is powerful yet cost-effective, and everything is built to give developers control over token usage, latency, and personalization depth.
+Honcho gives you maximum control over your agent's context and memory. The data model is flexible and composable, the reasoning backend is powerful yet cost-effective, and everything is built to give developers levers to manage token usage, latency, and reasoning depth.
 
 We're just scratching the surface. Dive into the quickstart to see Honcho in action, explore the architecture to understand how it all fits together, or jump straight to building.
 
