@@ -14,9 +14,9 @@ def _convert_observation(item: Any) -> dict[str, Any]:
     """Convert a core SDK Observations model to a dict for our Observation class."""
     if hasattr(item, "model_dump"):
         # Pydantic model - use model_dump()
-        return item.model_dump()
+        return item.model_dump()  # type: ignore[no-any-return]
     elif isinstance(item, dict):
-        return item
+        return cast(dict[str, Any], item)
     else:
         # Fallback: access as object attributes
         return {

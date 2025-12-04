@@ -15,13 +15,13 @@ from honcho_core.types.workspaces.sessions.message_create_param import Configura
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .base import PeerBase, SessionBase
-from .peer import Peer
 from .pagination import SyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
     from .types import Representation
+    from .peer import Peer
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +264,7 @@ class Session(SessionBase):
         Returns:
             A list of Peer objects that are members of this session
         """
+        from .peer import Peer
 
         peers_page = self._client.workspaces.sessions.peers.list(
             session_id=self.id,

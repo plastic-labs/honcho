@@ -582,7 +582,7 @@ class ObservationCreate(BaseModel):
         if self._token_count > settings.MAX_EMBEDDING_TOKENS:
             raise ValueError(
                 f"Content exceeds maximum embedding token limit of {settings.MAX_EMBEDDING_TOKENS} "
-                f"(got {self._token_count} tokens)"
+                + f"(got {self._token_count} tokens)"
             )
         return self
 

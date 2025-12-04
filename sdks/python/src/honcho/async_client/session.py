@@ -16,13 +16,13 @@ from honcho_core.types.workspaces.sessions.message_create_param import Configura
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from ..base import PeerBase, SessionBase
-from .peer import AsyncPeer
 from ..session_context import SessionContext, SessionSummaries, Summary
 from ..utils import prepare_file_for_upload
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
     from ..types import Representation
+    from .peer import AsyncPeer
 
 logger = logging.getLogger(__name__)
 

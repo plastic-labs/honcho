@@ -711,7 +711,7 @@ class AsyncPeer(PeerBase):
         """
         from ..observations import AsyncObservationScope as _AsyncObservationScope
 
-        target_id = target.id if isinstance(target, AsyncPeer) else target
+        target_id = target.id if isinstance(target, PeerBase) else target
         return _AsyncObservationScope(
             self._client, self.workspace_id, self.id, target_id
         )

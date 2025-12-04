@@ -680,7 +680,7 @@ class Peer(PeerBase):
         """
         from .observations import ObservationScope as _ObservationScope
 
-        target_id = target.id if isinstance(target, Peer) else target
+        target_id = target.id if isinstance(target, PeerBase) else target
         return _ObservationScope(self._client, self.workspace_id, self.id, target_id)
 
     def __repr__(self) -> str:

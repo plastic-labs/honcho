@@ -346,7 +346,7 @@ class LongMemEvalRunner:
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_deriver_status(session_id=session_id)
+                status = await honcho_client.get_deriver_status(session=session_id)
             except Exception as _e:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
