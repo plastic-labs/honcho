@@ -161,9 +161,38 @@ class VectorStore(ABC):
 _vector_store_instance: VectorStore | None = None
 
 
+def _create_vector_store() -> VectorStore:
+    """
+    Create a new vector store instance based on configuration.
+
+    Returns:
+        The vector store instance based on configuration.
+
+    Raises:
+        ValueError: If the configured vector store type is invalid.
+    """
+    store_type = settings.VECTOR_STORE.TYPE
+
+    if store_type == "turbopuffer":
+        from src.vector_store.turbopuffer import TurbopufferVectorStore
+
+        return TurbopufferVectorStore()
+    elif store_type == "lancedb":
+        from src.vector_store.lancedb import LanceDBVectorStore
+
+        return LanceDBVectorStore()
+    else:
+        raise ValueError(f"Unknown vector store type: {store_type}")
+
+
 def get_vector_store() -> VectorStore:
     """
-    Get the configured vector store instance (singleton).
+    FastAPI dependency that provides the configured vector store instance (singleton).
+
+    This function is designed to be used as a FastAPI dependency:
+        vector_store: VectorStore = Depends(get_vector_store)
+
+    It can also be called directly for non-request contexts (e.g., background tasks).
 
     Returns:
         The vector store instance based on configuration.
@@ -173,23 +202,20 @@ def get_vector_store() -> VectorStore:
     """
     global _vector_store_instance
 
-    if _vector_store_instance is not None:
-        return _vector_store_instance
-
-    store_type = settings.VECTOR_STORE.TYPE
-
-    if store_type == "turbopuffer":
-        from src.vector_store.turbopuffer import TurbopufferVectorStore
-
-        _vector_store_instance = TurbopufferVectorStore()
-    elif store_type == "lancedb":
-        from src.vector_store.lancedb import LanceDBVectorStore
-
-        _vector_store_instance = LanceDBVectorStore()
-    else:
-        raise ValueError(f"Unknown vector store type: {store_type}")
+    if _vector_store_instance is None:
+        _vector_store_instance = _create_vector_store()
 
     return _vector_store_instance
+
+
+def reset_vector_store() -> None:
+    """
+    Reset the vector store singleton instance.
+
+    This is primarily useful for testing to ensure a fresh instance is created.
+    """
+    global _vector_store_instance
+    _vector_store_instance = None
 
 
 __all__ = [
@@ -197,4 +223,5 @@ __all__ = [
     "VectorRecord",
     "QueryResult",
     "get_vector_store",
+    "reset_vector_store",
 ]

@@ -6,10 +6,11 @@ for use in self-hosted deployments of Honcho.
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import lancedb
 import pyarrow as pa
+from lancedb import AsyncConnection, AsyncTable
 
 from src.config import settings
 
@@ -27,27 +28,37 @@ class LanceDBVectorStore(VectorStore):
     """
     LanceDB implementation of the VectorStore interface.
 
-    Uses LanceDB's embedded mode for local vector storage.
+    Uses LanceDB's async embedded mode for local vector storage.
     Each namespace corresponds to a LanceDB table.
     """
 
-    _db: lancedb.DBConnection
+    _db: AsyncConnection | None = None
+    _db_path: str
 
     def __init__(self):
         """Initialize the LanceDB vector store."""
         super().__init__()
-        self._db = lancedb.connect(settings.VECTOR_STORE.LANCEDB_PATH)
+        self._db_path = settings.VECTOR_STORE.LANCEDB_PATH
+        self._db = None
 
-    def _get_table(self, namespace: str) -> lancedb.table.Table | None:
+    async def _get_db(self) -> AsyncConnection:
+        """Get or create the async database connection."""
+        if self._db is None:
+            self._db = await lancedb.connect_async(self._db_path)
+        return self._db
+
+    async def _get_table(self, namespace: str) -> AsyncTable | None:
         """Get a table if it exists, otherwise return None."""
-        if namespace in self._db.table_names():
-            return self._db.open_table(namespace)
+        db = await self._get_db()
+        table_names = await db.table_names()
+        if namespace in table_names:
+            return await db.open_table(namespace)
         return None
 
-    def _get_or_create_table(
+    async def _get_or_create_table(
         self, namespace: str, sample_data: list[dict[str, Any]] | None = None
-    ) -> lancedb.table.Table:
-        """_get_or_create_table
+    ) -> AsyncTable:
+        """
         Get existing table or create if not exists.
 
         Args:
@@ -55,14 +66,16 @@ class LanceDBVectorStore(VectorStore):
             sample_data: Optional sample data to infer schema from
 
         Returns:
-            LanceDB table
+            LanceDB async table
         """
-        if namespace in self._db.table_names():
-            return self._db.open_table(namespace)
+        db = await self._get_db()
+        table_names = await db.table_names()
+        if namespace in table_names:
+            return await db.open_table(namespace)
 
         # Create table with sample data if provided
         if sample_data:
-            return self._db.create_table(namespace, data=sample_data)
+            return await db.create_table(namespace, data=sample_data)
 
         # Create empty table with base schema
         schema = pa.schema(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
@@ -71,7 +84,7 @@ class LanceDBVectorStore(VectorStore):
                 pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSION)),  # pyright: ignore[reportUnknownMemberType]
             ]
         )
-        return self._db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
+        return await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
 
     def _row_to_dict(self, vector: VectorRecord) -> dict[str, Any]:
         """Convert a VectorRecord to a dict for LanceDB."""
@@ -98,10 +111,15 @@ class LanceDBVectorStore(VectorStore):
         """
         try:
             row = self._row_to_dict(vector)
-            table = self._get_or_create_table(namespace, sample_data=[row])
+            table = await self._get_or_create_table(namespace, sample_data=[row])
 
             # Use merge_insert for upsert behavior
-            table.merge_insert("id").when_matched_update_all().execute([row])
+            await (
+                table.merge_insert("id")
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute([row])
+            )
 
             logger.debug(f"Upserted vector {vector.id} to namespace {namespace}")
         except Exception:
@@ -127,12 +145,15 @@ class LanceDBVectorStore(VectorStore):
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
-            table = self._get_or_create_table(namespace, sample_data=rows)
+            table = await self._get_or_create_table(namespace, sample_data=rows)
 
             # Use merge_insert for upsert behavior
-            table.merge_insert(
-                "id"
-            ).when_matched_update_all().when_not_matched_insert_all().execute(rows)
+            await (
+                table.merge_insert("id")
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute(rows)
+            )
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
         except Exception:
@@ -163,44 +184,44 @@ class LanceDBVectorStore(VectorStore):
         Returns:
             List of QueryResult objects, ordered by similarity (most similar first)
         """
-        table = self._get_table(namespace)
+        table = await self._get_table(namespace)
         if table is None:
             logger.debug(f"Table {namespace} does not exist, returning empty results")
             return []
 
         try:
-            # Build query (LanceDB types are incomplete, so type checker reports false positive)
-            query = table.search(embedding).distance_type("cosine").limit(top_k)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType, reportUnknownMemberType]
+            # Build query
+            query = table.vector_search(embedding).distance_type("cosine").limit(top_k)
 
             # Apply filters if provided
             if filters:
                 where_clause = self._build_where_clause(filters)
                 if where_clause:
-                    query = query.where(where_clause)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                    query = query.where(where_clause)
 
             # Execute query
-            results = query.to_list()  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            # LanceDB async API returns list of dicts with incomplete type annotations
+            results = cast(list[dict[str, Any]], await query.to_list())
 
             # Convert to QueryResult objects
             query_results: list[QueryResult] = []
-            for row in results:  # pyright: ignore[reportUnknownVariableType]
-                dist = float(row.get("_distance", 0.0))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            for row in results:
+                dist = float(row.get("_distance", 0.0))
 
                 # Filter by max_distance if specified
                 if max_distance is not None and dist > max_distance:
                     continue
 
                 # Extract metadata (everything except id, vector, _distance)
-                # Type annotations for dict comprehension to satisfy type checker
                 metadata: dict[str, Any] = {
                     k: v
-                    for k, v in row.items()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    for k, v in row.items()
                     if k not in ("id", "vector", "_distance")
                 }
 
                 query_results.append(
                     QueryResult(
-                        id=str(row["id"]),  # pyright: ignore[reportUnknownArgumentType]
+                        id=str(row["id"]),
                         score=dist,
                         metadata=metadata,
                     )
@@ -255,7 +276,7 @@ class LanceDBVectorStore(VectorStore):
         if not ids:
             return
 
-        table = self._get_table(namespace)
+        table = await self._get_table(namespace)
         if table is None:
             logger.debug(f"Table {namespace} does not exist, nothing to delete")
             return
@@ -264,7 +285,7 @@ class LanceDBVectorStore(VectorStore):
             # Build IN clause with properly escaped IDs
             escaped_ids = [f"'{id.replace(chr(39), chr(39) + chr(39))}'" for id in ids]
             in_clause = ", ".join(escaped_ids)
-            table.delete(f"id IN ({in_clause})")
+            await table.delete(f"id IN ({in_clause})")
             logger.debug(f"Deleted {len(ids)} vectors from namespace {namespace}")
         except Exception:
             logger.exception(
@@ -280,8 +301,10 @@ class LanceDBVectorStore(VectorStore):
             namespace: The namespace (table) to delete
         """
         try:
-            if namespace in self._db.table_names():
-                self._db.drop_table(namespace)
+            db = await self._get_db()
+            table_names = await db.table_names()
+            if namespace in table_names:
+                await db.drop_table(namespace)
             else:
                 logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
         except Exception:

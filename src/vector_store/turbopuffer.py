@@ -9,8 +9,8 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from turbopuffer import NotFoundError, Turbopuffer
-from turbopuffer.lib.namespace import Namespace
+from turbopuffer import AsyncTurbopuffer, NotFoundError
+from turbopuffer.lib.namespace import AsyncNamespace
 from turbopuffer.types import Filter
 
 from src.config import settings
@@ -30,13 +30,13 @@ class TurbopufferVectorStore(VectorStore):
     """
     Turbopuffer implementation of the VectorStore interface.
 
-    Uses Turbopuffer's Python SDK for vector operations.
+    Uses Turbopuffer's async Python SDK for vector operations.
     Each namespace corresponds to either:
     - A document collection: {prefix}.{workspace}.{observer}.{observed}
     - A workspace's message embeddings: {prefix}.{workspace}.messages
     """
 
-    tpuf: Turbopuffer
+    tpuf: AsyncTurbopuffer
 
     def __init__(self):
         """
@@ -51,12 +51,12 @@ class TurbopufferVectorStore(VectorStore):
                 "VECTOR_STORE_TURBOPUFFER_API_KEY must be set for Turbopuffer vector store"
             )
 
-        # Initialize the Turbopuffer client
+        # Initialize the async Turbopuffer client
         # Region can be configured via VECTOR_STORE_TURBOPUFFER_REGION or TURBOPUFFER_REGION env var
         region = settings.VECTOR_STORE.TURBOPUFFER_REGION or "gcp-us-east4"
-        self.tpuf = Turbopuffer(api_key=api_key, region=region)
+        self.tpuf = AsyncTurbopuffer(api_key=api_key, region=region)
 
-    def _get_namespace(self, namespace: str) -> Namespace:
+    def _get_namespace(self, namespace: str) -> AsyncNamespace:
         """Get a Turbopuffer namespace object."""
         return self.tpuf.namespace(namespace)
 
@@ -85,7 +85,7 @@ class TurbopufferVectorStore(VectorStore):
                 **attributes,
             }
 
-            ns.write(
+            await ns.write(
                 upsert_rows=[row],
                 distance_metric=DISTANCE_METRIC,
             )
@@ -122,7 +122,7 @@ class TurbopufferVectorStore(VectorStore):
         ]
 
         try:
-            ns.write(
+            await ns.write(
                 upsert_rows=rows,
                 distance_metric=DISTANCE_METRIC,
             )
@@ -178,7 +178,7 @@ class TurbopufferVectorStore(VectorStore):
             if filter_condition is not None:
                 query_kwargs["filters"] = filter_condition
 
-            response = ns.query(**query_kwargs)
+            response = await ns.query(**query_kwargs)
 
             query_results: list[QueryResult] = []
             for row in response.rows or []:
@@ -269,7 +269,7 @@ class TurbopufferVectorStore(VectorStore):
         ns = self._get_namespace(namespace)
 
         try:
-            ns.write(deletes=ids)
+            await ns.write(deletes=ids)
         except NotFoundError:
             # Namespace doesn't exist - nothing to delete
             logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
@@ -289,7 +289,7 @@ class TurbopufferVectorStore(VectorStore):
         ns = self._get_namespace(namespace)
 
         try:
-            ns.delete_all()
+            await ns.delete_all()
             logger.debug(f"Deleted all vectors from namespace {namespace}")
         except NotFoundError:
             # Namespace doesn't exist - nothing to delete
