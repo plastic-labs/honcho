@@ -21,6 +21,7 @@ from . import (
     test_d429de0e5338_adopt_peer_paradigm,
     test_e9b705f9adf9_add_server_defaults_to_timestamp_,
     test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
+    test_f1a2b3c4d5e6_add_chunk_index_to_message_embeddings,
 )
 
 __all__ = [
@@ -44,4 +45,5 @@ __all__ = [
     "test_d429de0e5338_adopt_peer_paradigm",
     "test_e9b705f9adf9_add_server_defaults_to_timestamp_",
     "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
+    "test_f1a2b3c4d5e6_add_chunk_index_to_message_embeddings",
 ]
