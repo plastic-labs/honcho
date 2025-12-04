@@ -66,7 +66,7 @@ Every message is attributed to a specific peer and ordered chronologically withi
 
 ## System Components
 
-TODO: devs tell me if this section is legit or not pls 
+TODO: devs tell me if this section is legit or not pls
 
 
 At a high level, Honcho has three main components that work together.
@@ -91,15 +91,12 @@ The diagram above shows how agents write messages to Honcho, which triggers reas
 
 ## Perspective Taking
 
-One of Honcho's unique capabilities is modeling how different peers perceive each other based on their interactions. When multiple peers interact in a session, Honcho can build self-representations (a peer's representation built from all messages they've sent across all sessions) and other-representations (a peer's representation of another peer, built only from messages they've observed from that peer).
+One of Honcho's unique capabilities is modeling how different peers perceive each other based on their interactions. When multiple peers interact in a session, Honcho can build a representation of a peer itself (based on all the messages they've sent across all sessions) and representations of the peers a certain peer has interacted with (built only from messages they've observed from specific peers). It makes architecting the following figure effortless:
 
-TODO: Diagram here
+![](/images/perspectives.jpeg)
 
 This perspective-taking ability enables sophisticated multi-agent scenarios where each peer maintains distinct representations of the other participants they've interacted with.
 
-<Note>
-Perspective taking can be configured at the peer or session level depending on your application's needs.
-</Note>
 
 ## Configuration & Extensibility
 
