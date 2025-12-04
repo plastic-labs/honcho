@@ -76,6 +76,27 @@ for provider_name, provider_value in SELECTED_PROVIDERS:
     if provider_value not in CLIENTS:
         raise ValueError(f"Missing client for {provider_name}: {provider_value}")
 
+# Validate backup providers are initialized if configured
+BACKUP_PROVIDERS = [
+    ("Deriver", settings.DERIVER),
+    ("PeerCard", settings.PEER_CARD),
+    ("Dialectic", settings.DIALECTIC),
+    ("Summary", settings.SUMMARY),
+    ("Dream", settings.DREAM),
+]
+
+for component_name, component_settings in BACKUP_PROVIDERS:
+    if (
+        hasattr(component_settings, "BACKUP_PROVIDER")
+        and component_settings.BACKUP_PROVIDER is not None
+        and component_settings.BACKUP_PROVIDER not in CLIENTS
+    ):
+        raise ValueError(
+            f"Backup provider for {component_name} is set to {component_settings.BACKUP_PROVIDER}, "
+            + "but this provider is not initialized. Please set the required API key/URL environment "
+            + "variables or remove the backup configuration."
+        )
+
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
@@ -232,8 +253,8 @@ async def honcho_llm_call(
         ):
             provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
             model: str = llm_settings.BACKUP_MODEL
-            logger.info(
-                f"Final retry attempt {attempt}: switching from "
+            logger.warning(
+                f"Final retry attempt {attempt}/{retry_attempts}: switching from "
                 + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
                 + f"backup {provider}/{model}"
             )
@@ -306,14 +327,20 @@ async def honcho_llm_call(
     if enable_retry:
 
         def before_retry_callback(retry_state: Any) -> None:
-            """Update attempt counter before each retry."""
-            _current_attempt.set(retry_state.attempt_number)
+            """Update attempt counter before each retry.
+
+            Note: before_sleep is called AFTER an attempt fails and BEFORE sleeping,
+            so we need to increment to the next attempt number.
+            """
+            next_attempt = retry_state.attempt_number + 1
+            _current_attempt.set(next_attempt)
             exc = retry_state.outcome.exception() if retry_state.outcome else None
             if exc:
                 logger.warning(
-                    f"Error on attempt {retry_state.attempt_number} with "
+                    f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
                     + f"{llm_settings.PROVIDER}/{llm_settings.MODEL}: {exc}"
                 )
+                logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
         decorated = retry(
             stop=stop_after_attempt(retry_attempts),

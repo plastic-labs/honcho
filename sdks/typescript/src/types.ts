@@ -1,6 +1,40 @@
+import type { Session } from './session'
+
 /**
  * Shared types for the Honcho TypeScript SDK.
  */
+
+/**
+ * Observation - external view of a document (theory-of-mind data).
+ */
+export interface Observation {
+  id: string
+  content: string
+  observer_id: string
+  observed_id: string
+  session_id: string
+  created_at: string
+}
+
+/**
+ * Parameters for creating an observation.
+ */
+export interface ObservationCreateParam {
+  /** The observation content/text */
+  content: string
+  /** The session this observation relates to (ID string or Session object) */
+  sessionId: string | Session
+}
+
+/**
+ * Parameters for semantic search of observations.
+ */
+export interface ObservationQueryParams {
+  query: string
+  top_k?: number
+  distance?: number
+  filters?: Record<string, unknown>
+}
 
 /**
  * Delta object for streaming dialectic responses.

@@ -60,7 +60,7 @@ async def get_summaries_async():
     async_client = AsyncHoncho(api_key=api_key)
 
     # Get a session
-    async_session = async_client.session("my-conversation-session")
+    async_session = await async_client.session("my-conversation-session")
 
     # Get summaries asynchronously
     summaries = await async_session.get_summaries()

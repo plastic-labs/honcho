@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Honcho?
 
-Honcho is an infrastructure layer for building AI agents with social cognition and theory of mind capabilities. Its primary purposes include:
+Honcho is an infrastructure layer for building AI agents with memory and social cognition. Its primary purposes include:
 
 - Imbuing agents with a sense of identity
 - Personalizing user experiences through understanding user psychology
@@ -14,7 +14,7 @@ Honcho is an infrastructure layer for building AI agents with social cognition a
 - Supporting development of LLM-powered applications that adapt to end users
 - Enabling multi-peer sessions where multiple participants (users or agents) can interact
 
-Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coherent models of user psychology over time, enabling more personalized and effective AI interactions.
+Honcho leverages the inherent reasoning capabilities of LLMs to build coherent models of user psychology over time, enabling more personalized and effective AI interactions.
 
 ## Core Concepts
 
@@ -32,7 +32,7 @@ Honcho uses a peer-based model where both users and agents are represented as "p
 - **Peer** (formerly User): Any participant in the system (human or AI)
 - **Session**: A conversation context that can involve multiple peers
 - **Message**: Data units that can represent communication between peers OR arbitrary data ingested by a peer to enhance its global representation
-- **Collections & Documents**: Internal vector storage for theory-of-mind representations (not exposed via API)
+- **Collections & Documents**: Internal vector storage for peer representations (not exposed via API)
 
 ## Architecture Overview
 
@@ -50,7 +50,7 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 
 #### Dialectic API (`/peers/{peer_id}/chat`)
 
-- Provides theory-of-mind informed responses
+- Provides bespoke responses informed by the representation
 - Integrates long-term facts from vector storage
 - Supports streaming responses
 - Configurable LLM providers
@@ -59,17 +59,10 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 
 1. Messages created via API (batch or single)
 2. Enqueued for background processing:
-   - `representation`: Update peer's theory of mind
+   - `representation`: Update peer's context
    - `summary`: Create session summaries
 3. Session-based queue processing ensures order
 4. Results stored internally in vector DB
-
-#### Theory of Mind System
-
-- Multiple implementation methods (conversational, single_prompt, long_term)
-- Facts extracted from messages and stored in collections
-- Representations combine short-term inference with long-term facts
-- Configurable via peer and session feature flags
 
 ### Configuration
 
@@ -179,7 +172,6 @@ src/
 ### Key Architectural Decisions
 
 1. **Multi-Peer Sessions**: Sessions can have multiple participants with different observation settings
-2. **Flexible Theory of Mind**: Pluggable ToM implementations (conversational, single_prompt, long_term)
 3. **Background Processing**: Async queue system for expensive operations
 4. **Provider Abstraction**: Model client supports multiple LLM providers
 5. **Scoped Authentication**: JWTs can be scoped to workspace, peer, or session level

@@ -104,6 +104,12 @@ describe('Honcho Client', () => {
       const metadata = { name: 'Test Peer' };
       const config = { observe_me: false };
 
+      mockClient.workspaces.peers.getOrCreate.mockResolvedValue({
+        id: 'test-peer',
+        metadata: metadata,
+        configuration: config,
+      });
+
       await honcho.peer('test-peer', { metadata, config });
 
       expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
@@ -175,6 +181,12 @@ describe('Honcho Client', () => {
     it('should create session with metadata and config', async () => {
       const metadata = { name: 'Test Session' };
       const config = { anonymous: true };
+
+      mockClient.workspaces.sessions.getOrCreate.mockResolvedValue({
+        id: 'test-session',
+        metadata: metadata,
+        configuration: config,
+      });
 
       await honcho.session('test-session', { metadata, config });
 
@@ -429,9 +441,9 @@ describe('Honcho Client', () => {
       mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus);
 
       const status = await honcho.getDeriverStatus({
-        observerId: 'observer1',
-        senderId: 'sender1',
-        sessionId: 'session1',
+        observer: 'observer1',
+        sender: 'sender1',
+        session: 'session1',
       });
 
       expect(status).toEqual({
@@ -548,7 +560,7 @@ describe('Honcho Client', () => {
       const metadata = { updated: true };
 
       await expect(honcho.updateMessage(messageId, metadata)).rejects.toThrow(
-        'sessionId is required when message is a string ID'
+        'session is required when message is a string ID'
       );
     });
 

@@ -101,6 +101,8 @@ jobs:
           SENTRY_ENABLED: false
           LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_OPENAI_COMPATIBLE_API_KEY: test-key
+          LLM_OPENAI_COMPATIBLE_BASE_URL: http://localhost:8000
           DERIVER_PROVIDER: openai
           DERIVER_MODEL: test
           DIALECTIC_PROVIDER: openai

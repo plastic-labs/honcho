@@ -23,6 +23,7 @@ from src.exceptions import HonchoException
 from src.routers import (
     keys,
     messages,
+    observations,
     peers,
     sessions,
     webhooks,
@@ -63,6 +64,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Suppress cashews Redis error logs (NoScriptError, ConnectionError, etc.)
+# These are handled gracefully by SafeRedis and don't need full tracebacks
+logging.getLogger("cashews.backends.redis.client").setLevel(logging.CRITICAL)
 
 
 # JWT Setup
@@ -134,7 +139,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.4.3",
+    version="2.5.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -169,6 +174,7 @@ app.include_router(workspaces.router, prefix="/v2")
 app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
+app.include_router(observations.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
 

@@ -137,8 +137,8 @@ class BackupLLMSettingsMixin:
     both fields are set together or both are None.
     """
 
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
+    BACKUP_PROVIDER: SupportedProviders | None = "custom"
+    BACKUP_MODEL: str | None = "x-ai/grok-4-fast"
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self):
@@ -237,7 +237,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    # Maximum number of observations to store in working representation
+    # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=50, gt=0, le=500)
@@ -331,7 +331,7 @@ class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
-    URL: str = "redis://localhost:6379/0?suppress=false"
+    URL: str = "redis://localhost:6379/0?suppress=true"
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -352,8 +352,8 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     ENABLED_TYPES: list[str] = ["consolidate"]
 
     # LLM settings for dream processing
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-4o-mini-2024-07-18"
+    PROVIDER: SupportedProviders = "google"
+    MODEL: str = "gemini-2.5-flash"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
 
 

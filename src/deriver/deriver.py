@@ -9,8 +9,10 @@ from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
+from src.schemas import ResolvedConfiguration
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
+from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import (
     accumulate_metric,
@@ -126,6 +128,7 @@ async def peer_card_call(
 @with_sentry_transaction("process_representation_tasks_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
+    message_level_configuration: ResolvedConfiguration | None,
     *,
     observer: str,
     observed: str,
@@ -171,16 +174,29 @@ async def process_representation_tasks_batch(
         # include_most_derived=False,
     )
 
-    if settings.PEER_CARD.ENABLED:
-        async with tracked_db("deriver.get_peer_card") as db:
-            speaker_peer_card: list[str] | None = await crud.get_peer_card(
+    async with tracked_db("deriver.get_peer_card") as db:
+        if message_level_configuration is None:
+            message_level_configuration = get_configuration(
+                None,
+                await crud.get_session(
+                    db, latest_message.session_name, latest_message.workspace_name
+                ),
+                await crud.get_workspace(
+                    db, workspace_name=latest_message.workspace_name
+                ),
+            )
+        if message_level_configuration.peer_card.use is False:
+            speaker_peer_card = None
+        else:
+            speaker_peer_card = await crud.get_peer_card(
                 db,
                 latest_message.workspace_name,
                 observer=observer,
                 observed=observed,
             )
-    else:
-        speaker_peer_card = None
+
+    if message_level_configuration.deriver.enabled is False:
+        return
 
     # Estimate tokens for deriver input
     peer_card_tokens = estimate_tokens(speaker_peer_card)
@@ -279,6 +295,7 @@ async def process_representation_tasks_batch(
         ctx=messages,
         observed=observed,
         observer=observer,
+        message_level_configuration=message_level_configuration,
     )
 
     # Run single-pass reasoning
@@ -321,6 +338,7 @@ class CertaintyReasoner:
     ctx: list[Message]
     observer: str
     observed: str
+    message_level_configuration: ResolvedConfiguration
 
     def __init__(
         self,
@@ -329,11 +347,13 @@ class CertaintyReasoner:
         *,
         observed: str,
         observer: str,
+        message_level_configuration: ResolvedConfiguration,
     ) -> None:
         self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
+        self.message_level_configuration = message_level_configuration
 
     @conditional_observe(name="Deriver")
     @sentry_sdk.trace
@@ -352,6 +372,7 @@ class CertaintyReasoner:
         """
         analysis_start = time.perf_counter()
 
+        message_ids = [m.id for m in self.ctx]
         earliest_message = self.ctx[0]
         latest_message = self.ctx[-1]
 
@@ -385,7 +406,7 @@ class CertaintyReasoner:
 
         reasoning_response = Representation.from_prompt_representation(
             reasoning_response,
-            (earliest_message.id, latest_message.id),
+            [earliest_message.id, latest_message.id],
             latest_message.session_name,
             latest_message.created_at,
         )
@@ -405,20 +426,13 @@ class CertaintyReasoner:
         if not new_observations.is_empty():
             await self.representation_manager.save_representation(
                 new_observations,
-                (earliest_message.id, latest_message.id),
+                message_ids,
                 latest_message.session_name,
                 latest_message.created_at,
+                self.message_level_configuration,
             )
 
-        # not currently deduplicating at the save_representation step, so this isn't useful
-        # accumulate_metric(
-        #     f"deriver_{latest_payload.message_id}_{latest_payload.observer}",
-        #     "new_observation_count",
-        #     new_observations_saved,
-        #     "count",
-        # )
-
-        if settings.PEER_CARD.ENABLED:
+        if self.message_level_configuration.peer_card.create:
             update_peer_card_start = time.perf_counter()
             if not new_observations.is_empty():
                 await self._update_peer_card(speaker_peer_card, new_observations)
@@ -458,7 +472,9 @@ class CertaintyReasoner:
             ]
             accumulate_metric(
                 f"deriver_{self.ctx[-1].id}_{self.observer}",
-                "new_peer_card",
+                "new_peer_card"
+                if self.observer == self.observed
+                else f"new_{self.observed}_peer_card",
                 "\n".join(new_peer_card),
                 "blob",
             )

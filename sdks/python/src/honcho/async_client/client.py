@@ -14,6 +14,7 @@ from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from ..base import PeerBase, SessionBase
 from .pagination import AsyncPage
 from .peer import AsyncPeer
 from .session import AsyncSession
@@ -33,9 +34,11 @@ class AsyncHoncho(BaseModel):
     `core` property to use functionality not exposed through this SDK.
 
     Attributes:
-        api_key: API key for authentication
-        base_url: Base URL for the Honcho API
         workspace_id: Workspace ID for scoping operations
+        metadata: Cached metadata for this workspace. May be stale if not recently
+            fetched. Call get_metadata() for fresh data.
+        configuration: Cached configuration for this workspace. May be stale if not
+            recently fetched. Call get_config() for fresh data.
         core: Access to the underlying honcho_core client for advanced usage
     """
 
@@ -46,7 +49,19 @@ class AsyncHoncho(BaseModel):
         min_length=1,
         description="Workspace ID for scoping operations",
     )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: AsyncHonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this workspace. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this workspace. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @property
     def core(self) -> AsyncHonchoCore:
@@ -218,7 +233,14 @@ class AsyncHoncho(BaseModel):
             workspace_id=self.workspace_id, filters=filters
         )
         return AsyncPage(
-            peers_page, lambda peer: AsyncPeer(peer.id, self.workspace_id, self._client)
+            peers_page,
+            lambda peer: AsyncPeer(
+                peer.id,
+                self.workspace_id,
+                self._client,
+                metadata=peer.metadata,
+                config=peer.configuration,
+            ),
         )
 
     @validate_call
@@ -283,7 +305,13 @@ class AsyncHoncho(BaseModel):
         )
         return AsyncPage(
             sessions_page,
-            lambda session: AsyncSession(session.id, self.workspace_id, self._client),
+            lambda session: AsyncSession(
+                session.id,
+                self.workspace_id,
+                self._client,
+                metadata=session.metadata,
+                config=session.configuration,
+            ),
         )
 
     async def get_metadata(self) -> dict[str, object]:
@@ -292,14 +320,16 @@ class AsyncHoncho(BaseModel):
 
         Makes an async API call to retrieve metadata associated with the current workspace.
         Workspace metadata can include settings, configuration, or any other
-        key-value data associated with the workspace.
+        key-value data associated with the workspace. This method also updates the
+        cached metadata attribute.
 
         Returns:
             A dictionary containing the workspace's metadata. Returns an empty
             dictionary if no metadata is set
         """
         workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
-        return workspace.metadata or {}
+        self._metadata = workspace.metadata or {}
+        return self._metadata
 
     @validate_call
     async def set_metadata(
@@ -311,12 +341,64 @@ class AsyncHoncho(BaseModel):
 
         Makes an async API call to update the metadata associated with the current workspace.
         This will overwrite any existing metadata with the provided values.
+        This method also updates the cached metadata attribute.
 
         Args:
             metadata: A dictionary of metadata to associate with the workspace.
                       Keys must be strings, values can be any JSON-serializable type
         """
         await self._client.workspaces.update(self.workspace_id, metadata=metadata)
+        self._metadata = metadata
+
+    async def get_config(self) -> dict[str, object]:
+        """
+        Get configuration for the current workspace.
+
+        Makes an async API call to retrieve configuration associated with the current workspace.
+        Configuration includes settings that control workspace behavior.
+        This method also updates the cached configuration attribute.
+
+        Returns:
+            A dictionary containing the workspace's configuration. Returns an empty
+            dictionary if no configuration is set
+        """
+        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        self._configuration = workspace.configuration or {}
+        return self._configuration
+
+    @validate_call
+    async def set_config(
+        self,
+        configuration: dict[str, object] = Field(
+            ..., description="Configuration dictionary"
+        ),
+    ) -> None:
+        """
+        Set configuration for the current workspace.
+
+        Makes an async API call to update the configuration associated with the current workspace.
+        This will overwrite any existing configuration with the provided values.
+        This method also updates the cached configuration attribute.
+
+        Args:
+            configuration: A dictionary of configuration to associate with the workspace.
+                          Keys must be strings, values can be any JSON-serializable type
+        """
+        await self._client.workspaces.update(
+            self.workspace_id, configuration=configuration
+        )
+        self._configuration = configuration
+
+    async def refresh(self) -> None:
+        """
+        Refresh cached metadata and configuration for the current workspace.
+
+        Makes a single async API call to retrieve the latest metadata and configuration
+        associated with the current workspace and updates the cached attributes.
+        """
+        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        self._metadata = workspace.metadata or {}
+        self._configuration = workspace.configuration or {}
 
     async def get_workspaces(
         self, filters: dict[str, object] | None = None
@@ -389,29 +471,50 @@ class AsyncHoncho(BaseModel):
             limit=limit,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_deriver_status(
         self,
-        observer_id: str | None = None,
-        sender_id: str | None = None,
-        session_id: str | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
     ) -> DeriverStatus:
         """
-        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+
+        Args:
+            observer: Optional observer (ID string or Peer object) to scope the status check
+            sender: Optional sender (ID string or Peer object) to scope the status check
+            session: Optional session (ID string or Session object) to scope the status check
         """
-        return await self._client.workspaces.deriver_status(
-            workspace_id=self.workspace_id,
-            observer_id=observer_id,
-            sender_id=sender_id,
-            session_id=session_id,
+        resolved_observer_id = (
+            None
+            if observer is None
+            else (observer if isinstance(observer, str) else observer.id)
+        )
+        resolved_sender_id = (
+            None
+            if sender is None
+            else (sender if isinstance(sender, str) else sender.id)
+        )
+        resolved_session_id = (
+            None
+            if session is None
+            else (session if isinstance(session, str) else session.id)
         )
 
-    @validate_call
+        return await self._client.workspaces.deriver_status(
+            workspace_id=self.workspace_id,
+            observer_id=resolved_observer_id,
+            sender_id=resolved_sender_id,
+            session_id=resolved_session_id,
+        )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def poll_deriver_status(
         self,
-        observer_id: str | None = None,
-        sender_id: str | None = None,
-        session_id: str | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
         timeout: float = Field(
             300.0,
             gt=0,
@@ -426,9 +529,9 @@ class AsyncHoncho(BaseModel):
         The polling estimates sleep time by assuming each work unit takes 1 second.
 
         Args:
-            observer_id: Optional observer ID to scope the status check
-            sender_id: Optional sender ID to scope the status check
-            session_id: Optional session ID to scope the status check
+            observer: Optional observer (ID string or AsyncPeer object) to scope the status check
+            sender: Optional sender (ID string or AsyncPeer object) to scope the status check
+            session: Optional session (ID string or AsyncSession object) to scope the status check
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
@@ -442,9 +545,7 @@ class AsyncHoncho(BaseModel):
 
         while True:
             try:
-                status = await self.get_deriver_status(
-                    observer_id, sender_id, session_id
-                )
+                status = await self.get_deriver_status(observer, sender, session)
             except Exception as e:
                 logger.warning(f"Failed to get deriver status: {e}")
                 # Sleep briefly before retrying
@@ -497,10 +598,9 @@ class AsyncHoncho(BaseModel):
         metadata: dict[str, object] = Field(
             ..., description="The metadata to update for the message"
         ),
-        session_id: str | None = Field(
+        session: str | SessionBase | None = Field(
             None,
-            min_length=1,
-            description="The ID of the session (required if message is a string ID)",
+            description="The session (ID string or Session object) - required if message is a string ID",
         ),
     ) -> Message:
         """
@@ -511,7 +611,7 @@ class AsyncHoncho(BaseModel):
         Args:
             message: Either a Message object or a message ID string
             metadata: The metadata to update for the message
-            session_id: The ID of the session (required if message is a string ID, ignored if message is a Message object)
+            session: The session (ID string or Session object) - required if message is a string ID, ignored if message is a Message object
 
         Returns:
             The updated Message object
@@ -524,9 +624,9 @@ class AsyncHoncho(BaseModel):
             resolved_session_id = message.session_id
         else:
             message_id = message
-            if not session_id:
-                raise ValueError("session_id is required when message is a string ID")
-            resolved_session_id = session_id
+            if not session:
+                raise ValueError("session is required when message is a string ID")
+            resolved_session_id = session if isinstance(session, str) else session.id
 
         return await self._client.workspaces.sessions.messages.update(
             message_id=message_id,

@@ -88,13 +88,13 @@ class TestRepresentationWorkflow:
         explicit_obs1 = ExplicitObservation(
             content="User likes dogs",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="test_session",
         )
         explicit_obs2 = ExplicitObservation(
             content="User has a pet named Rover",
             created_at=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
-            message_ids=[(2, 2)],
+            message_ids=[2],
             session_name="test_session",
         )
 
@@ -103,7 +103,7 @@ class TestRepresentationWorkflow:
             conclusion="User probably has a dog named Rover",
             premises=["User likes dogs", "User has a pet named Rover"],
             created_at=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
-            message_ids=[(3, 3)],
+            message_ids=[3],
             session_name="test_session",
         )
 
@@ -144,7 +144,7 @@ class TestRepresentationWorkflow:
                 ExplicitObservation(
                     content="User likes cats",
                     created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[(1, 1)],
+                    message_ids=[1],
                     session_name="session1",
                 )
             ]
@@ -156,13 +156,13 @@ class TestRepresentationWorkflow:
                 ExplicitObservation(
                     content="User likes cats",  # Duplicate
                     created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[(1, 1)],
+                    message_ids=[1],
                     session_name="session1",
                 ),
                 ExplicitObservation(
                     content="User likes dogs",  # New
                     created_at=datetime(2025, 1, 1, 11, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[(2, 2)],
+                    message_ids=[2],
                     session_name="session1",
                 ),
             ]
@@ -186,7 +186,7 @@ class TestRepresentationWorkflow:
                 ExplicitObservation(
                     content="User likes birds",
                     created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-                    message_ids=[(3, 3)],
+                    message_ids=[3],
                     session_name="session1",
                 )
             ]
@@ -224,7 +224,7 @@ class TestDocumentCreationWorkflow:
             session_name="test_session",
             level="explicit",
             internal_metadata={
-                "message_ids": [(1, 1)],
+                "message_ids": [1],
                 "session_name": "test_session",
             },
             created_at=datetime.now(timezone.utc),
@@ -319,7 +319,7 @@ class TestDocumentCreationWorkflow:
             content="User said they like programming",
             level="explicit",
             internal_metadata={
-                "message_ids": [(1, 1)],
+                "message_ids": [1],
             },
             session_name="test_session",
             created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
@@ -332,7 +332,7 @@ class TestDocumentCreationWorkflow:
             content="User is likely a software developer",
             level="deductive",
             internal_metadata={
-                "message_ids": [(1, 1)],
+                "message_ids": [1],
                 "premises": ["User said they like programming"],
             },
             session_name="test_session",
@@ -347,13 +347,13 @@ class TestDocumentCreationWorkflow:
 
         explicit_obs = representation.explicit[0]
         assert explicit_obs.content == "User said they like programming"
-        assert explicit_obs.message_ids == [(1, 1)]
+        assert explicit_obs.message_ids == [1]
         assert explicit_obs.session_name == "test_session"
 
         deductive_obs = representation.deductive[0]
         assert deductive_obs.conclusion == "User is likely a software developer"
         assert deductive_obs.premises == ["User said they like programming"]
-        assert deductive_obs.message_ids == [(1, 1)]
+        assert deductive_obs.message_ids == [1]
         assert deductive_obs.session_name == "test_session"
 
     async def create_test_workspace_and_peer(
@@ -420,7 +420,7 @@ class TestPromptRepresentationConversion:
 
         representation = Representation.from_prompt_representation(
             prompt_rep,
-            message_ids=(123, 123),
+            message_ids=[123],
             session_name="test_session",
             created_at=timestamp,
         )
@@ -430,7 +430,7 @@ class TestPromptRepresentationConversion:
 
         # Check explicit observations
         assert representation.explicit[0].content == "User likes coffee"
-        assert representation.explicit[0].message_ids == [(123, 123)]
+        assert representation.explicit[0].message_ids == [123]
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
         assert representation.explicit[0].created_at == timestamp
@@ -442,7 +442,7 @@ class TestPromptRepresentationConversion:
             == "User probably works from a coffee shop sometimes"
         )
         assert deductive_obs.premises == ["User likes coffee", "User works remotely"]
-        assert deductive_obs.message_ids == [(123, 123)]
+        assert deductive_obs.message_ids == [123]
         assert deductive_obs.session_name == "test_session"
         assert deductive_obs.created_at == timestamp
 
@@ -451,7 +451,7 @@ class TestPromptRepresentationConversion:
         empty_prompt_rep = PromptRepresentation()
         representation = Representation.from_prompt_representation(
             empty_prompt_rep,
-            message_ids=(1, 1),
+            message_ids=[1],
             session_name="test",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
@@ -470,21 +470,21 @@ class TestRepresentationHashingAndEquality:
         obs1 = ExplicitObservation(
             content="Test content",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="session1",
         )
 
         obs2 = ExplicitObservation(
             content="Test content",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="session1",
         )
 
         obs3 = ExplicitObservation(
             content="Different content",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="session1",
         )
 
@@ -503,7 +503,7 @@ class TestRepresentationHashingAndEquality:
             conclusion="Test conclusion",
             premises=["premise1", "premise2"],
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="session1",
         )
 
@@ -511,7 +511,7 @@ class TestRepresentationHashingAndEquality:
             conclusion="Test conclusion",
             premises=["premise1", "premise2"],
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="session1",
         )
 
@@ -519,7 +519,7 @@ class TestRepresentationHashingAndEquality:
             conclusion="Different conclusion",
             premises=["premise1", "premise2"],
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_ids=[(1, 1)],
+            message_ids=[1],
             session_name="session1",
         )
 

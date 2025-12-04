@@ -333,3 +333,256 @@ async def test_file_too_large_rejected(
 
     # Should reject the file with 413 (Request Entity Too Large)
     assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_metadata(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test file upload with metadata parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create session for session endpoint
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    # Create a mock text file
+    file_content = "Test file with metadata"
+    file_data = io.BytesIO(file_content.encode("utf-8"))
+
+    # Prepare metadata
+    metadata = {"source": "test", "category": "upload", "priority": 1}
+
+    files = {"file": ("test_metadata.txt", file_data, "text/plain")}
+    form_data = {
+        "peer_id": test_peer.name,
+        "metadata": json.dumps(metadata),
+    }
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+
+    message = data[0]
+    assert file_content in message["content"]
+    assert message["peer_id"] == test_peer.name
+    assert message["session_id"] == session_name
+    # Check that metadata was applied
+    assert message["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_configuration(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test file upload with configuration parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create session for session endpoint
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    # Create a mock text file
+    file_content = "Test file with configuration"
+    file_data = io.BytesIO(file_content.encode("utf-8"))
+
+    # Prepare configuration
+    configuration = {"skip_deriver": True, "custom_flag": "test"}
+
+    files = {"file": ("test_config.txt", file_data, "text/plain")}
+    form_data = {
+        "peer_id": test_peer.name,
+        "configuration": json.dumps(configuration),
+    }
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+
+    message = data[0]
+    assert file_content in message["content"]
+    assert message["peer_id"] == test_peer.name
+    assert message["session_id"] == session_name
+    # Note: Configuration is used during processing, may not be directly stored
+    # This test confirms the endpoint accepts it without error
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_created_at(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test file upload with created_at parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create session for session endpoint
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    # Create a mock text file
+    file_content = "Test file with created_at"
+    file_data = io.BytesIO(file_content.encode("utf-8"))
+
+    # Prepare created_at timestamp (ISO 8601 format)
+    from datetime import datetime, timezone
+
+    test_timestamp = datetime(2023, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+    created_at_str = test_timestamp.isoformat()
+
+    files = {"file": ("test_timestamp.txt", file_data, "text/plain")}
+    form_data = {
+        "peer_id": test_peer.name,
+        "created_at": created_at_str,
+    }
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+
+    message = data[0]
+    assert file_content in message["content"]
+    assert message["peer_id"] == test_peer.name
+    assert message["session_id"] == session_name
+    # Check that created_at was applied (compare timestamps, allowing for small differences)
+    message_timestamp = datetime.fromisoformat(
+        message["created_at"].replace("Z", "+00:00")
+    )
+    assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_all_parameters(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test file upload with metadata, configuration, and created_at all together"""
+    test_workspace, test_peer = sample_data
+
+    # Create session for session endpoint
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    # Create a mock text file
+    file_content = "Test file with all parameters"
+    file_data = io.BytesIO(file_content.encode("utf-8"))
+
+    # Prepare all parameters
+    metadata = {"source": "comprehensive_test", "version": "1.0"}
+    configuration = {"skip_deriver": False, "test_mode": True}
+    from datetime import datetime, timezone
+
+    test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=timezone.utc)
+    created_at_str = test_timestamp.isoformat()
+
+    files = {"file": ("test_all_params.txt", file_data, "text/plain")}
+    form_data = {
+        "peer_id": test_peer.name,
+        "metadata": json.dumps(metadata),
+        "configuration": json.dumps(configuration),
+        "created_at": created_at_str,
+    }
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+
+    message = data[0]
+    assert file_content in message["content"]
+    assert message["peer_id"] == test_peer.name
+    assert message["session_id"] == session_name
+    # Check metadata
+    assert message["metadata"] == metadata
+    # Check created_at
+    message_timestamp = datetime.fromisoformat(
+        message["created_at"].replace("Z", "+00:00")
+    )
+    assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_file_upload_with_invalid_metadata_json(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test file upload with invalid JSON in metadata parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create session for session endpoint
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_content = "Test file"
+    file_data = io.BytesIO(file_content.encode("utf-8"))
+
+    files = {"file": ("test.txt", file_data, "text/plain")}
+    form_data = {
+        "peer_id": test_peer.name,
+        "metadata": "invalid json {",  # Invalid JSON
+    }
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    # Should still succeed but metadata will be None (backend handles gracefully)
+    assert response.status_code == 200
+    data = response.json()
+    # Metadata parsing failure is logged but doesn't fail the request
+    assert len(data) == 1
+
+
+@pytest.mark.asyncio
+async def test_large_file_upload_with_metadata(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test that large files with metadata get split correctly and metadata is applied to all chunks"""
+    test_workspace, test_peer = sample_data
+
+    # Create session for session endpoint
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    # Create a large text file that will require chunking
+    large_content = "This is a test line.\n" * 3000  # Should exceed 49500 chars
+    file_data = io.BytesIO(large_content.encode("utf-8"))
+
+    metadata = {"source": "chunked_test", "chunked": True}
+
+    files = {"file": ("large_metadata.txt", file_data, "text/plain")}
+    form_data = {
+        "peer_id": test_peer.name,
+        "metadata": json.dumps(metadata),
+    }
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) > 1  # Should be multiple messages due to chunking
+
+    # All messages should have the same metadata, peer_id and session_id
+    for message in data:
+        assert message["peer_id"] == test_peer.name
+        assert message["session_id"] == session_name
+        assert message["metadata"] == metadata

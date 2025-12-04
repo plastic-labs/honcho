@@ -232,9 +232,9 @@ The [`get_context()`](/v2/documentation/core-concepts/features/get-context) meth
 - **Manages conversation history** - Tracks all messages and determines what's relevant
 - **Respects token limits** - Stays within context window constraints without manual counting
 - **Handles long conversations** - Combines recent detailed messages with summaries of older exchanges
-- **Provides peer understanding** - Includes theory-of-mind representations and peer cards when requested
+- **Provides `peer` understanding** - Includes representations and `peer` cards when requested
 
-The `SessionContext` object always includes fields for messages, summaries, peer representations, and peer cards. By default, only `messages` and `summary` are populated. To populate peer-specific context, pass a `peer_target` parameter:
+The `SessionContext` object always includes fields for messages, summaries, `peer` representations, and `peer` cards. By default, only `messages` and `summary` are populated. To populate peer-specific context, pass a `peer_target` parameter:
 
 **Using `peer_target` for Context:**
 

@@ -1,0 +1,80 @@
+{
+  "description": "Test unidirectional observation - Alice observes Bob, Bob does not observe Alice",
+  "workspace_config": {
+    "deriver": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_uni_a_to_b",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_uni_a_to_b",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "I'm studying computer science."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm majoring in biology."
+        },
+        {
+          "peer_id": "alice",
+          "content": "That's interesting! I love programming."
+        },
+        {
+          "peer_id": "bob",
+          "content": "Biology fascinates me, especially genetics."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_uni_a_to_b",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob contains information about Bob studying biology and genetics.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_uni_a_to_b",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "explicit": [],
+            "deductive": []
+          }
+        }
+      ]
+    }
+  ]
+}

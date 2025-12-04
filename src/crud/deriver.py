@@ -98,10 +98,12 @@ def _build_queue_status_query(
         models.QueueItem.work_unit_key == models.ActiveQueueSession.work_unit_key,
     )
 
-    stmt = stmt.join(models.Session, models.QueueItem.session_id == models.Session.id)
-    stmt = stmt.where(models.Session.workspace_name == workspace_name)
+    stmt = stmt.where(models.QueueItem.workspace_name == workspace_name)
 
     if session_name is not None:
+        stmt = stmt.join(
+            models.Session, models.QueueItem.session_id == models.Session.id
+        )
         stmt = stmt.where(models.Session.name == session_name)
 
     peer_conditions = []

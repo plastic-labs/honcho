@@ -93,6 +93,127 @@ context = session.get_context(summary=False, tokens=2000)
 ```
 </CodeGroup>
 
+### Peer Representation in Context
+
+You can include a peer's representation and peer card in the context by specifying `peer_target`. This is useful for providing the LLM with knowledge about a specific peer.
+
+<CodeGroup>
+```python Python
+# Get context with peer representation included
+context = session.get_context(
+    tokens=2000,
+    peer_target="user-123"  # Include representation of user-123
+)
+
+# Access the representation and peer card
+print(context.peer_representation)  # String representation
+print(context.peer_card)            # List of peer card items
+
+# Get representation from a specific peer's perspective
+context = session.get_context(
+    tokens=2000,
+    peer_target="user-123",
+    peer_perspective="assistant"  # From assistant's viewpoint
+)
+```
+
+```typescript TypeScript
+(async () => {
+    // Get context with peer representation included
+    const context = await session.getContext({
+      tokens: 2000,
+      peerTarget: "user-123"  // Include representation of user-123
+    });
+
+    // Access the representation and peer card
+    console.log(context.peerRepresentation);  // String representation
+    console.log(context.peerCard);            // Array of peer card items
+
+    // Get representation from a specific peer's perspective
+    const perspectiveContext = await session.getContext({
+      tokens: 2000,
+      peerTarget: "user-123",
+      peerPerspective: "assistant"  // From assistant's viewpoint
+    });
+})();
+```
+</CodeGroup>
+
+### Semantic Search with Last Message
+
+Use `last_user_message` to fetch semantically relevant observations based on the most recent message:
+
+<CodeGroup>
+```python Python
+# Get context with semantic search based on last message
+context = session.get_context(
+    tokens=2000,
+    peer_target="user-123",
+    last_user_message="What are my account preferences?",
+    search_top_k=10,           # Number of relevant observations
+    search_max_distance=0.8,   # Max semantic distance (0.0-1.0)
+    include_most_derived=True, # Include most recent observations
+    max_observations=25        # Cap total observations
+)
+```
+
+```typescript TypeScript
+(async () => {
+    // Get context with semantic search based on last message
+    const context = await session.getContext({
+      tokens: 2000,
+      peerTarget: "user-123",
+      lastUserMessage: "What are my account preferences?",
+      searchTopK: 10,           // Number of relevant observations
+      searchMaxDistance: 0.8,   // Max semantic distance (0.0-1.0)
+      includeMostDerived: true, // Include most recent observations
+      maxObservations: 25       // Cap total observations
+    });
+})();
+```
+</CodeGroup>
+
+### Session-Scoped Representations
+
+Use `limit_to_session` to only include observations from the current session:
+
+<CodeGroup>
+```python Python
+# Get context limited to this session's observations only
+context = session.get_context(
+    tokens=2000,
+    peer_target="user-123",
+    limit_to_session=True  # Only observations from this session
+)
+```
+
+```typescript TypeScript
+(async () => {
+    // Get context limited to this session's observations only
+    const context = await session.getContext({
+      tokens: 2000,
+      peerTarget: "user-123",
+      limitToSession: true  // Only observations from this session
+    });
+})();
+```
+</CodeGroup>
+
+### All Parameters Reference
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `summary` | `bool` | Include summary in context (default: true) |
+| `tokens` | `int` | Maximum tokens to include |
+| `peer_target` | `str` | Peer ID to include representation for |
+| `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
+| `last_user_message` | `str` | Message for semantic search (requires peer_target) |
+| `limit_to_session` | `bool` | Limit to session observations only |
+| `search_top_k` | `int` | Semantic search results to include (1-100) |
+| `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
+| `include_most_derived` | `bool` | Include most recently derived observations |
+| `max_observations` | `int` | Maximum observations to include (1-100) |
+
 ## Converting to LLM Formats
 
 The `SessionContext` object provides methods to convert the context into formats compatible with popular LLM APIs. When converting to OpenAI format, you must specify the assistant peer to format the context in such a way that the LLM can understand it.
