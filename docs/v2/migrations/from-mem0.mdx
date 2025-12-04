@@ -6,7 +6,10 @@ icon: 'arrow-right-arrow-left'
 
 Interested in transferring your data from Mem0 to Honcho? This guide covers why to switch, how to migrate your data, and differences between the two products.
 
+
+
 ## Why Honcho?
+Mem0 stores facts. Honcho understands users.
 
 **Inference, Not Just Storage** - Honcho builds evolving profiles of each participant through rich logic-based reasoning. Rather than retrieving facts, Honcho infers communication styles, values, patterns, and relationships - adapting to how users interact, not just what they say.
 
@@ -17,14 +20,12 @@ Interested in transferring your data from Mem0 to Honcho? This guide covers why 
 **Advanced Multi-Peer Sessions** - Honcho offers configurable observation settings (who builds memories about whom), representation-based queries between participants, and first-class peer objects.
 
 <Note>
-Honcho's reasoning is more thorough than Mem0's memories. To effectively switch, import your messages directly into Honcho to build the best representation possible.
-
 We would love to support the transfer and cost—just [book a call!](https://cal.com/team/plasticlabs/migration-to-honcho)
 </Note>
 
 ## Quick Migration
 
-This example lazily migrates a single user's Mem0 memories to Honcho:
+For the best results, we recommend importing your raw messages directly into Honcho. This gives Honcho the full context to build rich, accurate representations. However, if you'd like to get started quickly, you can migrate your existing Mem0 memories directly. The code below demonstrates this faster approach.
 
 <Info>
 Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys). New accounts start with $100 credits (plenty to get you going).
@@ -82,9 +83,9 @@ console.log(`Migrated ${memories.results.length} memories!`);
 ```
 </CodeGroup>
 
-That's it! The user's Mem0 memories are now in Honcho.
+That's it! The user's Mem0 memories are now in Honcho. For richer representations, consider importing your raw messages as described in the [Step-by-Step Migration](#step-by-step-migration) section.
 
-Now replace your Mem0 API calls with the Honcho equivalents. See the [API Comparison](#api-comparison) section for more details.
+For more details on replacing Mem0 API calls with Honcho equivalents go to [API Comparison](#api-comparison).
 
 ## Step-by-Step Migration
 
@@ -92,15 +93,11 @@ Prefer a more detailed walkthrough? Follow these steps:
 
 ### 1. Export User Messages
 
-As stated above, for best results, import the raw user messages into Honcho. We generally recommend a data structure that preserves the session and peer structure.
-
-If you have this easily accessible, great!
-
+Importing raw user messages gives Honcho the full conversational context to build the most accurate representations. We recommend using a data structure that preserves the session and peer structure.
 
 If you need any help with this transfer or have any questions, please reach out at hello@plasticlabs.ai or [book a call!](https://cal.com/team/plasticlabs/migration-to-honcho)
 
-
-Alternatively, if you just want to import your memories from Mem0, follow the example above and dig into Mem0's [export API documentation](https://docs.mem0.ai/cookbooks/essentials/exporting-memories).
+Alternatively, if you want to import the Mem0 memories, follow the example above and learn more at Mem0's [export API documentation](https://docs.mem0.ai/cookbooks/essentials/exporting-memories).
 
 ### 2. Install the Honcho SDK
 
@@ -147,18 +144,26 @@ const honcho = new Honcho({apiKey: process.env.HONCHO_API_KEY!});
 </CodeGroup>
 
 ### 4. Import Your Data
-This is a possible implementation. Adapt the data structure to match your exported format.
+This is a possible implementation using raw user messages. Adapt the data structure to match your exported format.
 
 <CodeGroup>
 ```python Python
-# Example data structure:
+# Example data structure (preserving message history with timestamps):
 exported_data = {
     "session-1": {
-        "user123": ["I prefer dark mode", "My name is Alex"],
-        "user456": ["I work in finance", "I like concise responses"],
+        "user123": [
+            {"content": "I prefer dark mode", "timestamp": "2024-01-15T10:30:00Z"},
+            {"content": "My name is Alex", "timestamp": "2024-01-15T10:31:00Z"},
+        ],
+        "user456": [
+            {"content": "I work in finance", "timestamp": "2024-01-15T11:00:00Z"},
+            {"content": "I like concise responses", "timestamp": "2024-01-15T11:02:00Z"},
+        ],
     },
     "session-2": {
-        "user123": ["Meeting notes from last week..."],
+        "user123": [
+            {"content": "Meeting notes from last week...", "timestamp": "2024-01-16T09:00:00Z"},
+        ],
     }
 }
 
@@ -166,23 +171,36 @@ exported_data = {
 for session_name, users in exported_data.items():
     session = honcho.session(session_name)
 
-    for user_id, memories in users.items():
+    for user_id, messages in users.items():
         peer = honcho.peer(user_id)
         session.add_peers([peer])
 
-        # Add each memory as a message
-        session.add_messages([peer.message(memory) for memory in memories])
+        # Sort by timestamp to preserve message order
+        sorted_messages = sorted(messages, key=lambda m: m["timestamp"])
+        session.add_messages([peer.message(m["content"]) for m in sorted_messages])
 ```
 
 ```typescript TypeScript
-// Example data structure:
-const exportedData: Record<string, Record<string, string[]>> = {
+// Example data structure (preserving message history with timestamps):
+interface Message {
+  content: string;
+  timestamp: string;
+}
+const exportedData: Record<string, Record<string, Message[]>> = {
   "session-1": {
-    "user123": ["I prefer dark mode", "My name is Alex"],
-    "user456": ["I work in finance", "I like concise responses"],
+    "user123": [
+      { content: "I prefer dark mode", timestamp: "2024-01-15T10:30:00Z" },
+      { content: "My name is Alex", timestamp: "2024-01-15T10:31:00Z" },
+    ],
+    "user456": [
+      { content: "I work in finance", timestamp: "2024-01-15T11:00:00Z" },
+      { content: "I like concise responses", timestamp: "2024-01-15T11:02:00Z" },
+    ],
   },
   "session-2": {
-    "user123": ["Meeting notes from last week..."],
+    "user123": [
+      { content: "Meeting notes from last week...", timestamp: "2024-01-16T09:00:00Z" },
+    ],
   }
 };
 
@@ -190,12 +208,15 @@ const exportedData: Record<string, Record<string, string[]>> = {
 for (const [sessionName, users] of Object.entries(exportedData)) {
   const session = await honcho.session(sessionName);
 
-  for (const [userId, memories] of Object.entries(users)) {
+  for (const [userId, messages] of Object.entries(users)) {
     const peer = await honcho.peer(userId);
     await session.addPeers([peer]);
 
-    // Add each memory as a message
-    await session.addMessages(memories.map((memory) => peer.message(memory)));
+    // Sort by timestamp to preserve message order
+    const sortedMessages = messages.sort((a, b) =>
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    await session.addMessages(sortedMessages.map((m) => peer.message(m.content)));
   }
 }
 ```
@@ -203,7 +224,7 @@ for (const [sessionName, users] of Object.entries(exportedData)) {
 
 ### 5. Update Your Application Code
 
-Replace your Mem0 API calls with Honcho equivalents. See the [API Comparison](#api-comparison) section below.
+Reference the [API Comparison](#api-comparison) to replace your Mem0 API calls with the Honcho equivalents.
 
 ## API Comparison
 
