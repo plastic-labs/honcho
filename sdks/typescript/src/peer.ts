@@ -106,9 +106,11 @@ export class Peer {
    * @param stream - Whether to stream the response
    * @param target - Optional target peer for local representation query. If provided,
    *                 queries what this peer knows about the target peer rather than
-   *                 querying the peer's global representation
-   * @param sessionId - Optional session ID to scope the query to a specific session.
-   *                    If provided, only information from that session is considered
+   *                 querying the peer's global representation. Can be a peer ID string
+   *                 or a Peer object.
+   * @param session - Optional session to scope the query to. If provided, only
+   *                  information from that session is considered. Can be a session
+   *                  ID string or a Session object.
    * @returns Promise resolving to:
    *          - For non-streaming: response string or null if no relevant information
    *          - For streaming: DialecticStreamResponse that can be iterated over
@@ -118,26 +120,33 @@ export class Peer {
     options?: {
       stream?: boolean
       target?: string | Peer
-      sessionId?: string
+      session?: string | Session
     }
   ): Promise<string | DialecticStreamResponse | null> {
+    const targetId = options?.target
+      ? typeof options.target === 'string'
+        ? options.target
+        : options.target.id
+      : undefined
+    const resolvedSessionId = options?.session
+      ? typeof options.session === 'string'
+        ? options.session
+        : options.session.id
+      : undefined
+
     const chatParams = ChatQuerySchema.parse({
       query,
       stream: options?.stream,
-      target: options?.target,
-      sessionId: options?.sessionId,
+      target: targetId,
+      session: resolvedSessionId,
     })
 
     if (chatParams.stream) {
       const body = {
         query: chatParams.query,
         stream: true,
-        target: chatParams.target
-          ? typeof chatParams.target === 'string'
-            ? chatParams.target
-            : chatParams.target.id
-          : undefined,
-        session_id: chatParams.sessionId,
+        target: chatParams.target,
+        session_id: chatParams.session,
       }
 
       const url = `${this._client.baseURL}/v2/workspaces/${this.workspaceId}/peers/${this.id}/chat`
@@ -212,12 +221,8 @@ export class Peer {
       {
         query: chatParams.query,
         stream: false,
-        target: chatParams.target
-          ? typeof chatParams.target === 'string'
-            ? chatParams.target
-            : chatParams.target.id
-          : undefined,
-        session_id: chatParams.sessionId,
+        target: chatParams.target,
+        session_id: chatParams.session,
       }
     )
     if (!response.content || response.content === 'None') {

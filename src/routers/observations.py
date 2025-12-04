@@ -20,6 +20,40 @@ router = APIRouter(
 
 
 @router.post(
+    "",
+    response_model=list[schemas.Observation],
+)
+async def create_observations(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    body: schemas.ObservationBatchCreate = Body(
+        ..., description="Batch of observations to create"
+    ),
+    db: AsyncSession = db,
+) -> list[schemas.Observation]:
+    """
+    Create one or more observations.
+
+    Creates observations (theory-of-mind facts) for the specified observer/observed peer pairs.
+    Each observation must reference existing peers and a session within the workspace.
+    Embeddings are automatically generated for semantic search.
+
+    Maximum of 100 observations per request.
+    """
+    documents = await crud.create_observations(
+        db,
+        observations=body.observations,
+        workspace_name=workspace_id,
+    )
+
+    logger.debug(
+        "Created %d observations in workspace %s",
+        len(documents),
+        workspace_id,
+    )
+    return [schemas.Observation.model_validate(doc) for doc in documents]
+
+
+@router.post(
     "/list",
     response_model=Page[schemas.Observation],
 )

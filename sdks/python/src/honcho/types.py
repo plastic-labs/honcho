@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from typing import Any, cast
+from typing_extensions import Required, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -19,11 +20,24 @@ __all__ = [
     "ExplicitObservation",
     "ExplicitObservationBase",
     "Observation",
+    "ObservationCreateParam",
     "ObservationMetadata",
     "ObservationScope",
     "PeerContext",
     "Representation",
 ]
+
+
+class ObservationCreateParam(TypedDict, total=False):
+    """Parameters for creating an observation.
+
+    Attributes:
+        content: The observation content/text (required)
+        session_id: The session this observation relates to (required)
+    """
+
+    content: Required[str]
+    session_id: Required[str]
 
 
 class ObservationMetadata(BaseModel):

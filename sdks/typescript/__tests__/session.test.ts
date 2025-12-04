@@ -1091,8 +1091,8 @@ describe('Session', () => {
       mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus)
 
       const status = await session.getDeriverStatus({
-        observerId: 'observer1',
-        senderId: 'sender1',
+        observer: 'observer1',
+        sender: 'sender1',
       })
 
       expect(status).toEqual({

@@ -562,6 +562,37 @@ class ObservationQuery(BaseModel):
     )
 
 
+class ObservationCreate(BaseModel):
+    """Schema for creating a single observation"""
+
+    content: Annotated[str, Field(min_length=1, max_length=65535)]
+    observer_id: str = Field(..., description="The peer making the observation")
+    observed_id: str = Field(..., description="The peer being observed")
+    session_id: str = Field(..., description="The session this observation relates to")
+
+    _token_count: int = PrivateAttr(default=0)
+
+    @model_validator(mode="after")
+    def validate_token_count(self) -> Self:
+        """Validate that content doesn't exceed embedding token limit."""
+        encoding = tiktoken.get_encoding("cl100k_base")
+        tokens = encoding.encode(self.content)
+        self._token_count = len(tokens)
+
+        if self._token_count > settings.MAX_EMBEDDING_TOKENS:
+            raise ValueError(
+                f"Content exceeds maximum embedding token limit of {settings.MAX_EMBEDDING_TOKENS} "
+                f"(got {self._token_count} tokens)"
+            )
+        return self
+
+
+class ObservationBatchCreate(BaseModel):
+    """Schema for batch observation creation with a max of 100 observations"""
+
+    observations: list[ObservationCreate] = Field(..., min_length=1, max_length=100)
+
+
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
     filters: dict[str, Any] | None = Field(

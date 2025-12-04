@@ -470,20 +470,18 @@ async def test_session_get_deriver_status(
         assert hasattr(status, "pending_work_units")
         assert status.sessions is None
 
-        # Test with observer_id only
+        # Test with observer only
         peer = await honcho_client.peer(id="test-peer-session-deriver")
         await peer.get_metadata()  # Create the peer
-        status = await session.get_deriver_status(observer_id=peer.id)
+        status = await session.get_deriver_status(observer=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with sender_id only
-        status = await session.get_deriver_status(sender_id=peer.id)
+        # Test with sender only
+        status = await session.get_deriver_status(sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with both observer_id and sender_id
-        status = await session.get_deriver_status(
-            observer_id=peer.id, sender_id=peer.id
-        )
+        # Test with both observer and sender
+        status = await session.get_deriver_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, DeriverStatus)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -499,18 +497,18 @@ async def test_session_get_deriver_status(
         assert hasattr(status, "pending_work_units")
         assert status.sessions is None
 
-        # Test with observer_id only
+        # Test with observer only
         peer = honcho_client.peer(id="test-peer-session-deriver")
         peer.get_metadata()  # Create the peer
-        status = session.get_deriver_status(observer_id=peer.id)
+        status = session.get_deriver_status(observer=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with sender_id only
-        status = session.get_deriver_status(sender_id=peer.id)
+        # Test with sender only
+        status = session.get_deriver_status(sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with both observer_id and sender_id
-        status = session.get_deriver_status(observer_id=peer.id, sender_id=peer.id)
+        # Test with both observer and sender
+        status = session.get_deriver_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
 
@@ -554,9 +552,7 @@ async def test_session_poll_deriver_status(
             "get_deriver_status",
             new=AsyncMock(return_value=completed_status),
         ):
-            status = await session.poll_deriver_status(
-                observer_id=peer.id, sender_id=peer.id
-            )
+            status = await session.poll_deriver_status(observer=peer.id, sender=peer.id)
             assert isinstance(status, DeriverStatus)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -576,5 +572,5 @@ async def test_session_poll_deriver_status(
         with patch.object(
             session.__class__, "get_deriver_status", return_value=completed_status
         ):
-            status = session.poll_deriver_status(observer_id=peer.id, sender_id=peer.id)
+            status = session.poll_deriver_status(observer=peer.id, sender=peer.id)
             assert isinstance(status, DeriverStatus)

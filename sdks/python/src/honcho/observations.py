@@ -4,8 +4,29 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from .base import SessionBase
+
 if TYPE_CHECKING:
-    from .types import Representation
+    from .types import ObservationCreateParam, Representation
+
+
+def _convert_observation(item: Any) -> dict[str, Any]:
+    """Convert a core SDK Observations model to a dict for our Observation class."""
+    if hasattr(item, "model_dump"):
+        # Pydantic model - use model_dump()
+        return item.model_dump()
+    elif isinstance(item, dict):
+        return item
+    else:
+        # Fallback: access as object attributes
+        return {
+            "id": getattr(item, "id", ""),
+            "content": getattr(item, "content", ""),
+            "observer_id": getattr(item, "observer_id", ""),
+            "observed_id": getattr(item, "observed_id", ""),
+            "session_id": getattr(item, "session_id", ""),
+            "created_at": str(getattr(item, "created_at", "")),
+        }
 
 
 class Observation:
@@ -56,7 +77,7 @@ class Observation:
             observer_id=data.get("observer_id", ""),
             observed_id=data.get("observed_id", ""),
             session_id=data.get("session_id", ""),
-            created_at=data.get("created_at", ""),
+            created_at=str(data.get("created_at", "")),
         )
 
     def __repr__(self) -> str:
@@ -70,7 +91,7 @@ class ObservationScope:
     """
     Scoped access to observations for a specific observer/observed relationship.
 
-    This class provides convenient methods to list, query, and delete observations
+    This class provides convenient methods to list, query, create, and delete observations
     that are automatically scoped to a specific observer/observed pair.
 
     Typically accessed via `peer.observations` (for self-observations) or
@@ -87,13 +108,6 @@ class ObservationScope:
         bob_observations = peer.observations_of("bob")
         bob_list = bob_observations.list()
         ```
-
-    Note:
-        This class requires the core Honcho SDK to support observation endpoints.
-        The observation endpoints are:
-        - POST /workspaces/{workspace_id}/observations/list
-        - POST /workspaces/{workspace_id}/observations/query
-        - DELETE /workspaces/{workspace_id}/observations/{observation_id}
     """
 
     _client: Any
@@ -126,7 +140,7 @@ class ObservationScope:
         self,
         page: int = 1,
         size: int = 50,
-        session_id: str | None = None,
+        session: str | SessionBase | None = None,
     ) -> list[Observation]:
         """
         List observations in this scope.
@@ -134,19 +148,23 @@ class ObservationScope:
         Args:
             page: Page number (1-indexed)
             size: Number of results per page
-            session_id: Optional session ID to filter by
+            session: Optional session (ID string or Session object) to filter by
 
         Returns:
             List of Observation objects
         """
+        resolved_session_id = (
+            None
+            if session is None
+            else (session if isinstance(session, str) else session.id)
+        )
         filters: dict[str, Any] = {
             "observer": self.observer,
             "observed": self.observed,
         }
-        if session_id:
-            filters["session_id"] = session_id
+        if resolved_session_id:
+            filters["session_id"] = resolved_session_id
 
-        # Note: This requires the core SDK to support observations.list()
         response = self._client.workspaces.observations.list(
             workspace_id=self.workspace_id,
             filters=filters,
@@ -154,7 +172,11 @@ class ObservationScope:
             size=size,
         )
 
-        return [Observation.from_api_response(item) for item in response.items]
+        # response.items is List[Observations] (Pydantic models)
+        return [
+            Observation.from_api_response(_convert_observation(item))
+            for item in response.items
+        ]
 
     def query(
         self,
@@ -178,7 +200,6 @@ class ObservationScope:
             "observed": self.observed,
         }
 
-        # Note: This requires the core SDK to support observations.query()
         response = self._client.workspaces.observations.query(
             workspace_id=self.workspace_id,
             query=query,
@@ -187,7 +208,11 @@ class ObservationScope:
             filters=filters,
         )
 
-        return [Observation.from_api_response(item) for item in response]
+        # response is List[Observations] (Pydantic models)
+        return [
+            Observation.from_api_response(_convert_observation(item))
+            for item in response
+        ]
 
     def delete(self, observation_id: str) -> None:
         """
@@ -196,11 +221,64 @@ class ObservationScope:
         Args:
             observation_id: The ID of the observation to delete
         """
-        # Note: This requires the core SDK to support observations.delete()
         self._client.workspaces.observations.delete(
             workspace_id=self.workspace_id,
             observation_id=observation_id,
         )
+
+    def create(
+        self,
+        observations: "ObservationCreateParam | list[ObservationCreateParam]",
+    ) -> list[Observation]:
+        """
+        Create observations in this scope.
+
+        Args:
+            observations: Single observation or list of observations to create.
+                Each observation must have 'content' and 'session_id' keys.
+
+        Returns:
+            List of created Observation objects
+
+        Example:
+            ```python
+            # Create a single observation
+            observations = peer.observations.create(
+                {"content": "User prefers dark mode", "session_id": "session1"}
+            )
+
+            # Create multiple observations
+            observations = peer.observations.create([
+                {"content": "User prefers dark mode", "session_id": "session1"},
+                {"content": "User is interested in AI", "session_id": "session1"},
+            ])
+            ```
+        """
+        # Normalize to list
+        if not isinstance(observations, list):
+            observations = [observations]
+
+        # Build the request body with observer/observed from scope
+        request_observations = [
+            {
+                "content": obs["content"],
+                "session_id": obs["session_id"],
+                "observer_id": self.observer,
+                "observed_id": self.observed,
+            }
+            for obs in observations
+        ]
+
+        response = self._client.workspaces.observations.create(  # type: ignore[attr-defined]
+            workspace_id=self.workspace_id,
+            observations=request_observations,
+        )
+
+        # response is List[Observations] (Pydantic models)
+        return [
+            Observation.from_api_response(_convert_observation(item))
+            for item in response
+        ]
 
     def get_representation(
         self,
@@ -262,7 +340,7 @@ class AsyncObservationScope:
     """
     Async scoped access to observations for a specific observer/observed relationship.
 
-    This class provides convenient async methods to list, query, and delete observations
+    This class provides convenient async methods to list, query, create, and delete observations
     that are automatically scoped to a specific observer/observed pair.
 
     Typically accessed via `peer.observations` (for self-observations) or
@@ -279,13 +357,6 @@ class AsyncObservationScope:
         bob_observations = peer.observations_of("bob")
         bob_list = await bob_observations.list()
         ```
-
-    Note:
-        This class requires the core Honcho SDK to support observation endpoints.
-        The observation endpoints are:
-        - POST /workspaces/{workspace_id}/observations/list
-        - POST /workspaces/{workspace_id}/observations/query
-        - DELETE /workspaces/{workspace_id}/observations/{observation_id}
     """
 
     _client: Any
@@ -318,7 +389,7 @@ class AsyncObservationScope:
         self,
         page: int = 1,
         size: int = 50,
-        session_id: str | None = None,
+        session: str | SessionBase | None = None,
     ) -> list[Observation]:
         """
         List observations in this scope.
@@ -326,19 +397,23 @@ class AsyncObservationScope:
         Args:
             page: Page number (1-indexed)
             size: Number of results per page
-            session_id: Optional session ID to filter by
+            session: Optional session (ID string or AsyncSession object) to filter by
 
         Returns:
             List of Observation objects
         """
+        resolved_session_id = (
+            None
+            if session is None
+            else (session if isinstance(session, str) else session.id)
+        )
         filters: dict[str, Any] = {
             "observer": self.observer,
             "observed": self.observed,
         }
-        if session_id:
-            filters["session_id"] = session_id
+        if resolved_session_id:
+            filters["session_id"] = resolved_session_id
 
-        # Note: This requires the core SDK to support observations.list()
         response = await self._client.workspaces.observations.list(
             workspace_id=self.workspace_id,
             filters=filters,
@@ -346,7 +421,11 @@ class AsyncObservationScope:
             size=size,
         )
 
-        return [Observation.from_api_response(item) for item in response.items]
+        # response.items is List[Observations] (Pydantic models)
+        return [
+            Observation.from_api_response(_convert_observation(item))
+            for item in response.items
+        ]
 
     async def query(
         self,
@@ -370,7 +449,6 @@ class AsyncObservationScope:
             "observed": self.observed,
         }
 
-        # Note: This requires the core SDK to support observations.query()
         response = await self._client.workspaces.observations.query(
             workspace_id=self.workspace_id,
             query=query,
@@ -379,7 +457,11 @@ class AsyncObservationScope:
             filters=filters,
         )
 
-        return [Observation.from_api_response(item) for item in response]
+        # response is List[Observations] (Pydantic models)
+        return [
+            Observation.from_api_response(_convert_observation(item))
+            for item in response
+        ]
 
     async def delete(self, observation_id: str) -> None:
         """
@@ -388,11 +470,64 @@ class AsyncObservationScope:
         Args:
             observation_id: The ID of the observation to delete
         """
-        # Note: This requires the core SDK to support observations.delete()
         await self._client.workspaces.observations.delete(
             workspace_id=self.workspace_id,
             observation_id=observation_id,
         )
+
+    async def create(
+        self,
+        observations: "ObservationCreateParam | list[ObservationCreateParam]",
+    ) -> list[Observation]:
+        """
+        Create observations in this scope.
+
+        Args:
+            observations: Single observation or list of observations to create.
+                Each observation must have 'content' and 'session_id' keys.
+
+        Returns:
+            List of created Observation objects
+
+        Example:
+            ```python
+            # Create a single observation
+            observations = await peer.observations.create(
+                {"content": "User prefers dark mode", "session_id": "session1"}
+            )
+
+            # Create multiple observations
+            observations = await peer.observations.create([
+                {"content": "User prefers dark mode", "session_id": "session1"},
+                {"content": "User is interested in AI", "session_id": "session1"},
+            ])
+            ```
+        """
+        # Normalize to list
+        if not isinstance(observations, list):
+            observations = [observations]
+
+        # Build the request body with observer/observed from scope
+        request_observations = [
+            {
+                "content": obs["content"],
+                "session_id": obs["session_id"],
+                "observer_id": self.observer,
+                "observed_id": self.observed,
+            }
+            for obs in observations
+        ]
+
+        response = await self._client.workspaces.observations.create(  # type: ignore[attr-defined]
+            workspace_id=self.workspace_id,
+            observations=request_observations,
+        )
+
+        # response is List[Observations] (Pydantic models)
+        return [
+            Observation.from_api_response(_convert_observation(item))
+            for item in response
+        ]
 
     async def get_representation(
         self,

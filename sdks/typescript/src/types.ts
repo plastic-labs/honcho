@@ -15,6 +15,16 @@ export interface Observation {
 }
 
 /**
+ * Parameters for creating an observation.
+ */
+export interface ObservationCreateParam {
+  /** The observation content/text */
+  content: string
+  /** The session this observation relates to */
+  sessionId: string
+}
+
+/**
  * Parameters for semantic search of observations.
  */
 export interface ObservationQueryParams {

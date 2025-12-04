@@ -14,18 +14,20 @@ from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from honcho_core.types.workspaces.sessions.message_create_param import Configuration
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
+from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
+from ..base import PeerBase, SessionBase
 from ..types import DialecticStreamResponse
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
     from ..observations import AsyncObservationScope
     from ..types import PeerContext, Representation
-    from .session import AsyncSession
+
+from .session import AsyncSession
 
 
-class AsyncPeer(BaseModel):
+class AsyncPeer(PeerBase):
     """
     Represents a peer in the Honcho system with async operations.
 
@@ -42,10 +44,6 @@ class AsyncPeer(BaseModel):
             recently fetched. Call get_config() for fresh data.
     """
 
-    id: str = Field(..., min_length=1, description="Unique identifier for this peer")
-    workspace_id: str = Field(
-        ..., min_length=1, description="Workspace ID for scoping operations"
-    )
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: AsyncHonchoCore = PrivateAttr()
@@ -146,8 +144,8 @@ class AsyncPeer(BaseModel):
         query: str,
         *,
         stream: bool = False,
-        target: str | AsyncPeer | None = None,
-        session_id: str | None = None,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
     ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
@@ -161,14 +159,28 @@ class AsyncPeer(BaseModel):
             stream: Whether to stream the response
             target: Optional target peer for local representation query. If provided,
                     queries what this peer knows about the target peer rather than
-                    querying the peer's global representation
-            session_id: Optional session ID to scope the query to a specific session.
-                        If provided, only information from that session is considered
+                    querying the peer's global representation. Can be a peer ID string
+                    or an AsyncPeer object.
+            session: Optional session to scope the query to. If provided, only
+                     information from that session is considered. Can be a session
+                     ID string or an AsyncSession object.
 
         Returns:
             For non-streaming: Response string containing the answer, or None if no relevant information
             For streaming: DialecticStreamResponse object that can be iterated over and provides final response
         """
+        # Extract IDs from objects if needed
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
+        resolved_session_id = (
+            None
+            if session is None
+            else (session if isinstance(session, str) else session.id)
+        )
+
         if stream:
 
             async def stream_response() -> AsyncGenerator[str]:
@@ -180,8 +192,8 @@ class AsyncPeer(BaseModel):
                     workspace_id=self.workspace_id,
                     query=query,
                     stream=True,
-                    target=str(target.id) if isinstance(target, AsyncPeer) else target,
-                    session_id=session_id,
+                    target=target_id,
+                    session_id=resolved_session_id,
                 ) as response:
                     response.http_response.raise_for_status()
                     async for line in response.iter_lines():
@@ -205,8 +217,8 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             query=query,
             stream=stream,
-            target=str(target.id) if isinstance(target, AsyncPeer) else target,
-            session_id=session_id,
+            target=target_id,
+            session_id=resolved_session_id,
         )
         # "If the context provided doesn't help address the query, write absolutely NOTHING but "None""
         if response.content in ("", None, "None"):
@@ -452,7 +464,7 @@ class AsyncPeer(BaseModel):
 
     async def card(
         self,
-        target: str | AsyncPeer | None = None,
+        target: str | PeerBase | None = None,
     ) -> str:
         """
         Get the peer card for this peer.
@@ -472,10 +484,15 @@ class AsyncPeer(BaseModel):
         if isinstance(target, str) and len(target.strip()) == 0:
             raise ValueError("target string cannot be empty")
 
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
         response: PeerCardResponse = await self._client.workspaces.peers.card(
             peer_id=self.id,
             workspace_id=self.workspace_id,
-            target=str(target.id) if isinstance(target, AsyncPeer) else target,
+            target=target_id,
         )
 
         if response.peer_card is None:
@@ -486,8 +503,8 @@ class AsyncPeer(BaseModel):
 
     async def working_rep(
         self,
-        session: str | AsyncSession | None = None,
-        target: str | AsyncPeer | None = None,
+        session: str | SessionBase | None = None,
+        target: str | PeerBase | None = None,
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
@@ -537,12 +554,17 @@ class AsyncPeer(BaseModel):
             else session.id
         )
 
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
         data: PeerWorkingRepresentationResponse = (
             await self._client.workspaces.peers.working_representation(
                 peer_id=self.id,
                 workspace_id=self.workspace_id,
                 session_id=session_id,
-                target=str(target.id) if isinstance(target, AsyncPeer) else target,
+                target=target_id,
                 search_query=search_query if search_query is not None else omit,
                 search_top_k=search_top_k if search_top_k is not None else omit,
                 search_max_distance=search_max_distance
@@ -564,7 +586,7 @@ class AsyncPeer(BaseModel):
 
     async def get_context(
         self,
-        target: str | AsyncPeer | None = None,
+        target: str | PeerBase | None = None,
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
@@ -609,7 +631,11 @@ class AsyncPeer(BaseModel):
         """
         from ..types import PeerContext as _PeerContext
 
-        target_id = str(target.id) if isinstance(target, AsyncPeer) else target
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
 
         response = await self._client.workspaces.peers.get_context(
             peer_id=self.id,
@@ -655,7 +681,7 @@ class AsyncPeer(BaseModel):
 
         return _AsyncObservationScope(self._client, self.workspace_id, self.id, self.id)
 
-    def observations_of(self, target: str | AsyncPeer) -> "AsyncObservationScope":
+    def observations_of(self, target: str | PeerBase) -> "AsyncObservationScope":
         """
         Access observations this peer has made about another peer.
 
