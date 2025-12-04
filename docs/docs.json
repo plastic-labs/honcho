@@ -58,26 +58,6 @@
                 ]
               },
               {
-                "group": "Guides",
-                "pages": [
-                  "v2/guides/file-uploads",
-                  "v2/guides/storing-data",
-                  "v2/guides/workspace-organization",
-                  {
-                    "group": "Integrations",
-                    "pages": [
-                      "v2/guides/integrations/mcp"
-                    ]
-                  },
-                  {
-                    "group": "Migrations",
-                    "pages": [
-                      "v2/guides/migrations/mem0"
-                    ]
-                  }
-                ]
-              },
-              {
                 "group": "Reference",
                 "pages": [
                   "v2/documentation/reference/platform",
@@ -87,13 +67,35 @@
             ]
           },
           {
-            "tab": "Cookbooks",
+            "tab": "Guides",
             "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "v2/guides/overview",
+                  "v2/guides/file-uploads",
+                  "v2/guides/storing-data"
+                ]
+              },
+              {
+                "group": "Integrations",
+                "pages": [
+                  "v2/guides/integrations/crewai",
+                  "v2/guides/integrations/langgraph",
+                  "v2/guides/integrations/mcp"
+                ]
+              },
+              {
+                "group": "Migrations",
+                "pages": [
+                  "v2/guides/migrations/mem0"
+                ]
+              },
               {
                 "group": "Chatbots",
                 "pages": [
-                  "v2/cookbooks/discord",
-                  "v2/cookbooks/telegram"
+                  "v2/guides/discord",
+                  "v2/guides/telegram"
                 ]
               }
             ]
