@@ -315,6 +315,40 @@ def convert_tools_for_provider(
         return tools
 
 
+def extract_openai_reasoning_content(response: Any) -> str | None:
+    """
+    Extract reasoning/thinking content from an OpenAI ChatCompletion response.
+
+    GPT-5 and o1 models include reasoning_details in the response message.
+    Custom OpenAI-compatible providers may also include this field.
+
+    Args:
+        response: OpenAI ChatCompletion response object
+
+    Returns:
+        Concatenated reasoning content string, or None if not present
+    """
+    try:
+        message = response.choices[0].message
+        # Check for reasoning_details (GPT-5/o1 models)
+        if hasattr(message, "reasoning_details") and message.reasoning_details:
+            # reasoning_details is a list of reasoning steps
+            reasoning_parts: list[Any] = []
+            for detail in message.reasoning_details:
+                if hasattr(detail, "content") and detail.content:
+                    reasoning_parts.append(detail.content)
+                elif isinstance(detail, dict) and detail.get("content"):  # pyright: ignore[reportUnknownMemberType]
+                    reasoning_parts.append(detail["content"])
+            if reasoning_parts:
+                return "\n".join(reasoning_parts)
+        # Check for reasoning_content (some custom providers)
+        if hasattr(message, "reasoning_content") and message.reasoning_content:
+            return message.reasoning_content
+    except (AttributeError, IndexError, TypeError):
+        pass
+    return None
+
+
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
     Response object for LLM calls.
@@ -1303,6 +1337,7 @@ async def honcho_llm_call_inner(
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=[],
+                    thinking_content=extract_openai_reasoning_content(response),
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
@@ -1346,6 +1381,7 @@ async def honcho_llm_call_inner(
                     output_tokens=usage.completion_tokens if usage else 0,
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=parsed_tool_calls,
+                    thinking_content=extract_openai_reasoning_content(response),
                 )
             else:
                 response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
@@ -1375,6 +1411,7 @@ async def honcho_llm_call_inner(
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=tool_calls_list,
+                    thinking_content=extract_openai_reasoning_content(response),
                 )
 
         case genai.Client():

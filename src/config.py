@@ -361,6 +361,9 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
+    FINETUNING_TRACES_FILE: str | None = (
+        None  # Path to JSONL file for fine-tuning traces
+    )
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 
