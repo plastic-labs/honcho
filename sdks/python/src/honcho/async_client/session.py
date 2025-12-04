@@ -411,6 +411,52 @@ class AsyncSession(SessionBase):
             workspace_id=self.workspace_id,
         )
 
+    async def clone(
+        self,
+        *,
+        message_id: str | None = None,
+    ) -> "AsyncSession":
+        """
+        Clone this session, optionally up to a specific message.
+
+        Makes an async API call to create a copy of this session with a new ID.
+        All messages and peers from the original session are copied to the new session.
+        If a message_id is provided, only messages up to and including that message
+        are copied.
+
+        Args:
+            message_id: Optional message ID to cut off the clone at. If provided,
+                       the cloned session will only contain messages up to and
+                       including this message.
+
+        Returns:
+            A new AsyncSession object representing the cloned session
+
+        Example:
+            ```python
+            # Clone entire session
+            cloned = await session.clone()
+
+            # Clone session up to a specific message
+            cloned = await session.clone(message_id="msg_abc123")
+            ```
+        """
+        # Make the API call using the core SDK's clone method
+        cloned_session_data = await self._client.workspaces.sessions.clone(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            message_id=message_id if message_id is not None else omit,
+        )
+
+        # Return a new AsyncSession object with the cloned session's data
+        return AsyncSession(
+            cloned_session_data.id,
+            self.workspace_id,
+            self._client,
+            metadata=cloned_session_data.metadata,
+            config=cloned_session_data.configuration,
+        )
+
     async def get_metadata(self) -> dict[str, object]:
         """
         Get metadata for this session.
