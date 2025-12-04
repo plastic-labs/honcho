@@ -71,7 +71,7 @@ TODO: devs tell me if this section is legit or not pls
 
 At a high level, Honcho has three main components that work together.
 
-The API layer is your primary interface--a REST API for managing workspaces, peers, sessions, and messages, plus specialized endpoints for querying representations. The chat endpoint (`/peers/{peer_id}/chat`) gives you theory-of-mind informed responses about a peer, and the get_context endpoint (`/sessions/{session_id}/context`) retrieves relevant context for generating agent responses. Authentication uses JWTs that can be scoped to workspace, peer, or session level for fine-grained access control.
+The API layer is your primary interface--a REST API for managing workspaces, peers, sessions, and messages, plus specialized endpoints for querying representations. The chat endpoint (`/peers/{peer_id}/chat`) gives you reasoning-informed responses about a peer, and the get_context endpoint (`/sessions/{session_id}/context`) retrieves relevant context for generating agent responses. Authentication uses JWTs that can be scoped to workspace, peer, or session level for fine-grained access control.
 
 Storage runs on PostgreSQL with pgvector for semantic search. All the structured data--workspaces, peers, sessions, messages--lives in relational tables, while reasoning outputs are stored as vectors in internal collections for similarity search. Token counts are tracked automatically for usage monitoring, and JSONB metadata fields let you extend primitives with custom data.
 
@@ -83,7 +83,7 @@ Understanding how data moves through Honcho helps clarify the architecture.
 
 When you create messages, they're immediately written to PostgreSQL and reasoning tasks are added to background queues. Background workers then generate logic, summaries, and new insights to improve representations. These conclusions and insights get stored in vector collections for retrieval. This async approach ensures fast writes while still providing rich reasoning capabilities.
 
-When you need context from Honcho, you query through the chat endpoint or get_context endpoint. Honcho retrieves relevant observations and conclusions from vector storage along with recent messages, then assembles everything into coherent context ready to inject into agent prompts.
+When you need context from Honcho, you query through the "Chat" endpoint or "Get Context" endpoint. Honcho retrieves relevant observations and conclusions from vector storage along with recent messages, then assembles everything into coherent context ready to inject into agent prompts.
 
 ![Honcho Architecture](/images/architecture.png)
 

@@ -6,13 +6,22 @@ sidebarTitle: "Overview"
 
 Honcho is an open source memory library with a managed service for building stateful agents. Use it with any model, framework, or architecture. You can represent any kind of entity as a stateful agent--users, AIs, groups of users, and more. Using Honcho as your memory system will earn your agents higher retention, more trust, and help you build data moats to out-compete incumbents.
 
+<CardGroup cols={2}>
+  <Card title="Get an API Key" icon="key" href="https://app.honcho.dev">
+    Sign up and start building with Honcho
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/v2/documentation/introduction/quickstart">
+    Build your first stateful agent in minutes
+  </Card>
+</CardGroup>
+
 <Note>
 Honcho is a memory system that reasons. Read more on the approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning).
 </Note>
 
 ## What Can I Use Honcho For?
 
-Honcho streamlines the agent building process by offering elegant, flexible primitives for managing context. It also reasons over that context to give developers access to far richer insights only accessible through formal logical reasoning. Take the following scenario:
+Honcho streamlines the agent building process by offering elegant, flexible primitives for managing context. It also reasons over that context to give developers access to far richer insights only accessible through reasoning. Take the following scenario:
 
 - You find a use case for LLMs that you want to build an application or agent around
 - It performs well but fails to retain state on the task, customers, or itself over time
@@ -30,11 +39,11 @@ All the while usage dwindles, customers churn, and motivation to solve the probl
 Honcho has four core primitives that work together:
 
 - **Workspaces** - Top-level containers that isolate different applications or environments
-- **Peers** - Any entity that persists over time (users, agents, or any identity)
+- **Peers** - Any entity that persists over time (users, agents, objects, and more)
 - **Sessions** - Interaction threads between peers with temporal boundaries
-- **Messages** - Units of data that trigger reasoning and build peer [representations](/v2/documentation/core-concepts/representation)
+- **Messages** - Units of interaction that trigger reasoning
 
-When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical reasoning (deduction, induction, abduction) to generate insights about each peer. These insights--observations, conclusions, summaries--are stored as peer representations that you can query to provide rich context for your agents.
+When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical [*reasoning*](/v2/documentation/core-concepts/reasoning) (deduction, induction, abduction) to generate insights about each peer. These insights--observations, conclusions, summaries--are stored as peer [*representations*](/v2/documentation/core-concepts/representation) that you can query to provide rich context for your agents.
 
 ![Honcho Architecture](/images/architecture.png)
 
@@ -48,9 +57,9 @@ Honcho uses formal logic to generate new insights by combining premises. This re
 
 ## Get Started
 
-Honcho gives you maximum control over your agent's memory. The data model is flexible and composable, the reasoning layer is powerful yet cost-effective, and everything is built to give developers control over token usage, latency, and personalization depth.
+Honcho gives you maximum control over your agent's context and memory. The data model is flexible and composable, the reasoning backend is powerful yet cost-effective, and everything is built to give developers control over token usage, latency, and personalization depth.
 
-We're just scratching the surface here. Dive into the quickstart to see Honcho in action, explore the architecture to understand how it all fits together, or jump straight to building.
+We're just scratching the surface. Dive into the quickstart to see Honcho in action, explore the architecture to understand how it all fits together, or jump straight to building.
 
 Welcome to Honcho. We're excited to have you at the frontier of AI with us 🫡.
 

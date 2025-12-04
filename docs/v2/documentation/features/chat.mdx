@@ -1,15 +1,15 @@
 ---
-title: "Dialectic Endpoint"
+title: "Chat Endpoint"
 description: "An endpoint for reasoning about your users"
-sidebarTitle: "Dialectic Endpoint"
+sidebarTitle: "Chat Endpoint"
 icon: "message-question"
 ---
 
-The Dialectic endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving facts or observations, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
+The Chat endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving observations or conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
 
 ## How It Works
 
-Honcho builds a *representation*(TODO: link to concept page) for each peer--a collection of conclusions drawn from continuous reasoning over context. The most flexible way to query representations is through the `chat()` method. Some examples:
+Honcho builds a [*representation*](/v2/documentation/core-concepts/representation)for each peer--a collection of conclusions drawn from continuous reasoning over context. The most flexible way to query representations is through the `chat()` method. Some examples:
 
 - "What is the user's preferred communication style?"
 - "Has the user mentioned any dietary restrictions?"
