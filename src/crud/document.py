@@ -153,7 +153,8 @@ async def create_documents(
         Count of new documents
     """
     honcho_documents: list[models.Document] = []
-    embeddings_to_store: list[tuple[str, list[float]]] = []  # [(doc_id, embedding)]
+    # Store (document_model, embedding) pairs - IDs aren't available until after commit
+    docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
     for doc in documents:
         try:
@@ -180,9 +181,9 @@ async def create_documents(
             )
             honcho_documents.append(new_doc)
 
-            # Track embedding for vector store (will use document's generated ID)
+            # Track embedding for vector store (ID will be available after commit)
             if doc.embedding:
-                embeddings_to_store.append((new_doc.id, doc.embedding))
+                docs_with_embeddings.append((new_doc, doc.embedding))
 
         except Exception as e:
             logger.error(
@@ -194,8 +195,8 @@ async def create_documents(
         db.add_all(honcho_documents)
         await db.commit()
 
-        # Store embeddings in vector store after documents are committed
-        if embeddings_to_store:
+        # Store embeddings in vector store after documents are committed (IDs now available)
+        if docs_with_embeddings:
             vector_store = get_vector_store()
             namespace = vector_store.get_document_namespace(
                 workspace_name, observer, observed
@@ -203,12 +204,10 @@ async def create_documents(
 
             # Build vector records with metadata for filtering
             vector_records: list[VectorRecord] = []
-            doc_lookup = {doc.id: doc for doc in honcho_documents}
-            for doc_id, embedding in embeddings_to_store:
-                doc = doc_lookup[doc_id]
+            for doc, embedding in docs_with_embeddings:
                 vector_records.append(
                     VectorRecord(
-                        id=doc_id,
+                        id=doc.id,
                         embedding=embedding,
                         metadata={
                             "workspace_name": workspace_name,
