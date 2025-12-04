@@ -62,7 +62,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="User prefers dark mode",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -70,7 +69,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="User works late at night",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -170,7 +168,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Peer1 observes Peer2",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -178,7 +175,6 @@ class TestObservationRoutes:
             observer=test_peer2.name,
             observed=test_peer3.name,
             content="Peer2 observes Peer3",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -233,7 +229,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="First observation",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         db_session.add(doc1)
@@ -244,7 +239,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Second observation",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add(doc2)
@@ -298,7 +292,6 @@ class TestObservationRoutes:
                 observer=test_peer.name,
                 observed=test_peer2.name,
                 content=f"Observation {i}",
-                embedding=[0.1 * i] * 1536,
                 session_name=test_session.name,
             )
             db_session.add(doc)
@@ -350,30 +343,27 @@ class TestObservationRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create test observations via API (this populates the vector store)
+        create_response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "User loves pizza and pasta",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "User dislikes vegetables",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
         )
-
-        # Create test observations
-        doc1 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User loves pizza and pasta",
-            embedding=[0.9] * 1536,
-            session_name=test_session.name,
-        )
-        doc2 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User dislikes vegetables",
-            embedding=[0.5] * 1536,
-            session_name=test_session.name,
-        )
-        db_session.add_all([doc1, doc2])
-        await db_session.commit()
+        assert create_response.status_code == 200
 
         # Query observations
         response = client.post(
@@ -436,7 +426,6 @@ class TestObservationRoutes:
                 observer=test_peer.name,
                 observed=test_peer2.name,
                 content=f"Observation about topic {i}",
-                embedding=[0.1 * i] * 1536,
                 session_name=test_session.name,
             )
             db_session.add(doc)
@@ -496,7 +485,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test observation",
-            embedding=[0.5] * 1536,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -620,7 +608,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test observation to delete",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -725,7 +712,6 @@ class TestObservationRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test observation content",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         db_session.add(doc)

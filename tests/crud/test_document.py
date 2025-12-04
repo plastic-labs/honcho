@@ -60,7 +60,6 @@ class TestDocumentCRUD:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test observation 1",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -68,7 +67,6 @@ class TestDocumentCRUD:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test observation 2",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -100,25 +98,34 @@ class TestDocumentCRUD:
             db_session, test_workspace, test_peer
         )
 
-        # Create test documents with different embeddings
-        doc1 = models.Document(
+        # Create test documents using create_documents to ensure they're in vector store
+        doc_schemas = [
+            schemas.DocumentCreate(
+                content="User likes pizza",
+                embedding=[0.9] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+            schemas.DocumentCreate(
+                content="User dislikes vegetables",
+                embedding=[0.1] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[2],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+        ]
+        await crud.create_documents(
+            db_session,
+            doc_schemas,
             workspace_name=test_workspace.name,
             observer=test_peer.name,
             observed=test_peer2.name,
-            content="User likes pizza",
-            embedding=[0.9] * 1536,
-            session_name=test_session.name,
         )
-        doc2 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User dislikes vegetables",
-            embedding=[0.1] * 1536,
-            session_name=test_session.name,
-        )
-        db_session.add_all([doc1, doc2])
-        await db_session.flush()
 
         # Query documents
         results = await crud.query_documents(
@@ -150,7 +157,6 @@ class TestDocumentCRUD:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test observation",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -214,8 +220,8 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="Observation 1",
-                session_name=test_session.name,
                 embedding=[0.1] * 1536,
+                session_name=test_session.name,
                 level="explicit",
                 metadata=schemas.DocumentMetadata(
                     message_ids=[1, 2, 3, 4, 5],
@@ -224,8 +230,8 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="Observation 2",
-                session_name=test_session.name,
                 embedding=[0.2] * 1536,
+                session_name=test_session.name,
                 level="deductive",
                 metadata=schemas.DocumentMetadata(
                     message_ids=[6, 7, 8, 9, 10],

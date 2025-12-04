@@ -148,6 +148,64 @@ async def _semantic_search(
     return ordered_messages
 
 
+async def _filter_by_peer_perspective(
+    db: AsyncSession,
+    messages: list[models.Message],
+    workspace_name: str,
+    peer_name: str,
+) -> list[models.Message]:
+    """
+    Filter messages by peer perspective (temporal session membership).
+
+    Only keeps messages from sessions where the peer was a member at the time
+    the message was created (between joined_at and left_at).
+
+    Args:
+        db: Database session
+        messages: List of messages to filter
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer whose perspective to use
+
+    Returns:
+        Filtered list of messages
+    """
+    if not messages:
+        return []
+
+    # Get all session memberships for this peer in this workspace
+    session_memberships_query = (
+        select(session_peers_table)
+        .where(session_peers_table.c.workspace_name == workspace_name)
+        .where(session_peers_table.c.peer_name == peer_name)
+    )
+    result = await db.execute(session_memberships_query)
+    memberships = result.all()
+
+    # Build a lookup of session -> time windows
+    session_windows: dict[str, list[tuple[Any, Any]]] = {}
+    for membership in memberships:
+        session_name = membership.session_name
+        if session_name not in session_windows:
+            session_windows[session_name] = []
+        session_windows[session_name].append((membership.joined_at, membership.left_at))
+
+    # Filter messages
+    filtered_messages: list[models.Message] = []
+    for msg in messages:
+        if msg.session_name not in session_windows:
+            continue
+
+        # Check if message was created during any of the peer's active windows in this session
+        for joined_at, left_at in session_windows[msg.session_name]:
+            if msg.created_at >= joined_at and (
+                left_at is None or msg.created_at <= left_at
+            ):
+                filtered_messages.append(msg)
+                break  # Don't add the same message twice
+
+    return filtered_messages
+
+
 async def _fulltext_search(
     db: AsyncSession,
     query: str,
@@ -237,8 +295,9 @@ async def search(
     stmt = select(models.Message)
 
     # Handle special peer_perspective filter
+    peer_perspective_name: str | None = None
     if filters and "peer_perspective" in filters:
-        peer_name = filters["peer_perspective"]
+        peer_perspective_name = filters["peer_perspective"]
         # Remove from filters dict so apply_filter doesn't try to handle it
         filters = {k: v for k, v in filters.items() if k != "peer_perspective"}
         # Safety: peer_perspective must be scoped to a workspace
@@ -262,7 +321,7 @@ async def search(
                     models.Message.created_at <= session_peers_table.c.left_at,
                 ),
             ),
-        ).where(session_peers_table.c.peer_name == peer_name)
+        ).where(session_peers_table.c.peer_name == peer_perspective_name)
 
     stmt = apply_filter(stmt, models.Message, filters)
 
@@ -273,8 +332,8 @@ async def search(
     workspace_name: str | None = filters.get("workspace_id") if filters else None
     if settings.EMBED_MESSAGES and isinstance(workspace_name, str):
         # Type narrowing: workspace_name is guaranteed to be str in this block
-        # Get more results for fusion
-        semantic_limit = limit * 2
+        # Get more results for fusion (increase if peer_perspective filtering is applied post-search)
+        semantic_limit = limit * 4 if peer_perspective_name else limit * 2
         semantic_results = await _semantic_search(
             db=db,
             query=query,
@@ -282,6 +341,14 @@ async def search(
             limit=semantic_limit,
             filters=filters,
         )
+
+        # Apply peer_perspective filtering to semantic results if needed
+        # Vector store can't handle temporal filtering (joined_at/left_at), so filter post-search
+        if peer_perspective_name:
+            semantic_results = await _filter_by_peer_perspective(
+                db, semantic_results, workspace_name, peer_perspective_name
+            )
+
         search_results.append(semantic_results)
 
     # Perform full-text search

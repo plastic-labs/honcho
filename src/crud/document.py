@@ -423,22 +423,31 @@ async def create_observations(
     except ValueError as e:
         raise ValidationException(str(e)) from e
 
-    # Create document objects
+    # Create document objects and track embeddings for vector store
     honcho_documents: list[models.Document] = []
+    # Group observations by collection (observer, observed) for vector store upserts
+    collection_embeddings: dict[
+        tuple[str, str], list[tuple[models.Document, list[float]]]
+    ] = {}
+
     for obs, embedding in zip(observations, embeddings, strict=True):
-        honcho_documents.append(
-            models.Document(
-                workspace_name=workspace_name,
-                observer=obs.observer_id,
-                observed=obs.observed_id,
-                content=obs.content,
-                level="explicit",  # Manually created observations are always explicit
-                times_derived=1,
-                internal_metadata={},  # No message_ids since not derived from messages
-                embedding=embedding,
-                session_name=obs.session_id,
-            )
+        doc = models.Document(
+            workspace_name=workspace_name,
+            observer=obs.observer_id,
+            observed=obs.observed_id,
+            content=obs.content,
+            level="explicit",  # Manually created observations are always explicit
+            times_derived=1,
+            internal_metadata={},  # No message_ids since not derived from messages
+            session_name=obs.session_id,
         )
+        honcho_documents.append(doc)
+
+        # Track embedding for vector store (grouped by collection)
+        collection_key = (obs.observer_id, obs.observed_id)
+        if collection_key not in collection_embeddings:
+            collection_embeddings[collection_key] = []
+        collection_embeddings[collection_key].append((doc, embedding))
 
     try:
         db.add_all(honcho_documents)
@@ -446,6 +455,32 @@ async def create_observations(
         # Refresh all documents to get generated IDs and timestamps
         for doc in honcho_documents:
             await db.refresh(doc)
+
+        # Store embeddings in vector store after documents are committed (IDs now available)
+        vector_store = get_vector_store()
+        for (observer, observed), docs_with_embeddings in collection_embeddings.items():
+            namespace = vector_store.get_document_namespace(
+                workspace_name, observer, observed
+            )
+
+            # Build vector records with metadata for filtering
+            vector_records: list[VectorRecord] = []
+            for doc, embedding in docs_with_embeddings:
+                vector_records.append(
+                    VectorRecord(
+                        id=doc.id,
+                        embedding=embedding,
+                        metadata={
+                            "workspace_name": workspace_name,
+                            "observer": observer,
+                            "observed": observed,
+                            "session_name": doc.session_name,
+                            "level": doc.level,
+                        },
+                    )
+                )
+            await vector_store.upsert_many(namespace, vector_records)
+
     except IntegrityError as e:
         await db.rollback()
         raise ValidationException(
