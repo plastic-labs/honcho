@@ -4,11 +4,7 @@ description: 'A guide to migrate from Mem0 to Honcho'
 icon: 'arrow-right-arrow-left'
 ---
 
-Interested in transferring your data from Mem0 to Honcho? This guide covers why to switch, how to migrate your data and API comparisons.
-
-<Note>
-Got lots of data to migrate? Contact us at hello@plasticlabs.ai. We would love to help you!
-</Note>
+Interested in transferring your data from Mem0 to Honcho? This guide covers why to switch, how to migrate your data, and differences between the two products.
 
 ## Why Honcho?
 
@@ -16,13 +12,19 @@ Got lots of data to migrate? Contact us at hello@plasticlabs.ai. We would love t
 
 **Superior Performance** - Higher accuracy on memory retrieval benchmarks with faster inference times (more details soon!).
 
-**Competitive Pricing** - Flexible pricing with generous free tier and volume discounts for high-throughput applications.
+**Competitive Pricing** - Flexible pricing with generous free tier and volume discounts.
 
-**Advanced Multi-Peer Sessions** - Honcho offers configurable observation settings (who build's memories about whom), representation based queries between participants, and first-class peer objects.
+**Advanced Multi-Peer Sessions** - Honcho offers configurable observation settings (who builds memories about whom), representation-based queries between participants, and first-class peer objects.
+
+<Note>
+Honcho's reasoning is more thorough than Mem0's memories. To effectively switch, import your messages directly into Honcho to build the best representation possible.
+
+We would love to support the transfer and cost—just [book a call!](https://cal.com/team/plasticlabs/migration-to-honcho)
+</Note>
 
 ## Quick Migration
 
-Migrate a single user's memories from Mem0 to Honcho in one script:
+This example lazily migrates a single user's Mem0 memories to Honcho:
 
 <Info>
 Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys). New accounts start with $100 credits (plenty to get you going).
@@ -45,12 +47,12 @@ session = honcho.session("imported")
 session.add_peers([user])
 
 # Import memories
-for memory in memories:
+for memory in memories['results']:
     content = memory.get("memory") or memory.get("messages", [{}])[0].get("content", "")
     if content:
         session.add_messages([user.message(content)])
 
-print(f"Migrated {len(memories)} memories!")
+print(f"Migrated {len(memories['results'])} memories!")
 ```
 
 ```typescript TypeScript
@@ -69,57 +71,36 @@ const session = await honcho.session("imported");
 await session.addPeers([user]);
 
 // Import memories
-for (const memory of memories) {
+for (const memory of memories.results) {
   const content = memory.memory || memory.messages?.[0]?.content || "";
   if (content) {
     await session.addMessages([user.message(content)]);
   }
 }
 
-console.log(`Migrated ${memories.length} memories!`);
+console.log(`Migrated ${memories.results.length} memories!`);
 ```
 </CodeGroup>
 
-That's it! Your data is now in Honcho. Update your application code:
+That's it! The user's Mem0 memories are now in Honcho.
 
-<CodeGroup>
-```python Python
-# Previous: Mem0
-mem0.add(messages, user_id="user123")
-mem0.search("query", user_id="user123")
-
-# New: Honcho
-session.add_messages([user.message("Hello!")])
-user.search("query")
-user.chat("What does this user prefer?")  # New! Honcho inference-powered
-```
-
-```typescript TypeScript
-// Previous: Mem0
-await mem0.add(messages, { user_id: "user123" });
-await mem0.search("query", { user_id: "user123" });
-
-// New: Honcho
-await session.addMessages([user.message("Hello!")]);
-await user.search("query");
-await user.chat("What does this user prefer?");  // New! Honcho inference-powered
-```
-</CodeGroup>
+Now replace your Mem0 API calls with the Honcho equivalents. See the [API Comparison](#api-comparison) section for more details.
 
 ## Step-by-Step Migration
 
 Prefer a more detailed walkthrough? Follow these steps:
 
-### 1. Export from Mem0
+### 1. Export User Messages
 
-Use Mem0's [export API](https://docs.mem0.ai/cookbooks/essentials/exporting-memories) to retrieve your data:
+As stated above, for best results, import the raw user messages into Honcho. We generally recommend a data structure that preserves the session and peer structure.
 
-```python
-from mem0 import MemoryClient
+If you have this easily accessible, great!
 
-client = MemoryClient(api_key="your-mem0-api-key")
-memories = client.get_all(filters={"user_id": "user123"}, page_size=100)
-```
+
+If you need any help with this transfer or have any questions, please reach out at hello@plasticlabs.ai or [book a call!](https://cal.com/team/plasticlabs/migration-to-honcho)
+
+
+Alternatively, if you just want to import your memories from Mem0, follow the example above and dig into Mem0's [export API documentation](https://docs.mem0.ai/cookbooks/essentials/exporting-memories).
 
 ### 2. Install the Honcho SDK
 
@@ -147,6 +128,10 @@ pnpm add @honcho-ai/sdk
 
 ### 3. Initialize the Honcho Client
 
+<Info>
+Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys). New accounts start with $100 credits (plenty to get you going).
+</Info>
+
 <CodeGroup>
 ```python Python
 from honcho import Honcho
@@ -162,38 +147,55 @@ const honcho = new Honcho({apiKey: process.env.HONCHO_API_KEY!});
 </CodeGroup>
 
 ### 4. Import Your Data
+This is a possible implementation. Adapt the data structure to match your exported format.
 
 <CodeGroup>
 ```python Python
-for memory in memories:
-    user_id = memory["filters"]["user_id"]
-    peer = honcho.peer(user_id)
-    session = honcho.session(f"imported-{user_id}")
-    session.add_peers([peer])
+# Example data structure:
+exported_data = {
+    "session-1": {
+        "user123": ["I prefer dark mode", "My name is Alex"],
+        "user456": ["I work in finance", "I like concise responses"],
+    },
+    "session-2": {
+        "user123": ["Meeting notes from last week..."],
+    }
+}
 
-    # Add message history
-    if "messages" in memory:
-        session.add_messages([
-            peer.message(msg["content"]) for msg in memory["messages"]
-        ])
-    elif "memory" in memory:
-        session.add_messages([peer.message(memory["memory"])])
+# Import into Honcho
+for session_name, users in exported_data.items():
+    session = honcho.session(session_name)
+
+    for user_id, memories in users.items():
+        peer = honcho.peer(user_id)
+        session.add_peers([peer])
+
+        # Add each memory as a message
+        session.add_messages([peer.message(memory) for memory in memories])
 ```
 
 ```typescript TypeScript
-for (const memory of memories) {
-  const userId = memory.filters.user_id;
-  const peer = await honcho.peer(userId);
-  const session = await honcho.session(`imported-${userId}`);
-  await session.addPeers([peer]);
+// Example data structure:
+const exportedData: Record<string, Record<string, string[]>> = {
+  "session-1": {
+    "user123": ["I prefer dark mode", "My name is Alex"],
+    "user456": ["I work in finance", "I like concise responses"],
+  },
+  "session-2": {
+    "user123": ["Meeting notes from last week..."],
+  }
+};
 
-  // Add message history
-  if (memory.messages) {
-    await session.addMessages(
-      memory.messages.map((msg: any) => peer.message(msg.content))
-    );
-  } else if (memory.memory) {
-    await session.addMessages([peer.message(memory.memory)]);
+// Import into Honcho
+for (const [sessionName, users] of Object.entries(exportedData)) {
+  const session = await honcho.session(sessionName);
+
+  for (const [userId, memories] of Object.entries(users)) {
+    const peer = await honcho.peer(userId);
+    await session.addPeers([peer]);
+
+    // Add each memory as a message
+    await session.addMessages(memories.map((memory) => peer.message(memory)));
   }
 }
 ```
@@ -212,8 +214,8 @@ Replace your Mem0 API calls with Honcho equivalents. See the [API Comparison](#a
 | **Initialize** | `MemoryClient(api_key=...)` | `Honcho(api_key=...)` |  |
 | **Identity** | `user_id` string param | `peer = honcho.peer("id")` | Peers can be users or AI agents |
 | **Add data** | `client.add(messages, user_id=...)` | `session.add_messages([peer.message(...)])` | Session-scoped, preserves conversation order |
-| **Search** | `client.search(query, user_id=...)` | `peer.search(query)` or `session.search(query)` | Scoped to peer or session |
-| **List all** | `client.get_all(user_id=...)` | `session.get_messages()` | Paginated results |
+| **Search** | `client.search(query, filters={"user_id": ...})` | `peer.search(query)` or `session.search(query)` | Scoped to peer or session |
+| **List all** | `client.get_all(filters={"user_id": ...})` | `session.get_messages()` | Use .search() to filter for specific users |
 | **Update** | `client.update(memory_id, data=...)` | `honcho.update_message(message, metadata=...)` | Metadata updates only |
 | **Delete** | `client.delete(memory_id)` | `session.delete()` | Session-level deletion |
 
@@ -226,7 +228,7 @@ Mem0 requires manual assembly of context from `search()` results. Honcho's `sess
 </Card>
 
 
-Mem0's `search()` returns basic vector or semantic or raw memory matches. Honcho's `peer.chat()` enables your agent to *reason* about what it knows—returning synthesized natural language insights with streaming support and scoped queries.
+Mem0's `search()` returns basic vector, semantic, or raw memory matches. Honcho's `peer.chat()` enables your agent to *reason* about what it knows—returning synthesized natural language insights with streaming support and scoped queries.
 
 <Card title="Dialectic Endpoint" icon="brain" href="/v2/documentation/core-concepts/features/dialectic-endpoint">
   Learn more about inference-powered queries
@@ -240,19 +242,6 @@ Additional features with **no Mem0 equivalent**:
 | `session.working_rep(peer)` | Cached psychological analysis (mental state, intentions) | Real-time adaptation |
 | `session.get_summaries()` | Auto-generated short/long session summaries | Conversation continuity |
 | `SessionPeerConfig` | Configure observation settings (who learns about whom) | Privacy controls, role-based learning |
-
-### Multi-Peer / Group Chat Comparison
-
-Both platforms support multi-participant conversations, but with different approaches:
-
-| Capability | Mem0 | Honcho |
-|------------|------|--------|
-| **Participant identity** | `name` field in messages | First-class `Peer` objects |
-| **Attribution** | Auto-extracts to `user_id`/`agent_id` | Explicit `peer.message()` attribution |
-| **Session grouping** | `run_id` parameter | `session` object with `add_peers()` |
-| **Observation control** | None | `SessionPeerConfig` (who learns about whom) |
-| **Inference powered queries** | Not supported | `peer.chat(query, target=other_peer)` |
-| **Peer relationships** | Flat attribution | Bidirectional representation building |
 
 ## Next Steps
 
