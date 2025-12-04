@@ -2475,6 +2475,61 @@
         }
       }
     },
+    "/v2/workspaces/{workspace_id}/observations": {
+      "post": {
+        "tags": ["observations"],
+        "summary": "Create Observations",
+        "description": "Create one or more observations.\n\nCreates observations (theory-of-mind facts) for the specified observer/observed peer pairs.\nEach observation must reference existing peers and a session within the workspace.\nEmbeddings are automatically generated for semantic search.\n\nMaximum of 100 observations per request.",
+        "operationId": "create_observations_v2_workspaces__workspace_id__observations_post",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservationBatchCreate",
+                "description": "Batch of observations to create"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Observation" },
+                  "title": "Response Create Observations V2 Workspaces  Workspace Id  Observations Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v2/workspaces/{workspace_id}/observations/list": {
       "post": {
         "tags": ["observations"],
@@ -3333,6 +3388,50 @@
         ],
         "title": "Observation",
         "description": "Observation response - external view of a document"
+      },
+      "ObservationBatchCreate": {
+        "properties": {
+          "observations": {
+            "items": { "$ref": "#/components/schemas/ObservationCreate" },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Observations"
+          }
+        },
+        "type": "object",
+        "required": ["observations"],
+        "title": "ObservationBatchCreate",
+        "description": "Schema for batch observation creation with a max of 100 observations"
+      },
+      "ObservationCreate": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 65535,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "observer_id": {
+            "type": "string",
+            "title": "Observer Id",
+            "description": "The peer making the observation"
+          },
+          "observed_id": {
+            "type": "string",
+            "title": "Observed Id",
+            "description": "The peer being observed"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "The session this observation relates to"
+          }
+        },
+        "type": "object",
+        "required": ["content", "observer_id", "observed_id", "session_id"],
+        "title": "ObservationCreate",
+        "description": "Schema for creating a single observation"
       },
       "ObservationGet": {
         "properties": {

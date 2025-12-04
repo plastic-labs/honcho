@@ -33,7 +33,7 @@ async def test_session_upload_file(
         user = honcho_client.peer(id="user-upload")
         messages = session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
         )
     else:
         # Async client
@@ -41,7 +41,7 @@ async def test_session_upload_file(
         user = await honcho_client.peer(id="user-upload")
         messages = await session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
         )
 
     # Verify messages were created
@@ -78,7 +78,7 @@ async def test_large_file_chunking(
         user = honcho_client.peer(id="user-chunking")
         messages = session.upload_file(
             file=large_file,
-            peer_id=user.id,
+            peer=user.id,
         )
     else:
         # Async client
@@ -86,7 +86,7 @@ async def test_large_file_chunking(
         user = await honcho_client.peer(id="user-chunking")
         messages = await session.upload_file(
             file=large_file,
-            peer_id=user.id,
+            peer=user.id,
         )
 
     # Should be multiple messages due to chunking
@@ -129,16 +129,16 @@ async def test_multiple_files_upload(
         # Sync client
         session = honcho_client.session(id="test-session-multiple")
         user = honcho_client.peer(id="user-multiple")
-        messages1 = session.upload_file(file=file1, peer_id=user.id)
-        messages2 = session.upload_file(file=file2, peer_id=user.id)
-        messages3 = session.upload_file(file=file3, peer_id=user.id)
+        messages1 = session.upload_file(file=file1, peer=user.id)
+        messages2 = session.upload_file(file=file2, peer=user.id)
+        messages3 = session.upload_file(file=file3, peer=user.id)
     else:
         # Async client
         session = await honcho_client.session(id="test-session-multiple")
         user = await honcho_client.peer(id="user-multiple")
-        messages1 = await session.upload_file(file=file1, peer_id=user.id)
-        messages2 = await session.upload_file(file=file2, peer_id=user.id)
-        messages3 = await session.upload_file(file=file3, peer_id=user.id)
+        messages1 = await session.upload_file(file=file1, peer=user.id)
+        messages2 = await session.upload_file(file=file2, peer=user.id)
+        messages3 = await session.upload_file(file=file3, peer=user.id)
 
     # Should be at least one message per file
     assert len(messages1) >= 1
@@ -187,7 +187,7 @@ async def test_json_file_upload(client_fixture: tuple[Honcho | AsyncHoncho, str]
         user = honcho_client.peer(id="user-json")
         messages = session.upload_file(
             file=json_file,
-            peer_id=user.id,
+            peer=user.id,
         )
     else:
         # Async client
@@ -195,7 +195,7 @@ async def test_json_file_upload(client_fixture: tuple[Honcho | AsyncHoncho, str]
         user = await honcho_client.peer(id="user-json")
         messages = await session.upload_file(
             file=json_file,
-            peer_id=user.id,
+            peer=user.id,
         )
 
     # Should create at least one message
@@ -236,7 +236,7 @@ async def test_file_upload_with_tuple_input(
         user = honcho_client.peer(id="user-tuple")
         messages = session.upload_file(
             file=(filename, content.encode("utf-8"), content_type),
-            peer_id=user.id,
+            peer=user.id,
         )
     else:
         # Async client
@@ -244,7 +244,7 @@ async def test_file_upload_with_tuple_input(
         user = await honcho_client.peer(id="user-tuple")
         messages = await session.upload_file(
             file=(filename, content.encode("utf-8"), content_type),
-            peer_id=user.id,
+            peer=user.id,
         )
 
     # Should create at least one message
@@ -280,7 +280,7 @@ async def test_file_upload_with_metadata(
         user = honcho_client.peer(id="user-metadata")
         messages = session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             metadata=metadata,
         )
     else:
@@ -288,7 +288,7 @@ async def test_file_upload_with_metadata(
         user = await honcho_client.peer(id="user-metadata")
         messages = await session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             metadata=metadata,
         )
 
@@ -328,7 +328,7 @@ async def test_file_upload_with_configuration(
         user = honcho_client.peer(id="user-config")
         messages = session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             configuration=configuration,
         )
     else:
@@ -336,7 +336,7 @@ async def test_file_upload_with_configuration(
         user = await honcho_client.peer(id="user-config")
         messages = await session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             configuration=configuration,
         )
 
@@ -372,7 +372,7 @@ async def test_file_upload_with_created_at(
         user = honcho_client.peer(id="user-timestamp")
         messages = session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             created_at=test_timestamp.isoformat(),
         )
     else:
@@ -380,7 +380,7 @@ async def test_file_upload_with_created_at(
         user = await honcho_client.peer(id="user-timestamp")
         messages = await session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             created_at=created_at_str,
         )
 
@@ -426,7 +426,7 @@ async def test_file_upload_with_all_parameters(
         user = honcho_client.peer(id="user-all")
         messages = session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             metadata=metadata,
             configuration=configuration,
             created_at=created_at_str,
@@ -436,7 +436,7 @@ async def test_file_upload_with_all_parameters(
         user = await honcho_client.peer(id="user-all")
         messages = await session.upload_file(
             file=text_file,
-            peer_id=user.id,
+            peer=user.id,
             metadata=metadata,
             configuration=configuration,
             created_at=created_at_str,
@@ -476,13 +476,13 @@ async def test_file_upload_with_datetime_object(
         session = honcho_client.session(id="test-session-datetime")
         user = honcho_client.peer(id="user-datetime")
         messages = session.upload_file(
-            file=text_file, peer_id=user.id, created_at=test_timestamp
+            file=text_file, peer=user.id, created_at=test_timestamp
         )
     else:
         session = await honcho_client.session(id="test-session-datetime")
         user = await honcho_client.peer(id="user-datetime")
         messages = await session.upload_file(
-            file=text_file, peer_id=user.id, created_at=test_timestamp
+            file=text_file, peer=user.id, created_at=test_timestamp
         )
 
     assert len(messages) >= 1

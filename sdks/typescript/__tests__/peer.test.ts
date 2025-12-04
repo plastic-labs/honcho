@@ -126,7 +126,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Session-specific response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', { sessionId: 'session-123' });
+      await peer.chat('Hello', { session: 'session-123' });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',

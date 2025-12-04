@@ -111,7 +111,7 @@ response = alice.chat("What does the user know about weather?")
 response = alice.chat("What does the user know about the assistant?", target=assistant)
 
 # Query scoped to a specific session
-response = alice.chat("What happened in our conversation?", session_id=session.id)
+response = alice.chat("What happened in our conversation?", session=session.id)
 ```
 
 ```typescript TypeScript
@@ -258,7 +258,7 @@ print(f"Workspace: {alice.workspace_id}")
 # Chat with peer's representations (supports streaming)
 response = alice.chat("What did I have for breakfast?")
 response = alice.chat("What do I know about Bob?", target="bob")
-response = alice.chat("What happened in session-1?", session_id="session-1")
+response = alice.chat("What happened in session-1?", session="session-1")
 
 # Add content to a session with a peer
 session = honcho.session("session-1")
@@ -435,6 +435,59 @@ const bobSearch = await bobObs.query("work history");
 ```
 </CodeGroup>
 
+#### Creating Observations Manually
+
+You can also create observations directly, which is useful for importing data or adding explicit facts:
+
+<CodeGroup>
+```python Python
+# Create observations for what alice knows about bob
+bob_obs = alice.observations_of("bob")
+
+# Create a single observation
+created = bob_obs.create([
+    {"content": "User prefers dark mode", "session_id": "session-1"}
+])
+
+# Create multiple observations in batch
+created = bob_obs.create([
+    {"content": "User prefers dark mode", "session_id": "session-1"},
+    {"content": "User works late at night", "session_id": "session-1"},
+    {"content": "User enjoys programming", "session_id": "session-1"},
+])
+
+# Returns list of created Observation objects with IDs
+for obs in created:
+    print(f"Created observation: {obs.id} - {obs.content}")
+```
+
+```typescript TypeScript
+// Create observations for what alice knows about bob
+const bobObs = alice.observationsOf("bob");
+
+// Create a single observation
+const created = await bobObs.create([
+    { content: "User prefers dark mode", sessionId: "session-1" }
+]);
+
+// Create multiple observations in batch
+const batchCreated = await bobObs.create([
+    { content: "User prefers dark mode", sessionId: "session-1" },
+    { content: "User works late at night", sessionId: "session-1" },
+    { content: "User enjoys programming", sessionId: "session-1" },
+]);
+
+// Returns array of created Observation objects with IDs
+for (const obs of batchCreated) {
+    console.log(`Created observation: ${obs.id} - ${obs.content}`);
+}
+```
+</CodeGroup>
+
+<Info>
+Manually created observations are marked as "explicit" and are treated the same as system-derived observations. Each observation must be tied to a session and the content length is validated against the embedding token limit.
+</Info>
+
 ### Session
 
 Manages multi-party conversations:
@@ -504,7 +557,7 @@ searched_rep = session.working_rep(
 # Upload a file to create messages
 messages = session.upload_file(
     file=open("document.pdf", "rb"),
-    peer_id="user",
+    peer="user",
     metadata={"source": "upload"},
     created_at="2024-01-15T10:30:00Z"
 )
@@ -729,7 +782,7 @@ group_chat.add_messages([
 
 # Query different perspectives
 user_perspective = users[0].chat("What are people's concerns?")
-moderator_view = moderator.chat("What feedback am I getting?", session_id=group_chat.id)
+moderator_view = moderator.chat("What feedback am I getting?", session=group_chat.id)
 ```
 
 ```typescript TypeScript

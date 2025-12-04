@@ -441,9 +441,9 @@ describe('Honcho Client', () => {
       mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus);
 
       const status = await honcho.getDeriverStatus({
-        observerId: 'observer1',
-        senderId: 'sender1',
-        sessionId: 'session1',
+        observer: 'observer1',
+        sender: 'sender1',
+        session: 'session1',
       });
 
       expect(status).toEqual({
@@ -560,7 +560,7 @@ describe('Honcho Client', () => {
       const metadata = { updated: true };
 
       await expect(honcho.updateMessage(messageId, metadata)).rejects.toThrow(
-        'sessionId is required when message is a string ID'
+        'session is required when message is a string ID'
       );
     });
 

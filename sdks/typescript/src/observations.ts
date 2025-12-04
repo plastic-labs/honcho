@@ -4,9 +4,11 @@ import {
   type RepresentationData,
   type RepresentationOptions,
 } from './representation'
+import type { Session } from './session'
+import type { ObservationCreateParam } from './types'
 
 // Re-export for consumers who import from this module
-export type { RepresentationOptions }
+export type { RepresentationOptions, ObservationCreateParam }
 
 /**
  * An observation from the theory-of-mind system.
@@ -161,20 +163,25 @@ export class ObservationScope {
    *
    * @param page - Page number (1-indexed)
    * @param size - Number of results per page
-   * @param sessionId - Optional session ID to filter by
+   * @param session - Optional session (ID string or Session object) to filter by
    * @returns Promise resolving to list of Observation objects
    */
   async list(
     page: number = 1,
     size: number = 50,
-    sessionId?: string
+    session?: string | Session
   ): Promise<Observation[]> {
+    const resolvedSessionId = session
+      ? typeof session === 'string'
+        ? session
+        : session.id
+      : undefined
     const filters: Record<string, unknown> = {
       observer: this.observer,
       observed: this.observed,
     }
-    if (sessionId) {
-      filters.session_id = sessionId
+    if (resolvedSessionId) {
+      filters.session_id = resolvedSessionId
     }
 
     // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
@@ -236,6 +243,54 @@ export class ObservationScope {
     await (this._client.workspaces as any).observations.delete(
       this.workspaceId,
       observationId
+    )
+  }
+
+  /**
+   * Create observations in this scope.
+   *
+   * @param observations - Single observation or array of observations with content and sessionId
+   * @returns Promise resolving to list of created Observation objects
+   *
+   * @example
+   * ```typescript
+   * // Create a single observation
+   * const observations = await peer.observations.create(
+   *   { content: 'User prefers dark mode', sessionId: 'session1' }
+   * )
+   *
+   * // Create multiple observations
+   * const observations = await peer.observations.create([
+   *   { content: 'User prefers dark mode', sessionId: 'session1' },
+   *   { content: 'User is interested in AI', sessionId: 'session1' },
+   * ])
+   * ```
+   */
+  async create(
+    observations: ObservationCreateParam | ObservationCreateParam[]
+  ): Promise<Observation[]> {
+    // Normalize to array
+    const observationArray = Array.isArray(observations)
+      ? observations
+      : [observations]
+
+    // Build the request body with observer/observed from scope
+    const requestObservations = observationArray.map((obs) => ({
+      content: obs.content,
+      session_id:
+        typeof obs.sessionId === 'string' ? obs.sessionId : obs.sessionId.id,
+      observer_id: this.observer,
+      observed_id: this.observed,
+    }))
+
+    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
+    const response = await (this._client.workspaces as any).observations.create(
+      this.workspaceId,
+      { observations: requestObservations }
+    )
+
+    return (response ?? []).map((item: unknown) =>
+      Observation.fromApiResponse(item as Record<string, unknown>)
     )
   }
 

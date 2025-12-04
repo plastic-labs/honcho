@@ -826,7 +826,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.6.0" },
+    { name = "honcho-core", specifier = ">=1.6.1" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -837,7 +837,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.6.0"
+version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -847,9 +847,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/9a/19d48268e9cb3b7968141ac6f7ec9d6e3163d3402838ad3de58e0e77a769/honcho_core-1.6.0.tar.gz", hash = "sha256:1b394c7f9d611892685e815c918b5f0e8313126763c5936609c61e237d7c039b", size = 141235, upload-time = "2025-12-03T18:31:35.646Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/ca/5d0229382771d489b838805eb45829817d22b5c7c05d4838cd0a04f59081/honcho_core-1.6.1.tar.gz", hash = "sha256:e2baba3eaf2dfa59c2ecee164f1fb6cca121177167c194d4b861898cbfb5df2e", size = 142082, upload-time = "2025-12-04T16:37:32.725Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/25/7d9d48b6d8a1c9a1f578c76dd4354ef26c4f0704bfcc1d85ed0b2eae32b1/honcho_core-1.6.0-py3-none-any.whl", hash = "sha256:887c04dbff479a529fa4f4b5f774d5498e4dc2860c6438bea63b9964cb5bf6d8", size = 138075, upload-time = "2025-12-03T18:31:34.291Z" },
+    { url = "https://files.pythonhosted.org/packages/35/a6/8108dcedfcfa9c2eb1e9fdbcea4bd183e6f89b04b9acb8c9d1c71cf3981b/honcho_core-1.6.1-py3-none-any.whl", hash = "sha256:68ac553ea32c0f91ab47fce1be6637ccc0991d0a5a360155ea91a5ae9b7859b3", size = 139798, upload-time = "2025-12-04T16:37:31.692Z" },
 ]
 
 [[package]]
