@@ -406,6 +406,52 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
         )
 
+    def clone(
+        self,
+        *,
+        message_id: str | None = None,
+    ) -> "Session":
+        """
+        Clone this session, optionally up to a specific message.
+
+        Makes an API call to create a copy of this session with a new ID.
+        All messages and peers from the original session are copied to the new session.
+        If a message_id is provided, only messages up to and including that message
+        are copied.
+
+        Args:
+            message_id: Optional message ID to cut off the clone at. If provided,
+                       the cloned session will only contain messages up to and
+                       including this message.
+
+        Returns:
+            A new Session object representing the cloned session
+
+        Example:
+            ```python
+            # Clone entire session
+            cloned = session.clone()
+
+            # Clone session up to a specific message
+            cloned = session.clone(message_id="msg_abc123")
+            ```
+        """
+        # Make the API call using the core SDK's clone method
+        cloned_session_data = self._client.workspaces.sessions.clone(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            message_id=message_id if message_id is not None else omit,
+        )
+
+        # Return a new Session object with the cloned session's data
+        return Session(
+            cloned_session_data.id,
+            self.workspace_id,
+            self._client,
+            metadata=cloned_session_data.metadata,
+            config=cloned_session_data.configuration,
+        )
+
     @validate_call
     def set_metadata(
         self,

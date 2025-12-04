@@ -509,6 +509,14 @@ messages = session.upload_file(
     created_at="2024-01-15T10:30:00Z"
 )
 
+# Clone a session (creates a copy with all data)
+# Copies: messages, metadata, configuration, peers, and peer configurations
+cloned = session.clone()
+
+# Clone up to a specific message (inclusive)
+# Only messages up to and including the specified message are copied
+cloned_partial = session.clone(message_id="msg-123")
+
 # Delete session (async - returns 202)
 session.delete()
 
@@ -580,6 +588,14 @@ const messages = await session.uploadFile(
     createdAt: "2024-01-15T10:30:00Z"
   }
 );
+
+// Clone a session (creates a copy with all data)
+// Copies: messages, metadata, configuration, peers, and peer configurations
+const cloned = await session.clone();
+
+// Clone up to a specific message (inclusive)
+// Only messages up to and including the specified message are copied
+const clonedPartial = await session.clone("msg-123");
 
 // Delete session (async - returns 202)
 await session.delete();
