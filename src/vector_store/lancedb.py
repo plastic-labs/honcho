@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 # Additional metadata columns are added dynamically
 VECTOR_DIMENSION = 1536
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownParameterType=false
+
 
 class LanceDBVectorStore(VectorStore):
     """
@@ -35,7 +37,7 @@ class LanceDBVectorStore(VectorStore):
     _db: AsyncConnection | None = None
     _db_path: str
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the LanceDB vector store."""
         super().__init__()
         self._db_path = settings.VECTOR_STORE.LANCEDB_PATH
@@ -56,14 +58,14 @@ class LanceDBVectorStore(VectorStore):
         return None
 
     async def _get_or_create_table(
-        self, namespace: str, sample_data: list[dict[str, Any]] | None = None
+        self,
+        namespace: str,
     ) -> AsyncTable:
         """
         Get existing table or create if not exists.
 
         Args:
             namespace: Table name (namespace)
-            sample_data: Optional sample data to infer schema from
 
         Returns:
             LanceDB async table
@@ -73,18 +75,46 @@ class LanceDBVectorStore(VectorStore):
         if namespace in table_names:
             return await db.open_table(namespace)
 
-        # Create table with sample data if provided
-        if sample_data:
-            return await db.create_table(namespace, data=sample_data)
-
         # Create empty table with base schema
-        schema = pa.schema(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            [
-                pa.field("id", pa.string()),  # pyright: ignore[reportUnknownMemberType]
-                pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSION)),  # pyright: ignore[reportUnknownMemberType]
+        fields: list[pa.Field] = [
+            pa.field("id", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSION)),
+        ]
+        fields.extend(self._metadata_fields_for_namespace(namespace))
+        schema = pa.schema(fields)
+        table = await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
+        return table
+
+    def _metadata_fields_for_namespace(self, namespace: str) -> list[pa.Field]:
+        """
+        Infer standard metadata columns based on namespace structure.
+
+        Namespaces:
+            - Documents: {prefix}.{workspace}.{observer}.{observed}
+            - Messages:  {prefix}.{workspace}.messages
+        """
+        parts = namespace.split(".")
+        if len(parts) < 3:
+            return []
+
+        if parts[-1] == "messages":
+            return [
+                pa.field("message_id", pa.string(), nullable=True),
+                pa.field("session_name", pa.string(), nullable=True),
+                pa.field("peer_name", pa.string(), nullable=True),
+                pa.field("chunk_index", pa.int64(), nullable=True),
             ]
-        )
-        return await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
+
+        if len(parts) == 4:
+            return [
+                pa.field("workspace_name", pa.string(), nullable=True),
+                pa.field("observer", pa.string(), nullable=True),
+                pa.field("observed", pa.string(), nullable=True),
+                pa.field("session_name", pa.string(), nullable=True),
+                pa.field("level", pa.string(), nullable=True),
+            ]
+
+        return []
 
     def _row_to_dict(self, vector: VectorRecord) -> dict[str, Any]:
         """Convert a VectorRecord to a dict for LanceDB."""
@@ -94,7 +124,10 @@ class LanceDBVectorStore(VectorStore):
         }
         # Add metadata fields
         if vector.metadata:
-            row.update(vector.metadata)
+            reserved_keys = {"id", "vector", "_distance"}
+            for key in vector.metadata:
+                if key not in reserved_keys:
+                    row[key] = vector.metadata[key]
         return row
 
     async def upsert(
@@ -111,7 +144,7 @@ class LanceDBVectorStore(VectorStore):
         """
         try:
             row = self._row_to_dict(vector)
-            table = await self._get_or_create_table(namespace, sample_data=[row])
+            table = await self._get_or_create_table(namespace)
 
             # Use merge_insert for upsert behavior
             await (
@@ -145,7 +178,7 @@ class LanceDBVectorStore(VectorStore):
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
-            table = await self._get_or_create_table(namespace, sample_data=rows)
+            table = await self._get_or_create_table(namespace)
 
             # Use merge_insert for upsert behavior
             await (

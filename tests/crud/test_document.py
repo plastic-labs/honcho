@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
@@ -138,6 +140,139 @@ class TestDocumentCRUD:
         )
 
         assert len(results) == 2
+
+    @pytest.mark.asyncio
+    async def test_query_documents_excludes_soft_deleted(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Query results should not include soft-deleted documents even if vectors remain"""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # Create two documents and persist embeddings
+        doc_schemas = [
+            schemas.DocumentCreate(
+                content="User likes pizza",
+                embedding=[0.9] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+            schemas.DocumentCreate(
+                content="User dislikes vegetables",
+                embedding=[0.1] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[2],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+        ]
+        await crud.create_documents(
+            db_session,
+            doc_schemas,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Soft-delete one document without touching vectors
+        stmt = select(models.Document).where(
+            models.Document.workspace_name == test_workspace.name,
+            models.Document.observer == test_peer.name,
+            models.Document.observed == test_peer2.name,
+        )
+        result = await db_session.execute(stmt)
+        docs = {doc.content: doc for doc in result.scalars().all()}
+        deleted_doc = docs["User likes pizza"]
+        kept_doc = docs["User dislikes vegetables"]
+
+        deleted_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        await db_session.commit()
+
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="food preferences",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            top_k=10,
+        )
+
+        assert len(results) == 1
+        assert results[0].id == kept_doc.id
+
+    @pytest.mark.asyncio
+    async def test_query_documents_applies_additional_filters(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Filters beyond vector metadata should be enforced at the DB layer"""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        doc_schemas = [
+            schemas.DocumentCreate(
+                content="Observation one",
+                embedding=[0.5] * 1536,
+                session_name=test_session.name,
+                times_derived=1,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+            schemas.DocumentCreate(
+                content="Observation two",
+                embedding=[0.5] * 1536,
+                session_name=test_session.name,
+                times_derived=2,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[2],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+        ]
+        await crud.create_documents(
+            db_session,
+            doc_schemas,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        result = await db_session.execute(
+            select(models.Document).where(
+                models.Document.workspace_name == test_workspace.name,
+                models.Document.observer == test_peer.name,
+                models.Document.observed == test_peer2.name,
+            )
+        )
+        docs = result.scalars().all()
+        times_derived_map = {doc.times_derived: doc.id for doc in docs}
+
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="any query",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            top_k=10,
+            filters={"times_derived": 2},
+            embedding=[0.5] * 1536,
+        )
+
+        assert len(results) == 1
+        assert results[0].id == times_derived_map[2]
 
     @pytest.mark.asyncio
     async def test_delete_document_success(

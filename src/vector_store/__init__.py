@@ -89,11 +89,9 @@ class VectorStore(ABC):
 
         Args:
             namespace: The namespace to store the vector in
-            id: Unique identifier for the vector
-            embedding: The embedding vector
-            metadata: Optional metadata to store with the vector
+            vector: VectorRecord containing id, embedding, and optional metadata
         """
-        pass
+        ...
 
     @abstractmethod
     async def upsert_many(
@@ -108,7 +106,7 @@ class VectorStore(ABC):
             namespace: The namespace to store the vectors in
             vectors: List of VectorRecord objects to upsert
         """
-        pass
+        ...
 
     @abstractmethod
     async def query(
@@ -133,7 +131,7 @@ class VectorStore(ABC):
         Returns:
             List of QueryResult objects, ordered by similarity (most similar first)
         """
-        pass
+        ...
 
     @abstractmethod
     async def delete_many(self, namespace: str, ids: list[str]) -> None:
@@ -144,7 +142,7 @@ class VectorStore(ABC):
             namespace: The namespace containing the vectors
             ids: List of vector identifiers to delete
         """
-        pass
+        ...
 
     @abstractmethod
     async def delete_namespace(self, namespace: str) -> None:
@@ -154,7 +152,7 @@ class VectorStore(ABC):
         Args:
             namespace: The namespace to delete
         """
-        pass
+        ...
 
 
 # Singleton instance

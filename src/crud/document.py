@@ -1,11 +1,14 @@
+import datetime
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
+from sqlalchemy.sql.functions import func
+from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
 from src import models, schemas
 from src.config import settings
@@ -15,7 +18,7 @@ from src.crud.session import get_session
 from src.embedding_client import embedding_client
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.utils.filter import apply_filter
-from src.vector_store import VectorRecord, get_vector_store
+from src.vector_store import VectorRecord, VectorStore, get_vector_store
 
 logger = getLogger(__name__)
 
@@ -50,6 +53,7 @@ def get_all_documents(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
+        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
     )
 
     # Apply additional filters if provided
@@ -87,8 +91,10 @@ def get_documents_with_filters(
     Returns:
         Select query for documents
     """
-    stmt = select(models.Document).where(
-        models.Document.workspace_name == workspace_name
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
     )
 
     # Apply additional filters if provided
@@ -172,14 +178,17 @@ async def query_documents(
     document_ids = [result.id for result in vector_results]
 
     # Fetch documents from database
-    # No additional filtering needed since vector store already applied all supported filters
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
+        .where(models.Document.deleted_at.is_(None))
         .where(models.Document.id.in_(document_ids))
     )
+    # Re-apply all filters at the database layer to catch any constraints
+    # that aren't supported by the vector store metadata.
+    stmt = apply_filter(stmt, models.Document, filters)
 
     result = await db.execute(stmt)
     documents = {doc.id: doc for doc in result.scalars().all()}
@@ -281,7 +290,20 @@ async def create_documents(
                         },
                     )
                 )
-            await vector_store.upsert_many(namespace, vector_records)
+
+            # Retry vector upsert with exponential backoff
+            try:
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(3),
+                    wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+                    reraise=True,
+                ):
+                    with attempt:
+                        await vector_store.upsert_many(namespace, vector_records)
+            except Exception as e:
+                # Final attempt failed - log but don't raise
+                # Documents exist in DB, vectors can be added manually later
+                logger.error(f"Failed to upsert vectors after retries: {e}")
 
     except IntegrityError as e:
         await db.rollback()
@@ -302,7 +324,11 @@ async def delete_document(
     session_name: str | None = None,
 ) -> None:
     """
-    Delete a single document by ID.
+    Delete a single document by ID using hybrid sync/soft delete pattern.
+
+    Tries to delete from vector store first, then hard deletes from DB.
+    If vector store delete fails, soft deletes (sets deleted_at) and lets
+    cleanup job handle vector deletion later.
 
     Args:
         db: Database session
@@ -315,24 +341,52 @@ async def delete_document(
     Raises:
         ResourceNotFoundException: If document not found or doesn't match criteria
     """
-    stmt = delete(models.Document).where(
+    # Build base query conditions
+    conditions = [
         models.Document.id == document_id,
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
-    )
-
-    # If session is specified, ensure document belongs to that session
+        models.Document.deleted_at.is_(None),  # Only delete non-deleted docs
+    ]
     if session_name is not None:
-        stmt = stmt.where(models.Document.session_name == session_name)
+        conditions.append(models.Document.session_name == session_name)
 
-    result = await db.execute(stmt)
-    await db.commit()
+    # Check document exists first
+    check_stmt = select(models.Document).where(*conditions)
+    result = await db.execute(check_stmt)
+    doc = result.scalar_one_or_none()
 
-    if result.rowcount == 0:
+    if doc is None:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to the specified collection/session"
         )
+
+    # Try to delete from vector store first
+    vector_store = get_vector_store()
+    namespace = vector_store.get_document_namespace(workspace_name, observer, observed)
+    vector_deleted = False
+
+    try:
+        await vector_store.delete_many(namespace, [document_id])
+        vector_deleted = True
+    except Exception as e:
+        logger.warning(f"Failed to delete vector for document {document_id}: {e}")
+
+    if vector_deleted:
+        # Happy path: hard delete from DB
+        delete_stmt = delete(models.Document).where(models.Document.id == document_id)
+        await db.execute(delete_stmt)
+    else:
+        # Fallback: soft delete, let cleanup job handle vector
+        update_stmt = (
+            update(models.Document)
+            .where(models.Document.id == document_id)
+            .values(deleted_at=func.now())
+        )
+        await db.execute(update_stmt)
+
+    await db.commit()
 
 
 async def delete_document_by_id(
@@ -341,7 +395,11 @@ async def delete_document_by_id(
     document_id: str,
 ) -> None:
     """
-    Delete a single document by ID and workspace.
+    Delete a single document by ID and workspace using hybrid sync/soft delete pattern.
+
+    Tries to delete from vector store first, then hard deletes from DB.
+    If vector store delete fails, soft deletes (sets deleted_at) and lets
+    cleanup job handle vector deletion later.
 
     Args:
         db: Database session
@@ -351,18 +409,47 @@ async def delete_document_by_id(
     Raises:
         ResourceNotFoundException: If document not found or doesn't belong to the workspace
     """
-    stmt = delete(models.Document).where(
+    # Fetch document to get observer/observed for namespace
+    stmt = select(models.Document).where(
         models.Document.id == document_id,
         models.Document.workspace_name == workspace_name,
+        models.Document.deleted_at.is_(None),  # Only delete non-deleted docs
     )
-
     result = await db.execute(stmt)
-    await db.commit()
+    doc = result.scalar_one_or_none()
 
-    if result.rowcount == 0:
+    if doc is None:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
+
+    # Try to delete from vector store first
+    vector_store = get_vector_store()
+    namespace = vector_store.get_document_namespace(
+        workspace_name, doc.observer, doc.observed
+    )
+    vector_deleted = False
+
+    try:
+        await vector_store.delete_many(namespace, [document_id])
+        vector_deleted = True
+    except Exception as e:
+        logger.warning(f"Failed to delete vector for document {document_id}: {e}")
+
+    if vector_deleted:
+        # Happy path: hard delete from DB
+        delete_stmt = delete(models.Document).where(models.Document.id == document_id)
+        await db.execute(delete_stmt)
+    else:
+        # Fallback: soft delete, let cleanup job handle vector
+        update_stmt = (
+            update(models.Document)
+            .where(models.Document.id == document_id)
+            .values(deleted_at=func.now())
+        )
+        await db.execute(update_stmt)
+
+    await db.commit()
 
 
 async def create_observations(
@@ -479,7 +566,22 @@ async def create_observations(
                         },
                     )
                 )
-            await vector_store.upsert_many(namespace, vector_records)
+
+            # Retry vector upsert with exponential backoff
+            try:
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(3),
+                    wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+                    reraise=True,
+                ):
+                    with attempt:
+                        await vector_store.upsert_many(namespace, vector_records)
+            except Exception as e:
+                # Final attempt failed - log but don't raise
+                # Documents exist in DB, vectors can be added manually later
+                logger.error(
+                    f"Failed to upsert vectors for {namespace} after retries: {e}"
+                )
 
     except IntegrityError as e:
         await db.rollback()
@@ -566,3 +668,89 @@ async def is_rejected_duplicate(
         f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
     )
     return True
+
+
+async def cleanup_soft_deleted_documents(
+    db: AsyncSession,
+    vector_store: VectorStore,
+    batch_size: int = 100,
+    older_than_minutes: int = 5,
+) -> int:
+    """
+    Clean up soft-deleted documents by deleting from vector store and hard deleting from DB.
+
+    This function is designed to be called periodically (e.g., every 5 minutes) to reconcile
+    any documents that were soft-deleted when the vector store was unavailable.
+
+    Steps:
+    1. Find documents with deleted_at older than threshold
+    2. Group by namespace (workspace/observer/observed)
+    3. Delete from vector store (per namespace)
+    4. Hard delete from DB only for documents where vector deletion succeeded
+
+    If vector deletion fails for a namespace, those documents remain soft-deleted
+    and will be retried on the next cleanup run.
+
+    Args:
+        db: Database session
+        vector_store: Vector store instance
+        batch_size: Maximum number of documents to process per call
+        older_than_minutes: Only process documents soft-deleted more than this many minutes ago
+
+    Returns:
+        Count of documents cleaned up (only those where vector deletion succeeded)
+    """
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+        minutes=older_than_minutes
+    )
+
+    # Find soft-deleted documents ready for cleanup
+    # Use FOR UPDATE SKIP LOCKED to prevent multiple deriver instances from
+    # processing the same documents simultaneously
+    stmt = (
+        select(models.Document)
+        .where(models.Document.deleted_at.is_not(None))
+        .where(models.Document.deleted_at < cutoff)
+        .limit(batch_size)
+        .with_for_update(skip_locked=True)
+    )
+    result = await db.execute(stmt)
+    documents = list(result.scalars().all())
+
+    if not documents:
+        return 0
+
+    # Group by namespace for batch vector deletion
+    by_namespace: dict[str, list[str]] = {}
+    for doc in documents:
+        namespace = vector_store.get_document_namespace(
+            doc.workspace_name, doc.observer, doc.observed
+        )
+        by_namespace.setdefault(namespace, []).append(doc.id)
+
+    # Delete from vector store (per namespace) and track successful deletions
+    successfully_deleted_ids: set[str] = set()
+    for namespace, ids in by_namespace.items():
+        try:
+            await vector_store.delete_many(namespace, ids)
+            # Only add to successfully_deleted_ids if vector deletion succeeded
+            successfully_deleted_ids.update(ids)
+        except Exception as e:
+            # Log but continue - vectors may already be deleted or namespace may not exist
+            logger.warning(f"Failed to delete vectors from {namespace}: {e}")
+
+    # Only hard delete documents where vector deletion succeeded
+    if successfully_deleted_ids:
+        await db.execute(
+            delete(models.Document).where(
+                models.Document.id.in_(successfully_deleted_ids)
+            )
+        )
+        await db.commit()
+        logger.debug(
+            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+        )
+        return len(successfully_deleted_ids)
+
+    # No documents were successfully deleted from vector store
+    return 0

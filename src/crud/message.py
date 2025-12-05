@@ -4,6 +4,7 @@ from typing import Any
 from nanoid import generate as generate_nanoid
 from sqlalchemy import ColumnElement, Select, and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
 from src import models, schemas
 from src.config import settings
@@ -179,9 +180,20 @@ async def create_messages(
                 db.add_all(embedding_objects)
                 await db.commit()
 
-            # Upsert vectors to external vector store
+            # Upsert vectors to external vector store with retry
             if vector_records:
-                await vector_store.upsert_many(namespace, vector_records)
+                try:
+                    async for attempt in AsyncRetrying(
+                        stop=stop_after_attempt(3),
+                        wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+                        reraise=True,
+                    ):
+                        with attempt:
+                            await vector_store.upsert_many(namespace, vector_records)
+                except Exception as e:
+                    # Final attempt failed - log but don't raise
+                    # MessageEmbedding records exist in DB, vectors can be added later
+                    logger.error(f"Failed to upsert message vectors after retries: {e}")
 
     except Exception:
         logger.exception(

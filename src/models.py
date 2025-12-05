@@ -389,6 +389,9 @@ class Document(Base):
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
     session_name: Mapped[str] = mapped_column(TEXT, index=True)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True, default=None
+    )
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (

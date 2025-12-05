@@ -70,9 +70,7 @@ class TurbopufferVectorStore(VectorStore):
 
         Args:
             namespace: The namespace to store the vector in
-            id: Unique identifier for the vector
-            embedding: The embedding vector
-            metadata: Optional metadata to store with the vector
+            vector: VectorRecord containing id, embedding, and optional metadata
         """
         ns = self._get_namespace(namespace)
         attributes = vector.metadata or {}
@@ -116,7 +114,7 @@ class TurbopufferVectorStore(VectorStore):
             {
                 "id": v.id,
                 "vector": v.embedding,
-                **v.metadata,
+                **(v.metadata or {}),
             }
             for v in vectors
         ]

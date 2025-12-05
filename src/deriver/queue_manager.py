@@ -49,6 +49,10 @@ class WorkerOwnership(NamedTuple):
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
 
 
+VECTOR_CLEANUP_INTERVAL_SECONDS = 300  # 5 minutes
+QUEUE_CLEANUP_INTERVAL_SECONDS = 43200  # 12 hours
+
+
 class QueueManager:
     def __init__(self):
         self.shutdown_event: asyncio.Event = asyncio.Event()
@@ -111,7 +115,7 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start background maintenance loop
+        # Start background maintenance loop (handles both queue cleanup and vector cleanup)
         try:
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
         except Exception:
@@ -343,29 +347,84 @@ class QueueManager:
             await db.commit()
 
     async def _maintenance_loop(self) -> None:
-        """Run periodic maintenance tasks on the queue."""
+        """
+        Run periodic maintenance tasks.
+
+        - Vector cleanup: every 5 minutes (clean up soft-deleted documents)
+        - Queue cleanup: every 12 hours (remove old processed/errored queue items)
+        """
+        # Track when each task should next run
+        next_vector_cleanup = datetime.now(timezone.utc)
+        next_queue_cleanup = datetime.now(timezone.utc)
+
         try:
             while not self.shutdown_event.is_set():
-                try:
-                    await self.cleanup_queue_items()
-                except Exception:
-                    logger.exception("Error during maintenance cleanup")
-                    if settings.SENTRY.ENABLED:
-                        sentry_sdk.capture_exception()
+                now = datetime.now(timezone.utc)
 
-                # Sleep until interval elapses or shutdown event is set
+                # Run vector cleanup if due
+                if now >= next_vector_cleanup:
+                    try:
+                        await self._run_vector_cleanup()
+                    except Exception:
+                        logger.exception("Error during vector cleanup")
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception()
+                    next_vector_cleanup = now + timedelta(
+                        seconds=VECTOR_CLEANUP_INTERVAL_SECONDS
+                    )
+
+                # Run queue cleanup if due
+                if now >= next_queue_cleanup:
+                    try:
+                        await self.cleanup_queue_items()
+                    except Exception:
+                        logger.exception("Error during queue cleanup")
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception()
+                    next_queue_cleanup = now + timedelta(
+                        seconds=QUEUE_CLEANUP_INTERVAL_SECONDS
+                    )
+
+                # Sleep until next task is due or shutdown
+                next_task_time = min(next_vector_cleanup, next_queue_cleanup)
+                sleep_seconds = max(
+                    0, (next_task_time - datetime.now(timezone.utc)).total_seconds()
+                )
+
                 try:
                     await asyncio.wait_for(
                         self.shutdown_event.wait(),
-                        timeout=43200,  # 12 hours
+                        timeout=sleep_seconds
+                        or 1,  # At least 1 second to avoid busy loop
                     )
                     break  # Shutdown event set
                 except asyncio.TimeoutError:
-                    # Timeout means it's time for next cleanup
+                    # Timeout means it's time for next task
                     pass
         except asyncio.CancelledError:
             logger.debug("Maintenance loop cancelled")
             raise
+
+    async def _run_vector_cleanup(self) -> None:
+        """Run vector store cleanup for soft-deleted documents."""
+        from src.crud.document import cleanup_soft_deleted_documents
+        from src.vector_store import get_vector_store
+
+        async with tracked_db("vector_cleanup") as db:
+            vector_store = get_vector_store()
+            total_cleaned = 0
+
+            # Process in batches until no more soft-deleted documents
+            while True:
+                cleaned = await cleanup_soft_deleted_documents(db, vector_store)
+                total_cleaned += cleaned
+                if cleaned == 0:
+                    break
+
+            if total_cleaned > 0:
+                logger.info(
+                    f"Vector cleanup: removed {total_cleaned} soft-deleted documents"
+                )
 
     async def _handle_processing_error(
         self,

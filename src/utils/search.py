@@ -130,11 +130,11 @@ async def _semantic_search(
 
     message_ids = list(seen_message_ids.keys())
 
-    # Fetch messages from database by the IDs from vector search
-    # No additional filtering needed since vector store already applied all filters
+    # Fetch messages from database by the IDs from vector search and reapply filters
     semantic_query = select(models.Message).where(
         models.Message.public_id.in_(message_ids)
     )
+    semantic_query = apply_filter(semantic_query, models.Message, filters)
 
     result = await db.execute(semantic_query)
     messages = {msg.public_id: msg for msg in result.scalars().all()}
