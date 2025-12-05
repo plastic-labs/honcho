@@ -33,7 +33,6 @@ python -m tests.bench.locomo_baseline --data-file tests/bench/locomo_data/locomo
 
 Optional arguments:
 ```
---anthropic-api-key: Anthropic API key (can be set in .env as LLM_ANTHROPIC_API_KEY)
 --batch-size: Number of conversations to run concurrently in each batch (default: 1)
 --json-output: Path to write JSON summary results for analytics
 --sample-id: Run only the conversation with this sample_id (skips all others)
@@ -42,9 +41,9 @@ Optional arguments:
 ```
 
 ## Other notes
-- Uses Anthropic API directly (configured via LLM_ANTHROPIC_API_KEY in tests/bench/.env or env var)
-- Default model is claude-haiku-4-5 for baseline comparison
-- Evaluation uses F1 score following the LoCoMo paper methodology
+- Uses OpenRouter API (configured via LLM_OPENAI_COMPATIBLE_API_KEY in tests/bench/.env or env var)
+- Default model is anthropic/claude-haiku-4-5 for baseline comparison
+- Evaluation uses LLM judge following the LoCoMo paper methodology
 """
 
 import argparse
@@ -56,7 +55,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -82,7 +80,8 @@ from .locomo_common import (
 bench_dir = Path(__file__).parent
 load_dotenv(bench_dir / ".env")
 
-MODEL_BEING_TESTED = "claude-haiku-4-5"
+# OpenRouter model format for baseline testing
+MODEL_BEING_TESTED = "anthropic/claude-haiku-4.5"
 
 
 class LoCoMoBaselineRunner:
@@ -90,15 +89,9 @@ class LoCoMoBaselineRunner:
     Executes LoCoMo benchmark tests directly against Claude.
     """
 
-    def __init__(
-        self,
-        anthropic_api_key: str | None = None,
-    ):
+    def __init__(self):
         """
         Initialize the LoCoMo baseline test runner.
-
-        Args:
-            anthropic_api_key: Anthropic API key (optional, uses env var if not provided)
         """
         # Configure logging
         logging.basicConfig(
@@ -106,14 +99,21 @@ class LoCoMoBaselineRunner:
         )
         self.logger: logging.Logger = logging.getLogger(__name__)
 
-        # Initialize Anthropic client
-        api_key = anthropic_api_key or os.getenv("LLM_ANTHROPIC_API_KEY")
-        if not api_key:
+        # Initialize OpenRouter client for model being tested
+        openrouter_api_key = os.getenv("LLM_OPENAI_COMPATIBLE_API_KEY")
+        openrouter_base_url = os.getenv(
+            "LLM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1"
+        )
+
+        if not openrouter_api_key:
             raise ValueError(
-                "LLM_ANTHROPIC_API_KEY is not set in tests/bench/.env or environment"
+                "LLM_OPENAI_COMPATIBLE_API_KEY is not set in tests/bench/.env or environment"
             )
 
-        self.anthropic_client: AsyncAnthropic = AsyncAnthropic(api_key=api_key)
+        self.openrouter_client: AsyncOpenAI = AsyncOpenAI(
+            api_key=openrouter_api_key,
+            base_url=openrouter_base_url,
+        )
 
         # Initialize OpenAI client for judging responses
         openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -248,30 +248,26 @@ Below is the history of their past conversations. Use this history to answer the
                 print(f"  Q{q_idx + 1} [{category_name}]: {question[:80]}...")
 
                 try:
-                    # Call Claude with full context, using prompt caching
-                    response = await self.anthropic_client.messages.create(
+                    # Call model via OpenRouter with full context
+                    response = await self.openrouter_client.chat.completions.create(
                         model=MODEL_BEING_TESTED,
                         max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-                        system=[
-                            {
-                                "type": "text",
-                                "text": system_prompt,
-                                "cache_control": {"type": "ephemeral"},
-                            }
-                        ],
                         messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt,
+                            },
                             {
                                 "role": "user",
                                 "content": question,
-                            }
+                            },
                         ],
                     )
 
-                    if not response.content:
+                    if not response.choices or not response.choices[0].message.content:
                         actual_response = ""
                     else:
-                        content_block = response.content[0]
-                        actual_response = getattr(content_block, "text", "")
+                        actual_response = response.choices[0].message.content
 
                     # Get evidence context for the judge
                     evidence_context = get_evidence_context(conversation, evidence)
@@ -441,12 +437,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--anthropic-api-key",
-        type=str,
-        help="Anthropic API key (optional, can use LLM_ANTHROPIC_API_KEY env var)",
-    )
-
-    parser.add_argument(
         "--batch-size",
         type=int,
         default=1,
@@ -489,9 +479,7 @@ Examples:
         return 1
 
     # Create test runner
-    runner = LoCoMoBaselineRunner(
-        anthropic_api_key=args.anthropic_api_key,
-    )
+    runner = LoCoMoBaselineRunner()
 
     try:
         # Run conversations

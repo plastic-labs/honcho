@@ -21,12 +21,16 @@ python -m tests.bench.longmem_baseline --test-file tests/bench/longmemeval_data/
 
 Optional arguments:
 ```
---anthropic-api-key: Anthropic API key (can be set in .env as LLM_ANTHROPIC_API_KEY)
 --batch-size: Number of questions to run concurrently in each batch (default: 10)
 --json-output: Path to write JSON summary results for analytics
 --test-count: Number of tests to run (default: all)
 --question-id: Run only the question with this question_id
 ```
+
+## Other notes
+- Uses OpenRouter API (configured via LLM_OPENAI_COMPATIBLE_API_KEY in tests/bench/.env or env var)
+- Default model is anthropic/claude-haiku-4-5
+- Evaluation uses GPT-4o judge per the LongMemEval paper methodology
 """
 
 import argparse
@@ -38,7 +42,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from typing_extensions import TypedDict
@@ -59,7 +62,8 @@ from .longmem_common import (
 load_dotenv()
 
 
-MODEL_BEING_TESTED = "claude-haiku-4-5"
+# OpenRouter model format for baseline testing
+MODEL_BEING_TESTED = "anthropic/claude-haiku-4.5"
 
 
 class QueryResult(TypedDict):
@@ -93,15 +97,9 @@ class LongMemEvalBaselineRunner:
     Executes longmemeval tests directly against a model.
     """
 
-    def __init__(
-        self,
-        anthropic_api_key: str | None = None,
-    ):
+    def __init__(self):
         """
         Initialize the baseline test runner.
-
-        Args:
-            anthropic_api_key: Anthropic API key for API calls
         """
         # Configure logging
         logging.basicConfig(
@@ -109,15 +107,21 @@ class LongMemEvalBaselineRunner:
         )
         self.logger: logging.Logger = logging.getLogger(__name__)
 
-        if anthropic_api_key:
-            self.anthropic_client: AsyncAnthropic = AsyncAnthropic(
-                api_key=anthropic_api_key
+        # Initialize OpenRouter client for model being tested
+        openrouter_api_key = os.getenv("LLM_OPENAI_COMPATIBLE_API_KEY")
+        openrouter_base_url = os.getenv(
+            "LLM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1"
+        )
+
+        if not openrouter_api_key:
+            raise ValueError(
+                "LLM_OPENAI_COMPATIBLE_API_KEY is not set in tests/bench/.env or environment"
             )
-        else:
-            api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
-            self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+        self.openrouter_client: AsyncOpenAI = AsyncOpenAI(
+            api_key=openrouter_api_key,
+            base_url=openrouter_base_url,
+        )
 
         # OpenAI client for GPT-4o judge (per LongMemEval paper)
         openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -234,33 +238,29 @@ Below is a history of past conversations. Use this history to answer the user's 
 
 {conversation_context}"""
 
-            # Call Claude with full context, using prompt caching for the conversation context
-            response = await self.anthropic_client.messages.create(
+            # Call model via OpenRouter with full context
+            response = await self.openrouter_client.chat.completions.create(
                 model=MODEL_BEING_TESTED,
                 max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
                 messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
                     {
                         "role": "user",
                         "content": question_with_date,
-                    }
+                    },
                 ],
             )
 
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
+            if not response.choices or not response.choices[0].message.content:
+                raise ValueError("OpenRouter returned empty response")
 
-            content_block = response.content[0]
-            actual_response = getattr(content_block, "text", "")
+            actual_response = response.choices[0].message.content
 
-            input_tokens = response.usage.input_tokens
-            output_tokens = response.usage.output_tokens
+            input_tokens = response.usage.prompt_tokens if response.usage else 0
+            output_tokens = response.usage.completion_tokens if response.usage else 0
 
             output_lines.append(
                 f"  API usage: {input_tokens} input tokens, {output_tokens} output tokens"
@@ -530,12 +530,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--anthropic-api-key",
-        type=str,
-        help="Anthropic API key (optional, can use LLM_ANTHROPIC_API_KEY env var)",
-    )
-
-    parser.add_argument(
         "--batch-size",
         type=int,
         default=10,
@@ -576,9 +570,7 @@ Examples:
         return 1
 
     # Create test runner
-    runner = LongMemEvalBaselineRunner(
-        anthropic_api_key=args.anthropic_api_key,
-    )
+    runner = LongMemEvalBaselineRunner()
 
     try:
         # Run all questions

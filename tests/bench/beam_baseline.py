@@ -42,8 +42,8 @@ Optional arguments:
 ```
 
 ## Other notes
-- Uses Anthropic API directly (configured via LLM_ANTHROPIC_API_KEY in tests/bench/.env or env var)
-- Default model is claude-sonnet-4-5
+- Uses OpenRouter API (configured via LLM_OPENAI_COMPATIBLE_API_KEY in tests/bench/.env or env var)
+- Default model is anthropic/claude-haiku-4-5
 - Evaluation follows the paper's nugget-based methodology with 0/0.5/1 scoring
 - Event ordering uses Kendall tau-b coefficient
 """
@@ -57,7 +57,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -82,7 +81,8 @@ from .beam_common import (
 bench_dir = Path(__file__).parent
 load_dotenv(bench_dir / ".env")
 
-MODEL_BEING_TESTED = "claude-haiku-4-5"
+# OpenRouter model format for baseline testing
+MODEL_BEING_TESTED = "anthropic/claude-haiku-4.5"
 
 
 class BEAMBaselineRunner:
@@ -93,14 +93,12 @@ class BEAMBaselineRunner:
     def __init__(
         self,
         data_dir: Path,
-        anthropic_api_key: str | None = None,
     ):
         """
         Initialize the BEAM baseline test runner.
 
         Args:
             data_dir: Path to the BEAM data directory
-            anthropic_api_key: Anthropic API key (optional, uses env var if not provided)
         """
         self.data_dir: Path = data_dir
 
@@ -110,16 +108,7 @@ class BEAMBaselineRunner:
         )
         self.logger: logging.Logger = logging.getLogger(__name__)
 
-        # Initialize Anthropic client
-        api_key = anthropic_api_key or os.getenv("LLM_ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "LLM_ANTHROPIC_API_KEY is not set in tests/bench/.env or environment"
-            )
-
-        self.anthropic_client: AsyncAnthropic = AsyncAnthropic(api_key=api_key)
-
-        # Initialize OpenRouter client for judging (same as beam.py)
+        # Initialize OpenRouter client for model being tested and judging
         openrouter_api_key = os.getenv("LLM_OPENAI_COMPATIBLE_API_KEY")
         openrouter_base_url = os.getenv(
             "LLM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1"
@@ -140,26 +129,66 @@ class BEAMBaselineRunner:
             "BEAM_JUDGE_MODEL", "anthropic/claude-sonnet-4.5"
         )
 
-        # Model to use for answering questions (Anthropic format)
+        # Model to use for answering questions (OpenRouter format)
         self.answer_model: str = MODEL_BEING_TESTED
 
     def _format_conversation_context(
         self,
         messages: list[dict[str, str]],
+        max_tokens: int = 140000,
     ) -> str:
         """
-        Format conversation messages into a context string.
+        Format conversation messages into a context string, truncating from the
+        beginning if the total exceeds max_tokens.
 
         Args:
             messages: List of messages with 'role' and 'content' keys
+            max_tokens: Maximum tokens allowed for the context (default: 140000
+                        to account for Claude's tokenizer producing ~30% more tokens
+                        than o200k_base, plus room for system prompt and question)
 
         Returns:
             Formatted conversation transcript string
         """
+        # Calculate tokens for each message and find where to start
+        # Note: We use o200k_base tokenizer but Claude's tokenizer produces ~30% more
+        # tokens, so we use a conservative max_tokens limit to compensate
+        message_tokens: list[int] = []
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            role_label = "User" if role == "user" else "Assistant"
+            formatted = f"{role_label}: {content}\n"
+            message_tokens.append(calculate_tokens(formatted))
+
+        total_tokens = sum(message_tokens)
+
+        # Find the starting index to fit within max_tokens
+        start_idx = 0
+        if total_tokens > max_tokens:
+            running_total = total_tokens
+            for i, tokens in enumerate(message_tokens):
+                if running_total <= max_tokens:
+                    break
+                running_total -= tokens
+                start_idx = i + 1
+
+            truncated_count = start_idx
+            print(
+                f"    [TRUNCATION] Removed {truncated_count} messages from start "
+                + f"({total_tokens:,} -> {running_total:,} tokens)"
+            )
+
+        # Build the context string from start_idx onwards
         lines: list[str] = []
         lines.append("=== CONVERSATION HISTORY ===\n")
 
-        for msg in messages:
+        if start_idx > 0:
+            lines.append(
+                f"[... {start_idx} earlier messages truncated to fit context window ...]\n"
+            )
+
+        for msg in messages[start_idx:]:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             role_label = "User" if role == "user" else "Assistant"
@@ -196,31 +225,27 @@ Below is a history of past conversations. Use this history to answer the user's 
 
 {conversation_context}"""
 
-            # Call Claude with full context, using prompt caching
+            # Call model via OpenRouter with full context
             try:
-                response = await self.anthropic_client.messages.create(
+                response = await self.openrouter_client.chat.completions.create(
                     model=self.answer_model,
                     max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
                     messages=[
+                        {
+                            "role": "system",
+                            "content": system_prompt,
+                        },
                         {
                             "role": "user",
                             "content": question,
-                        }
+                        },
                     ],
                 )
 
-                if not response.content:
+                if not response.choices or not response.choices[0].message.content:
                     actual_response = ""
                 else:
-                    content_block = response.content[0]
-                    actual_response = getattr(content_block, "text", "")
+                    actual_response = response.choices[0].message.content
             except Exception as e:
                 self.logger.error(f"Error calling Claude API: {e}")
                 actual_response = f"Error: {e}"
@@ -471,12 +496,6 @@ async def main() -> int:
         help="Path to write JSON summary results for analytics (optional)",
     )
 
-    parser.add_argument(
-        "--anthropic-api-key",
-        type=str,
-        help="Anthropic API key (optional, can use LLM_ANTHROPIC_API_KEY env var)",
-    )
-
     args = parser.parse_args()
 
     # Setup data directory
@@ -486,10 +505,7 @@ async def main() -> int:
         return 1
 
     # Create runner
-    runner = BEAMBaselineRunner(
-        data_dir=data_dir,
-        anthropic_api_key=args.anthropic_api_key,
-    )
+    runner = BEAMBaselineRunner(data_dir=data_dir)
 
     try:
         # Determine which conversations to run
