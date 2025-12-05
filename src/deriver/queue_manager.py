@@ -21,6 +21,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
     process_item,
+    process_representation_agent_batch,
     process_representation_batch,
 )
 from src.dreamer.dream_scheduler import (
@@ -438,12 +439,20 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_representation_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observer=work_unit.observer,
-                                    observed=work_unit.observed,
-                                )
+                                if settings.DERIVER.AGENTIC:
+                                    await process_representation_agent_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
+                                else:
+                                    await process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
@@ -453,7 +462,7 @@ class QueueManager:
                                     e,
                                     items_to_process,
                                     work_unit_key,
-                                    "processing representation batch",
+                                    f"processing {work_unit.task_type} batch",
                                 )
 
                         else:
@@ -523,10 +532,6 @@ class QueueManager:
                                     observed=work_unit.observed,
                                 )
                             )
-                        else:
-                            logger.debug(
-                                f"Skipping queue.empty event for webhook work unit {work_unit_key}"
-                            )
                     except Exception:
                         logger.exception("Error triggering queue_empty webhook")
                 else:
@@ -541,7 +546,7 @@ class QueueManager:
         """Get the next queue item to process for a specific work unit."""
         if task_type == "representation":
             raise ValueError(
-                "Representation tasks are not supported for get_next_queue_item"
+                "representation tasks are not supported for get_next_queue_item"
             )
         async with tracked_db("get_next_queue_item") as db:
             # ActiveQueueSession conditions for worker ownership verification
@@ -579,16 +584,21 @@ class QueueManager:
         aqs_id: str,
     ) -> tuple[list[models.Message], list[QueueItem], ResolvedConfiguration | None]:
         """
-        Representation-only: returns a tuple of (messages_context, items_to_process).
+        Batch processing for representation and agent tasks.
+        Returns a tuple of (messages_context, items_to_process, configuration).
         - messages_context: unique Message rows (conversation turns) forming the context window
         - items_to_process: QueueItems for the current work_unit_key within that window
+        - configuration: Resolved configuration for the batch
         """
         if task_type != "representation":
             raise ValueError(
-                "Non-representation tasks are not supported for get_queue_item_batch"
+                f"{task_type} tasks are not supported for get_queue_item_batch"
             )
+
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
         async with tracked_db("get_queue_item_batch") as db:
-            # For representation tasks, get a batch based on token limit.
+            # For batch tasks, get messages based on token limit.
             # Step 1: Parse work_unit_key to get session context and focused sender
             parsed_key = parse_work_unit_key(work_unit_key)
 
@@ -644,10 +654,7 @@ class QueueManager:
             )
 
             allowed_condition = (
-                (
-                    cte.c.cumulative_token_count
-                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-                )
+                (cte.c.cumulative_token_count <= batch_max_tokens)
                 | (
                     cte.c.message_id == min_unprocessed_message_id_subq
                 )  # always include the first unprocessed message

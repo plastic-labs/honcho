@@ -1,9 +1,6 @@
 {
   "description": "Test unidirectional observation - Alice observes Bob, Bob does not observe Alice",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

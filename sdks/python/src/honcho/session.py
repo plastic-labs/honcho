@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
-import json
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
@@ -20,8 +20,8 @@ from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
-    from .types import Representation
     from .peer import Peer
+    from .types import Representation
 
 logger = logging.getLogger(__name__)
 
@@ -886,7 +886,6 @@ class Session(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-
         data = self._client.workspaces.peers.working_representation(
             peer_id,
             workspace_id=self.workspace_id,

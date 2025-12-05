@@ -1,9 +1,6 @@
 {
   "description": "LongMemEval test: single-session-assistant question",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {
@@ -11,11 +8,11 @@
       "session_id": "answer_ultrachat_294807",
       "peer_configs": {
         "user": {
-          "observe_me": true,
+          "observe_me": false,
           "observe_others": false
         },
         "assistant": {
-          "observe_me": false,
+          "observe_me": true,
           "observe_others": false
         }
       }
@@ -78,13 +75,14 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "timeout": 180
     },
     {
       "step_type": "query",
       "target": "chat",
       "session_id": "answer_ultrachat_294807",
-      "observer_peer_id": "user",
+      "observer_peer_id": "assistant",
       "observed_peer_id": "assistant",
       "input": "[2023/05/23 (Tue) 07:05] I'm looking back at our previous conversation about the Seco de Cordero recipe from Ancash. You mentioned using a light or medium-bodied beer, but I was wondering if you could remind me what type of beer you specifically recommended?",
       "assertions": [

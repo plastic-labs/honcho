@@ -202,8 +202,9 @@ async def trigger_dream(
         observed=observed,
         dream_type=dream_type,
         document_count=document_count,
+        session_name=request.session_id,
     )
 
     logger.info(
-        f"Manually triggered dream: {dream_type.value} for {workspace_id}/{observer}/{observed}"
+        f"Manually triggered dream: {dream_type.value} for {workspace_id}/{observer}/{observed} (session: {request.session_id})"
     )

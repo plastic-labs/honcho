@@ -1,9 +1,6 @@
 {
   "description": "LongMemEval test: single-session-assistant question using directional representation (assistant observes user)",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

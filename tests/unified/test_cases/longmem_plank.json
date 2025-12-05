@@ -1,9 +1,6 @@
 {
   "description": "LongMemEval test: temporal-reasoning question",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

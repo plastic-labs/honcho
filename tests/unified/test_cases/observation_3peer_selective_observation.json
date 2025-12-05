@@ -1,9 +1,6 @@
 {
   "description": "Test selective observation - Alice observes Bob (observe_me=true) but not Charlie (observe_me=false)",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {
