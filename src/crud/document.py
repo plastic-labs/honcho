@@ -655,11 +655,17 @@ async def is_rejected_duplicate(
         namespace = vector_store.get_document_namespace(
             workspace_name, observer, observed
         )
-        await vector_store.delete_many(namespace, [existing_doc.id])
+        vector_deleted = False
+        try:
+            await vector_store.delete_many(namespace, [existing_doc.id])
+            vector_deleted = True
+        except Exception:
+            existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+            await db.flush()
 
-        # Delete from database after vector store succeeds
-        await db.delete(existing_doc)
-        await db.flush()  # Flush to make deletion visible in this transaction
+        if vector_deleted:
+            await db.delete(existing_doc)
+            await db.flush()  # Flush to make deletion visible in this transaction
 
         return False  # Don't reject the new document
 
@@ -700,7 +706,7 @@ async def cleanup_soft_deleted_documents(
     Returns:
         Count of documents cleaned up (only those where vector deletion succeeded)
     """
-    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
         minutes=older_than_minutes
     )
 

@@ -190,10 +190,10 @@ async def create_messages(
                     ):
                         with attempt:
                             await vector_store.upsert_many(namespace, vector_records)
-                except Exception as e:
+                except Exception:
                     # Final attempt failed - log but don't raise
                     # MessageEmbedding records exist in DB, vectors can be added later
-                    logger.error(f"Failed to upsert message vectors after retries: {e}")
+                    logger.exception("Failed to upsert message vectors after retries")
 
     except Exception:
         logger.exception(

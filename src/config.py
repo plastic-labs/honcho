@@ -442,15 +442,18 @@ class AppSettings(HonchoSettings):
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
         After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE, and
-        VECTOR_STORE.NAMESPACE are guaranteed to exist.
+        VECTOR_STORE.NAMESPACE are guaranteed to exist. Explicitly provided
+        nested namespaces are preserved.
         """
         if self.CACHE.NAMESPACE is None:
             self.CACHE.NAMESPACE = self.NAMESPACE
         if self.METRICS.NAMESPACE is None:
             self.METRICS.NAMESPACE = self.NAMESPACE
-        # Note: VECTOR_STORE.NAMESPACE has its own default of "honcho",
-        # but we propagate the top-level NAMESPACE if the user explicitly set it
-        # and wants consistency across all namespaced services
+
+        vector_namespace_explicit = "NAMESPACE" in self.VECTOR_STORE.model_fields_set
+        if not vector_namespace_explicit:
+            self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+
         return self
 
 

@@ -432,6 +432,7 @@ async def delete_session(
             )
         )
         embeddings = embedding_result.all()
+        vector_store = get_vector_store()
 
         if embeddings:
             # Build vector IDs: {message_id}_{chunk_index}
@@ -439,7 +440,6 @@ async def delete_session(
 
             # Try to delete from vector store (best effort)
             try:
-                vector_store = get_vector_store()
                 namespace = vector_store.get_message_namespace(workspace_name)
                 await vector_store.delete_many(namespace, vector_ids)
                 logger.debug(
@@ -479,7 +479,6 @@ async def delete_session(
         if documents:
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
-            vector_store = get_vector_store()
             for doc in documents:
                 namespace = vector_store.get_document_namespace(
                     workspace_name, doc.observer, doc.observed
