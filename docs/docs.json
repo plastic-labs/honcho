@@ -19,10 +19,10 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.4.3",
+        "version": "v2.5.0",
         "api": {
           "openapi": [
-            "openapi.documented.yml"
+            "openapi.json"
           ]
         },
         "tabs": [
@@ -75,8 +75,15 @@
                 ]
               },
               {
+                "group": "Migrations",
+                "pages": [
+                  "v2/migrations/from-mem0"
+                ]
+              },
+              {
                 "group": "Integrations",
                 "pages": [
+                  "v2/integrations/crewai",
                   "v2/integrations/langgraph",
                   "v2/integrations/mcp"
                 ]
@@ -107,7 +114,8 @@
                   "v2/api-reference/endpoint/workspaces/update-workspace",
                   "v2/api-reference/endpoint/workspaces/delete-workspace",
                   "v2/api-reference/endpoint/workspaces/search-workspace",
-                  "v2/api-reference/endpoint/workspaces/get-deriver-status"
+                  "v2/api-reference/endpoint/workspaces/get-deriver-status",
+                  "v2/api-reference/endpoint/workspaces/trigger-dream"
                 ]
               },
               {
@@ -119,8 +127,10 @@
                   "v2/api-reference/endpoint/peers/get-sessions-for-peer",
                   "v2/api-reference/endpoint/peers/chat",
                   "v2/api-reference/endpoint/peers/get-working-representation",
-                  "v2/api-reference/endpoint/peers/search-peer",
-                  "v2/api-reference/endpoint/peers/get-peer-card"
+                  "v2/api-reference/endpoint/peers/get-peer-card",
+                  "v2/api-reference/endpoint/peers/set-peer-card",
+                  "v2/api-reference/endpoint/peers/get-peer-context",
+                  "v2/api-reference/endpoint/peers/search-peer"
                 ]
               },
               {
@@ -150,6 +160,15 @@
                   "v2/api-reference/endpoint/messages/get-message",
                   "v2/api-reference/endpoint/messages/update-message",
                   "v2/api-reference/endpoint/messages/create-messages-with-file"
+                ]
+              },
+              {
+                "group": "observations",
+                "pages": [
+                  "v2/api-reference/endpoint/observations/create-observations",
+                  "v2/api-reference/endpoint/observations/list-observations",
+                  "v2/api-reference/endpoint/observations/query-observations",
+                  "v2/api-reference/endpoint/observations/delete-observation"
                 ]
               },
               {

@@ -68,7 +68,7 @@ export const SessionIdSchema = z
  */
 export const SessionPeerConfigSchema = z.object({
   observe_me: z.boolean().nullable().optional(),
-  observe_others: z.boolean().optional(),
+  observe_others: z.boolean().nullable().optional(),
 })
 
 /**
@@ -89,12 +89,22 @@ export const MessageMetadataSchema = z
   .optional()
 
 /**
+ * Schema for message configuration.
+ * Configuration can include deriver and peer_card settings.
+ */
+export const MessageConfigurationSchema = z
+  .record(z.string(), z.unknown())
+  .nullable()
+  .optional()
+
+/**
  * Schema for message creation.
  */
 export const MessageCreateSchema = z.object({
   peer_id: PeerIdSchema,
   content: MessageContentSchema,
   metadata: MessageMetadataSchema,
+  configuration: MessageConfigurationSchema,
   created_at: z.string().nullable().optional(),
 })
 
@@ -120,8 +130,18 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
 export const ChatQuerySchema = z.object({
   query: SearchQuerySchema,
   stream: z.boolean().optional().default(false),
-  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  sessionId: z.string().optional(),
+  target: z
+    .union([z.string(), z.object({ id: z.string() })])
+    .optional()
+    .transform((val) =>
+      val ? (typeof val === 'string' ? val : val.id) : undefined
+    ),
+  session: z
+    .union([z.string(), z.object({ id: z.string() })])
+    .optional()
+    .transform((val) =>
+      val ? (typeof val === 'string' ? val : val.id) : undefined
+    ),
 })
 
 /**
@@ -205,9 +225,9 @@ export const ContextParamsSchema = z
  * Schema for deriver status options.
  */
 export const DeriverStatusOptionsSchema = z.object({
-  observerId: z.string().optional(),
-  senderId: z.string().optional(),
-  sessionId: z.string().optional(),
+  observer: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  sender: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   timeoutMs: z
     .number()
     .positive('Timeout must be a positive number')
@@ -242,7 +262,10 @@ export const FileUploadSchema = z.object({
         'File must not be null or undefined'
       ),
   ]),
-  peerId: PeerIdSchema,
+  peer: z.union([PeerIdSchema, z.object({ id: z.string() })]),
+  metadata: MessageMetadataSchema,
+  configuration: z.record(z.string(), z.unknown()).optional(),
+  created_at: z.string().nullable().optional(),
 })
 
 /**

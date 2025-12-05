@@ -111,7 +111,7 @@ response = alice.chat("What does the user know about weather?")
 response = alice.chat("What does the user know about the assistant?", target=assistant)
 
 # Query scoped to a specific session
-response = alice.chat("What happened in our conversation?", session_id=session.id)
+response = alice.chat("What happened in our conversation?", session=session.id)
 ```
 
 ```typescript TypeScript
@@ -258,7 +258,7 @@ print(f"Workspace: {alice.workspace_id}")
 # Chat with peer's representations (supports streaming)
 response = alice.chat("What did I have for breakfast?")
 response = alice.chat("What do I know about Bob?", target="bob")
-response = alice.chat("What happened in session-1?", session_id="session-1")
+response = alice.chat("What happened in session-1?", session="session-1")
 
 # Add content to a session with a peer
 session = honcho.session("session-1")
@@ -278,6 +278,17 @@ results = alice.search("programming")
 metadata = alice.get_metadata()
 metadata["location"] = "Paris"
 alice.set_metadata(metadata)
+
+# Get peer context (representation + peer card in one call)
+context = alice.get_context()
+context = alice.get_context(target="bob")  # What alice knows about bob
+
+# Get working representation with semantic search
+rep = alice.working_rep(search_query="preferences", search_top_k=10)
+
+# Access observations
+self_observations = alice.observations.list()  # Self-observations
+bob_observations = alice.observations_of("bob").list()  # Observations of bob
 ```
 
 ```typescript TypeScript
@@ -318,8 +329,164 @@ await alice.setMetadata({
   ...metadata,
   location: "Paris"
 });
+
+// Get peer context (representation + peer card in one call)
+const context = await alice.getContext();
+const targetContext = await alice.getContext("bob");  // What alice knows about bob
+
+// Get working representation with semantic search
+const rep = await alice.workingRep(undefined, undefined, {
+  searchQuery: "preferences",
+  searchTopK: 10
+});
+
+// Access observations
+const selfObs = await alice.observations.list();  // Self-observations
+const bobObs = await alice.observationsOf("bob").list();  // Observations of bob
 ```
 </CodeGroup>
+
+### Peer Context
+
+The `get_context()` method on peers retrieves both the working representation and peer card in a single API call:
+
+<CodeGroup>
+```python Python
+# Get peer's own context
+context = alice.get_context()
+print(context.representation)  # Working representation
+print(context.peer_card)       # Peer card as list of strings
+
+# Get context about another peer (what alice knows about bob)
+bob_context = alice.get_context(target="bob")
+
+# Get context with semantic search
+context = alice.get_context(
+    target="bob",
+    search_query="work preferences",
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_derived=True,
+    max_observations=50
+)
+```
+
+```typescript TypeScript
+// Get peer's own context
+const context = await alice.getContext();
+console.log(context.representation);  // Working representation
+console.log(context.peerCard);        // Peer card as array of strings
+
+// Get context about another peer (what alice knows about bob)
+const bobContext = await alice.getContext("bob");
+
+// Get context with semantic search
+const searchedContext = await alice.getContext("bob", {
+  searchQuery: "work preferences",
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostDerived: true,
+  maxObservations: 50
+});
+```
+</CodeGroup>
+
+### Observations
+
+Peers can access their observations (facts derived from messages) through the `observations` property and `observations_of()` method:
+
+<CodeGroup>
+```python Python
+# Access self-observations (what honcho knows about alice)
+self_obs = alice.observations
+
+# List self-observations
+obs_list = self_obs.list()
+
+# Search self-observations semantically
+results = self_obs.query("food preferences")
+
+# Delete an observation
+self_obs.delete("observation-id")
+
+# Access observations of another peer (what alice knows about bob)
+bob_obs = alice.observations_of("bob")
+bob_obs_list = bob_obs.list()
+bob_search = bob_obs.query("work history")
+```
+
+```typescript TypeScript
+// Access self-observations (what honcho knows about alice)
+const selfObs = alice.observations;
+
+// List self-observations
+const obsList = await selfObs.list();
+
+// Search self-observations semantically
+const results = await selfObs.query("food preferences");
+
+// Delete an observation
+await selfObs.delete("observation-id");
+
+// Access observations of another peer (what alice knows about bob)
+const bobObs = alice.observationsOf("bob");
+const bobObsList = await bobObs.list();
+const bobSearch = await bobObs.query("work history");
+```
+</CodeGroup>
+
+#### Creating Observations Manually
+
+You can also create observations directly, which is useful for importing data or adding explicit facts:
+
+<CodeGroup>
+```python Python
+# Create observations for what alice knows about bob
+bob_obs = alice.observations_of("bob")
+
+# Create a single observation
+created = bob_obs.create([
+    {"content": "User prefers dark mode", "session_id": "session-1"}
+])
+
+# Create multiple observations in batch
+created = bob_obs.create([
+    {"content": "User prefers dark mode", "session_id": "session-1"},
+    {"content": "User works late at night", "session_id": "session-1"},
+    {"content": "User enjoys programming", "session_id": "session-1"},
+])
+
+# Returns list of created Observation objects with IDs
+for obs in created:
+    print(f"Created observation: {obs.id} - {obs.content}")
+```
+
+```typescript TypeScript
+// Create observations for what alice knows about bob
+const bobObs = alice.observationsOf("bob");
+
+// Create a single observation
+const created = await bobObs.create([
+    { content: "User prefers dark mode", sessionId: "session-1" }
+]);
+
+// Create multiple observations in batch
+const batchCreated = await bobObs.create([
+    { content: "User prefers dark mode", sessionId: "session-1" },
+    { content: "User works late at night", sessionId: "session-1" },
+    { content: "User enjoys programming", sessionId: "session-1" },
+]);
+
+// Returns array of created Observation objects with IDs
+for (const obs of batchCreated) {
+    console.log(`Created observation: ${obs.id} - ${obs.content}`);
+}
+```
+</CodeGroup>
+
+<Info>
+Manually created observations are marked as "explicit" and are treated the same as system-derived observations. Each observation must be tied to a session and the content length is validated against the embedding token limit.
+</Info>
 
 ### Session
 
@@ -361,12 +528,50 @@ messages = session.get_messages()
 # Get conversation context
 context = session.get_context(summary=True, tokens=2000)
 
+# Get context with peer representation included
+context = session.get_context(
+    tokens=2000,
+    peer_target="user",
+    peer_perspective="assistant",
+    last_user_message="What are my preferences?",
+    limit_to_session=True,
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_derived=True,
+    max_observations=25
+)
+
 # Search session content
 results = session.search("help")
 
-# Working representation queries
+# Working representation queries with semantic search
 global_rep = session.working_rep("alice")
-targeted_rep = session.working_rep(alice, bob)
+targeted_rep = session.working_rep(alice, target=bob)
+searched_rep = session.working_rep(
+    "alice",
+    search_query="preferences",
+    search_top_k=10,
+    include_most_derived=True
+)
+
+# Upload a file to create messages
+messages = session.upload_file(
+    file=open("document.pdf", "rb"),
+    peer="user",
+    metadata={"source": "upload"},
+    created_at="2024-01-15T10:30:00Z"
+)
+
+# Clone a session (creates a copy with all data)
+# Copies: messages, metadata, configuration, peers, and peer configurations
+cloned = session.clone()
+
+# Clone up to a specific message (inclusive)
+# Only messages up to and including the specified message are copied
+cloned_partial = session.clone(message_id="msg-123")
+
+# Delete session (async - returns 202)
+session.delete()
 
 # Metadata management
 session.set_metadata({"topic": "product planning", "status": "active"})
@@ -402,12 +607,51 @@ const messages = await session.getMessages();
 // Get conversation context
 const context = await session.getContext({ summary: true, tokens: 2000 });
 
+// Get context with peer representation included
+const richContext = await session.getContext({
+  tokens: 2000,
+  peerTarget: "user",
+  peerPerspective: "assistant",
+  lastUserMessage: "What are my preferences?",
+  limitToSession: true,
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostDerived: true,
+  maxObservations: 25
+});
+
 // Search session content
 const results = await session.search("help");
 
-// Working representation queries
+// Working representation queries with semantic search
 const globalRep = await session.workingRep("alice");
-const targetedRep = await session.workingRep(alice, bob);
+const targetedRep = await session.workingRep(alice, { target: bob });
+const searchedRep = await session.workingRep("alice", undefined, {
+  searchQuery: "preferences",
+  searchTopK: 10,
+  includeMostDerived: true
+});
+
+// Upload a file to create messages
+const messages = await session.uploadFile(
+  fileBuffer,
+  "user",
+  {
+    metadata: { source: "upload" },
+    createdAt: "2024-01-15T10:30:00Z"
+  }
+);
+
+// Clone a session (creates a copy with all data)
+// Copies: messages, metadata, configuration, peers, and peer configurations
+const cloned = await session.clone();
+
+// Clone up to a specific message (inclusive)
+// Only messages up to and including the specified message are copied
+const clonedPartial = await session.clone("msg-123");
+
+// Delete session (async - returns 202)
+await session.delete();
 
 // Metadata management
 await session.setMetadata({
@@ -494,9 +738,26 @@ The SessionContext object has the following structure:
     "message_id": 123,
     "summary_type": "short|long",
     "created_at": "2024-01-15T10:30:00Z"
-  }
+  },
+  "peer_representation": "string (optional)",
+  "peer_card": ["string"] // optional, included when peer_target is provided
 }
 ```
+
+**Session Context Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `summary` | `bool` | Whether to include summary (default: true) |
+| `tokens` | `int` | Maximum tokens to include |
+| `peer_target` | `str` | Peer ID to get representation for |
+| `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
+| `last_user_message` | `str` | Most recent message for semantic search |
+| `limit_to_session` | `bool` | Limit representation to session only |
+| `search_top_k` | `int` | Number of semantic search results (1-100) |
+| `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
+| `include_most_derived` | `bool` | Include most derived observations |
+| `max_observations` | `int` | Max observations to include (1-100) |
 
 ## Advanced Usage
 
@@ -521,7 +782,7 @@ group_chat.add_messages([
 
 # Query different perspectives
 user_perspective = users[0].chat("What are people's concerns?")
-moderator_view = moderator.chat("What feedback am I getting?", session_id=group_chat.id)
+moderator_view = moderator.chat("What feedback am I getting?", session=group_chat.id)
 ```
 
 ```typescript TypeScript

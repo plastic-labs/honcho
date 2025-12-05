@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
 from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import (
+    create_deletion_payload,
     create_dream_payload,
     create_payload,
 )
@@ -496,3 +497,92 @@ async def enqueue_dream(
 
                 sentry_sdk.capture_exception(e)
             raise
+
+
+def create_deletion_record(
+    workspace_name: str,
+    deletion_type: Literal["session", "observation"],
+    resource_id: str,
+) -> dict[str, Any]:
+    """
+    Create a queue record for a deletion task.
+
+    Args:
+        workspace_name: Name of the workspace
+        deletion_type: Type of resource to delete ("session" or "observation")
+        resource_id: ID of the resource to delete
+
+    Returns:
+        Queue record dictionary for insertion into the queue
+    """
+    deletion_payload = create_deletion_payload(
+        deletion_type=deletion_type,
+        resource_id=resource_id,
+    )
+
+    return {
+        "work_unit_key": construct_work_unit_key(workspace_name, deletion_payload),
+        "payload": deletion_payload,
+        "session_id": None,
+        "task_type": "deletion",
+        "workspace_name": workspace_name,
+        "message_id": None,
+    }
+
+
+async def enqueue_deletion(
+    workspace_name: str,
+    deletion_type: Literal["session", "observation"],
+    resource_id: str,
+    db_session: AsyncSession | None = None,
+) -> None:
+    """
+    Enqueue a deletion task for processing by the deriver.
+
+    This function adds a deletion task to the queue for asynchronous processing.
+    The deletion will be handled by the queue consumer with retry support.
+
+    Args:
+        workspace_name: Name of the workspace
+        deletion_type: Type of resource to delete ("session" or "observation")
+        resource_id: ID of the resource to delete
+        db_session: Optional database session. If provided, uses this session
+            instead of creating a new one. The caller is responsible for committing.
+    """
+
+    async def _do_enqueue(session: AsyncSession, should_commit: bool) -> None:
+        deletion_record = create_deletion_record(
+            workspace_name,
+            deletion_type,
+            resource_id,
+        )
+
+        stmt = insert(QueueItem).returning(QueueItem)
+        await session.execute(stmt, [deletion_record])
+
+        if should_commit:
+            await session.commit()
+
+        logger.info(
+            "Enqueued deletion task: type=%s, resource_id=%s, workspace=%s",
+            deletion_type,
+            resource_id,
+            workspace_name,
+        )
+
+    try:
+        if db_session is not None:
+            # Use the provided session - caller is responsible for committing
+            await _do_enqueue(db_session, should_commit=False)
+        else:
+            # Create a new session and commit
+            async with tracked_db("deletion_enqueue") as new_session:
+                await _do_enqueue(new_session, should_commit=True)
+
+    except Exception as e:
+        logger.exception("Failed to enqueue deletion task!")
+        if settings.SENTRY.ENABLED:
+            import sentry_sdk
+
+            sentry_sdk.capture_exception(e)
+        raise

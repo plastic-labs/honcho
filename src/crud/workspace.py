@@ -172,21 +172,36 @@ async def update_workspace(
         ),
     )
 
-    if workspace.metadata is not None:
+    # Track if anything changed
+    needs_update = False
+
+    if (
+        workspace.metadata is not None
+        and honcho_workspace.h_metadata != workspace.metadata
+    ):
         honcho_workspace.h_metadata = workspace.metadata
+        needs_update = True
 
     if workspace.configuration is not None:
         # Merge configuration instead of replacing to preserve existing keys
         base_config = (honcho_workspace.configuration or {}).copy()
-        honcho_workspace.configuration = {
+        merged_config = {
             **base_config,
             **workspace.configuration.model_dump(exclude_none=True),
         }
+        if honcho_workspace.configuration != merged_config:
+            honcho_workspace.configuration = merged_config
+            needs_update = True
+
+    # Early exit if unchanged
+    if not needs_update:
+        logger.debug("Workspace %s unchanged, skipping update", workspace_name)
+        return honcho_workspace
 
     await db.commit()
     await db.refresh(honcho_workspace)
 
-    # Invalidate cache
+    # Only invalidate if we actually updated
     cache_key = workspace_cache_key(workspace_name)
     await cache.delete(cache_key)
 

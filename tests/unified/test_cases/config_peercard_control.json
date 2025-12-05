@@ -1,6 +1,9 @@
 {
   "description": "Test peer card generation control",
   "workspace_config": {
+    "deriver": {
+      "enabled": true
+    },
     "peer_card": {
       "create": true
     }

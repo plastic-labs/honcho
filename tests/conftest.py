@@ -530,9 +530,6 @@ def mock_tracked_db(db_session: AsyncSession):
     async def mock_tracked_db_context(_: str | None = None):
         yield db_session
 
-    # Note: src.deriver.deriver.tracked_db was removed as the file is now commented out
-    # The deriver now uses agentic approach in src.deriver.agent.worker
-    # Note: src.dreamer.consolidate was removed - dreamer now uses agentic approach in src.dreamer.agent
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
@@ -542,12 +539,25 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.consolidate.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.agent.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
+        patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def enable_deriver_for_tests():
+    """Enable deriver globally for tests that need queue processing"""
+    from src.config import settings
+
+    original_value = settings.DERIVER.ENABLED
+    settings.DERIVER.ENABLED = True
+    yield
+    settings.DERIVER.ENABLED = original_value
 
 
 @pytest.fixture(autouse=True)

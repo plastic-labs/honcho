@@ -2,7 +2,7 @@
 
 ## What is Honcho?
 
-Honcho is an infrastructure layer for building AI agents with social cognition and theory of mind capabilities. It enables personalized AI interactions by building coherent models of user psychology over time. The Honcho MCP server simplifies the integration to just 3 essential functions. Here's how to use them:
+Honcho is an infrastructure layer for building AI agents with memory and social cognition. It enables personalized AI interactions by building coherent models of user psychology over time. The Honcho MCP server simplifies the integration to just 3 essential functions. Here's how to use them:
 
 ### Step 1: Start New Conversation (First Message Only)
 
@@ -21,7 +21,7 @@ Before responding to any user message, you can query for personalization insight
 ```text
 get_personalization_insights
 session_id: [SESSION_ID_FROM_STEP_1]
-query: [YOUR_THEORY_OF_MIND_QUESTION]
+query: [YOUR_QUESTION]
 ```
 
 This query takes a bit of time, so it's best to only perform it when you need personalized insights. If the query can be responded to effectively using what you already know about the user, just go ahead and answer it. However, the insights endpoint is extremely perceptive. It has the capability to reveal aspects of the user's personality, historical use of the application you are operating in, and more.
@@ -129,7 +129,7 @@ For subsequent messages in the same conversation:
 
 ## Best Practices for Personalization Queries
 
-Ask theory-of-mind questions that reveal:
+Ask questions that reveal:
 
 **Communication Style**: "How formal/casual should I be?" "What does this reveal about their preferences?"
 
@@ -151,6 +151,6 @@ Ask theory-of-mind questions that reveal:
 1. **Always start with `start_conversation` for new conversations**
 2. **Store every message exchange with `add_turn`**
 3. **Use `get_personalization_insights` strategically for better responses**
-4. **Ask thoughtful theory-of-mind questions**
+4. **Ask thoughtful questions about `peer` representation**
 5. **Never expose technical details to the user**
 6. **The system maintains context automatically between sessions**

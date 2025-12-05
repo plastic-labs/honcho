@@ -126,7 +126,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Session-specific response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', { sessionId: 'session-123' });
+      await peer.chat('Hello', { session: 'session-123' });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',
@@ -209,6 +209,8 @@ describe('Peer', () => {
         peer_id: 'test-peer',
         content: 'Test content',
         metadata: undefined,
+        configuration: undefined,
+        created_at: undefined,
       });
     });
 
@@ -220,6 +222,39 @@ describe('Peer', () => {
         peer_id: 'test-peer',
         content: 'Hello there',
         metadata: { importance: 'high', category: 'greeting' },
+        configuration: undefined,
+        created_at: undefined,
+      });
+    });
+
+    it('should create message object with configuration', () => {
+      const configuration = { deriver: { enabled: false } };
+      const message = peer.message('Test content', { configuration });
+
+      expect(message).toEqual({
+        peer_id: 'test-peer',
+        content: 'Test content',
+        metadata: undefined,
+        configuration: { deriver: { enabled: false } },
+        created_at: undefined,
+      });
+    });
+
+    it('should create message object with metadata, configuration, and timestamp', () => {
+      const metadata = { importance: 'high' };
+      const configuration = { deriver: { enabled: false }, peer_card: { create: false } };
+      const message = peer.message('Full options test', {
+        metadata,
+        configuration,
+        created_at: '2024-01-15T10:30:00Z',
+      });
+
+      expect(message).toEqual({
+        peer_id: 'test-peer',
+        content: 'Full options test',
+        metadata: { importance: 'high' },
+        configuration: { deriver: { enabled: false }, peer_card: { create: false } },
+        created_at: '2024-01-15T10:30:00Z',
       });
     });
 
@@ -230,6 +265,8 @@ describe('Peer', () => {
         peer_id: 'test-peer',
         content: '',
         metadata: undefined,
+        configuration: undefined,
+        created_at: undefined,
       });
     });
   });

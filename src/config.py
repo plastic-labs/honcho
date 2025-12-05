@@ -136,8 +136,8 @@ class BackupLLMSettingsMixin:
     both fields are set together or both are None.
     """
 
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
+    BACKUP_PROVIDER: SupportedProviders | None = "custom"
+    BACKUP_MODEL: str | None = "x-ai/grok-4-fast"
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self):
@@ -241,6 +241,8 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
+    # Maximum number of observations to return in working representation
+    # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=100, gt=0, le=1000)
     ] = 100
@@ -312,7 +314,7 @@ class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
-    URL: str = "redis://localhost:6379/0?suppress=false"
+    URL: str = "redis://localhost:6379/0?suppress=true"
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache

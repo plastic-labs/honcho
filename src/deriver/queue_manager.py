@@ -698,14 +698,20 @@ class QueueManager:
                 payload = items_to_process[0].payload
 
                 raw_config = payload.get("configuration")
-
-                resolved_config = ResolvedConfiguration.model_validate(raw_config)
+                if raw_config is None:
+                    resolved_config = None
+                else:
+                    resolved_config = ResolvedConfiguration.model_validate(raw_config)
 
                 valid_items: list[QueueItem] = []
                 for item in items_to_process:
-                    item_config = ResolvedConfiguration.model_validate(
-                        item.payload.get("configuration")
-                    )
+                    item_raw_config = item.payload.get("configuration")
+                    if item_raw_config is None:
+                        item_config = None
+                    else:
+                        item_config = ResolvedConfiguration.model_validate(
+                            item_raw_config
+                        )
                     if item_config != resolved_config:
                         break
                     valid_items.append(item)

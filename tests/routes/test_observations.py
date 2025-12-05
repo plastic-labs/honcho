@@ -753,3 +753,409 @@ class TestObservationRoutes:
         assert "embedding" not in observation
         assert "internal_metadata" not in observation
         assert "collection" not in observation
+
+    @pytest.mark.asyncio
+    async def test_create_observation_success(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating a single observation"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create observation via API
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "User prefers dark mode",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+
+        observation = data[0]
+        assert observation["content"] == "User prefers dark mode"
+        assert observation["observer_id"] == test_peer.name
+        assert observation["observed_id"] == test_peer2.name
+        assert observation["session_id"] == test_session.name
+        assert "id" in observation
+        assert "created_at" in observation
+
+    @pytest.mark.asyncio
+    async def test_create_observations_batch(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating multiple observations in batch"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create multiple observations via API
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "User prefers dark mode",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "User works late at night",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "User enjoys programming",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 3
+
+        contents = [obs["content"] for obs in data]
+        assert "User prefers dark mode" in contents
+        assert "User works late at night" in contents
+        assert "User enjoys programming" in contents
+
+    @pytest.mark.asyncio
+    async def test_create_observation_nonexistent_session(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating observation with non-existent session fails"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.commit()
+
+        # Try to create observation with non-existent session
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "Test observation",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": "nonexistent_session",
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_create_observation_nonexistent_peer(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating observation with non-existent peer fails"""
+        test_workspace, test_peer = sample_data
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Try to create observation with non-existent observer
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "Test observation",
+                        "observer_id": "nonexistent_peer",
+                        "observed_id": test_peer.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_create_observation_empty_content(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating observation with empty content fails validation"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Try to create observation with empty content
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_create_observation_empty_list(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating observations with empty list fails validation"""
+        test_workspace, _test_peer = sample_data
+
+        # Try to create with empty observations list
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={"observations": []},
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_create_observation_creates_collection(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that creating observation auto-creates collection if needed"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create observation via API (this should auto-create collection)
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "Test observation",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+
+        # The observation was created successfully, which means the collection
+        # was created (since documents require a collection)
+        observation = data[0]
+        assert observation["observer_id"] == test_peer.name
+        assert observation["observed_id"] == test_peer2.name
+
+    @pytest.mark.asyncio
+    async def test_create_observation_different_observer_observed_pairs(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating observations with different observer/observed pairs in single batch"""
+        test_workspace, test_peer = sample_data
+
+        # Create two more peers
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_peer3 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer2, test_peer3])
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create observations with different observer/observed pairs
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "Peer1 observes Peer2",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "Peer2 observes Peer3",
+                        "observer_id": test_peer2.name,
+                        "observed_id": test_peer3.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+
+        # Verify each observation has correct observer/observed
+        obs1 = next(o for o in data if o["content"] == "Peer1 observes Peer2")
+        assert obs1["observer_id"] == test_peer.name
+        assert obs1["observed_id"] == test_peer2.name
+
+        obs2 = next(o for o in data if o["content"] == "Peer2 observes Peer3")
+        assert obs2["observer_id"] == test_peer2.name
+        assert obs2["observed_id"] == test_peer3.name
+
+    @pytest.mark.asyncio
+    async def test_created_observations_are_searchable(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that created observations can be found via list endpoint"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create observation via API
+        create_response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations",
+            json={
+                "observations": [
+                    {
+                        "content": "Unique test content for searchability",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
+        )
+
+        assert create_response.status_code == 200
+        created_id = create_response.json()[0]["id"]
+
+        # List observations and verify the created one is there
+        list_response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/observations/list",
+            json={
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                }
+            },
+        )
+
+        assert list_response.status_code == 200
+        data = list_response.json()
+        ids = [obs["id"] for obs in data["items"]]
+        assert created_id in ids

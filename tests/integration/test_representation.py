@@ -313,8 +313,9 @@ class TestDocumentCreationWorkflow:
 
     async def test_representation_from_documents(self):
         """Test converting documents to representation"""
-        # Create test documents
+        # Create test documents with IDs (simulating database-assigned IDs)
         explicit_doc = models.Document(
+            id="test_explicit_doc_id",
             workspace_name="test_workspace",
             observer="test_peer",
             observed="test_peer",
@@ -329,6 +330,7 @@ class TestDocumentCreationWorkflow:
         )
 
         deductive_doc = models.Document(
+            id="test_deductive_doc_id",
             workspace_name="test_workspace",
             observer="test_peer",
             observed="test_peer",

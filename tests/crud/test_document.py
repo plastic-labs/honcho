@@ -75,7 +75,7 @@ class TestDocumentCRUD:
         await db_session.flush()
 
         # Get documents query
-        stmt = await crud.get_all_documents(
+        stmt = crud.get_all_documents(
             workspace_name=test_workspace.name,
             observer=test_peer.name,
             observed=test_peer2.name,

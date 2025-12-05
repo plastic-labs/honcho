@@ -4,33 +4,43 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, Field
+from typing_extensions import Required, TypedDict
+
+# Re-export observation types from dedicated module
+from .observations import AsyncObservationScope, Observation, ObservationScope
+
+if TYPE_CHECKING:
+    from .base import SessionBase
+
+__all__ = [
+    "AsyncObservationScope",
+    "DeductiveObservation",
+    "DeductiveObservationBase",
+    "DialecticStreamResponse",
+    "ExplicitObservation",
+    "ExplicitObservationBase",
+    "Observation",
+    "ObservationCreateParam",
+    "ObservationMetadata",
+    "ObservationScope",
+    "PeerContext",
+    "Representation",
+]
 
 
-class RepresentationOptions(BaseModel):
-    """Options for configuring representation retrieval behavior."""
+class ObservationCreateParam(TypedDict, total=False):
+    """Parameters for creating an observation.
 
-    search_top_k: int | None = Field(
-        None,
-        ge=1,
-        le=100,
-        description="Number of semantically relevant facts to return",
-    )
-    search_max_distance: float | None = Field(
-        None,
-        ge=0.0,
-        le=1.0,
-        description="Maximum semantic distance for search results (0.0-1.0)",
-    )
-    include_most_derived: bool | None = Field(
-        None,
-        description="Whether to include the most derived observations in the representation",
-    )
-    max_observations: int | None = Field(
-        None, ge=1, le=100, description="Maximum number of observations to include"
-    )
+    Attributes:
+        content: The observation content/text (required)
+        session_id: The session this observation relates to (ID string or Session object) (required)
+    """
+
+    content: Required[str]
+    session_id: "Required[str | SessionBase]"
 
 
 class ObservationMetadata(BaseModel):
@@ -76,7 +86,8 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
     def __eq__(self, other: object) -> bool:
         """
         Define equality for ExplicitObservation objects.
-        Two observations are equal if all their fields match.
+        Two observations are equal if content, created_at, and session_name match.
+        NOTE: message_ids are not included in the equality check.
         """
         if not isinstance(other, ExplicitObservation):
             return False
@@ -306,6 +317,9 @@ class Representation(BaseModel):
 
         Returns:
             A new Representation instance
+
+        Raises:
+            ValidationError: If observation data is missing required fields
         """
         explicit_data: Any = data.get("explicit", [])
         deductive_data: Any = data.get("deductive", [])
@@ -422,3 +436,81 @@ class DialecticStreamResponse:
     def is_complete(self) -> bool:
         """Check if the stream has finished."""
         return self._is_complete
+
+
+class PeerContext:
+    """
+    Context for a peer, including representation and peer card.
+
+    This class holds both the working representation and peer card for a peer,
+    typically returned from the get_context API call.
+
+    Attributes:
+        peer_id: The ID of the observer peer
+        target_id: The ID of the target peer being observed
+        representation: The working representation (may be None if no observations exist)
+        peer_card: List of peer card strings (may be None if no card exists)
+    """
+
+    peer_id: str
+    target_id: str
+    representation: Representation | None
+    peer_card: list[str] | None
+
+    def __init__(
+        self,
+        peer_id: str,
+        target_id: str,
+        representation: Representation | None = None,
+        peer_card: list[str] | None = None,
+    ):
+        self.peer_id = peer_id
+        self.target_id = target_id
+        self.representation = representation
+        self.peer_card = peer_card
+
+    @classmethod
+    def from_api_response(cls, response: Any) -> "PeerContext":
+        """
+        Create a PeerContext from an API response.
+
+        Args:
+            response: API response object with peer_id, target_id, representation, and peer_card
+
+        Returns:
+            A new PeerContext instance
+        """
+        peer_id = getattr(response, "peer_id", "") or ""
+        target_id = getattr(response, "target_id", "") or ""
+
+        representation = None
+        rep_data = getattr(response, "representation", None)
+        if rep_data is not None:
+            if isinstance(rep_data, dict):
+                representation = Representation.from_dict(
+                    cast(dict[str, Any], rep_data)
+                )
+            elif hasattr(rep_data, "explicit") and hasattr(rep_data, "deductive"):
+                representation = Representation.from_dict(
+                    {
+                        "explicit": rep_data.explicit,
+                        "deductive": rep_data.deductive,
+                    }
+                )
+
+        peer_card = getattr(response, "peer_card", None)
+
+        return cls(
+            peer_id=peer_id,
+            target_id=target_id,
+            representation=representation,
+            peer_card=peer_card,
+        )
+
+    def __repr__(self) -> str:
+        has_rep = self.representation is not None
+        has_card = self.peer_card is not None and len(self.peer_card) > 0
+        return (
+            f"PeerContext(peer_id={self.peer_id!r}, target_id={self.target_id!r}, "
+            f"has_representation={has_rep}, has_peer_card={has_card})"
+        )

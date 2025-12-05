@@ -18,7 +18,6 @@ import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
   type DeriverStatusOptions,
-  DeriverStatusOptionsSchema,
   FileUploadSchema,
   FilterSchema,
   type Filters,
@@ -55,7 +54,7 @@ export class SessionPeerConfig {
    * of other peers in the session. When false, this peer will not build local
    * representations of other peers within this session.
    */
-  observe_others?: boolean
+  observe_others?: boolean | null
 
   /**
    * Initialize SessionPeerConfig with observation settings.
@@ -63,7 +62,7 @@ export class SessionPeerConfig {
    * @param observe_me - Whether other peers should observe this peer in the session
    * @param observe_others - Whether this peer should observe others in the session
    */
-  constructor(observe_me?: boolean | null, observe_others?: boolean) {
+  constructor(observe_me?: boolean | null, observe_others?: boolean | null) {
     const validatedConfig = SessionPeerConfigSchema.parse({
       observe_me,
       observe_others,
@@ -121,13 +120,25 @@ export class Session {
    */
   private _client: HonchoCore
   /**
+   * Private cached metadata for this session.
+   */
+  private _metadata?: Record<string, unknown>
+  /**
+   * Private cached configuration for this session.
+   */
+  private _configuration?: Record<string, unknown>
+
+  /**
    * Cached metadata for this session. May be stale if the session
    * was not recently fetched from the API.
    *
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  public metadata?: Record<string, unknown> | null
+  get metadata(): Record<string, unknown> | undefined {
+    return this._metadata
+  }
+
   /**
    * Cached configuration for this session. May be stale if the session
    * was not recently fetched from the API.
@@ -135,7 +146,9 @@ export class Session {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  public configuration?: Record<string, unknown> | null
+  get configuration(): Record<string, unknown> | undefined {
+    return this._configuration
+  }
 
   /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
@@ -150,14 +163,14 @@ export class Session {
     id: string,
     workspaceId: string,
     client: HonchoCore,
-    metadata?: Record<string, unknown> | null,
-    configuration?: Record<string, unknown> | null
+    metadata?: Record<string, unknown>,
+    configuration?: Record<string, unknown>
   ) {
     this.id = id
     this.workspaceId = workspaceId
     this._client = client
-    this.metadata = metadata
-    this.configuration = configuration
+    this._metadata = metadata
+    this._configuration = configuration
   }
 
   /**
@@ -448,8 +461,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    this.metadata = session.metadata || {}
-    return this.metadata
+    this._metadata = session.metadata || {}
+    return this._metadata
   }
 
   /**
@@ -468,7 +481,7 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       metadata,
     })
-    this.metadata = metadata
+    this._metadata = metadata
   }
 
   /**
@@ -486,8 +499,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    this.configuration = session.configuration || {}
-    return this.configuration
+    this._configuration = session.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -504,7 +517,7 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       configuration,
     })
-    this.configuration = configuration
+    this._configuration = configuration
   }
 
   /**
@@ -518,8 +531,8 @@ export class Session {
       this.workspaceId,
       { id: this.id }
     )
-    this.metadata = session.metadata || {}
-    this.configuration = session.configuration || {}
+    this._metadata = session.metadata || {}
+    this._configuration = session.configuration || {}
   }
 
   /**
@@ -536,6 +549,44 @@ export class Session {
    */
   async delete(): Promise<void> {
     await this._client.workspaces.sessions.delete(this.workspaceId, this.id)
+  }
+
+  /**
+   * Clone this session, optionally up to a specific message.
+   *
+   * Makes an API call to create a copy of this session with a new ID.
+   * All messages and peers from the original session are copied to the new session.
+   * If a messageId is provided, only messages up to and including that message
+   * are copied.
+   *
+   * @param messageId - Optional message ID to cut off the clone at. If provided,
+   *                    the cloned session will only contain messages up to and
+   *                    including this message.
+   * @returns Promise resolving to a new Session object representing the cloned session
+   *
+   * @example
+   * ```typescript
+   * // Clone entire session
+   * const cloned = await session.clone()
+   *
+   * // Clone session up to a specific message
+   * const cloned = await session.clone('msg_abc123')
+   * ```
+   */
+  async clone(messageId?: string): Promise<Session> {
+    const clonedSessionData = await this._client.workspaces.sessions.clone(
+      this.workspaceId,
+      this.id,
+      messageId ? { message_id: messageId } : {}
+    )
+
+    return new Session(
+      clonedSessionData.id,
+      this.workspaceId,
+      this._client,
+      clonedSessionData.metadata ?? undefined,
+      clonedSessionData.configuration ?? undefined
+    )
   }
 
   /**
@@ -617,6 +668,7 @@ export class Session {
 
     if (
       typeof summaryOrOptions === 'boolean' ||
+      // biome-ignore lint/complexity/noArguments: Need to detect which overload pattern is being used
       (summaryOrOptions === undefined && arguments.length > 1)
     ) {
       // Positional arguments pattern
@@ -843,12 +895,18 @@ export class Session {
    * This method automatically scopes the status to this session.
    *
    * @param options - Configuration options for the status request
-   * @param options.observerId - Optional observer ID to scope the status to
-   * @param options.senderId - Optional sender ID to scope the status to
+   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
+   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @returns Promise resolving to the deriver status information including work unit counts
    */
   async getDeriverStatus(
-    options?: Omit<DeriverStatusOptions, 'sessionId'>
+    options?: Omit<
+      DeriverStatusOptions,
+      'sessionId' | 'observerId' | 'senderId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+    }
   ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
@@ -856,16 +914,22 @@ export class Session {
     pendingWorkUnits: number
     sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options
-      ? DeriverStatusOptionsSchema.parse(options)
+    const resolvedObserverId = options?.observer
+      ? typeof options.observer === 'string'
+        ? options.observer
+        : options.observer.id
       : undefined
+    const resolvedSenderId = options?.sender
+      ? typeof options.sender === 'string'
+        ? options.sender
+        : options.sender.id
+      : undefined
+
     const queryParams: WorkspaceDeriverStatusParams = {
       session_id: this.id, // Always use this session's ID
     }
-    if (validatedOptions?.observerId)
-      queryParams.observer_id = validatedOptions.observerId
-    if (validatedOptions?.senderId)
-      queryParams.sender_id = validatedOptions.senderId
+    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
+    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
 
     const status = await this._client.workspaces.deriverStatus(
       this.workspaceId,
@@ -889,14 +953,20 @@ export class Session {
    * The polling estimates sleep time by assuming each work unit takes 1 second.
    *
    * @param options - Configuration options for the status request
-   * @param options.observerId - Optional observer ID to scope the status to
-   * @param options.senderId - Optional sender ID to scope the status to
+   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
+   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
    * @returns Promise resolving to the final deriver status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
   async pollDeriverStatus(
-    options?: Omit<DeriverStatusOptions, 'sessionId'>
+    options?: Omit<
+      DeriverStatusOptions,
+      'sessionId' | 'observerId' | 'senderId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+    }
   ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
@@ -904,14 +974,11 @@ export class Session {
     pendingWorkUnits: number
     sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options
-      ? DeriverStatusOptionsSchema.parse(options)
-      : undefined
-    const timeoutMs = validatedOptions?.timeoutMs ?? 300000 // Default to 5 minutes
+    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(validatedOptions)
+      const status = await this.getDeriverStatus(options)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
         return status
       }
@@ -953,7 +1020,11 @@ export class Session {
    *   - File objects (browser File API)
    *   - Buffer or Uint8Array with filename and content_type
    *   - { filename: string, content: Buffer | Uint8Array, content_type: string }
-   * @param peerId - The peer ID to attribute the created messages to
+   * @param peer - The peer (ID string or Peer object) to attribute the created messages to
+   * @param options - Optional parameters for the uploaded messages
+   * @param options.metadata - Optional metadata dictionary to associate with the messages
+   * @param options.configuration - Optional configuration dictionary to associate with the messages
+   * @param options.created_at - Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
    * @returns Promise resolving to a list of Message objects representing the created messages
    *
    * @note Supported file types include PDFs, text files, and JSON documents.
@@ -965,17 +1036,59 @@ export class Session {
    * // Upload a file
    * const messages = await session.uploadFile(fileInput.files[0], 'user123')
    * console.log(`Created ${messages.length} messages from file`)
+   *
+   * // Upload a file with metadata and timestamp
+   * const messages = await session.uploadFile(fileInput.files[0], 'user123', {
+   *   metadata: { source: 'upload' },
+   *   created_at: '2021-01-01T00:00:00.000Z'
+   * })
    * ```
    */
-  async uploadFile(file: Uploadable, peerId: string): Promise<Message[]> {
-    const uploadParams = FileUploadSchema.parse({ file, peerId })
+  async uploadFile(
+    file: Uploadable,
+    peer: string | Peer,
+    options?: {
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+      created_at?: string | Date
+    }
+  ): Promise<Message[]> {
+    const createdAt =
+      options?.created_at instanceof Date
+        ? options.created_at.toISOString()
+        : options?.created_at
+
+    const resolvedPeerId = typeof peer === 'string' ? peer : peer.id
+
+    const uploadParams = FileUploadSchema.parse({
+      file,
+      peer: resolvedPeerId,
+      metadata: options?.metadata,
+      configuration: options?.configuration,
+      created_at: createdAt,
+    })
+
+    // Build body with file and peer_id, plus optional fields as JSON strings
+    const body = {
+      file: uploadParams.file,
+      peer_id: resolvedPeerId,
+      ...(uploadParams.metadata !== undefined && uploadParams.metadata !== null
+        ? { metadata: JSON.stringify(uploadParams.metadata) }
+        : {}),
+      ...(uploadParams.configuration !== undefined &&
+      uploadParams.configuration !== null
+        ? { configuration: JSON.stringify(uploadParams.configuration) }
+        : {}),
+      ...(uploadParams.created_at !== undefined &&
+      uploadParams.created_at !== null
+        ? { created_at: uploadParams.created_at }
+        : {}),
+    }
+
     const response = await this._client.workspaces.sessions.messages.upload(
       this.workspaceId,
       this.id,
-      {
-        file: uploadParams.file,
-        peer_id: uploadParams.peerId,
-      }
+      body
     )
 
     return response
@@ -1053,9 +1166,9 @@ export class Session {
       | RepresentationData
       | { representation?: RepresentationData | null }
       | null
-    const rep = (maybe && 'representation' in (maybe as any)
-      ? (maybe as any).representation
-      : (maybe as any)) ?? { explicit: [], deductive: [] }
+    const rep = (maybe && typeof maybe === 'object' && 'representation' in maybe
+      ? (maybe as { representation?: RepresentationData | null }).representation
+      : maybe) ?? { explicit: [], deductive: [] }
     return Representation.fromData(rep as RepresentationData)
   }
 

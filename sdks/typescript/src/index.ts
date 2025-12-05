@@ -3,8 +3,9 @@
 
 export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 export { Honcho } from './client'
+export { Observation, ObservationScope } from './observations'
 export { Page } from './pagination'
-export { Peer } from './peer'
+export { Peer, PeerContext } from './peer'
 export { Session, SessionPeerConfig } from './session'
 export {
   SessionContext,
@@ -16,7 +17,7 @@ export {
   type DialecticStreamChunk,
   type DialecticStreamDelta,
   DialecticStreamResponse,
-  type Observation,
+  type Observation as ObservationData,
   type ObservationQueryParams,
 } from './types'
 

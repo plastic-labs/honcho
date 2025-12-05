@@ -369,6 +369,9 @@ class MessageUploadCreate(BaseModel):
     """Schema for message creation from file uploads"""
 
     peer_id: str = Field(..., description="ID of the peer creating the message")
+    metadata: dict[str, Any] | None = None
+    configuration: MessageConfiguration | None = None
+    created_at: datetime.datetime | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -447,6 +450,21 @@ class SessionContext(SessionBase):
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
+    )
+
+
+class PeerContext(BaseModel):
+    """Context for a peer, including representation and peer card."""
+
+    peer_id: str = Field(description="The ID of the peer")
+    target_id: str = Field(description="The ID of the target peer being observed")
+    representation: Representation | None = Field(
+        default=None,
+        description="The working representation of the target peer from the observer's perspective",
+    )
+    peer_card: list[str] | None = Field(
+        default=None,
+        description="The peer card for the target peer from the observer's perspective",
     )
 
 
@@ -541,6 +559,37 @@ class ObservationQuery(BaseModel):
     filters: dict[str, Any] | None = Field(
         default=None, description="Additional filters to apply"
     )
+
+
+class ObservationCreate(BaseModel):
+    """Schema for creating a single observation"""
+
+    content: Annotated[str, Field(min_length=1, max_length=65535)]
+    observer_id: str = Field(..., description="The peer making the observation")
+    observed_id: str = Field(..., description="The peer being observed")
+    session_id: str = Field(..., description="The session this observation relates to")
+
+    _token_count: int = PrivateAttr(default=0)
+
+    @model_validator(mode="after")
+    def validate_token_count(self) -> Self:
+        """Validate that content doesn't exceed embedding token limit."""
+        encoding = tiktoken.get_encoding("cl100k_base")
+        tokens = encoding.encode(self.content)
+        self._token_count = len(tokens)
+
+        if self._token_count > settings.MAX_EMBEDDING_TOKENS:
+            raise ValueError(
+                f"Content exceeds maximum embedding token limit of {settings.MAX_EMBEDDING_TOKENS} "
+                + f"(got {self._token_count} tokens)"
+            )
+        return self
+
+
+class ObservationBatchCreate(BaseModel):
+    """Schema for batch observation creation with a max of 100 observations"""
+
+    observations: list[ObservationCreate] = Field(..., min_length=1, max_length=100)
 
 
 class MessageSearchOptions(BaseModel):

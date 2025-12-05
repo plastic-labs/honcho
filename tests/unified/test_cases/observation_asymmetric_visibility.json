@@ -1,6 +1,9 @@
 {
   "description": "Test asymmetric visibility scenario from documentation - Alice lies to Bob but tells truth to Charlie",
   "workspace_config": {
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {

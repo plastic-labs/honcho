@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -710,7 +710,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "2.4.3"
+version = "2.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -810,7 +810,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "1.5.0"
+version = "1.6.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "honcho-core" },
@@ -826,7 +826,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", path = "sdks/python/honcho_core-1.5.1-py3-none-any.whl" },
+    { name = "honcho-core", specifier = ">=1.6.1" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -837,8 +837,8 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.5.1"
-source = { path = "sdks/python/honcho_core-1.5.1-py3-none-any.whl" }
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -847,8 +847,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/75/ca/5d0229382771d489b838805eb45829817d22b5c7c05d4838cd0a04f59081/honcho_core-1.6.1.tar.gz", hash = "sha256:e2baba3eaf2dfa59c2ecee164f1fb6cca121177167c194d4b861898cbfb5df2e", size = 142082, upload-time = "2025-12-04T16:37:32.725Z" }
 wheels = [
-    { filename = "honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:7cfac7e44d83bb172408e66a36b854963e4cedfb88e83814e91803f3c394fea6" },
+    { url = "https://files.pythonhosted.org/packages/35/a6/8108dcedfcfa9c2eb1e9fdbcea4bd183e6f89b04b9acb8c9d1c71cf3981b/honcho_core-1.6.1-py3-none-any.whl", hash = "sha256:68ac553ea32c0f91ab47fce1be6637ccc0991d0a5a360155ea91a5ae9b7859b3", size = 139798, upload-time = "2025-12-04T16:37:31.692Z" },
 ]
 
 [package.metadata]

@@ -29,9 +29,6 @@ async def main():
     parser.add_argument(
         "--api-port", type=int, default=9001, help="API port for the harness"
     )
-    parser.add_argument(
-        "--redis-port", type=int, default=6379, help="Redis port for the harness"
-    )
 
     args = parser.parse_args()
 
@@ -50,10 +47,7 @@ async def main():
             sys.exit(1)
 
         runner = UnifiedTestRunner(
-            test_file=test_path,
-            honcho_port=args.port,
-            api_port=args.api_port,
-            redis_port=args.redis_port,
+            test_file=test_path, honcho_port=args.port, api_port=args.api_port
         )
     else:
         test_dir = Path(args.test_dir)
@@ -62,10 +56,7 @@ async def main():
             sys.exit(1)
 
         runner = UnifiedTestRunner(
-            tests_dir=test_dir,
-            honcho_port=args.port,
-            api_port=args.api_port,
-            redis_port=args.redis_port,
+            tests_dir=test_dir, honcho_port=args.port, api_port=args.api_port
         )
 
     await runner.run()

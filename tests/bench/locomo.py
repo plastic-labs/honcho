@@ -256,7 +256,7 @@ class LoCoMoRunner:
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_deriver_status(session_id=session_id)
+                status = await honcho_client.get_deriver_status(session=session_id)
             except Exception:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -553,7 +553,7 @@ class LoCoMoRunner:
                     else:
                         # Use dialectic .chat endpoint on the appropriate peer
                         actual_response = await target_peer.chat(
-                            question, session_id=session_id
+                            question, session=session_id
                         )
                         actual_response = (
                             actual_response if isinstance(actual_response, str) else ""

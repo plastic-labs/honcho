@@ -40,7 +40,9 @@ from .async_client import (
     AsyncPeer,
     AsyncSession,
 )
+from .base import PeerBase, SessionBase
 from .client import Honcho
+from .observations import AsyncObservationScope, Observation, ObservationScope
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
@@ -49,28 +51,33 @@ from .types import (
     DeductiveObservation,
     DialecticStreamResponse,
     ExplicitObservation,
+    PeerContext,
     Representation,
-    RepresentationOptions,
 )
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
 __all__ = [
     "AsyncHoncho",
+    "AsyncObservationScope",
     "AsyncPeer",
     "AsyncSession",
     "AsyncPage",
     "Honcho",
+    "Observation",
+    "ObservationScope",
     "Peer",
+    "PeerBase",
+    "PeerContext",
     "Session",
+    "SessionBase",
     "SessionContext",
     "SessionSummaries",
     "Summary",
     "SyncPage",
     "DialecticStreamResponse",
-    "RepresentationOptions",
     "Representation",
     "ExplicitObservation",
     "DeductiveObservation",

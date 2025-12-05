@@ -18,8 +18,8 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from honcho import AsyncHoncho
-from honcho.async_client.peer import AsyncPeer
 from honcho.async_client.session import SessionPeerConfig as SDKSessionPeerConfig
+from honcho.base import PeerBase
 from honcho_core.types.workspaces.sessions.message_create_param import (
     Configuration,
     MessageCreateParam,
@@ -59,7 +59,7 @@ RED = "\033[91m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
-JUDGE_MODEL: str = "claude-sonnet-4-5"
+JUDGE_MODEL: str = "claude-haiku-4-5"
 
 
 class TestExecutionError(Exception):
@@ -110,7 +110,7 @@ class UnifiedTestExecutor:
             )
 
             if step.peer_configs:
-                peer_list: list[tuple[str | AsyncPeer, SDKSessionPeerConfig]] = []
+                peer_list: list[tuple[str | PeerBase, SDKSessionPeerConfig]] = []
                 for peer_id, config in step.peer_configs.items():
                     sdk_config = SDKSessionPeerConfig(
                         **config.model_dump(exclude_none=True)
@@ -203,7 +203,7 @@ class UnifiedTestExecutor:
             peer = await self.client.peer(id=step.observer_peer_id)
 
             response = await peer.chat(
-                step.input, session_id=step.session_id, target=step.observed_peer_id
+                step.input, session=step.session_id, target=step.observed_peer_id
             )
             return response
 
@@ -359,7 +359,7 @@ class UnifiedTestRunner:
         test_file: Path | None = None,
         honcho_port: int = 9000,
         api_port: int = 9001,
-        redis_port: int = 6379,
+        redis_port: int = 9002,
     ):
         if not tests_dir and not test_file:
             raise ValueError("Either tests_dir or test_file must be provided")

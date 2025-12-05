@@ -45,7 +45,11 @@ def count_message_tokens(messages: list[dict[str, Any]]) -> int:
             total += estimate_tokens(json.dumps(content))
         # Also count parts for Google format
         if "parts" in msg:
-            total += estimate_tokens(json.dumps(msg["parts"]))
+            try:
+                total += estimate_tokens(json.dumps(msg["parts"]))
+            except TypeError:
+                # Handle non-JSON-serializable content (e.g., bytes) by estimating based on string representation
+                total += estimate_tokens(str(msg["parts"]))
     return total
 
 
@@ -693,6 +697,23 @@ async def honcho_llm_call(
 
     # apply retry logic - retries on ANY exception
     if enable_retry:
+
+        def before_retry_callback(retry_state: Any) -> None:
+            """Update attempt counter before each retry.
+
+            Note: before_sleep is called AFTER an attempt fails and BEFORE sleeping,
+            so we need to increment to the next attempt number.
+            """
+            next_attempt = retry_state.attempt_number + 1
+            _current_attempt.set(next_attempt)
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            if exc:
+                logger.warning(
+                    f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
+                    + f"{llm_settings.PROVIDER}/{llm_settings.MODEL}: {exc}"
+                )
+                logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
+
         decorated = retry(
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),

@@ -65,6 +65,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress cashews Redis error logs (NoScriptError, ConnectionError, etc.)
+# These are handled gracefully by SafeRedis and don't need full tracebacks
+logging.getLogger("cashews.backends.redis.client").setLevel(logging.CRITICAL)
+
 
 # JWT Setup
 async def setup_admin_jwt():
@@ -135,7 +139,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.4.3",
+    version="2.5.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",

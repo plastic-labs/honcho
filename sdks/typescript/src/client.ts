@@ -10,7 +10,6 @@ import { Peer } from './peer'
 import { Session } from './session'
 import {
   type DeriverStatusOptions,
-  DeriverStatusOptionsSchema,
   FilterSchema,
   type Filters,
   type HonchoConfig,
@@ -65,13 +64,25 @@ export class Honcho {
    */
   private _client: HonchoCore
   /**
+   * Private cached metadata for this workspace.
+   */
+  private _metadata?: Record<string, unknown>
+  /**
+   * Private cached configuration for this workspace.
+   */
+  private _configuration?: Record<string, unknown>
+
+  /**
    * Cached metadata for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
    *
    * Call getMetadata() to get the latest metadata from the server,
    * which will also update this cached value.
    */
-  public metadata?: Record<string, unknown>
+  get metadata(): Record<string, unknown> | undefined {
+    return this._metadata
+  }
+
   /**
    * Cached configuration for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
@@ -79,7 +90,9 @@ export class Honcho {
    * Call getConfig() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  public configuration?: Record<string, unknown>
+  get configuration(): Record<string, unknown> | undefined {
+    return this._configuration
+  }
 
   /**
    * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
@@ -187,8 +200,8 @@ export class Honcho {
         validatedId,
         this.workspaceId,
         this._client,
-        peerData.metadata,
-        peerData.configuration
+        peerData.metadata ?? undefined,
+        peerData.configuration ?? undefined
       )
     }
 
@@ -217,8 +230,8 @@ export class Honcho {
           peer.id,
           this.workspaceId,
           this._client,
-          peer.metadata,
-          peer.configuration
+          peer.metadata ?? undefined,
+          peer.configuration ?? undefined
         )
     )
   }
@@ -272,8 +285,8 @@ export class Honcho {
         validatedId,
         this.workspaceId,
         this._client,
-        sessionData.metadata,
-        sessionData.configuration
+        sessionData.metadata ?? undefined,
+        sessionData.configuration ?? undefined
       )
     }
 
@@ -303,8 +316,8 @@ export class Honcho {
           session.id,
           this.workspaceId,
           this._client,
-          session.metadata,
-          session.configuration
+          session.metadata ?? undefined,
+          session.configuration ?? undefined
         )
     )
   }
@@ -324,8 +337,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    this.metadata = workspace.metadata || {}
-    return this.metadata
+    this._metadata = workspace.metadata || {}
+    return this._metadata
   }
 
   /**
@@ -343,7 +356,7 @@ export class Honcho {
     await this._client.workspaces.update(this.workspaceId, {
       metadata: validatedMetadata,
     })
-    this.metadata = validatedMetadata
+    this._metadata = validatedMetadata
   }
 
   /**
@@ -360,8 +373,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    this.configuration = workspace.configuration || {}
-    return this.configuration
+    this._configuration = workspace.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -379,7 +392,7 @@ export class Honcho {
     await this._client.workspaces.update(this.workspaceId, {
       configuration: validatedConfig,
     })
-    this.configuration = validatedConfig
+    this._configuration = validatedConfig
   }
 
   /**
@@ -392,8 +405,8 @@ export class Honcho {
     const workspace = await this._client.workspaces.getOrCreate({
       id: this.workspaceId,
     })
-    this.metadata = workspace.metadata || {}
-    this.configuration = workspace.configuration || {}
+    this._metadata = workspace.metadata || {}
+    this._configuration = workspace.configuration || {}
   }
 
   /**
@@ -472,28 +485,47 @@ export class Honcho {
    * The deriver is responsible for processing messages and updating peer representations.
    *
    * @param options - Configuration options for the status request
-   * @param options.observerId - Optional observer ID to scope the status to
-   * @param options.senderId - Optional sender ID to scope the status to
-   * @param options.sessionId - Optional session ID to scope the status to
+   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
+   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
+   * @param options.session - Optional session (ID string or Session object) to scope the status to
    * @returns Promise resolving to the deriver status information including work unit counts
    */
-  async getDeriverStatus(options?: DeriverStatusOptions): Promise<{
+  async getDeriverStatus(
+    options?: Omit<
+      DeriverStatusOptions,
+      'observerId' | 'senderId' | 'sessionId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+      session?: string | Session
+    }
+  ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
     sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options
-      ? DeriverStatusOptionsSchema.parse(options)
+    const resolvedObserverId = options?.observer
+      ? typeof options.observer === 'string'
+        ? options.observer
+        : options.observer.id
       : undefined
+    const resolvedSenderId = options?.sender
+      ? typeof options.sender === 'string'
+        ? options.sender
+        : options.sender.id
+      : undefined
+    const resolvedSessionId = options?.session
+      ? typeof options.session === 'string'
+        ? options.session
+        : options.session.id
+      : undefined
+
     const queryParams: WorkspaceDeriverStatusParams = {}
-    if (validatedOptions?.observerId)
-      queryParams.observer_id = validatedOptions.observerId
-    if (validatedOptions?.senderId)
-      queryParams.sender_id = validatedOptions.senderId
-    if (validatedOptions?.sessionId)
-      queryParams.session_id = validatedOptions.sessionId
+    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
+    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
+    if (resolvedSessionId) queryParams.session_id = resolvedSessionId
 
     const status = await this._client.workspaces.deriverStatus(
       this.workspaceId,
@@ -517,28 +549,34 @@ export class Honcho {
    * The polling estimates sleep time by assuming each work unit takes 1 second.
    *
    * @param options - Configuration options for the status request
-   * @param options.observerId - Optional observer ID to scope the status to
-   * @param options.senderId - Optional sender ID to scope the status to
-   * @param options.sessionId - Optional session ID to scope the status to
+   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
+   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
+   * @param options.session - Optional session (ID string or Session object) to scope the status to
    * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
    * @returns Promise resolving to the final deriver status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
-  async pollDeriverStatus(options?: DeriverStatusOptions): Promise<{
+  async pollDeriverStatus(
+    options?: Omit<
+      DeriverStatusOptions,
+      'observerId' | 'senderId' | 'sessionId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+      session?: string | Session
+    }
+  ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
     sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options
-      ? DeriverStatusOptionsSchema.parse(options)
-      : undefined
-    const timeoutMs = validatedOptions?.timeoutMs ?? 300000 // Default to 5 minutes
+    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(validatedOptions)
+      const status = await this.getDeriverStatus(options)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
         return status
       }
@@ -575,14 +613,14 @@ export class Honcho {
    *
    * @param message - Either a Message object or a message ID string
    * @param metadata - The metadata to update for the message
-   * @param sessionId - The ID of the session (required if message is a string ID, ignored if message is a Message object)
+   * @param session - The session (ID string or Session object) - required if message is a string ID, ignored if message is a Message object
    * @returns Promise resolving to the updated Message object
-   * @throws Error if message is a string ID but sessionId is not provided
+   * @throws Error if message is a string ID but session is not provided
    */
   async updateMessage(
     message: Message | string,
     metadata: Record<string, unknown>,
-    sessionId?: string
+    session?: string | Session
   ): Promise<Message> {
     const validatedMetadata = MessageMetadataSchema.parse(metadata)
     let messageId: string
@@ -590,10 +628,10 @@ export class Honcho {
 
     if (typeof message === 'string') {
       messageId = message
-      if (!sessionId) {
-        throw new Error('sessionId is required when message is a string ID')
+      if (!session) {
+        throw new Error('session is required when message is a string ID')
       }
-      resolvedSessionId = sessionId
+      resolvedSessionId = typeof session === 'string' ? session : session.id
     } else {
       messageId = message.id
       resolvedSessionId = message.session_id

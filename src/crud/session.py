@@ -130,6 +130,15 @@ async def get_or_create_session(
     if honcho_session is not None:
         honcho_session = await db.merge(honcho_session, load=False)
 
+        # Reject operations on inactive sessions (marked for deletion)
+        if not honcho_session.is_active:
+            raise ResourceNotFoundException(
+                f"Session {session.name} not found in workspace {workspace_name}"
+            )
+
+    # Track if we need to update cache
+    needs_cache_update = False
+
     # Check if session already exists
     if honcho_session is None:
         if session.peer_names:
@@ -155,8 +164,10 @@ async def get_or_create_session(
         )
         try:
             db.add(honcho_session)
-            # Flush to ensure session exists in DB before adding peers
+            # Flush to ensure session exists in DB before adding peers and set flag to warm cache
             await db.flush()
+            needs_cache_update = True
+
         except IntegrityError:
             await db.rollback()
             logger.debug(
@@ -169,12 +180,20 @@ async def get_or_create_session(
             return await get_or_create_session(db, session, workspace_name, _retry=True)
     else:
         # Update existing session with metadata and feature flags if provided
-        if session.metadata is not None:
+        if (
+            session.metadata is not None
+            and honcho_session.h_metadata != session.metadata
+        ):
             honcho_session.h_metadata = session.metadata
+            needs_cache_update = True
         if session.configuration is not None:
+            # Merge configuration instead of replacing to preserve existing keys
             existing_config = (honcho_session.configuration or {}).copy()
             incoming_config = session.configuration.model_dump(exclude_none=True)
-            honcho_session.configuration = {**existing_config, **incoming_config}
+            merged_config = {**existing_config, **incoming_config}
+            if honcho_session.configuration != merged_config:
+                honcho_session.configuration = merged_config
+                needs_cache_update = True
 
     # Add all peers to session
     if session.peer_names:
@@ -195,10 +214,16 @@ async def get_or_create_session(
     await db.commit()
     await db.refresh(honcho_session)
 
-    cache_key = session_cache_key(workspace_name, session.name)
-    await cache.set(
-        cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
-    )
+    # Only update cache if session data changed or was newly created
+    if needs_cache_update:
+        cache_key = session_cache_key(workspace_name, session.name)
+        await cache.set(
+            cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+        )
+        logger.debug(
+            "Session %s cache updated in workspace %s", session.name, workspace_name
+        )
+
     return honcho_session
 
 
@@ -206,6 +231,8 @@ async def get_session(
     db: AsyncSession,
     session_name: str,
     workspace_name: str,
+    *,
+    include_inactive: bool = False,
 ) -> models.Session:
     """
     Get a session in a workspace.
@@ -214,16 +241,24 @@ async def get_session(
         db: Database session
         session_name: Name of the session
         workspace_name: Name of the workspace
+        include_inactive: If True, return sessions even if they are marked for deletion.
+            This should only be used for internal operations like the deletion task.
 
     Returns:
         The session
 
     Raises:
-        ResourceNotFoundException: If the session does not exist
+        ResourceNotFoundException: If the session does not exist or is inactive
     """
     session = await _fetch_session(db, workspace_name, session_name)
 
     if session is None:
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
+
+    # Check if session is active (unless include_inactive is True)
+    if not include_inactive and not session.is_active:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
@@ -259,21 +294,36 @@ async def update_session(
         db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
     )
 
-    if session.metadata is not None:
+    # Track if anything changed
+    needs_update = False
+
+    if session.metadata is not None and honcho_session.h_metadata != session.metadata:
         honcho_session.h_metadata = session.metadata
+        needs_update = True
 
     if session.configuration is not None:
         # Merge configuration instead of replacing to preserve existing keys
         base_config = (honcho_session.configuration or {}).copy()
-        honcho_session.configuration = {
+        merged_config = {
             **base_config,
             **session.configuration.model_dump(exclude_none=True),
         }
+        if honcho_session.configuration != merged_config:
+            honcho_session.configuration = merged_config
+            needs_update = True
+
+    if not needs_update:
+        logger.debug(
+            "Session %s unchanged in workspace %s, skipping update",
+            session_name,
+            workspace_name,
+        )
+        return honcho_session
 
     await db.commit()
     await db.refresh(honcho_session)
 
-    # Invalidate cache - read-through pattern
+    # Only invalidate if we actually updated
     cache_key = session_cache_key(workspace_name, session_name)
     await cache.delete(cache_key)
 
@@ -343,7 +393,9 @@ async def delete_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    honcho_session = await get_session(db, session_name, workspace_name)
+    honcho_session = await get_session(
+        db, session_name, workspace_name, include_inactive=True
+    )
 
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
@@ -428,8 +480,16 @@ async def clone_session(
     cutoff_message_id: str | None = None,
 ) -> models.Session:
     """
-    Clone a session and its messages. If cutoff_message_id is provided,
+    Clone a session and its data. If cutoff_message_id is provided,
     only clone messages up to and including that message.
+
+    The following data is copied to the new session:
+    - Session metadata
+    - Session configuration
+    - All messages (or up to cutoff_message_id) with their content, metadata, and peer associations
+    - Session-peer associations with their configurations (observe_me, observe_others)
+
+    The new session gets a unique ID (nanoid) and fresh timestamps.
 
     Args:
         db: SQLAlchemy session
@@ -470,6 +530,7 @@ async def clone_session(
         workspace_name=workspace_name,
         name=generate_nanoid(),
         h_metadata=original_session.h_metadata,
+        configuration=original_session.configuration,
     )
     db.add(new_session)
     await db.flush()  # Flush to get the new session ID
@@ -505,7 +566,7 @@ async def clone_session(
     insert_stmt = insert(models.Message).returning(models.Message)
     result = await db.execute(insert_stmt, new_messages)
 
-    # Clone peers from original session to new session
+    # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == original_session_name
     )
@@ -516,6 +577,7 @@ async def clone_session(
             session_name=new_session.name,
             peer_name=session_peer.peer_name,
             workspace_name=workspace_name,
+            configuration=session_peer.configuration,
         )
         db.add(new_session_peer)
 

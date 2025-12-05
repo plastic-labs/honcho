@@ -1,6 +1,9 @@
 {
   "description": "Test complex 4-peer scenario with mixed observation patterns",
   "workspace_config": {
+    "deriver": {
+      "enabled": true
+    }
   },
   "steps": [
     {

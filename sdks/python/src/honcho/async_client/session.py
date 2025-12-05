@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
@@ -10,8 +12,10 @@ from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
+from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from ..base import PeerBase, SessionBase
 from ..session_context import SessionContext, SessionSummaries, Summary
 from ..utils import prepare_file_for_upload
 from .pagination import AsyncPage
@@ -34,7 +38,7 @@ class SessionPeerConfig(BaseModel):
     )
 
 
-class AsyncSession(BaseModel):
+class AsyncSession(SessionBase):
     """
     Represents a session in Honcho with async operations.
 
@@ -51,21 +55,19 @@ class AsyncSession(BaseModel):
             recently fetched. Call get_config() for fresh data.
     """
 
-    id: str = Field(..., min_length=1, description="Unique identifier for this session")
-    workspace_id: str = Field(
-        ..., min_length=1, description="Workspace ID for scoping operations"
-    )
-    metadata: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached metadata for this session. May be stale. Use get_metadata() for fresh data.",
-    )
-    configuration: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached configuration for this session. May be stale. Use get_config() for fresh data.",
-    )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: AsyncHonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this session. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this session. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -96,10 +98,10 @@ class AsyncSession(BaseModel):
         super().__init__(
             id=session_id,
             workspace_id=workspace_id,
-            metadata=metadata,
-            configuration=config,
         )
         self._client = client
+        self._metadata = metadata
+        self._configuration = config
 
     @classmethod
     async def create(
@@ -149,12 +151,12 @@ class AsyncSession(BaseModel):
     async def add_peers(
         self,
         peers: str
-        | AsyncPeer
+        | PeerBase
         | tuple[str, SessionPeerConfig]
-        | tuple[AsyncPeer, SessionPeerConfig]
-        | list[AsyncPeer | str]
-        | list[tuple[AsyncPeer | str, SessionPeerConfig]]
-        | list[AsyncPeer | str | tuple[AsyncPeer | str, SessionPeerConfig]] = Field(
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]] = Field(
             ..., description="Peers to add to the session"
         ),
     ) -> None:
@@ -199,12 +201,12 @@ class AsyncSession(BaseModel):
     async def set_peers(
         self,
         peers: str
-        | AsyncPeer
+        | PeerBase
         | tuple[str, SessionPeerConfig]
-        | tuple[AsyncPeer, SessionPeerConfig]
-        | list[AsyncPeer | str]
-        | list[tuple[AsyncPeer | str, SessionPeerConfig]]
-        | list[AsyncPeer | str | tuple[AsyncPeer | str, SessionPeerConfig]] = Field(
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]] = Field(
             ..., description="Peers to set for the session"
         ),
     ) -> None:
@@ -247,7 +249,7 @@ class AsyncSession(BaseModel):
 
     async def remove_peers(
         self,
-        peers: str | AsyncPeer | list[AsyncPeer | str] = Field(
+        peers: str | PeerBase | list[PeerBase | str] = Field(
             ..., description="Peers to remove from the session"
         ),
     ) -> None:
@@ -297,15 +299,14 @@ class AsyncSession(BaseModel):
             for peer in peers_page.items
         ]
 
-    async def get_peer_config(self, peer: str | AsyncPeer) -> SessionPeerConfig:
+    async def get_peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
-        from .peer import AsyncPeer
-
+        peer_id = peer if isinstance(peer, str) else peer.id
         peer_get_config_response = (
             await self._client.workspaces.sessions.peers.get_config(
-                peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
+                peer_id=peer_id,
                 workspace_id=self.workspace_id,
                 session_id=self.id,
             )
@@ -316,15 +317,14 @@ class AsyncSession(BaseModel):
         )
 
     async def set_peer_config(
-        self, peer: str | AsyncPeer, config: SessionPeerConfig
+        self, peer: str | PeerBase, config: SessionPeerConfig
     ) -> None:
         """
         Set the configuration for a peer in this session.
         """
-        from .peer import AsyncPeer
-
+        peer_id = peer if isinstance(peer, str) else peer.id
         await self._client.workspaces.sessions.peers.set_config(
-            peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
+            peer_id=peer_id,
             workspace_id=self.workspace_id,
             session_id=self.id,
             observe_others=omit
@@ -411,6 +411,52 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
         )
 
+    async def clone(
+        self,
+        *,
+        message_id: str | None = None,
+    ) -> "AsyncSession":
+        """
+        Clone this session, optionally up to a specific message.
+
+        Makes an async API call to create a copy of this session with a new ID.
+        All messages and peers from the original session are copied to the new session.
+        If a message_id is provided, only messages up to and including that message
+        are copied.
+
+        Args:
+            message_id: Optional message ID to cut off the clone at. If provided,
+                       the cloned session will only contain messages up to and
+                       including this message.
+
+        Returns:
+            A new AsyncSession object representing the cloned session
+
+        Example:
+            ```python
+            # Clone entire session
+            cloned = await session.clone()
+
+            # Clone session up to a specific message
+            cloned = await session.clone(message_id="msg_abc123")
+            ```
+        """
+        # Make the API call using the core SDK's clone method
+        cloned_session_data = await self._client.workspaces.sessions.clone(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            message_id=message_id if message_id is not None else omit,
+        )
+
+        # Return a new AsyncSession object with the cloned session's data
+        return AsyncSession(
+            cloned_session_data.id,
+            self.workspace_id,
+            self._client,
+            metadata=cloned_session_data.metadata,
+            config=cloned_session_data.configuration,
+        )
+
     async def get_metadata(self) -> dict[str, object]:
         """
         Get metadata for this session.
@@ -427,9 +473,8 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = session.metadata or {}
-        object.__setattr__(self, "metadata", metadata)
-        return metadata
+        self._metadata = session.metadata or {}
+        return self._metadata
 
     @validate_call
     async def set_metadata(
@@ -454,7 +499,7 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        object.__setattr__(self, "metadata", metadata)
+        self._metadata = metadata
 
     async def get_config(self) -> dict[str, object]:
         """
@@ -472,9 +517,8 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        configuration = session.configuration or {}
-        object.__setattr__(self, "configuration", configuration)
-        return configuration
+        self._configuration = session.configuration or {}
+        return self._configuration
 
     @validate_call
     async def set_config(
@@ -499,7 +543,7 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             configuration=configuration,
         )
-        object.__setattr__(self, "configuration", configuration)
+        self._configuration = configuration
 
     async def refresh(self) -> None:
         """
@@ -512,10 +556,8 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = session.metadata or {}
-        configuration = session.configuration or {}
-        object.__setattr__(self, "metadata", metadata)
-        object.__setattr__(self, "configuration", configuration)
+        self._metadata = session.metadata or {}
+        self._configuration = session.configuration or {}
 
     @validate_call
     async def get_context(
@@ -738,14 +780,28 @@ class AsyncSession(BaseModel):
             limit=limit,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def upload_file(
         self,
         file: tuple[str, bytes, str] | tuple[str, Any, str] | Any = Field(
             ...,
             description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
         ),
-        peer_id: str = Field(..., description="ID of the peer creating the messages"),
+        peer: str | PeerBase = Field(
+            ..., description="The peer creating the messages (ID string or Peer object)"
+        ),
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with the messages",
+        ),
+        configuration: Configuration | None = Field(
+            None,
+            description="Optional configuration dictionary to associate with the messages",
+        ),
+        created_at: str | datetime | None = Field(
+            None,
+            description="Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.",
+        ),
     ) -> list[Message]:
         """
         Upload file to create message(s) in this session.
@@ -762,7 +818,11 @@ class AsyncSession(BaseModel):
                 - a file object (must have .name and .read())
                 - a tuple (filename, bytes, content_type)
                 - a tuple (filename, fileobj, content_type)
-            peer_id: ID of the peer who will be attributed as the creator of the messages
+            peer: The peer who will be attributed as the creator of the messages.
+                Can be a peer ID string or an AsyncPeer object.
+            metadata: Optional metadata dictionary to associate with the messages
+            configuration: Optional configuration dictionary to associate with the messages
+            created_at: Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
 
         Returns:
             A list of Message objects representing the created messages
@@ -776,21 +836,38 @@ class AsyncSession(BaseModel):
         # Prepare file for upload using shared utility
         filename, content_bytes, content_type = prepare_file_for_upload(file)
 
-        # Call the upload endpoint
+        # Extract peer ID from AsyncPeer object if needed
+        resolved_peer_id = peer if isinstance(peer, str) else peer.id
+
+        # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
+        extra_body_data: dict[str, str] = {}
+        if metadata is not None:
+            extra_body_data["metadata"] = json.dumps(metadata)
+        if configuration is not None:
+            extra_body_data["configuration"] = json.dumps(configuration)
+        if created_at is not None:
+            # Ensure created_at is a string (ISO format)
+            if isinstance(created_at, datetime):
+                extra_body_data["created_at"] = created_at.isoformat()
+            else:
+                extra_body_data["created_at"] = created_at
+
+        # Call the upload endpoint with extra_body for the additional form fields
         response = await self._client.workspaces.sessions.messages.upload(
             session_id=self.id,
             workspace_id=self.workspace_id,
             file=(filename, content_bytes, content_type),
-            peer_id=peer_id,
+            peer_id=resolved_peer_id,
+            extra_body=extra_body_data if extra_body_data else None,
         )
 
         return [Message.model_validate(msg) for msg in response]
 
     async def working_rep(
         self,
-        peer: str | AsyncPeer,
+        peer: str | PeerBase,
         *,
-        target: str | AsyncPeer | None = None,
+        target: str | PeerBase | None = None,
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
@@ -831,13 +908,18 @@ class AsyncSession(BaseModel):
             ```
         """
         from ..types import Representation as _Representation
-        from .peer import AsyncPeer as _AsyncPeer
 
+        peer_id = peer if isinstance(peer, str) else peer.id
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
         data = await self._client.workspaces.peers.working_representation(
-            str(peer.id) if isinstance(peer, _AsyncPeer) else peer,
+            peer_id,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            target=str(target.id) if isinstance(target, _AsyncPeer) else target,
+            target=target_id,
             search_query=search_query if search_query is not None else omit,
             search_top_k=search_top_k if search_top_k is not None else omit,
             search_max_distance=search_max_distance
@@ -850,27 +932,42 @@ class AsyncSession(BaseModel):
         )
         return _Representation.from_dict(data)  # type: ignore
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_deriver_status(
         self,
-        observer_id: str | None = None,
-        sender_id: str | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
     ) -> DeriverStatus:
         """
-        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+
+        Args:
+            observer: Optional observer (ID string or AsyncPeer object) to scope the status check
+            sender: Optional sender (ID string or AsyncPeer object) to scope the status check
         """
+        resolved_observer_id = (
+            None
+            if observer is None
+            else (observer if isinstance(observer, str) else observer.id)
+        )
+        resolved_sender_id = (
+            None
+            if sender is None
+            else (sender if isinstance(sender, str) else sender.id)
+        )
+
         return await self._client.workspaces.deriver_status(
             workspace_id=self.workspace_id,
-            observer_id=observer_id,
-            sender_id=sender_id,
+            observer_id=resolved_observer_id,
+            sender_id=resolved_sender_id,
             session_id=self.id,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def poll_deriver_status(
         self,
-        observer_id: str | None = None,
-        sender_id: str | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
         timeout: float = Field(
             300.0,
             gt=0,
@@ -885,8 +982,8 @@ class AsyncSession(BaseModel):
         The polling estimates sleep time by assuming each work unit takes 1 second.
 
         Args:
-            observer_id: Optional observer ID to scope the status check
-            sender_id: Optional sender ID to scope the status check
+            observer: Optional observer (ID string or AsyncPeer object) to scope the status check
+            sender: Optional sender (ID string or AsyncPeer object) to scope the status check
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
@@ -900,7 +997,7 @@ class AsyncSession(BaseModel):
 
         while True:
             try:
-                status = await self.get_deriver_status(observer_id, sender_id)
+                status = await self.get_deriver_status(observer, sender)
             except Exception as e:
                 logger.warning(f"Failed to get deriver status: {e}")
                 # Sleep briefly before retrying

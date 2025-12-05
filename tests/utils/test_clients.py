@@ -542,8 +542,9 @@ class TestGoogleClient:
         mock_candidate.content = mock_content
         mock_candidate.finish_reason = mock_finish_reason
         mock_response.candidates = [mock_candidate]
-        # Mock the usage_metadata with candidates_token_count
+        # Mock the usage_metadata with both prompt_token_count and candidates_token_count
         mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 3
         mock_usage_metadata.candidates_token_count = 5
         mock_response.usage_metadata = mock_usage_metadata
         # Mock the async aio interface
@@ -561,6 +562,7 @@ class TestGoogleClient:
 
             assert isinstance(response, HonchoLLMCallResponse)
             assert response.content == "Hello from Gemini"
+            assert response.input_tokens == 3
             assert response.output_tokens == 5
             assert response.finish_reasons == ["STOP"]
 
@@ -582,8 +584,9 @@ class TestGoogleClient:
         mock_candidate.content = mock_content
         mock_candidate.finish_reason = mock_finish_reason
         mock_response.candidates = [mock_candidate]
-        # Mock the usage_metadata with candidates_token_count
+        # Mock the usage_metadata with both prompt_token_count and candidates_token_count
         mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 5
         mock_usage_metadata.candidates_token_count = 10
         mock_response.usage_metadata = mock_usage_metadata
         # Mock the async aio interface
@@ -618,8 +621,9 @@ class TestGoogleClient:
         mock_finish_reason = Mock()
         mock_finish_reason.name = "STOP"
         mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
-        # Mock the usage_metadata with candidates_token_count
+        # Mock the usage_metadata with both prompt_token_count and candidates_token_count
         mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
         mock_usage_metadata.candidates_token_count = 15
         mock_response.usage_metadata = mock_usage_metadata
         # Mock the async aio interface

@@ -210,24 +210,24 @@ async def test_get_deriver_status(client_fixture: tuple[Honcho | AsyncHoncho, st
         # Test with peer_id only
         peer = await honcho_client.peer(id="test-peer-deriver-status")
         await peer.get_metadata()  # Create the peer
-        status = await honcho_client.get_deriver_status(observer_id=peer.id)
+        status = await honcho_client.get_deriver_status(observer=peer.id)
         assert isinstance(status, DeriverStatus)
 
         # Test with session_id only
         session = await honcho_client.session(id="test-session-deriver-status")
         await session.get_metadata()  # Create the session
-        status = await honcho_client.get_deriver_status(session_id=session.id)
+        status = await honcho_client.get_deriver_status(session=session.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with both peer_id and session_id
+        # Test with both peer and session
         status = await honcho_client.get_deriver_status(
-            observer_id=peer.id, session_id=session.id
+            observer=peer.id, session=session.id
         )
         assert isinstance(status, DeriverStatus)
 
-        # Test with include_sender=True
+        # Test with sender
         status = await honcho_client.get_deriver_status(
-            observer_id=peer.id, sender_id=peer.id
+            observer=peer.id, sender=peer.id
         )
         assert isinstance(status, DeriverStatus)
     else:
@@ -243,25 +243,21 @@ async def test_get_deriver_status(client_fixture: tuple[Honcho | AsyncHoncho, st
         # Test with peer_id only
         peer = honcho_client.peer(id="test-peer-deriver-status")
         peer.get_metadata()  # Create the peer
-        status = honcho_client.get_deriver_status(observer_id=peer.id)
+        status = honcho_client.get_deriver_status(observer=peer.id)
         assert isinstance(status, DeriverStatus)
 
         # Test with session_id only
         session = honcho_client.session(id="test-session-deriver-status")
         session.get_metadata()  # Create the session
-        status = honcho_client.get_deriver_status(session_id=session.id)
+        status = honcho_client.get_deriver_status(session=session.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with both peer_id and session_id
-        status = honcho_client.get_deriver_status(
-            observer_id=peer.id, session_id=session.id
-        )
+        # Test with both peer and session
+        status = honcho_client.get_deriver_status(observer=peer.id, session=session.id)
         assert isinstance(status, DeriverStatus)
 
-        # Test with include_sender=True
-        status = honcho_client.get_deriver_status(
-            observer_id=peer.id, sender_id=peer.id
-        )
+        # Test with sender
+        status = honcho_client.get_deriver_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, DeriverStatus)
 
 
@@ -297,7 +293,7 @@ async def test_poll_deriver_status(client_fixture: tuple[Honcho | AsyncHoncho, s
             honcho_client, "get_deriver_status", return_value=completed_status
         ):
             status = await honcho_client.poll_deriver_status(
-                observer_id=peer.id, sender_id=peer.id
+                observer=peer.id, sender=peer.id
             )
             assert isinstance(status, DeriverStatus)
     else:
@@ -315,9 +311,7 @@ async def test_poll_deriver_status(client_fixture: tuple[Honcho | AsyncHoncho, s
         with patch.object(
             honcho_client, "get_deriver_status", return_value=completed_status
         ):
-            status = honcho_client.poll_deriver_status(
-                observer_id=peer.id, sender_id=peer.id
-            )
+            status = honcho_client.poll_deriver_status(observer=peer.id, sender=peer.id)
             assert isinstance(status, DeriverStatus)
 
 
@@ -390,7 +384,7 @@ async def test_update_message_with_message_id(
 
         # Update using message_id string
         updated = await honcho_client.update_message(
-            message.id, {"updated": True}, session_id=session.id
+            message.id, {"updated": True}, session=session.id
         )
         assert isinstance(updated, Message)
         assert updated.metadata == {"updated": True}
@@ -410,7 +404,7 @@ async def test_update_message_with_message_id(
 
         # Update using message_id string
         updated = honcho_client.update_message(
-            message.id, {"updated": True}, session_id=session.id
+            message.id, {"updated": True}, session=session.id
         )
         assert isinstance(updated, Message)
         assert updated.metadata == {"updated": True}
@@ -422,15 +416,19 @@ async def test_update_message_validation(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests that update_message raises ValueError when message_id is provided without session_id.
+    Tests that update_message raises ValueError when message ID is provided without session.
     """
     honcho_client, client_type = client_fixture
 
     if client_type == "async":
         assert isinstance(honcho_client, AsyncHoncho)
-        with pytest.raises(ValueError, match="session_id is required"):
+        with pytest.raises(
+            ValueError, match="session is required when message is a string ID"
+        ):
             await honcho_client.update_message("msg_123", {"key": "value"})
     else:
         assert isinstance(honcho_client, Honcho)
-        with pytest.raises(ValueError, match="session_id is required"):
+        with pytest.raises(
+            ValueError, match="session is required when message is a string ID"
+        ):
             honcho_client.update_message("msg_123", {"key": "value"})

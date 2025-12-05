@@ -2,6 +2,7 @@ from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
 from .document import (
     create_documents,
+    create_observations,
     delete_document,
     delete_document_by_id,
     get_all_documents,
@@ -68,6 +69,7 @@ __all__ = [
     "get_deriver_status",
     # Document
     "create_documents",
+    "create_observations",
     "get_all_documents",
     "get_documents_with_filters",
     "query_documents",

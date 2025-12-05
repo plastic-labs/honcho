@@ -14,17 +14,20 @@ from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from honcho_core.types.workspaces.sessions.message_create_param import Configuration
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
+from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
+from ..base import PeerBase, SessionBase
 from ..types import DialecticStreamResponse
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
-    from ..types import Representation
-    from .session import AsyncSession
+    from ..observations import AsyncObservationScope
+    from ..types import PeerContext, Representation
+
+from .session import AsyncSession
 
 
-class AsyncPeer(BaseModel):
+class AsyncPeer(PeerBase):
     """
     Represents a peer in the Honcho system with async operations.
 
@@ -41,21 +44,19 @@ class AsyncPeer(BaseModel):
             recently fetched. Call get_config() for fresh data.
     """
 
-    id: str = Field(..., min_length=1, description="Unique identifier for this peer")
-    workspace_id: str = Field(
-        ..., min_length=1, description="Workspace ID for scoping operations"
-    )
-    metadata: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached metadata for this peer. May be stale. Use get_metadata() for fresh data.",
-    )
-    configuration: dict[str, object] | None = Field(
-        None,
-        frozen=True,
-        description="Cached configuration for this peer. May be stale. Use get_config() for fresh data.",
-    )
+    _metadata: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _client: AsyncHonchoCore = PrivateAttr()
+
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        """Cached metadata for this peer. May be stale. Use get_metadata() for fresh data."""
+        return self._metadata
+
+    @property
+    def configuration(self) -> dict[str, object] | None:
+        """Cached configuration for this peer. May be stale. Use get_config() for fresh data."""
+        return self._configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -88,10 +89,10 @@ class AsyncPeer(BaseModel):
         super().__init__(
             id=peer_id,
             workspace_id=workspace_id,
-            metadata=metadata,
-            configuration=config,
         )
         self._client = client
+        self._metadata = metadata
+        self._configuration = config
 
     @classmethod
     async def create(
@@ -143,8 +144,8 @@ class AsyncPeer(BaseModel):
         query: str,
         *,
         stream: bool = False,
-        target: str | AsyncPeer | None = None,
-        session_id: str | None = None,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
     ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
@@ -158,14 +159,28 @@ class AsyncPeer(BaseModel):
             stream: Whether to stream the response
             target: Optional target peer for local representation query. If provided,
                     queries what this peer knows about the target peer rather than
-                    querying the peer's global representation
-            session_id: Optional session ID to scope the query to a specific session.
-                        If provided, only information from that session is considered
+                    querying the peer's global representation. Can be a peer ID string
+                    or an AsyncPeer object.
+            session: Optional session to scope the query to. If provided, only
+                     information from that session is considered. Can be a session
+                     ID string or an AsyncSession object.
 
         Returns:
             For non-streaming: Response string containing the answer, or None if no relevant information
             For streaming: DialecticStreamResponse object that can be iterated over and provides final response
         """
+        # Extract IDs from objects if needed
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
+        resolved_session_id = (
+            None
+            if session is None
+            else (session if isinstance(session, str) else session.id)
+        )
+
         if stream:
 
             async def stream_response() -> AsyncGenerator[str]:
@@ -177,8 +192,8 @@ class AsyncPeer(BaseModel):
                     workspace_id=self.workspace_id,
                     query=query,
                     stream=True,
-                    target=str(target.id) if isinstance(target, AsyncPeer) else target,
-                    session_id=session_id,
+                    target=target_id,
+                    session_id=resolved_session_id,
                 ) as response:
                     response.http_response.raise_for_status()
                     async for line in response.iter_lines():
@@ -202,8 +217,8 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             query=query,
             stream=stream,
-            target=str(target.id) if isinstance(target, AsyncPeer) else target,
-            session_id=session_id,
+            target=target_id,
+            session_id=resolved_session_id,
         )
         # "If the context provided doesn't help address the query, write absolutely NOTHING but "None""
         if response.content in ("", None, "None"):
@@ -297,9 +312,8 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = peer.metadata or {}
-        object.__setattr__(self, "metadata", metadata)
-        return metadata
+        self._metadata = peer.metadata or {}
+        return self._metadata
 
     @validate_call
     async def set_metadata(
@@ -324,7 +338,7 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             metadata=metadata,
         )
-        object.__setattr__(self, "metadata", metadata)
+        self._metadata = metadata
 
     async def get_config(self) -> dict[str, object]:
         """
@@ -341,9 +355,8 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        configuration = peer.configuration or {}
-        object.__setattr__(self, "configuration", configuration)
-        return configuration
+        self._configuration = peer.configuration or {}
+        return self._configuration
 
     @validate_call
     async def set_config(
@@ -370,7 +383,7 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             configuration=config,
         )
-        object.__setattr__(self, "configuration", config)
+        self._configuration = config
 
     async def get_peer_config(self) -> dict[str, object]:
         """
@@ -413,10 +426,8 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             id=self.id,
         )
-        metadata = peer.metadata or {}
-        configuration = peer.configuration or {}
-        object.__setattr__(self, "metadata", metadata)
-        object.__setattr__(self, "configuration", configuration)
+        self._metadata = peer.metadata or {}
+        self._configuration = peer.configuration or {}
 
     @validate_call
     async def search(
@@ -453,7 +464,7 @@ class AsyncPeer(BaseModel):
 
     async def card(
         self,
-        target: str | AsyncPeer | None = None,
+        target: str | PeerBase | None = None,
     ) -> str:
         """
         Get the peer card for this peer.
@@ -473,10 +484,15 @@ class AsyncPeer(BaseModel):
         if isinstance(target, str) and len(target.strip()) == 0:
             raise ValueError("target string cannot be empty")
 
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
         response: PeerCardResponse = await self._client.workspaces.peers.card(
             peer_id=self.id,
             workspace_id=self.workspace_id,
-            target=str(target.id) if isinstance(target, AsyncPeer) else target,
+            target=target_id,
         )
 
         if response.peer_card is None:
@@ -487,8 +503,8 @@ class AsyncPeer(BaseModel):
 
     async def working_rep(
         self,
-        session: str | AsyncSession | None = None,
-        target: str | AsyncPeer | None = None,
+        session: str | SessionBase | None = None,
+        target: str | PeerBase | None = None,
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
@@ -538,12 +554,17 @@ class AsyncPeer(BaseModel):
             else session.id
         )
 
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
         data: PeerWorkingRepresentationResponse = (
             await self._client.workspaces.peers.working_representation(
                 peer_id=self.id,
                 workspace_id=self.workspace_id,
                 session_id=session_id,
-                target=str(target.id) if isinstance(target, AsyncPeer) else target,
+                target=target_id,
                 search_query=search_query if search_query is not None else omit,
                 search_top_k=search_top_k if search_top_k is not None else omit,
                 search_max_distance=search_max_distance
@@ -562,6 +583,138 @@ class AsyncPeer(BaseModel):
             return _Representation.from_dict(cast(dict[str, object], representation))
         else:
             return _Representation.from_dict(data)
+
+    async def get_context(
+        self,
+        target: str | PeerBase | None = None,
+        search_query: str | None = None,
+        search_top_k: int | None = None,
+        search_max_distance: float | None = None,
+        include_most_derived: bool | None = None,
+        max_observations: int | None = None,
+    ) -> "PeerContext":
+        """
+        Get context for this peer, including representation and peer card.
+
+        This is a convenience method that retrieves both the working representation
+        and peer card in a single API call.
+
+        Args:
+            target: Optional target peer to get context for. If provided, returns
+                   the context for the target from this peer's perspective.
+                   Can be an AsyncPeer object or peer ID string.
+            search_query: Semantic search query to filter relevant observations
+            search_top_k: Number of semantically relevant facts to return
+            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            include_most_derived: Whether to include the most derived observations
+            max_observations: Maximum number of observations to include
+
+        Returns:
+            A PeerContext object containing the representation and peer card
+
+        Example:
+            ```python
+            # Get own context
+            context = await peer.get_context()
+            print(context.representation)
+            print(context.peer_card)
+
+            # Get context for another peer
+            context = await peer.get_context(target='other-peer-id')
+
+            # Get context with semantic search
+            context = await peer.get_context(
+                search_query='preferences',
+                search_top_k=10
+            )
+            ```
+        """
+        from ..types import PeerContext as _PeerContext
+
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
+
+        response = await self._client.workspaces.peers.get_context(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            target=target_id,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_derived=include_most_derived
+            if include_most_derived is not None
+            else omit,
+            max_observations=max_observations if max_observations is not None else omit,
+        )
+
+        return _PeerContext.from_api_response(response)
+
+    @property
+    def observations(self) -> "AsyncObservationScope":
+        """
+        Access this peer's self-observations (where observer == observed == self).
+
+        This property provides a convenient way to access observations that this peer
+        has made about themselves. Use this for self-observation scenarios.
+
+        Returns:
+            An AsyncObservationScope scoped to this peer's self-observations
+
+        Example:
+            ```python
+            # List self-observations
+            obs_list = await peer.observations.list()
+
+            # Search self-observations
+            results = await peer.observations.query("preferences")
+
+            # Delete a self-observation
+            await peer.observations.delete("obs-123")
+            ```
+        """
+        from ..observations import AsyncObservationScope as _AsyncObservationScope
+
+        return _AsyncObservationScope(self._client, self.workspace_id, self.id, self.id)
+
+    def observations_of(self, target: str | PeerBase) -> "AsyncObservationScope":
+        """
+        Access observations this peer has made about another peer.
+
+        This method provides scoped access to observations where this peer is the
+        observer and the target is the observed peer.
+
+        Args:
+            target: The target peer (either an AsyncPeer object or peer ID string)
+
+        Returns:
+            An AsyncObservationScope scoped to this peer's observations of the target
+
+        Example:
+            ```python
+            # Get observations about another peer
+            bob_observations = peer.observations_of("bob")
+
+            # List observations
+            obs_list = await bob_observations.list()
+
+            # Search observations
+            results = await bob_observations.query("work history")
+
+            # Get the representation from these observations
+            rep = await bob_observations.get_representation()
+            ```
+        """
+        from ..observations import AsyncObservationScope as _AsyncObservationScope
+
+        target_id = target.id if isinstance(target, PeerBase) else target
+        return _AsyncObservationScope(
+            self._client, self.workspace_id, self.id, target_id
+        )
 
     def __repr__(self) -> str:
         """

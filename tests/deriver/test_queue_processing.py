@@ -367,9 +367,15 @@ class TestQueueProcessing:
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
 
-        with patch(
-            "src.deriver.queue_manager.process_representation_agent_batch",
-            side_effect=mock_process_representation_batch,
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_agent_batch",
+                side_effect=mock_process_representation_batch,
+            ),
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=mock_process_representation_batch,
+            ),
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
@@ -922,9 +928,15 @@ class TestQueueProcessing:
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
 
-        with patch(
-            "src.deriver.queue_manager.process_representation_agent_batch",
-            side_effect=mock_process_representation_batch,
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_agent_batch",
+                side_effect=mock_process_representation_batch,
+            ),
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=mock_process_representation_batch,
+            ),
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
@@ -1040,9 +1052,15 @@ class TestQueueProcessing:
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
 
-        with patch(
-            "src.deriver.queue_manager.process_representation_agent_batch",
-            side_effect=mock_process_representation_batch,
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_agent_batch",
+                side_effect=mock_process_representation_batch,
+            ),
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=mock_process_representation_batch,
+            ),
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
