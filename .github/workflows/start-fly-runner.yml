@@ -1,0 +1,141 @@
+name: Start Fly Runner
+
+on:
+  workflow_call:
+    outputs:
+      runner-ready:
+        description: "Whether the runner is ready"
+        value: ${{ jobs.start-runner.outputs.runner-ready }}
+      machine-id:
+        description: "The Fly machine ID that was started"
+        value: ${{ jobs.start-runner.outputs.machine-id }}
+      runner-labels:
+        description: "Labels to target the self-hosted runner"
+        value: ${{ jobs.start-runner.outputs.runner-labels }}
+      runner-name:
+        description: "Resolved GitHub runner name"
+        value: ${{ jobs.start-runner.outputs.runner-name }}
+
+env:
+  FLY_RUNNER_APP: ${{ vars.FLY_RUNNER_APP || 'honcho-runner' }}
+  FLY_RUNNER_REGION: ${{ vars.FLY_RUNNER_REGION || 'iad' }}
+  FLY_RUNNER_IMAGE: ${{ vars.FLY_RUNNER_IMAGE || 'registry.fly.io/honcho-runner:latest' }}
+  FLY_RUNNER_VM_SIZE: ${{ vars.FLY_RUNNER_VM_SIZE || 'shared-cpu-8x' }}
+  FLY_RUNNER_VM_MEMORY: ${{ vars.FLY_RUNNER_VM_MEMORY || '8192' }}
+  RUNNER_NAME_PREFIX: ${{ vars.FLY_RUNNER_NAME_PREFIX || 'honcho-unified-runner' }}
+
+jobs:
+  start-runner:
+    name: Start Fly Runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner-ready: ${{ steps.wait-for-runner.outputs.ready }}
+      machine-id: ${{ steps.machine-management.outputs.machine-id }}
+      runner-labels: ${{ steps.generate-labels.outputs.labels }}
+      runner-name: ${{ steps.wait-for-runner.outputs.runner-name }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate unique runner labels
+        id: generate-labels
+        run: |
+          UNIQUE_LABELS='"self-hosted","${{ github.run_id }}"'
+          RUNNER_LABELS_CSV="self-hosted,${{ github.run_id }}"
+          echo "Generated unique labels: $UNIQUE_LABELS"
+          echo "labels=$UNIQUE_LABELS" >> "$GITHUB_OUTPUT"
+          echo "labels-csv=$RUNNER_LABELS_CSV" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Fly machine management
+        id: machine-management
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          MACHINE_NAME="${RUNNER_NAME_PREFIX}-${{ github.run_id }}"
+          echo "Target Fly app: ${FLY_RUNNER_APP}"
+          echo "Desired machine name: ${MACHINE_NAME}"
+
+          MACHINES_JSON=$(flyctl machines list -a "$FLY_RUNNER_APP" --json || echo "[]")
+          MACHINE_ID=$(echo "$MACHINES_JSON" | jq -r --arg name "$MACHINE_NAME" '.[] | select(.name == $name) | .id' | head -n 1)
+
+          if [ -n "$MACHINE_ID" ]; then
+            echo "🔄 Found existing machine $MACHINE_ID for this run. Ensuring it's started..."
+            flyctl machines start "$MACHINE_ID" -a "$FLY_RUNNER_APP" || true
+          else
+            echo "📦 Creating new machine for runner..."
+            CREATE_OUTPUT=$(flyctl machines run "$FLY_RUNNER_IMAGE" \
+              -a "$FLY_RUNNER_APP" \
+              --name "$MACHINE_NAME" \
+              --region "$FLY_RUNNER_REGION" \
+              --vm-size "$FLY_RUNNER_VM_SIZE" \
+              --vm-memory "$FLY_RUNNER_VM_MEMORY" \
+              --env GH_TOKEN=${{ secrets.GH_TOKEN }} \
+              --env RUN_ID=${{ github.run_id }} \
+              --env RUNNER_NAME_PREFIX="$RUNNER_NAME_PREFIX" \
+              --env RUNNER_LABELS="${{ steps.generate-labels.outputs.labels-csv }}" \
+              --restart always)
+
+            MACHINE_ID=$(echo "$CREATE_OUTPUT" | grep "Machine ID:" | awk '{print $3}')
+            if [ -z "$MACHINE_ID" ] || [ "$MACHINE_ID" = "null" ]; then
+              echo "❌ Failed to parse machine ID from creation output"
+              echo "$CREATE_OUTPUT"
+              exit 1
+            fi
+            echo "✅ Created machine $MACHINE_ID"
+          fi
+
+          echo "machine-id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for runner to be online
+        id: wait-for-runner
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          MAX_WAIT: 420
+        run: |
+          set -euo pipefail
+          if [ -z "${GITHUB_TOKEN}" ]; then
+            echo "GH_TOKEN secret is required to poll the Actions runner API."
+            exit 1
+          fi
+
+          TARGET_LABEL="${{ github.run_id }}"
+          echo "Waiting for runner with label ${TARGET_LABEL} to come online..."
+
+          WAITED=0
+          RUNNER_NAME=""
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            RESPONSE=$(curl -s \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runners")
+
+            if echo "$RESPONSE" | grep -q '"message"'; then
+              echo "API Error: $(echo "$RESPONSE" | jq -r '.message')"
+              exit 1
+            fi
+
+            # Find runner that is online, not busy, and has the unique label for this run
+            RUNNER_LINE=$(echo "$RESPONSE" | jq -r --arg label "$TARGET_LABEL" '.runners[]? | select(.status == "online") | select(.busy == false) | select([.labels[].name] | index($label)) | "\(.name)|\(.id)"' | head -n 1)
+
+            if [ -n "$RUNNER_LINE" ]; then
+              RUNNER_NAME=$(echo "$RUNNER_LINE" | cut -d'|' -f1)
+              echo "✅ Found runner: ${RUNNER_NAME}"
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              echo "runner-name=${RUNNER_NAME}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "⏳ Waiting for runner... (${WAITED}s elapsed)"
+            sleep 15
+            WAITED=$((WAITED + 15))
+          done
+
+          echo "Runner failed to come online within ${MAX_WAIT} seconds"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          exit 1
