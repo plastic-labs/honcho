@@ -537,6 +537,7 @@ async def get_recent_history(
     workspace_name: str,
     session_name: str | None,
     observed: str | None = None,
+    token_limit: int = 8192,
 ) -> list[models.Message]:
     """
     Retrieve recent conversation history.
@@ -550,6 +551,7 @@ async def get_recent_history(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: Peer name to filter by when no session specified (optional)
+        token_limit: Maximum tokens to retrieve (default: 8192)
 
     Returns:
         List of messages in chronological order
@@ -559,7 +561,7 @@ async def get_recent_history(
         messages_stmt = await crud.get_messages(
             workspace_name=workspace_name,
             session_name=session_name,
-            token_limit=8192,  # TODO config
+            token_limit=token_limit,
             reverse=True,  # Get most recent first
         )
         result = await db.execute(messages_stmt)
@@ -1112,6 +1114,535 @@ async def extract_preferences(
     }
 
 
+class ToolContext:
+    """Context object passed to tool handlers."""
+
+    db: AsyncSession
+    workspace_name: str
+    observer: str
+    observed: str
+    session_name: str | None
+    current_messages: list[models.Message] | None
+    include_observation_ids: bool
+    history_token_limit: int
+
+    def __init__(
+        self,
+        db: AsyncSession,
+        workspace_name: str,
+        observer: str,
+        observed: str,
+        session_name: str | None,
+        current_messages: list[models.Message] | None,
+        include_observation_ids: bool,
+        history_token_limit: int,
+    ):
+        self.db = db
+        self.workspace_name = workspace_name
+        self.observer = observer
+        self.observed = observed
+        self.session_name = session_name
+        self.current_messages = current_messages
+        self.include_observation_ids = include_observation_ids
+        self.history_token_limit = history_token_limit
+
+
+async def _handle_create_observations(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle create_observations tool."""
+    observations = tool_input.get("observations", [])
+
+    if not observations:
+        return "ERROR: observations list is empty"
+
+    # Determine message context based on whether we have current_messages
+    if ctx.current_messages:
+        # Deriver agent: require level field, use message IDs from batch
+        for i, obs in enumerate(observations):
+            if "content" not in obs:
+                return f"ERROR: observation {i} missing 'content' field"
+            if "level" not in obs:
+                return f"ERROR: observation {i} missing 'level' field"
+            if obs["level"] not in ["explicit", "deductive"]:
+                return f"ERROR: observation {i} has invalid level '{obs['level']}', must be 'explicit' or 'deductive'"
+
+        message_ids = [msg.id for msg in ctx.current_messages]
+        message_created_at = str(ctx.current_messages[-1].created_at)
+        obs_session_name = ctx.session_name or ctx.current_messages[0].session_name
+    else:
+        # Dialectic agent: force deductive, no source messages
+        if not ctx.session_name:
+            return "ERROR: Cannot create observations without a session context"
+
+        for obs in observations:
+            if "content" not in obs:
+                return "ERROR: observation missing 'content' field"
+            obs["level"] = "deductive"
+
+        message_ids = []
+        message_created_at = utc_now_iso()
+        obs_session_name = ctx.session_name
+
+    await create_observations(
+        ctx.db,
+        observations=observations,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        session_name=obs_session_name,
+        workspace_name=ctx.workspace_name,
+        message_ids=message_ids,
+        message_created_at=message_created_at,
+    )
+
+    explicit_count = sum(1 for o in observations if o.get("level") == "explicit")
+    deductive_count = sum(1 for o in observations if o.get("level") == "deductive")
+    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive)"
+
+
+async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle update_peer_card tool."""
+    await update_peer_card(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        content=tool_input["content"],
+    )
+    return f"Updated peer card for {ctx.observed} by {ctx.observer}"
+
+
+async def _handle_get_recent_history(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_recent_history tool."""
+    _ = tool_input
+    history: list[models.Message] = await get_recent_history(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        observed=ctx.observed,
+        token_limit=ctx.history_token_limit,
+    )
+    if not history:
+        return "No conversation history available"
+    history_text = "\n".join(
+        [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
+    )
+    scope = (
+        f"from session {ctx.session_name}"
+        if ctx.session_name
+        else f"from {ctx.observed} across sessions"
+    )
+    output = f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
+    return _truncate_tool_output(output)
+
+
+async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle search_memory tool."""
+    top_k = min(tool_input.get("top_k", 5), 20)  # Cap at 20
+    mem: Representation = await search_memory(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        query=tool_input["query"],
+        limit=top_k,
+    )
+    total_count = mem.len()
+    if total_count == 0:
+        return f"No observations found for query '{tool_input['query']}'"
+    mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
+    return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
+
+
+async def _handle_get_observation_context(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_observation_context tool."""
+    messages = await get_observation_context(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        message_ids=tool_input["message_ids"],
+    )
+    if not messages:
+        return f"No messages found for IDs {tool_input['message_ids']}"
+    messages_text = "\n".join(
+        [
+            format_new_turn_with_timestamp(
+                _truncate_message_content(m.content),
+                m.created_at,
+                m.peer_name,
+            )
+            for m in messages
+        ]
+    )
+    output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
+    return _truncate_tool_output(output)
+
+
+async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle search_messages tool."""
+    query = tool_input["query"]
+    limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
+    snippets = await search_messages(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        query=query,
+        limit=limit,
+    )
+    if not snippets:
+        return f"No messages found for query '{query}'"
+
+    return _format_message_snippets(snippets, f"for query '{query}'")
+
+
+async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle grep_messages tool."""
+    text = tool_input.get("text", "")
+    if not text:
+        return "ERROR: 'text' parameter is required"
+    limit = min(tool_input.get("limit", 10), 15)  # Cap at 15
+    context_window = min(tool_input.get("context_window", 2), 2)  # Cap context
+
+    snippets = await grep_messages(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        text=text,
+        limit=limit,
+        context_window=context_window,
+    )
+    if not snippets:
+        return f"No messages found containing '{text}'"
+
+    # Format with pattern-based snippet extraction
+    snippet_texts: list[str] = []
+    total_matches = sum(len(matches) for matches, _ in snippets)
+    for i, (matches, context) in enumerate(snippets, 1):
+        lines: list[str] = []
+        for msg in context:
+            truncated = _extract_pattern_snippet(msg.content, text)
+            lines.append(
+                format_new_turn_with_timestamp(truncated, msg.created_at, msg.peer_name)
+            )
+        sess = context[0].session_name if context else "unknown"
+        snippet_texts.append(
+            f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+            + "\n".join(lines)
+        )
+
+    output = (
+        f"Found {total_matches} messages containing '{text}' in {len(snippets)} conversation snippets:\n\n"
+        + "\n\n".join(snippet_texts)
+    )
+    return _truncate_tool_output(output)
+
+
+def _parse_date(date_str: str | None, param_name: str) -> datetime | None | str:
+    """Parse a date string, returning datetime, None, or error string."""
+    if not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+    except ValueError:
+        return f"ERROR: Invalid {param_name} format '{date_str}'. Use ISO format (e.g., '2024-01-15')"
+
+
+async def _handle_get_messages_by_date_range(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_messages_by_date_range tool."""
+    after_date_str = tool_input.get("after_date")
+    before_date_str = tool_input.get("before_date")
+    limit = min(tool_input.get("limit", 20), 20)
+    order = tool_input.get("order", "desc")
+
+    after_date = _parse_date(after_date_str, "after_date")
+    if isinstance(after_date, str):
+        return after_date  # Error message
+
+    before_date = _parse_date(before_date_str, "before_date")
+    if isinstance(before_date, str):
+        return before_date  # Error message
+
+    messages = await get_messages_by_date_range(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        order=order,
+    )
+
+    date_range: list[str] = []
+    if after_date_str:
+        date_range.append(f"after {after_date_str}")
+    if before_date_str:
+        date_range.append(f"before {before_date_str}")
+
+    if not messages:
+        range_desc = " and ".join(date_range) if date_range else "specified range"
+        return f"No messages found {range_desc}"
+
+    messages_text = "\n".join(
+        [
+            format_new_turn_with_timestamp(
+                _truncate_message_content(m.content), m.created_at, m.peer_name
+            )
+            for m in messages
+        ]
+    )
+
+    range_desc = " and ".join(date_range) if date_range else "all time"
+    order_desc = "oldest first" if order == "asc" else "newest first"
+
+    output = f"Found {len(messages)} messages ({range_desc}, {order_desc}):\n\n{messages_text}"
+    return _truncate_tool_output(output)
+
+
+async def _handle_search_messages_temporal(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle search_messages_temporal tool."""
+    query = tool_input.get("query", "")
+    if not query:
+        return "ERROR: 'query' parameter is required"
+
+    after_date_str = tool_input.get("after_date")
+    before_date_str = tool_input.get("before_date")
+    limit = min(tool_input.get("limit", 10), 10)
+    context_window = min(tool_input.get("context_window", 2), 2)
+
+    after_date = _parse_date(after_date_str, "after_date")
+    if isinstance(after_date, str):
+        return after_date
+
+    before_date = _parse_date(before_date_str, "before_date")
+    if isinstance(before_date, str):
+        return before_date
+
+    snippets = await search_messages_temporal(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        query=query,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        context_window=context_window,
+    )
+
+    date_filter: list[str] = []
+    if after_date_str:
+        date_filter.append(f"after {after_date_str}")
+    if before_date_str:
+        date_filter.append(f"before {before_date_str}")
+    filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+
+    if not snippets:
+        return f"No messages found for query '{query}'{filter_desc}"
+
+    return _format_message_snippets(snippets, f"for query '{query}'{filter_desc}")
+
+
+async def _handle_get_recent_observations(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_recent_observations tool."""
+    session_only = tool_input.get("session_only", False)
+    representation: Representation = await get_recent_observations(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        limit=tool_input.get("limit", 10),
+        session_name=ctx.session_name if session_only else None,
+    )
+    total_count = len(representation.explicit) + len(representation.deductive)
+    if total_count == 0:
+        return "No recent observations found"
+    scope = "this session" if session_only else "all sessions"
+    repr_str = (
+        representation.str_with_ids()
+        if ctx.include_observation_ids
+        else str(representation)
+    )
+    return f"Found {total_count} recent observations from {scope}:\n\n{repr_str}"
+
+
+async def _handle_get_most_derived_observations(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_most_derived_observations tool."""
+    representation = await get_most_derived_observations(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        limit=tool_input.get("limit", 10),
+    )
+    total_count = len(representation.explicit) + len(representation.deductive)
+    if total_count == 0:
+        return "No established observations found"
+    repr_str = (
+        representation.str_with_ids()
+        if ctx.include_observation_ids
+        else str(representation)
+    )
+    return f"Found {total_count} established (frequently reinforced) observations:\n\n{repr_str}"
+
+
+async def _handle_get_session_summary(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_session_summary tool."""
+    if not ctx.session_name:
+        return "ERROR: No session available for summary"
+    summary = await get_session_summary(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        summary_type=tool_input.get("summary_type", "short"),
+    )
+    if not summary:
+        return "No session summary available yet"
+    return f"Session summary ({summary['summary_type']}):\n{summary['content']}"
+
+
+async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle get_peer_card tool."""
+    _ = tool_input
+    peer_card = await get_peer_card(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+    )
+    if not peer_card:
+        return f"No peer card available for {ctx.observed}"
+    return f"Peer card for {ctx.observed}:\n" + "\n".join(
+        f"- {fact}" for fact in peer_card
+    )
+
+
+async def _handle_delete_observations(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle delete_observations tool."""
+    observation_ids = tool_input.get("observation_ids", [])
+    if not observation_ids:
+        return "ERROR: observation_ids list is empty"
+
+    deleted_count = await delete_observations(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        observation_ids=observation_ids,
+    )
+    return f"Deleted {deleted_count} observations"
+
+
+async def _handle_finish_consolidation(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle finish_consolidation tool."""
+    _ = ctx
+    summary = tool_input.get("summary", "Consolidation complete")
+    return f"CONSOLIDATION_COMPLETE: {summary}"
+
+
+async def _handle_extract_preferences(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle extract_preferences tool."""
+    _ = tool_input
+    results = await extract_preferences(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        observed=ctx.observed,
+    )
+
+    instructions = results["instructions"]
+    preferences = results["preferences"]
+
+    if not instructions and not preferences:
+        return "No preferences or standing instructions found in conversation history."
+
+    output_parts: list[str] = []
+
+    if instructions:
+        output_parts.append(
+            f"**Standing Instructions Found ({len(instructions)}):**\n"
+            + "\n".join(f"- {inst}" for inst in instructions)
+        )
+
+    if preferences:
+        output_parts.append(
+            f"**Preferences Found ({len(preferences)}):**\n"
+            + "\n".join(f"- {pref}" for pref in preferences)
+        )
+
+    output_parts.append(
+        "\n**Action Required:** Review these and add relevant ones to the peer card using `update_peer_card`. "
+        + "Summarize standing instructions as clear rules (e.g., 'Always include cultural context when discussing social norms')."
+    )
+
+    return "\n\n".join(output_parts)
+
+
+def _format_message_snippets(
+    snippets: list[tuple[list[models.Message], list[models.Message]]], desc: str
+) -> str:
+    """Format message snippets for output."""
+    snippet_texts: list[str] = []
+    total_matches = sum(len(matches) for matches, _ in snippets)
+    for i, (matches, context) in enumerate(snippets, 1):
+        lines: list[str] = []
+        for msg in context:
+            truncated = _truncate_message_content(msg.content)
+            lines.append(
+                format_new_turn_with_timestamp(truncated, msg.created_at, msg.peer_name)
+            )
+        sess = context[0].session_name if context else "unknown"
+        snippet_texts.append(
+            f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+            + "\n".join(lines)
+        )
+
+    output = (
+        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}:\n\n"
+        + "\n\n".join(snippet_texts)
+    )
+    return _truncate_tool_output(output)
+
+
+# Tool handler dispatch table
+_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
+    "create_observations": _handle_create_observations,
+    "update_peer_card": _handle_update_peer_card,
+    "get_recent_history": _handle_get_recent_history,
+    "search_memory": _handle_search_memory,
+    "get_observation_context": _handle_get_observation_context,
+    "search_messages": _handle_search_messages,
+    "grep_messages": _handle_grep_messages,
+    "get_messages_by_date_range": _handle_get_messages_by_date_range,
+    "search_messages_temporal": _handle_search_messages_temporal,
+    "get_recent_observations": _handle_get_recent_observations,
+    "get_most_derived_observations": _handle_get_most_derived_observations,
+    "get_session_summary": _handle_get_session_summary,
+    "get_peer_card": _handle_get_peer_card,
+    "delete_observations": _handle_delete_observations,
+    "finish_consolidation": _handle_finish_consolidation,
+    "extract_preferences": _handle_extract_preferences,
+}
+
+
 def create_tool_executor(
     db: AsyncSession,
     workspace_name: str,
@@ -1120,6 +1651,7 @@ def create_tool_executor(
     session_name: str | None = None,
     current_messages: list[models.Message] | None = None,
     include_observation_ids: bool = False,
+    history_token_limit: int = 8192,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1135,10 +1667,21 @@ def create_tool_executor(
         session_name: Session identifier (optional for global queries)
         current_messages: List of current messages being processed (optional, for deriver)
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
+        history_token_limit: Maximum tokens for get_recent_history (default: 8192)
 
     Returns:
         An async callable that executes tools with the captured context
     """
+    ctx = ToolContext(
+        db=db,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
+        current_messages=current_messages,
+        include_observation_ids=include_observation_ids,
+        history_token_limit=history_token_limit,
+    )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
         """
@@ -1154,500 +1697,25 @@ def create_tool_executor(
         logger.info(f"[tool call] {tool_name}")
 
         try:
-            # === WRITE TOOLS ===
-
-            if tool_name == "create_observations":
-                observations = tool_input.get("observations", [])
-
-                if not observations:
-                    return "ERROR: observations list is empty"
-
-                # Determine message context based on whether we have current_messages
-                if current_messages:
-                    # Deriver agent: require level field, use message IDs from batch
-                    for i, obs in enumerate(observations):
-                        if "content" not in obs:
-                            return f"ERROR: observation {i} missing 'content' field"
-                        if "level" not in obs:
-                            return f"ERROR: observation {i} missing 'level' field"
-                        if obs["level"] not in ["explicit", "deductive"]:
-                            return f"ERROR: observation {i} has invalid level '{obs['level']}', must be 'explicit' or 'deductive'"
-
-                    message_ids = [msg.id for msg in current_messages]
-                    message_created_at = str(current_messages[-1].created_at)
-                    obs_session_name = session_name or current_messages[0].session_name
-                else:
-                    # Dialectic agent: force deductive, no source messages
-                    if not session_name:
-                        return "ERROR: Cannot create observations without a session context"
-
-                    for obs in observations:
-                        if "content" not in obs:
-                            return "ERROR: observation missing 'content' field"
-                        obs["level"] = "deductive"
-
-                    message_ids = []
-                    message_created_at = utc_now_iso()
-                    obs_session_name = session_name
-
-                await create_observations(
-                    db,
-                    observations=observations,
-                    observer=observer,
-                    observed=observed,
-                    session_name=obs_session_name,
-                    workspace_name=workspace_name,
-                    message_ids=message_ids,
-                    message_created_at=message_created_at,
-                )
-
-                explicit_count = sum(
-                    1 for o in observations if o.get("level") == "explicit"
-                )
-                deductive_count = sum(
-                    1 for o in observations if o.get("level") == "deductive"
-                )
-                return f"Created {len(observations)} observations for {observed} by {observer} ({explicit_count} explicit, {deductive_count} deductive)"
-
-            elif tool_name == "update_peer_card":
-                await update_peer_card(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    content=tool_input["content"],
-                )
-                return f"Updated peer card for {observed} by {observer}"
-
-            # === READ TOOLS ===
-
-            elif tool_name == "get_recent_history":
-                history: list[models.Message] = await get_recent_history(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    observed=observed,
-                )
-                if not history:
-                    return "No conversation history available"
-                history_text = "\n".join(
-                    [
-                        f"{m.peer_name}: {_truncate_message_content(m.content)}"
-                        for m in history
-                    ]
-                )
-                scope = (
-                    f"from session {session_name}"
-                    if session_name
-                    else f"from {observed} across sessions"
-                )
-                output = f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
-                return _truncate_tool_output(output)
-
-            elif tool_name == "search_memory":
-                top_k = min(tool_input.get("top_k", 5), 20)  # Cap at 20
-                mem: Representation = await search_memory(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    query=tool_input["query"],
-                    limit=top_k,
-                )
-                total_count = mem.len()
-                if total_count == 0:
-                    return f"No observations found for query '{tool_input['query']}'"
-                mem_str = mem.str_with_ids() if include_observation_ids else str(mem)
-                return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
-
-            elif tool_name == "get_observation_context":
-                messages = await get_observation_context(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    message_ids=tool_input["message_ids"],
-                )
-                if not messages:
-                    return f"No messages found for IDs {tool_input['message_ids']}"
-                messages_text = "\n".join(
-                    [
-                        format_new_turn_with_timestamp(
-                            _truncate_message_content(m.content),
-                            m.created_at,
-                            m.peer_name,
-                        )
-                        for m in messages
-                    ]
-                )
-                output = (
-                    f"Retrieved {len(messages)} messages with context:\n{messages_text}"
-                )
-                return _truncate_tool_output(output)
-
-            elif tool_name == "search_messages":
-                query = tool_input["query"]
-                limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
-                snippets = await search_messages(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    query=query,
-                    limit=limit,
-                )
-                if not snippets:
-                    return f"No messages found for query '{query}'"
-
-                # Format each snippet with matched messages highlighted
-                snippet_texts: list[str] = []
-                total_matches = sum(len(matches) for matches, _ in snippets)
-                for i, (matches, context) in enumerate(snippets, 1):
-                    lines: list[str] = []
-                    for msg in context:
-                        truncated = _truncate_message_content(msg.content)
-                        lines.append(
-                            format_new_turn_with_timestamp(
-                                truncated, msg.created_at, msg.peer_name
-                            )
-                        )
-                    # Get session name from context (first message)
-                    sess = context[0].session_name if context else "unknown"
-                    snippet_texts.append(
-                        f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
-                        + "\n".join(lines)
-                    )
-
-                output = (
-                    f"Found {total_matches} matching messages in {len(snippets)} conversation snippets for query '{query}':\n\n"
-                    + "\n\n".join(snippet_texts)
-                )
-                return _truncate_tool_output(output)
-
-            elif tool_name == "grep_messages":
-                text = tool_input.get("text", "")
-                if not text:
-                    return "ERROR: 'text' parameter is required"
-                limit = min(tool_input.get("limit", 10), 15)  # Cap at 15
-                context_window = min(
-                    tool_input.get("context_window", 2), 2
-                )  # Cap context
-
-                snippets = await grep_messages(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    text=text,
-                    limit=limit,
-                    context_window=context_window,
-                )
-                if not snippets:
-                    return f"No messages found containing '{text}'"
-
-                # Format each snippet with matched messages highlighted
-                snippet_texts = []
-                total_matches = sum(len(matches) for matches, _ in snippets)
-                for i, (matches, context) in enumerate(snippets, 1):
-                    lines = []
-                    for msg in context:
-                        # Use pattern-based snippet extraction for grep
-                        truncated = _extract_pattern_snippet(msg.content, text)
-                        lines.append(
-                            format_new_turn_with_timestamp(
-                                truncated, msg.created_at, msg.peer_name
-                            )
-                        )
-                    sess = context[0].session_name if context else "unknown"
-                    snippet_texts.append(
-                        f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
-                        + "\n".join(lines)
-                    )
-
-                output = (
-                    f"Found {total_matches} messages containing '{text}' in {len(snippets)} conversation snippets:\n\n"
-                    + "\n\n".join(snippet_texts)
-                )
-                return _truncate_tool_output(output)
-
-            elif tool_name == "get_messages_by_date_range":
-                # Parse date parameters
-                after_date_str = tool_input.get("after_date")
-                before_date_str = tool_input.get("before_date")
-                limit = min(tool_input.get("limit", 20), 20)  # Cap at 20
-                order = tool_input.get("order", "desc")
-
-                after_date = None
-                before_date = None
-
-                if after_date_str:
-                    try:
-                        after_date = datetime.fromisoformat(
-                            after_date_str.replace("Z", "+00:00")
-                        )
-                    except ValueError:
-                        return f"ERROR: Invalid after_date format '{after_date_str}'. Use ISO format (e.g., '2024-01-15')"
-
-                if before_date_str:
-                    try:
-                        before_date = datetime.fromisoformat(
-                            before_date_str.replace("Z", "+00:00")
-                        )
-                    except ValueError:
-                        return f"ERROR: Invalid before_date format '{before_date_str}'. Use ISO format (e.g., '2024-01-15')"
-
-                messages = await get_messages_by_date_range(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    after_date=after_date,
-                    before_date=before_date,
-                    limit=limit,
-                    order=order,
-                )
-
-                date_range: list[Any] = []
-
-                if not messages:
-                    if after_date_str:
-                        date_range.append(f"after {after_date_str}")
-                    if before_date_str:
-                        date_range.append(f"before {before_date_str}")
-                    range_desc = (
-                        " and ".join(date_range) if date_range else "specified range"
-                    )
-                    return f"No messages found {range_desc}"
-
-                # Format messages with timestamps
-                messages_text = "\n".join(
-                    [
-                        format_new_turn_with_timestamp(
-                            _truncate_message_content(m.content),
-                            m.created_at,
-                            m.peer_name,
-                        )
-                        for m in messages
-                    ]
-                )
-
-                if after_date_str:
-                    date_range.append(f"after {after_date_str}")
-                if before_date_str:
-                    date_range.append(f"before {before_date_str}")
-                range_desc = " and ".join(date_range) if date_range else "all time"
-                order_desc = "oldest first" if order == "asc" else "newest first"
-
-                output = f"Found {len(messages)} messages ({range_desc}, {order_desc}):\n\n{messages_text}"
-                return _truncate_tool_output(output)
-
-            elif tool_name == "search_messages_temporal":
-                query = tool_input.get("query", "")
-                if not query:
-                    return "ERROR: 'query' parameter is required"
-
-                # Parse date parameters
-                after_date_str = tool_input.get("after_date")
-                before_date_str = tool_input.get("before_date")
-                limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
-                context_window = min(tool_input.get("context_window", 2), 2)  # Cap at 2
-
-                after_date = None
-                before_date = None
-
-                if after_date_str:
-                    try:
-                        after_date = datetime.fromisoformat(
-                            after_date_str.replace("Z", "+00:00")
-                        )
-                    except ValueError:
-                        return f"ERROR: Invalid after_date format '{after_date_str}'. Use ISO format (e.g., '2024-01-15')"
-
-                if before_date_str:
-                    try:
-                        before_date = datetime.fromisoformat(
-                            before_date_str.replace("Z", "+00:00")
-                        )
-                    except ValueError:
-                        return f"ERROR: Invalid before_date format '{before_date_str}'. Use ISO format (e.g., '2024-01-15')"
-
-                snippets = await search_messages_temporal(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    query=query,
-                    after_date=after_date,
-                    before_date=before_date,
-                    limit=limit,
-                    context_window=context_window,
-                )
-
-                if not snippets:
-                    date_filter: list[Any] = []
-                    if after_date_str:
-                        date_filter.append(f"after {after_date_str}")
-                    if before_date_str:
-                        date_filter.append(f"before {before_date_str}")
-                    filter_desc = (
-                        f" ({' and '.join(date_filter)})" if date_filter else ""
-                    )
-                    return f"No messages found for query '{query}'{filter_desc}"
-
-                # Format each snippet with matched messages highlighted
-                snippet_texts = []
-                total_matches = sum(len(matches) for matches, _ in snippets)
-                for i, (matches, context) in enumerate(snippets, 1):
-                    lines = []
-                    for msg in context:
-                        truncated_content = _truncate_message_content(msg.content)
-                        lines.append(
-                            format_new_turn_with_timestamp(
-                                truncated_content, msg.created_at, msg.peer_name
-                            )
-                        )
-                    sess = context[0].session_name if context else "unknown"
-                    snippet_texts.append(
-                        f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
-                        + "\n".join(lines)
-                    )
-
-                date_filter = []
-                if after_date_str:
-                    date_filter.append(f"after {after_date_str}")
-                if before_date_str:
-                    date_filter.append(f"before {before_date_str}")
-                filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
-
-                output = (
-                    f"Found {total_matches} messages for query '{query}'{filter_desc} in {len(snippets)} conversation snippets:\n\n"
-                    + "\n\n".join(snippet_texts)
-                )
-                return _truncate_tool_output(output)
-
-            elif tool_name == "get_recent_observations":
-                session_only = tool_input.get("session_only", False)
-                representation: Representation = await get_recent_observations(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    limit=tool_input.get("limit", 10),
-                    session_name=session_name if session_only else None,
-                )
-                total_count = len(representation.explicit) + len(
-                    representation.deductive
-                )
-                if total_count == 0:
-                    return "No recent observations found"
-                scope = "this session" if session_only else "all sessions"
-                repr_str = (
-                    representation.str_with_ids()
-                    if include_observation_ids
-                    else str(representation)
-                )
-                return f"Found {total_count} recent observations from {scope}:\n\n{repr_str}"
-
-            elif tool_name == "get_most_derived_observations":
-                representation = await get_most_derived_observations(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    limit=tool_input.get("limit", 10),
-                )
-                total_count = len(representation.explicit) + len(
-                    representation.deductive
-                )
-                if total_count == 0:
-                    return "No established observations found"
-                repr_str = (
-                    representation.str_with_ids()
-                    if include_observation_ids
-                    else str(representation)
-                )
-                return f"Found {total_count} established (frequently reinforced) observations:\n\n{repr_str}"
-
-            elif tool_name == "get_session_summary":
-                if not session_name:
-                    return "ERROR: No session available for summary"
-                summary = await get_session_summary(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    summary_type=tool_input.get("summary_type", "short"),
-                )
-                if not summary:
-                    return "No session summary available yet"
-                return f"Session summary ({summary['summary_type']}):\n{summary['content']}"
-
-            elif tool_name == "get_peer_card":
-                peer_card = await get_peer_card(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                )
-                if not peer_card:
-                    return f"No peer card available for {observed}"
-                return f"Peer card for {observed}:\n" + "\n".join(
-                    f"- {fact}" for fact in peer_card
-                )
-
-            elif tool_name == "delete_observations":
-                observation_ids = tool_input.get("observation_ids", [])
-                if not observation_ids:
-                    return "ERROR: observation_ids list is empty"
-
-                deleted_count = await delete_observations(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    observation_ids=observation_ids,
-                )
-                return f"Deleted {deleted_count} observations"
-
-            elif tool_name == "finish_consolidation":
-                summary = tool_input.get("summary", "Consolidation complete")
-                # This is a signal tool - it doesn't do anything except signal completion
-                # The LLM loop will see this and can choose to stop
-                return f"CONSOLIDATION_COMPLETE: {summary}"
-
-            elif tool_name == "extract_preferences":
-                results = await extract_preferences(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    observed=observed,
-                )
-
-                instructions = results["instructions"]
-                preferences = results["preferences"]
-
-                if not instructions and not preferences:
-                    return "No preferences or standing instructions found in conversation history."
-
-                output_parts: list[str] = []
-
-                if instructions:
-                    output_parts.append(
-                        f"**Standing Instructions Found ({len(instructions)}):**\n"
-                        + "\n".join(f"- {inst}" for inst in instructions)
-                    )
-
-                if preferences:
-                    output_parts.append(
-                        f"**Preferences Found ({len(preferences)}):**\n"
-                        + "\n".join(f"- {pref}" for pref in preferences)
-                    )
-
-                output_parts.append(
-                    "\n**Action Required:** Review these and add relevant ones to the peer card using `update_peer_card`. "
-                    + "Summarize standing instructions as clear rules (e.g., 'Always include cultural context when discussing social norms')."
-                )
-
-                return "\n\n".join(output_parts)
-
+            handler = _TOOL_HANDLERS.get(tool_name)
+            if handler:
+                return await handler(ctx, tool_input)
             return f"Unknown tool: {tool_name}"
 
+        except ValueError as e:
+            # Recoverable errors (bad input, validation failures) - return to LLM
+            error_msg = f"Tool {tool_name} failed with invalid input: {e}"
+            logger.warning(error_msg)
+            return error_msg
+        except KeyError as e:
+            # Missing required parameters - return to LLM
+            error_msg = f"Tool {tool_name} missing required parameter: {e}"
+            logger.warning(error_msg)
+            return error_msg
         except Exception as e:
-            error_msg = f"Tool {tool_name} failed: {e}"
+            # Unexpected errors - log with full traceback but still return to LLM
+            # We don't re-raise because the LLM should be able to continue with other tools
+            error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
             logger.error(error_msg, exc_info=True)
             return error_msg
 

@@ -234,6 +234,7 @@ class DreamerAgent:
             observed=self.observed,
             session_name=self.session_name,
             include_observation_ids=True,
+            history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
         )
 
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(

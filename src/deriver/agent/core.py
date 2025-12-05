@@ -123,18 +123,20 @@ class Agent:
             observer=self.observer,
             observed=self.observed,
             current_messages=messages,
+            history_token_limit=settings.DERIVER.HISTORY_TOKEN_LIMIT,
         )
 
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
             llm_settings=settings.DERIVER,
             prompt="",  # Ignored since we pass messages
-            max_tokens=32_768,  # TODO config
+            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS,
             tools=self._tools,
             tool_choice="required",
             tool_executor=tool_executor,
-            max_tool_iterations=3,
+            max_tool_iterations=settings.DERIVER.MAX_TOOL_ITERATIONS,
             messages=self.messages,
             track_name="Deriver Agent",
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
         )
 
         # Log tool calls made with inputs and outputs

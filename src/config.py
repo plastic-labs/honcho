@@ -241,6 +241,12 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
+    # Agent iteration limit - controls how many tool calling rounds the agent gets
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=3, gt=0, le=20)] = 3
+
+    # Token limit for recent history retrieval
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
+
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
@@ -271,7 +277,13 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 4096
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=4096, gt=0, le=10_000)] = 4096
+
+    # Agent iteration limit - controls how many tool calling rounds the agent gets
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
+
+    # Token limit for get_recent_history tool within the agent
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
@@ -342,6 +354,9 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     # Agent iteration limit - controls how many tool calling rounds the agent gets
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=8, gt=0, le=30)] = 8
+
+    # Token limit for get_recent_history tool within the agent
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
 
 class AppSettings(HonchoSettings):

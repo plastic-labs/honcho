@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# Type aliases for OpenAI GPT-5 specific parameters
+ReasoningEffortType = Literal["low", "medium", "high", "minimal"] | None
+VerbosityType = Literal["low", "medium", "high"] | None
+
 
 def count_message_tokens(messages: list[dict[str, Any]]) -> int:
     """Count tokens in a list of messages using tiktoken."""
@@ -583,14 +587,22 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    async def _call_with_provider_selection() -> (
-        HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+    def _get_provider_and_model() -> (
+        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
     ):
         """
-        Inner function that selects provider/model based on current attempt.
-        This function is retried, so provider selection happens on each attempt.
+        Get the provider and model to use based on current attempt.
+
+        Returns:
+            Tuple of (provider, model, thinking_budget, reasoning_effort, verbosity)
         """
         attempt = _current_attempt.get()
+
+        provider: SupportedProviders
+        model: str
+        thinking_budget: int | None
+        gpt5_reasoning_effort: ReasoningEffortType
+        gpt5_verbosity: VerbosityType
 
         # Use backup on final retry attempt (when attempt == retry_attempts)
         if (
@@ -599,19 +611,13 @@ async def honcho_llm_call(
             and llm_settings.BACKUP_MODEL is not None
             and llm_settings.BACKUP_PROVIDER in CLIENTS
         ):
-            provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
-            model: str = llm_settings.BACKUP_MODEL
-            logger.warning(
-                f"Final retry attempt {attempt}/{retry_attempts}: switching from "
-                + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
-                + f"backup {provider}/{model}"
-            )
-
-            # Filter out incompatible parameters when using backup
+            provider = llm_settings.BACKUP_PROVIDER
+            model = llm_settings.BACKUP_MODEL
             thinking_budget = thinking_budget_tokens
             gpt5_reasoning_effort = reasoning_effort
             gpt5_verbosity = verbosity
 
+            # Filter out incompatible parameters when using backup
             if provider != "anthropic" and thinking_budget:
                 logger.warning(
                     f"thinking_budget_tokens not supported by {provider}, ignoring"
@@ -624,12 +630,31 @@ async def honcho_llm_call(
                 )
                 gpt5_reasoning_effort = None
                 gpt5_verbosity = None
+
+            logger.warning(
+                f"Final retry attempt {attempt}/{retry_attempts}: switching from "
+                + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
+                + f"backup {provider}/{model}"
+            )
         else:
             provider = llm_settings.PROVIDER
             model = llm_settings.MODEL
             thinking_budget = thinking_budget_tokens
             gpt5_reasoning_effort = reasoning_effort
             gpt5_verbosity = verbosity
+
+        return provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity
+
+    async def _call_with_provider_selection() -> (
+        HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+    ):
+        """
+        Inner function that selects provider/model based on current attempt.
+        This function is retried, so provider selection happens on each attempt.
+        """
+        provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
+            _get_provider_and_model()
+        )
 
         # Validate client exists
         client = CLIENTS.get(provider)
@@ -753,32 +778,10 @@ async def honcho_llm_call(
             effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
             conversation_messages: list[dict[str, Any]] = conversation_messages,
         ) -> HonchoLLMCallResponse[Any]:
-            # Reimplement provider selection with messages
-            attempt = _current_attempt.get()
-
-            if (
-                attempt == retry_attempts
-                and llm_settings.BACKUP_PROVIDER is not None
-                and llm_settings.BACKUP_MODEL is not None
-                and llm_settings.BACKUP_PROVIDER in CLIENTS
-            ):
-                provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
-                model: str = llm_settings.BACKUP_MODEL
-                thinking_budget = thinking_budget_tokens
-                gpt5_reasoning_effort = reasoning_effort
-                gpt5_verbosity = verbosity
-
-                if provider != "anthropic" and thinking_budget:
-                    thinking_budget = None
-                if "gpt-5" not in model and (gpt5_reasoning_effort or gpt5_verbosity):
-                    gpt5_reasoning_effort = None
-                    gpt5_verbosity = None
-            else:
-                provider = llm_settings.PROVIDER
-                model = llm_settings.MODEL
-                thinking_budget = thinking_budget_tokens
-                gpt5_reasoning_effort = reasoning_effort
-                gpt5_verbosity = verbosity
+            # Use shared provider selection helper
+            provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
+                _get_provider_and_model()
+            )
 
             client = CLIENTS.get(provider)
             if not client:
@@ -835,17 +838,8 @@ async def honcho_llm_call(
             response.cache_read_input_tokens = total_cache_read_tokens
             return response
 
-        # Determine which provider we're using
-        attempt = _current_attempt.get()
-        current_provider = (
-            llm_settings.BACKUP_PROVIDER
-            if (
-                attempt == retry_attempts
-                and llm_settings.BACKUP_PROVIDER is not None
-                and llm_settings.BACKUP_PROVIDER in CLIENTS
-            )
-            else llm_settings.PROVIDER
-        )
+        # Determine which provider we're using (reuse the helper)
+        current_provider, _, _, _, _ = _get_provider_and_model()
 
         # Add assistant message with tool calls to conversation
         # Format depends on provider

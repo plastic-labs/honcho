@@ -180,6 +180,7 @@ class DialecticAgent:
             session_name=self.session_name,
             observer=self.observer,
             observed=self.observed,
+            history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
         )
 
         # Run the agent loop
@@ -190,7 +191,7 @@ class DialecticAgent:
             tools=DIALECTIC_TOOLS,
             tool_choice=None,
             tool_executor=tool_executor,
-            max_tool_iterations=20,
+            max_tool_iterations=settings.DIALECTIC.MAX_TOOL_ITERATIONS,
             messages=self.messages,
             track_name="Dialectic Agent",
             thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS,
