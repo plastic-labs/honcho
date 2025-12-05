@@ -90,6 +90,7 @@ from .locomo_common import (
     filter_questions,
     format_duration,
     generate_json_summary,
+    get_evidence_context,
     judge_response,
     load_locomo_data,
     parse_locomo_date,
@@ -99,6 +100,38 @@ from .locomo_common import (
 # Load .env from bench directory
 bench_dir = Path(__file__).parent
 load_dotenv(bench_dir / ".env")
+
+
+def format_message_with_image(msg: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """
+    Format a LoCoMo message with optional image caption appended.
+
+    Args:
+        msg: LoCoMo message dict with 'text', optional 'img_url', 'blip_caption', 'query'
+
+    Returns:
+        Tuple of (formatted_content, metadata_dict or None)
+    """
+    text = msg.get("text", "")
+    blip_caption = msg.get("blip_caption")
+    img_urls = msg.get("img_url", [])
+    query = msg.get("query")
+
+    # Append caption to content so deriver can see it
+    content = f"{text}\n\n[Image shared: {blip_caption}]" if blip_caption else text
+
+    # Build metadata if image data exists
+    metadata: dict[str, Any] | None = None
+    if img_urls or blip_caption or query:
+        metadata = {}
+        if img_urls:
+            metadata["img_urls"] = img_urls
+        if blip_caption:
+            metadata["blip_caption"] = blip_caption
+        if query:
+            metadata["image_query"] = query
+
+    return content, metadata
 
 
 def determine_question_target(question: str, speaker_a: str, speaker_b: str) -> str:
@@ -392,25 +425,23 @@ class LoCoMoRunner:
 
                 for msg in session_messages:
                     speaker = msg.get("speaker", "")
-                    text = msg.get("text", "")
+                    content, metadata = format_message_with_image(msg)
                     result["total_turns"] += 1
-                    total_tokens += calculate_tokens(text)
+                    total_tokens += calculate_tokens(content)
 
                     # Map speaker to peer by name
                     if speaker == speaker_a:
-                        if session_date:
-                            messages.append(
-                                peer_a.message(text, created_at=session_date)
+                        messages.append(
+                            peer_a.message(
+                                content, metadata=metadata, created_at=session_date
                             )
-                        else:
-                            messages.append(peer_a.message(text))
+                        )
                     elif speaker == speaker_b:
-                        if session_date:
-                            messages.append(
-                                peer_b.message(text, created_at=session_date)
+                        messages.append(
+                            peer_b.message(
+                                content, metadata=metadata, created_at=session_date
                             )
-                        else:
-                            messages.append(peer_b.message(text))
+                        )
 
             result["total_tokens"] = total_tokens
 
@@ -473,7 +504,7 @@ class LoCoMoRunner:
             # Filter questions
             filtered_qa = filter_questions(
                 qa_list,
-                exclude_adversarial=False,
+                exclude_adversarial=True,
                 test_count=question_count,
             )
 
@@ -521,10 +552,15 @@ class LoCoMoRunner:
                         actual_response = getattr(content_block, "text", "")
                     else:
                         # Use dialectic .chat endpoint on the appropriate peer
-                        actual_response = await target_peer.chat(question)
+                        actual_response = await target_peer.chat(
+                            question, session_id=session_id
+                        )
                         actual_response = (
                             actual_response if isinstance(actual_response, str) else ""
                         )
+
+                    # Get evidence context for the judge
+                    evidence_context = get_evidence_context(conversation, evidence)
 
                     # Judge the response
                     judgment = await judge_response(
@@ -532,7 +568,7 @@ class LoCoMoRunner:
                         question,
                         str(expected_answer),
                         actual_response,
-                        category=category,
+                        evidence_context=evidence_context,
                     )
 
                     passed = judgment.get("passed", False)

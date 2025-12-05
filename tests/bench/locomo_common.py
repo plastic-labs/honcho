@@ -142,7 +142,7 @@ def parse_locomo_date(date_str: str) -> datetime:
 
 def extract_sessions(
     conversation: dict[str, Any],
-) -> list[tuple[str, list[dict[str, str]]]]:
+) -> list[tuple[str, list[dict[str, Any]]]]:
     """
     Extract sessions from a LoCoMo conversation.
 
@@ -150,9 +150,10 @@ def extract_sessions(
         conversation: The conversation dict containing session_N and session_N_date_time
 
     Returns:
-        List of tuples (date_time_str, messages) where messages have 'speaker' and 'text'
+        List of tuples (date_time_str, messages) where messages contain
+        'speaker', 'text', 'dia_id', and optional 'img_url', 'blip_caption', 'query'
     """
-    sessions: list[tuple[str, list[dict[str, str]]]] = []
+    sessions: list[tuple[str, list[dict[str, Any]]]] = []
 
     # Find all session keys
     session_keys = sorted(
@@ -172,7 +173,7 @@ def extract_sessions(
 
 def extract_all_messages(
     conversation: dict[str, Any],
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """
     Extract all messages from all sessions in a conversation.
 
@@ -180,22 +181,67 @@ def extract_all_messages(
         conversation: The conversation dict
 
     Returns:
-        List of message dicts with 'speaker', 'text', and 'dia_id'
+        List of message dicts with 'speaker', 'text', 'dia_id', and optional image fields
     """
-    all_messages: list[dict[str, str]] = []
+    all_messages: list[dict[str, Any]] = []
     sessions = extract_sessions(conversation)
 
     for _date_str, messages in sessions:
         for msg in messages:
-            all_messages.append(
-                {
-                    "speaker": msg.get("speaker", ""),
-                    "text": msg.get("text", ""),
-                    "dia_id": msg.get("dia_id", ""),
-                }
-            )
+            message_dict: dict[str, Any] = {
+                "speaker": msg.get("speaker", ""),
+                "text": msg.get("text", ""),
+                "dia_id": msg.get("dia_id", ""),
+            }
+            # Preserve image fields if present
+            if msg.get("blip_caption"):
+                message_dict["blip_caption"] = msg["blip_caption"]
+            if msg.get("img_url"):
+                message_dict["img_url"] = msg["img_url"]
+            if msg.get("query"):
+                message_dict["query"] = msg["query"]
+
+            all_messages.append(message_dict)
 
     return all_messages
+
+
+def get_evidence_context(
+    conversation: dict[str, Any],
+    evidence_ids: list[str],
+) -> str | None:
+    """
+    Extract evidence messages from a conversation based on dia_id references.
+
+    Args:
+        conversation: The conversation dict containing sessions
+        evidence_ids: List of dia_id references (e.g., ["D1:3", "D2:8"])
+
+    Returns:
+        Formatted string of evidence messages, or None if no evidence found
+    """
+    if not evidence_ids:
+        return None
+
+    # Build a mapping of dia_id to message
+    all_messages = extract_all_messages(conversation)
+    dia_id_to_msg = {msg["dia_id"]: msg for msg in all_messages if msg.get("dia_id")}
+
+    # Extract evidence messages
+    evidence_messages: list[str] = []
+    for eid in evidence_ids:
+        if eid in dia_id_to_msg:
+            msg = dia_id_to_msg[eid]
+            text = msg["text"]
+            # Include image caption if present
+            if msg.get("blip_caption"):
+                text = f"{text} [Image: {msg['blip_caption']}]"
+            evidence_messages.append(f"[{eid}] {msg['speaker']}: {text}")
+
+    if not evidence_messages:
+        return None
+
+    return "\n".join(evidence_messages)
 
 
 def filter_questions(
@@ -237,58 +283,89 @@ def filter_questions(
     return filtered
 
 
-def _build_judge_prompt(
-    category: int,
+def _build_judge_system_prompt(context: str | None) -> str:
+    """Build the system prompt for LoCoMo evaluation.
+
+    Args:
+        context: Optional evidence context from the conversation
+
+    Returns:
+        The system prompt for the judge model
+    """
+    return f"""You are evaluating whether a synthesized answer adequately addresses a query about a user based on available conclusions.
+## EVIDENCE CONTEXT
+{context if context else "No evidence provided."}
+## EVALUATION CONTEXT
+You will evaluate:
+1. **Query**: The specific question asked about the user
+2. **Synthesized Answer**: The response generated from available conclusions
+3. **Gold Standard Answer**: The expected/correct answer
+## EVALUATION CRITERIA
+Judge the synthesized answer as SUFFICIENT or INSUFFICIENT based on:
+### Content Completeness
+- Does the answer address what the query is asking?
+- Are all key aspects of the gold answer covered (even if phrased differently)?
+- Is critical information missing that would change the answer's usefulness?
+### Semantic Accuracy
+- Are any factual errors or contradictions present?
+## ACCEPTABLE DIFFERENCES
+The following differences are ACCEPTABLE and should NOT result in INSUFFICIENT:
+- Different phrasing or word choice that still conveys the same or very similar meaning, especially in cases where the question is tentative or open-ended.
+- Additional relevant context beyond the gold answer (including evidence supplied above). This includes the case where the synthesized answer is longer and more detailed than the gold answer, potentially even including additional information that is not explicitly stated in the gold answer but is still broadly relevant to the query. Do NOT penalize the synthesized answer for including additional information that is not explicitly stated in the gold answer.
+- **The synthesized answer explicitly includes the full gold answer text (even if surrounded by additional or unrelated details).  If the gold answer appears within the synthesized answer, you MUST mark the answer as SUFFICIENT.**
+- More detailed explanations of reasoning or evidence
+- Appropriate confidence qualifiers (e.g., "likely", "probably") when warranted
+- Differences in length, with the synthesized answer being longer and even more circuitous or indirect in its addressing of the query, as long as it conveys the same meaning
+- Minor format or structure variations
+## EVIDENCE-GOLD ANSWER CONSISTENCY CHECK
+It is possible for the gold answers to be wrong. Sometimes it may not be fully supported by or follow logically from the evidence messages, instead constituting a guess or assumption. Additionally, the gold answers are generated automatically based on the limited set of evidence messages provided above, whereas if additional context were to be taken into account, the answer might be different. In these cases, we must not penalize the synthesized answer for not being exactly the same as the gold answer.
+Before deciding, verify whether the gold answer logically and necessarily follows from the supplied evidence context. If you identify a mismatch or missing logical link **and** the synthesized answer acknowledges this uncertainty or provides a more cautious, evidence-grounded explanation (optionally leveraging additional context beyond the ground truth evidence above), treat the synthesized answer as SUFFICIENT even when it diverges in wording or conclusion from the gold answer.  In short:
+* If the gold answer over-claims beyond what the evidence shows, do **not** penalize a synthesized answer that appropriately qualifies the claim or offers a plausible alternative consistent with evidence.
+* This includes the case where the synthesized answer is ambivalent or uncertain about the answer, as long as it provides sufficient evidence to support not providing a definitive, categorical answer.
+* If the synthesized answer clearly explains the gap and gives a better-supported conclusion, mark it SUFFICIENT.
+## UNACCEPTABLE DIFFERENCES
+The following DO warrant an INSUFFICIENT rating:
+- Irreconcilable errors or contradictions with the gold answer **and** the evidence context
+- Missing information central to answering the query, such that its absence would change the meaning of the answer
+- Does not address the question being asked
+## YOUR TASK
+First, analyze what the query is asking **and** how well both answers are supported by the evidence context.
+Then, provide 2 brief 2-3 sentence arguments for both SUFFICIENT and INSUFFICIENT:
+**Arguments for SUFFICIENT:**
+- List reasons why the synthesized answer adequately addresses the query
+- Note what key information from the gold answer is present or why deviations are justified by the evidence
+- Note whether the gold answer is wrong or not necessarily true given the evidence above
+**Arguments for INSUFFICIENT:**
+- List reasons why the synthesized answer fails to address the question.
+
+Based on weighing these arguments, provide 2-3 sentences to determine if the synthesized answer is sufficient. In your weighing, consider whether the synthesized answer might be a better answer than the gold answer given the evidence above.
+Finally, set is_sufficient to true if sufficient or false if insufficient.
+Your response MUST be a valid JSON object with EXACTLY these keys:
+  - arguments_for_sufficient (string)
+  - arguments_for_insufficient (string)
+  - final_reasoning (string)
+  - is_sufficient (boolean)
+Return ONLY this JSON object and nothing else."""
+
+
+def _build_judge_user_prompt(
     question: str,
     answer: str,
     response: str,
 ) -> str:
-    """Build the judge prompt for LoCoMo evaluation.
+    """Build the user prompt for LoCoMo evaluation.
 
     Args:
-        category: Question category (1-5)
         question: The question asked
         answer: Expected answer from the test
         response: Actual response from the system under test
 
     Returns:
-        The complete prompt for the judge model
+        The user prompt for the judge model
     """
-    # Adversarial questions (category 5) - should identify as unanswerable
-    if category == 5:
-        return (
-            "I will give you an unanswerable question, an explanation, and a response "
-            "from a model. Please answer yes if the model correctly identifies the "
-            "question as unanswerable. The model could say that the information is "
-            "incomplete, or some other information is given but the asked information "
-            f"is not.\n\nQuestion: {question}\n\nExplanation: {answer}\n\n"
-            f"Model Response: {response}\n\nDoes the model correctly identify the "
-            "question as unanswerable? Answer yes or no only."
-        )
-
-    # Temporal questions (category 3) - allow off-by-one errors
-    if category == 3:
-        return (
-            "I will give you a question, a correct answer, and a response from a model. "
-            "Please answer yes if the response contains the correct answer. Otherwise, "
-            "answer no. If the response is equivalent to the correct answer or contains "
-            "all the intermediate steps to get the correct answer, you should also answer "
-            "yes. If the response only contains a subset of the information required by "
-            "the answer, answer no.\n\n"
-            f"Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}"
-            "\n\nIs the model response correct? Answer yes or no only."
-        )
-
-    # Default prompt for single-hop, multi-hop, commonsense
-    return (
-        "I will give you a question, a correct answer, and a response from a model. "
-        "Please answer yes if the response contains the correct answer. Otherwise, "
-        "answer no. If the response is equivalent to the correct answer or contains "
-        "all the intermediate steps to get the correct answer, you should also answer "
-        "yes. If the response only contains a subset of the information required by "
-        f"the answer, answer no. \n\nQuestion: {question}\n\nCorrect Answer: {answer}"
-        f"\n\nModel Response: {response}\n\nIs the model response correct? Answer yes or no only."
-    )
+    return f"""Query: {question}
+Gold Answer: {answer}
+Synthesized Answer: {response}"""
 
 
 async def judge_response(
@@ -296,31 +373,39 @@ async def judge_response(
     question: str,
     expected_answer: str,
     actual_response: str,
-    category: int = 1,
+    evidence_context: str | None = None,
 ) -> dict[str, Any]:
-    """Use GPT-4o to judge if the actual response matches the expected answer.
+    """Use GPT-4o-mini to judge if the actual response matches the expected answer.
+
+    This judge is designed to be lenient towards verbose answers that contain
+    additional context, as long as they address the question. It also considers
+    whether the gold answer is actually correct given the evidence.
 
     Args:
         openai_client: OpenAI client instance
         question: The question asked
         expected_answer: Expected answer from the test
         actual_response: Actual response from the system under test
-        category: Question category (1-5)
+        evidence_context: Optional evidence messages from the conversation
 
     Returns:
         Judgment result with pass/fail and reasoning
     """
     try:
-        prompt = _build_judge_prompt(
-            category, question, expected_answer, actual_response
+        system_prompt = _build_judge_system_prompt(evidence_context)
+        user_prompt = _build_judge_user_prompt(
+            question, expected_answer, actual_response
         )
 
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
-            max_tokens=10,
+            model="gpt-4o-mini",
+            max_tokens=1024,
             temperature=0,
             n=1,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
         )
 
         if not response.choices:
@@ -330,13 +415,38 @@ async def judge_response(
         if eval_response is None:
             raise ValueError("No text content in response")
 
-        # Check if "yes" appears in lowercased response
-        passed = "yes" in eval_response.lower()
+        # Parse JSON response
+        try:
+            # Strip any markdown code blocks if present
+            json_str = eval_response.strip()
+            if json_str.startswith("```"):
+                json_str = json_str.split("```")[1]
+                if json_str.startswith("json"):
+                    json_str = json_str[4:]
+                json_str = json_str.strip()
 
-        return {
-            "passed": passed,
-            "reasoning": eval_response.strip(),
-        }
+            result = json.loads(json_str)
+            passed = result.get("is_sufficient", False)
+            reasoning = result.get("final_reasoning", eval_response.strip())
+
+            return {
+                "passed": passed,
+                "reasoning": reasoning,
+                "arguments_for_sufficient": result.get("arguments_for_sufficient", ""),
+                "arguments_for_insufficient": result.get(
+                    "arguments_for_insufficient", ""
+                ),
+            }
+        except json.JSONDecodeError:
+            # Fallback: check for "sufficient" in the response
+            passed = 'is_sufficient": true' in eval_response.lower() or (
+                "sufficient" in eval_response.lower()
+                and "insufficient" not in eval_response.lower()
+            )
+            return {
+                "passed": passed,
+                "reasoning": eval_response.strip(),
+            }
 
     except Exception as e:
         logger.error(f"Error judging response: {e}")

@@ -7,6 +7,7 @@ from typing import Any, Generic, Literal, TypeVar, cast, overload
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
+from anthropic.types.usage import Usage
 from google import genai
 from google.genai.types import (
     ContentListUnionDict,
@@ -349,6 +350,50 @@ def extract_openai_reasoning_content(response: Any) -> str | None:
     return None
 
 
+def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
+    """
+    Extract cache token counts from OpenAI-style usage objects.
+
+    OpenAI reports cached tokens in usage.prompt_tokens_details.cached_tokens.
+    OpenRouter and some proxies may report in different locations.
+
+    Args:
+        usage: OpenAI CompletionUsage object or similar
+
+    Returns:
+        Tuple of (cache_creation_tokens, cache_read_tokens).
+        For OpenAI-style APIs, cache_creation is always 0 (automatic caching),
+        and cache_read is the cached_tokens count.
+    """
+    if not usage:
+        return 0, 0
+
+    cache_read = 0
+
+    # OpenAI native: usage.prompt_tokens_details.cached_tokens
+    if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
+        details = usage.prompt_tokens_details
+        if hasattr(details, "cached_tokens") and details.cached_tokens:
+            cache_read = details.cached_tokens
+
+    # OpenRouter style: usage.cache_read_input_tokens or usage.cached_tokens
+    if cache_read == 0:
+        if hasattr(usage, "cache_read_input_tokens") and usage.cache_read_input_tokens:
+            cache_read = usage.cache_read_input_tokens
+        elif hasattr(usage, "cached_tokens") and usage.cached_tokens:
+            cache_read = usage.cached_tokens
+
+    # OpenRouter/Anthropic-proxy style: cache_creation_input_tokens
+    cache_creation = 0
+    if (
+        hasattr(usage, "cache_creation_input_tokens")
+        and usage.cache_creation_input_tokens
+    ):
+        cache_creation = usage.cache_creation_input_tokens
+
+    return cache_creation, cache_read
+
+
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
     Response object for LLM calls.
@@ -356,15 +401,23 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     Args:
         content: The response content. When a response_model is provided, this will be
                 the parsed object of that type. Otherwise, it will be a string.
-        input_tokens: Number of tokens in the input/prompt.
+        input_tokens: Total number of input tokens (including cached).
         output_tokens: Number of tokens generated in the response.
+        cache_creation_input_tokens: Number of tokens written to cache.
+        cache_read_input_tokens: Number of tokens read from cache.
         finish_reasons: List of finish reasons for the response.
         tool_calls_made: Optional list of all tool calls executed during the request.
+
+    Note:
+        Uncached input tokens = input_tokens - cache_read_input_tokens + cache_creation_input_tokens
+        (cache_creation costs 25% more, cache_read costs 90% less)
     """
 
     content: T
     input_tokens: int = 0
     output_tokens: int
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
     thinking_content: str | None = None
@@ -660,6 +713,8 @@ async def honcho_llm_call(
     all_tool_calls: list[dict[str, Any]] = []
     total_input_tokens = 0  # Accumulate input tokens across all tool iterations
     total_output_tokens = 0  # Accumulate output tokens across all tool iterations
+    total_cache_creation_tokens = 0  # Accumulate cache creation tokens
+    total_cache_read_tokens = 0  # Accumulate cache read tokens
     # Track effective tool_choice - switches from "required" to "auto" after first iteration
     effective_tool_choice = tool_choice
 
@@ -745,6 +800,8 @@ async def honcho_llm_call(
         # Accumulate tokens from this iteration
         total_input_tokens += response.input_tokens
         total_output_tokens += response.output_tokens
+        total_cache_creation_tokens += response.cache_creation_input_tokens
+        total_cache_read_tokens += response.cache_read_input_tokens
 
         # Check if there are tool calls
         if not response.tool_calls_made:
@@ -753,6 +810,8 @@ async def honcho_llm_call(
             response.tool_calls_made = all_tool_calls
             response.input_tokens = total_input_tokens
             response.output_tokens = total_output_tokens
+            response.cache_creation_input_tokens = total_cache_creation_tokens
+            response.cache_read_input_tokens = total_cache_read_tokens
             return response
 
         # Determine which provider we're using
@@ -989,6 +1048,12 @@ async def honcho_llm_call(
     # Include accumulated tokens from all iterations plus the final call
     final_response.input_tokens = total_input_tokens + final_response.input_tokens
     final_response.output_tokens = total_output_tokens + final_response.output_tokens
+    final_response.cache_creation_input_tokens = (
+        total_cache_creation_tokens + final_response.cache_creation_input_tokens
+    )
+    final_response.cache_read_input_tokens = (
+        total_cache_read_tokens + final_response.cache_read_input_tokens
+    )
     return final_response
 
 
@@ -1172,15 +1237,15 @@ async def honcho_llm_call_inner(
                     "budget_tokens": thinking_budget_tokens,
                 }
 
-            anthropic_response: AnthropicMessage = await client.messages.create(  # pyright: ignore
-                **anthropic_params
+            anthropic_response: AnthropicMessage = cast(
+                AnthropicMessage, await client.messages.create(**anthropic_params)
             )
 
             # Extract text content, thinking blocks, and tool use blocks from content blocks
             text_blocks: list[str] = []
             thinking_blocks: list[str] = []
             tool_calls: list[dict[str, Any]] = []
-            for block in anthropic_response.content:  # pyright: ignore
+            for block in anthropic_response.content:
                 if isinstance(block, TextBlock):
                     text_blocks.append(block.text)
                 elif isinstance(block, ThinkingBlock):
@@ -1195,11 +1260,26 @@ async def honcho_llm_call_inner(
                     )
 
             # Safely extract usage and stop_reason
-            usage = anthropic_response.usage  # pyright: ignore
-            stop_reason = anthropic_response.stop_reason  # pyright: ignore
+            usage: Any | Usage = anthropic_response.usage
+            stop_reason = anthropic_response.stop_reason
 
             text_content = "\n".join(text_blocks)
             thinking_content = "\n".join(thinking_blocks) if thinking_blocks else None
+
+            # Extract cache token counts from Anthropic usage
+            # Anthropic's input_tokens = uncached tokens only
+            # Total = input_tokens + cache_read + cache_creation
+            cache_creation_tokens = (
+                getattr(usage, "cache_creation_input_tokens", 0) or 0 if usage else 0
+            )
+            cache_read_tokens = (
+                getattr(usage, "cache_read_input_tokens", 0) or 0 if usage else 0
+            )
+            uncached_tokens = usage.input_tokens if usage else 0
+            # Calculate total input tokens for consistent reporting
+            total_input_tokens = (
+                uncached_tokens + cache_read_tokens + cache_creation_tokens
+            )
 
             # If using response_model, parse the JSON response
             if response_model:
@@ -1211,8 +1291,10 @@ async def honcho_llm_call_inner(
 
                     return HonchoLLMCallResponse(
                         content=parsed_content,
-                        input_tokens=usage.input_tokens if usage else 0,  # pyright: ignore
-                        output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
+                        input_tokens=total_input_tokens,
+                        output_tokens=usage.output_tokens if usage else 0,
+                        cache_creation_input_tokens=cache_creation_tokens,
+                        cache_read_input_tokens=cache_read_tokens,
                         finish_reasons=[stop_reason] if stop_reason else [],
                         tool_calls_made=tool_calls,
                         thinking_content=thinking_content,
@@ -1224,17 +1306,44 @@ async def honcho_llm_call_inner(
 
             return HonchoLLMCallResponse(
                 content=text_content,
-                input_tokens=usage.input_tokens if usage else 0,  # pyright: ignore
-                output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
+                input_tokens=total_input_tokens,
+                output_tokens=usage.output_tokens if usage else 0,
+                cache_creation_input_tokens=cache_creation_tokens,
+                cache_read_input_tokens=cache_read_tokens,
                 finish_reasons=[stop_reason] if stop_reason else [],
                 tool_calls_made=tool_calls,
                 thinking_content=thinking_content,
             )
 
         case AsyncOpenAI():
+            # For custom providers (e.g., OpenRouter), add cache_control to system messages
+            # This enables prompt caching for Anthropic models proxied via OpenAI-compatible APIs
+            processed_messages: list[dict[str, Any]] = params["messages"]
+            if provider == "custom":
+                processed_messages = []
+                for msg in params["messages"]:
+                    if msg.get("role") == "system" and isinstance(
+                        msg.get("content"), str
+                    ):
+                        # Convert system message to content block format with cache_control
+                        processed_messages.append(
+                            {
+                                "role": "system",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": msg["content"],
+                                        "cache_control": {"type": "ephemeral"},
+                                    }
+                                ],
+                            }
+                        )
+                    else:
+                        processed_messages.append(msg)
+
             openai_params: dict[str, Any] = {
                 "model": params["model"],
-                "messages": params["messages"],
+                "messages": processed_messages,
             }
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
@@ -1271,19 +1380,20 @@ async def honcho_llm_call_inner(
                 }
                 if stop_seqs:
                     openai_params["stop"] = stop_seqs
-                response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
-                    **openai_params
+                vllm_response: ChatCompletion = cast(
+                    ChatCompletion,
+                    await client.chat.completions.create(**openai_params),
                 )
 
-                usage = response.usage  # pyright: ignore
-                finish_reason = response.choices[0].finish_reason  # pyright: ignore
+                usage = vllm_response.usage
+                finish_reason = vllm_response.choices[0].finish_reason
 
                 try:
                     test_rep = ""
-                    if response.choices[0].message.content is not None:  # pyright: ignore
-                        test_rep = response.choices[0].message.content  # pyright: ignore
+                    if vllm_response.choices[0].message.content is not None:
+                        test_rep = vllm_response.choices[0].message.content
 
-                    final = validate_and_repair_json(test_rep)  # pyright: ignore
+                    final = validate_and_repair_json(test_rep)
 
                     # Schema-aware repair: ensure deductive observations have required fields
 
@@ -1331,13 +1441,16 @@ async def honcho_llm_call_inner(
                     )
                     response_obj = PromptRepresentation(explicit=[], deductive=[])
 
+                cache_creation, cache_read = extract_openai_cache_tokens(usage)
                 return HonchoLLMCallResponse(
                     content=response_obj,
-                    input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
-                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    input_tokens=usage.prompt_tokens if usage else 0,
+                    output_tokens=usage.completion_tokens if usage else 0,
+                    cache_creation_input_tokens=cache_creation,
+                    cache_read_input_tokens=cache_read,
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=[],
-                    thinking_content=extract_openai_reasoning_content(response),
+                    thinking_content=extract_openai_reasoning_content(vllm_response),
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
@@ -1375,10 +1488,13 @@ async def honcho_llm_call_inner(
                             }
                         )
 
+                cache_creation, cache_read = extract_openai_cache_tokens(usage)
                 return HonchoLLMCallResponse(
                     content=parsed_content,
                     input_tokens=usage.prompt_tokens if usage else 0,
                     output_tokens=usage.completion_tokens if usage else 0,
+                    cache_creation_input_tokens=cache_creation,
+                    cache_read_input_tokens=cache_read,
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=parsed_tool_calls,
                     thinking_content=extract_openai_reasoning_content(response),
@@ -1405,10 +1521,13 @@ async def honcho_llm_call_inner(
                             }
                         )
 
+                cache_creation, cache_read = extract_openai_cache_tokens(usage)
                 return HonchoLLMCallResponse(
                     content=response.choices[0].message.content or "",  # pyright: ignore
                     input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    cache_creation_input_tokens=cache_creation,
+                    cache_read_input_tokens=cache_read,
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=tool_calls_list,
                     thinking_content=extract_openai_reasoning_content(response),
@@ -1625,6 +1744,7 @@ async def honcho_llm_call_inner(
             finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
             # Handle response model parsing for Groq
+            cache_creation, cache_read = extract_openai_cache_tokens(usage)
             if response_model:
                 try:
                     json_content = json.loads(response.choices[0].message.content)  # pyright: ignore
@@ -1634,6 +1754,8 @@ async def honcho_llm_call_inner(
                         content=parsed_content,
                         input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                         output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                        cache_creation_input_tokens=cache_creation,
+                        cache_read_input_tokens=cache_read,
                         finish_reasons=[finish_reason] if finish_reason else [],
                         tool_calls_made=[],
                     )
@@ -1646,6 +1768,8 @@ async def honcho_llm_call_inner(
                     content=response.choices[0].message.content,  # pyright: ignore
                     input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    cache_creation_input_tokens=cache_creation,
+                    cache_read_input_tokens=cache_read,
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=[],
                 )

@@ -271,6 +271,12 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 4096
 
+    # Session history injection: max tokens of recent messages to include when session_id is specified.
+    # Set to 0 to disable automatic session history injection.
+    SESSION_HISTORY_MAX_TOKENS: Annotated[
+        int, Field(default=16_384, ge=0, le=100_000)
+    ] = 16_384
+
 
 class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore

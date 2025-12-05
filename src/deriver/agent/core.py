@@ -13,7 +13,11 @@ from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.utils.agent_tools import DERIVER_TOOLS, create_tool_executor
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
-from src.utils.logging import accumulate_metric, log_performance_metrics
+from src.utils.logging import (
+    accumulate_metric,
+    log_performance_metrics,
+    log_token_usage_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +151,14 @@ class Agent:
                 "blob",
             )
 
-        # Log output
-        accumulate_metric(task_name, "output_tokens", response.output_tokens, "tokens")
+        # Log token usage with cache awareness
+        log_token_usage_metrics(
+            task_name,
+            response.input_tokens,
+            response.output_tokens,
+            response.cache_read_input_tokens,
+            response.cache_creation_input_tokens,
+        )
         if response.content:
             accumulate_metric(task_name, "response", response.content, "blob")
 

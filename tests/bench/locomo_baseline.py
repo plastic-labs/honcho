@@ -72,6 +72,7 @@ from .locomo_common import (
     filter_questions,
     format_duration,
     generate_json_summary,
+    get_evidence_context,
     judge_response,
     load_locomo_data,
     print_summary,
@@ -272,13 +273,16 @@ Below is the history of their past conversations. Use this history to answer the
                         content_block = response.content[0]
                         actual_response = getattr(content_block, "text", "")
 
+                    # Get evidence context for the judge
+                    evidence_context = get_evidence_context(conversation, evidence)
+
                     # Judge the response
                     judgment = await judge_response(
                         self.openai_client,
                         question,
                         str(expected_answer),
                         actual_response,
-                        category=category,
+                        evidence_context=evidence_context,
                     )
 
                     passed = judgment.get("passed", False)

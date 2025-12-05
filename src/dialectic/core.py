@@ -13,11 +13,17 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import crud
 from src.config import settings
 from src.dialectic import prompts
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
-from src.utils.logging import accumulate_metric, log_performance_metrics
+from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.logging import (
+    accumulate_metric,
+    log_performance_metrics,
+    log_token_usage_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +79,50 @@ class DialecticAgent:
                 ),
             }
         ]
+        self._session_history_initialized: bool = False
+
+    async def _initialize_session_history(self) -> None:
+        """Fetch and inject session history into the system prompt if configured."""
+        if self._session_history_initialized:
+            return
+        self._session_history_initialized = True
+
+        max_tokens = settings.DIALECTIC.SESSION_HISTORY_MAX_TOKENS
+        if max_tokens == 0 or not self.session_name:
+            return
+
+        # Fetch recent messages up to the token limit
+        stmt = await crud.get_messages(
+            workspace_name=self.workspace_name,
+            session_name=self.session_name,
+            token_limit=max_tokens,
+            reverse=False,  # chronological order
+        )
+        result = await self.db.execute(stmt)
+        messages = result.scalars().all()
+
+        if not messages:
+            return
+
+        # Format messages for injection
+        formatted_messages: list[str] = []
+        for msg in messages:
+            formatted = format_new_turn_with_timestamp(
+                msg.content, msg.created_at, msg.peer_name
+            )
+            formatted_messages.append(formatted)
+
+        session_history_section = (
+            "\n\n## SESSION HISTORY\n\n"
+            "The following is the recent conversation history from this session. "
+            "Use this as immediate context when answering the query.\n\n"
+            "<session_history>\n"
+            f"{chr(10).join(formatted_messages)}\n"
+            "</session_history>"
+        )
+
+        # Append session history to the system prompt
+        self.messages[0]["content"] += session_history_section
 
     async def answer(self, query: str) -> str:
         """
@@ -89,6 +139,9 @@ class DialecticAgent:
         Returns:
             The synthesized answer string
         """
+        # Initialize session history if configured
+        await self._initialize_session_history()
+
         # Use provided metric_key or generate our own
         run_id: str | None = None
         if self.metric_key:
@@ -163,13 +216,13 @@ class DialecticAgent:
         if response.thinking_content:
             accumulate_metric(task_name, "thinking", response.thinking_content, "blob")
 
-        # Log output
-        accumulate_metric(task_name, "input_tokens", response.input_tokens, "tokens")
-        accumulate_metric(task_name, "output_tokens", response.output_tokens, "tokens")
-        # Total tokens used for efficiency tracking
-        tokens_used_estimate = response.input_tokens + response.output_tokens
-        accumulate_metric(
-            task_name, "tokens_used_estimate", tokens_used_estimate, "tokens"
+        # Log token usage with cache awareness
+        log_token_usage_metrics(
+            task_name,
+            response.input_tokens,
+            response.output_tokens,
+            response.cache_read_input_tokens,
+            response.cache_creation_input_tokens,
         )
         accumulate_metric(task_name, "response", response.content, "blob")
 

@@ -165,6 +165,55 @@ def accumulate_metric(
     accumulated_metrics.setdefault(task_name, []).append((label, value, unit))
 
 
+def log_token_usage_metrics(
+    task_name: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_input_tokens: int,
+    cache_creation_input_tokens: int,
+) -> int:
+    """
+    Log cache-aware token usage metrics.
+
+    Args:
+        task_name: The task name for metric accumulation
+        input_tokens: Total input tokens (cached + uncached)
+        output_tokens: Output tokens generated
+        cache_read_input_tokens: Tokens read from cache (90% cheaper)
+        cache_creation_input_tokens: Tokens written to cache (25% more expensive)
+
+    Returns:
+        The tokens_used_estimate (uncached + output tokens)
+    """
+    accumulate_metric(task_name, "input_tokens", input_tokens, "tokens")
+    accumulate_metric(task_name, "output_tokens", output_tokens, "tokens")
+    accumulate_metric(
+        task_name,
+        "cache_read_input_tokens",
+        cache_read_input_tokens,
+        "tokens",
+    )
+    accumulate_metric(
+        task_name,
+        "cache_creation_input_tokens",
+        cache_creation_input_tokens,
+        "tokens",
+    )
+    # Total uncached tokens (what you're paying full price for)
+    # = total - cache_read (those were cheap) + cache_creation (those cost 1.25x)
+    uncached_input_tokens = (
+        input_tokens - cache_read_input_tokens + cache_creation_input_tokens
+    )
+    accumulate_metric(
+        task_name, "uncached_input_tokens", uncached_input_tokens, "tokens"
+    )
+    # Tokens used estimate reflects uncached cost
+    tokens_used_estimate = uncached_input_tokens + output_tokens
+    accumulate_metric(task_name, "tokens_used_estimate", tokens_used_estimate, "tokens")
+
+    return tokens_used_estimate
+
+
 def log_performance_metrics(
     task_slug: str,
     task_name: str,

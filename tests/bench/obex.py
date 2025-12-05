@@ -45,6 +45,13 @@ EVAL_RESULTS_DIR = Path(__file__).parent / "eval_results"
 # =============================================================================
 
 
+def f1_score(precision: float, recall: float) -> float:
+    """Calculate F1 score from precision and recall."""
+    if precision + recall == 0:
+        return 0.0
+    return 2 * (precision * recall) / (precision + recall)
+
+
 @dataclass
 class CaseResult:
     """Result for a single test case."""
@@ -63,6 +70,14 @@ class CaseResult:
     extracted_deductive: list[str] = field(default_factory=list)
     error: str | None = None
 
+    @property
+    def explicit_f1(self) -> float:
+        return f1_score(self.explicit_precision, self.explicit_recall)
+
+    @property
+    def deductive_f1(self) -> float:
+        return f1_score(self.deductive_precision, self.deductive_recall)
+
 
 @dataclass
 class SourceStats:
@@ -71,8 +86,10 @@ class SourceStats:
     count: int
     explicit_precision: float
     explicit_recall: float
+    explicit_f1: float
     deductive_precision: float
     deductive_recall: float
+    deductive_f1: float
 
 
 @dataclass
@@ -82,8 +99,10 @@ class AggregateResults:
     total_cases: int
     explicit_precision: float
     explicit_recall: float
+    explicit_f1: float
     deductive_precision: float
     deductive_recall: float
+    deductive_f1: float
     by_source: dict[str, SourceStats] = field(default_factory=dict)
     by_difficulty: dict[str, SourceStats] = field(default_factory=dict)
 
@@ -299,15 +318,21 @@ async def evaluate_case(case: TestCase, matcher: ObservationMatcher) -> CaseResu
 def aggregate_results(results: list[CaseResult]) -> AggregateResults:
     """Compute aggregate statistics."""
     if not results:
-        return AggregateResults(0, 0, 0, 0, 0)
+        return AggregateResults(0, 0, 0, 0, 0, 0, 0)
 
     n = len(results)
+    exp_p = sum(r.explicit_precision for r in results) / n
+    exp_r = sum(r.explicit_recall for r in results) / n
+    ded_p = sum(r.deductive_precision for r in results) / n
+    ded_r = sum(r.deductive_recall for r in results) / n
     agg = AggregateResults(
         total_cases=n,
-        explicit_precision=sum(r.explicit_precision for r in results) / n,
-        explicit_recall=sum(r.explicit_recall for r in results) / n,
-        deductive_precision=sum(r.deductive_precision for r in results) / n,
-        deductive_recall=sum(r.deductive_recall for r in results) / n,
+        explicit_precision=exp_p,
+        explicit_recall=exp_r,
+        explicit_f1=f1_score(exp_p, exp_r),
+        deductive_precision=ded_p,
+        deductive_recall=ded_r,
+        deductive_f1=f1_score(ded_p, ded_r),
     )
 
     # By source
@@ -315,12 +340,18 @@ def aggregate_results(results: list[CaseResult]) -> AggregateResults:
     for r in results:
         by_source.setdefault(r.source, []).append(r)
     for source, rs in by_source.items():
+        src_exp_p = sum(r.explicit_precision for r in rs) / len(rs)
+        src_exp_r = sum(r.explicit_recall for r in rs) / len(rs)
+        src_ded_p = sum(r.deductive_precision for r in rs) / len(rs)
+        src_ded_r = sum(r.deductive_recall for r in rs) / len(rs)
         agg.by_source[source] = SourceStats(
             count=len(rs),
-            explicit_precision=sum(r.explicit_precision for r in rs) / len(rs),
-            explicit_recall=sum(r.explicit_recall for r in rs) / len(rs),
-            deductive_precision=sum(r.deductive_precision for r in rs) / len(rs),
-            deductive_recall=sum(r.deductive_recall for r in rs) / len(rs),
+            explicit_precision=src_exp_p,
+            explicit_recall=src_exp_r,
+            explicit_f1=f1_score(src_exp_p, src_exp_r),
+            deductive_precision=src_ded_p,
+            deductive_recall=src_ded_r,
+            deductive_f1=f1_score(src_ded_p, src_ded_r),
         )
 
     # By difficulty
@@ -328,12 +359,18 @@ def aggregate_results(results: list[CaseResult]) -> AggregateResults:
     for r in results:
         by_diff.setdefault(r.difficulty, []).append(r)
     for diff, rs in by_diff.items():
+        diff_exp_p = sum(r.explicit_precision for r in rs) / len(rs)
+        diff_exp_r = sum(r.explicit_recall for r in rs) / len(rs)
+        diff_ded_p = sum(r.deductive_precision for r in rs) / len(rs)
+        diff_ded_r = sum(r.deductive_recall for r in rs) / len(rs)
         agg.by_difficulty[diff] = SourceStats(
             count=len(rs),
-            explicit_precision=sum(r.explicit_precision for r in rs) / len(rs),
-            explicit_recall=sum(r.explicit_recall for r in rs) / len(rs),
-            deductive_precision=sum(r.deductive_precision for r in rs) / len(rs),
-            deductive_recall=sum(r.deductive_recall for r in rs) / len(rs),
+            explicit_precision=diff_exp_p,
+            explicit_recall=diff_exp_r,
+            explicit_f1=f1_score(diff_exp_p, diff_exp_r),
+            deductive_precision=diff_ded_p,
+            deductive_recall=diff_ded_r,
+            deductive_f1=f1_score(diff_ded_p, diff_ded_r),
         )
 
     return agg
@@ -350,23 +387,25 @@ def print_results(agg: AggregateResults, results: list[CaseResult]) -> None:
     print(f"\n{'EXPLICIT OBSERVATIONS':^35}")
     print(f"  Precision: {agg.explicit_precision:.3f}")
     print(f"  Recall:    {agg.explicit_recall:.3f}")
+    print(f"  F1:        {agg.explicit_f1:.3f}")
 
     print(f"\n{'DEDUCTIVE OBSERVATIONS':^35}")
     print(f"  Precision: {agg.deductive_precision:.3f}")
     print(f"  Recall:    {agg.deductive_recall:.3f}")
+    print(f"  F1:        {agg.deductive_f1:.3f}")
 
     if agg.by_source:
         print(f"\n{'BY SOURCE':^35}")
         for source, data in sorted(agg.by_source.items()):
             print(
-                f"  {source:12} n={data.count:3}  exp_p={data.explicit_precision:.3f}  exp_r={data.explicit_recall:.3f}  ded_p={data.deductive_precision:.3f}  ded_r={data.deductive_recall:.3f}"
+                f"  {source:12} n={data.count:3}  exp_f1={data.explicit_f1:.3f}  ded_f1={data.deductive_f1:.3f}"
             )
 
     if agg.by_difficulty:
         print(f"\n{'BY DIFFICULTY':^35}")
         for diff, data in sorted(agg.by_difficulty.items()):
             print(
-                f"  {diff:12} n={data.count:3}  exp_p={data.explicit_precision:.3f}  exp_r={data.explicit_recall:.3f}  ded_p={data.deductive_precision:.3f}  ded_r={data.deductive_recall:.3f}"
+                f"  {diff:12} n={data.count:3}  exp_f1={data.explicit_f1:.3f}  ded_f1={data.deductive_f1:.3f}"
             )
 
     # Worst cases (by average of precision and recall)
@@ -455,8 +494,10 @@ def generate_json_summary(
             "cases_with_errors": len(errors),
             "explicit_precision": agg.explicit_precision,
             "explicit_recall": agg.explicit_recall,
+            "explicit_f1": agg.explicit_f1,
             "deductive_precision": agg.deductive_precision,
             "deductive_recall": agg.deductive_recall,
+            "deductive_f1": agg.deductive_f1,
             "mean_case_score": sum(case_scores) / len(case_scores)
             if case_scores
             else 0,
@@ -474,17 +515,13 @@ def generate_json_summary(
                 "difficulty": r.difficulty,
                 "explicit_precision": r.explicit_precision,
                 "explicit_recall": r.explicit_recall,
+                "explicit_f1": r.explicit_f1,
                 "deductive_precision": r.deductive_precision,
                 "deductive_recall": r.deductive_recall,
+                "deductive_f1": r.deductive_f1,
                 "num_extracted": r.num_extracted,
                 "num_expected": r.num_expected,
-                "average_score": (
-                    r.explicit_precision
-                    + r.explicit_recall
-                    + r.deductive_precision
-                    + r.deductive_recall
-                )
-                / 4,
+                "average_f1": (r.explicit_f1 + r.deductive_f1) / 2,
                 "model_output": {
                     "explicit": r.extracted_explicit,
                     "deductive": r.extracted_deductive,
