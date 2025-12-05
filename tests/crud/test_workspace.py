@@ -199,7 +199,6 @@ class TestWorkspaceCRUD:
             observed=test_peer.name,
             session_name=session.name,
             content="Test document content",
-            embedding=[0.1] * 1536,  # Mock embedding vector
         )
         db_session.add(document)
         await db_session.flush()
@@ -451,7 +450,6 @@ class TestWorkspaceCRUD:
             observed=peer2.name,
             session_name=session1.name,
             content="Test document",
-            embedding=[0.1] * 1536,  # Mock embedding vector
         )
         db_session.add(document)
 

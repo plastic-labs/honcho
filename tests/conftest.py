@@ -377,6 +377,74 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
+def mock_vector_store():
+    """Mock vector store operations for testing"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.vector_store import QueryResult, VectorRecord
+
+    # Create a mock vector store that stores vectors in memory
+    vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
+
+    async def mock_upsert(namespace: str, vector: VectorRecord) -> None:
+        if namespace not in vector_storage:
+            vector_storage[namespace] = {}
+        vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
+
+    async def mock_upsert_many(namespace: str, vectors: list[VectorRecord]) -> None:
+        if namespace not in vector_storage:
+            vector_storage[namespace] = {}
+        for vector in vectors:
+            vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
+
+    async def mock_query(
+        namespace: str, embedding: list[float], **kwargs: Any
+    ) -> list[QueryResult]:
+        _ = embedding  # unused in mock
+        if namespace not in vector_storage:
+            return []
+
+        # Simple mock: return all vectors in the namespace as results
+        results: list[QueryResult] = []
+        for vec_id, (_vec_embedding, metadata) in vector_storage[namespace].items():
+            results.append(
+                QueryResult(
+                    id=vec_id,
+                    score=0.1,  # Mock score
+                    metadata=metadata,
+                )
+            )
+        top_k: int = kwargs.get("top_k", 10)
+        return results[:top_k]
+
+    async def mock_delete_many(namespace: str, ids: list[str]) -> None:
+        if namespace in vector_storage:
+            for vec_id in ids:
+                vector_storage[namespace].pop(vec_id, None)
+
+    async def mock_delete_namespace(namespace: str) -> None:
+        vector_storage.pop(namespace, None)
+
+    with (
+        patch("src.vector_store.get_vector_store") as mock_get_vs,
+    ):
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock(side_effect=mock_upsert)
+        mock_vs.upsert_many = AsyncMock(side_effect=mock_upsert_many)
+        mock_vs.query = AsyncMock(side_effect=mock_query)
+        mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
+        mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
+        mock_vs.get_document_namespace = (
+            lambda ws, obs, obd: f"honcho:{ws}:{obs}:{obd}"  # pyright: ignore[reportUnknownLambdaType]
+        )
+        mock_vs.get_message_namespace = lambda ws: f"honcho:{ws}:messages"  # pyright: ignore[reportUnknownLambdaType]
+
+        mock_get_vs.return_value = mock_vs
+
+        yield mock_vs
+
+
+@pytest.fixture(autouse=True)
 def mock_llm_call_functions():
     """Mock LLM functions to avoid needing API keys during tests"""
 

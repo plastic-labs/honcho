@@ -24,9 +24,6 @@ from src.utils.representation import (
 
 logger = logging.getLogger(__name__)
 
-# Fetch extra documents to ensure we have enough after filtering
-FILTER_OVERSAMPLING_FACTOR = 3
-
 
 class RepresentationManager:
     """Unified manager for representation and document queries."""
@@ -403,30 +400,31 @@ class RepresentationManager:
             observed=self.observed,
             query=query,
             max_distance=max_distance,
-            top_k=count * FILTER_OVERSAMPLING_FACTOR,
+            top_k=count,
             filters=self._build_filter_conditions(level),
         )
 
-        # Sort by creation time and return top count
+        # Sort by creation time
         docs_sorted: list[models.Document] = sorted(
             list(documents), key=lambda x: x.created_at, reverse=True
         )
-        return docs_sorted[:count]
+        return docs_sorted
 
     def _build_filter_conditions(
         self,
         level: str | None = None,
     ) -> dict[str, Any]:
-        """Build complete filter conditions for document queries."""
-        conditions: list[dict[str, Any]] = []
+        """
+        Build filter conditions for document queries.
+
+        Returns a flat dict of key-value pairs for vector store filtering.
+        """
+        filters: dict[str, Any] = {}
 
         if level:
-            conditions.append({"level": level})
+            filters["level"] = level
 
-        if not conditions:
-            return {}
-
-        return conditions[0] if len(conditions) == 1 else {"AND": conditions}
+        return filters
 
 
 # Module-level functions for backward compatibility and convenience
