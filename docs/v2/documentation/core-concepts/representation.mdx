@@ -6,21 +6,19 @@ sidebarTitle: "Representations"
 
 A peer representation is the collection of reasoning Honcho has done about a peer over time. It's not a static profile or a snapshot--it's the accumulated output of continuous reasoning about every message that's been written to the peer. Representations evolve dynamically as new messages come in, with Honcho reasoning about them in the context of existing conclusions, reconciling contradictions and refining understanding.
 
-When you write messages to Honcho, the reasoning models extract premises, draw conclusions, and generate insights. All of that reasoning--observations, conclusions, summaries, peer cards--gets stored as the peer's representation. Think of it as Honcho's understanding of who that peer is, what they care about, and how they behave, built through formal logic rather than simple storage.
+When you write messages to Honcho, the reasoning models extract premises, draw conclusions, and generate insights. All of that reasoning gets stored as the peer's representation. Think of it as Honcho's understanding of who that peer is, what they care about, and how they behave, built through formal logic rather than simple storage.
 
 ## What's in a Representation?
 
 A peer representation is made up of several types of artifacts that Honcho generates through reasoning:
 
-**Observations** are explicit premises extracted directly from messages. If a user says "I'm saving for a house," that's an observation. These serve as the foundation for further reasoning.
-
-**Conclusions** are insights derived through formal logic. Deductive conclusions are things Honcho can be certain about based on the observations. Inductive conclusions identify patterns across multiple messages. Abductive conclusions infer the simplest explanations for observed behavior. For example, if a user frequently mentions work deadlines and rarely mentions hobbies, Honcho might inductively conclude they're time-constrained or career-focused.
+**Conclusions** are insights derived through formal logic. Deductive conclusions are things Honcho can be certain about based on the premises. Inductive conclusions identify patterns across multiple messages. Abductive conclusions infer the simplest explanations for observed behavior. For example, if a user frequently mentions work deadlines and rarely mentions hobbies, Honcho might inductively conclude they're time-constrained or career-focused.
 
 **Summaries** capture the essence of sessions. Short summaries are generated every 20 messages by default, and long summaries every 60 messages. These help compress conversation history into dense, queryable context.
 
 **Peer cards** contain key biographical information. They essentially cache the most basic information about a peer (name, occupation, interests) to ensure the model never loses its grounding.
 
-The reasoning flows from observations to conclusions to higher-order artifacts. Each layer builds on what came before, creating a rich, queryable representation.
+TODO: workshop this--The reasoning flows from premises to conclusions to higher-order artifacts. Each layer builds on what came before, creating a rich, queryable representation.
 
 <Note>
 For details on how reasoning works (deduction, induction, abduction), see the [Reasoning](/v2/documentation/core-concepts/reasoning) page.
@@ -36,7 +34,7 @@ There are two observation modes controlled by configuration:
 
 **Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. If Alice and Opus are in a session together and Opus has `observe_others: true`, Opus will form a representation of Alice based solely on what Alice said in sessions Opus participated in. Opus's representation of Alice will be completely different from Carol's representation of Alice if they've observed different interactions.
 
-![](/images/perspectives.jpeg)
+![](/images/alice-bob.png)
 
 The diagram above shows observation in practice. Honcho can observe each peer (forming representations based on everything they say), and individual peers can observe others (forming representations based only on what they witness in shared sessions).
 

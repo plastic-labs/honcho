@@ -7,16 +7,6 @@ icon: "message-question"
 
 The Chat endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving observations or conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
 
-## How It Works
-
-Honcho builds a [*representation*](/v2/documentation/core-concepts/representation)for each peer--a collection of conclusions drawn from continuous reasoning over context. The most flexible way to query representations is through the `chat()` method. Some examples:
-
-- "What is the user's preferred communication style?"
-- "Has the user mentioned any dietary restrictions?"
-- "What tasks does the user struggle with?"
-
-Honcho searches the peer's representation, retrieves relevant conclusions, and synthesizes a natural language answer. It acts like a detective reasoning over evidence to make a case--your LLM asks the question, Honcho composes an answer from its conclusions.
-
 ## Basic Usage
 
 The simplest way to use the Dialectic endpoint is to ask a question and get a text response:

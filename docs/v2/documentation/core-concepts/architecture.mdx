@@ -83,7 +83,7 @@ Understanding how data moves through Honcho helps clarify the architecture.
 
 When you create messages, they're immediately written to PostgreSQL and reasoning tasks are added to background queues. Background workers then generate logic, summaries, and new insights to improve representations. These conclusions and insights get stored in vector collections for retrieval. This async approach ensures fast writes while still providing rich reasoning capabilities.
 
-When you need context from Honcho, you query through the "Chat" endpoint or "Get Context" endpoint. Honcho retrieves relevant observations and conclusions from vector storage along with recent messages, then assembles everything into coherent context ready to inject into agent prompts.
+When you need context from Honcho, you query through the "Chat" endpoint or "Get Context" endpoint. Honcho retrieves relevant conclusions from vector storage along with recent messages, then assembles everything into coherent context ready to inject into agent prompts.
 
 ![Honcho Architecture](/images/architecture.png)
 
