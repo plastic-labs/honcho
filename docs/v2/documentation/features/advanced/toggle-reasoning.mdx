@@ -4,8 +4,6 @@ description: 'Concerned with all the places you can turn reasoning off'
 icon: 'wrench'
 ---
 
-TODO: remove deriver references
-
 Customizing how Honcho handles peers, sessions, and messages
 
 Honcho's reasoning engine can be configured at multiple levels to control how it processes messages, generates facts, creates summaries, and builds peer representations.
@@ -27,13 +25,13 @@ All configuration fields are optional. If not specified, the value is inherited 
 
 ## Configuration Options
 
-### Deriver Configuration
+### Reasoning Configuration
 
 Controls the core reasoning engine that extracts facts and insights from messages.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `enabled` | `bool` | Whether to enable deriver functionality. When disabled, no facts or representations are generated. |
+| `enabled` | `bool` | Whether to enable reasoning functionality. When disabled, no facts or representations are generated. |
 
 <CodeGroup>
 ```python Python
@@ -41,9 +39,9 @@ from honcho import Honcho
 
 honcho = Honcho()
 
-# Disable deriver at session level
+# Disable reasoning at session level
 session = honcho.session("private-session", config={
-    "deriver": {"enabled": False}
+    "reasoning": {"enabled": False}
 })
 ```
 ```typescript TypeScript
@@ -51,10 +49,10 @@ import { Honcho } from "@honcho-ai/sdk";
 
 const honcho = new Honcho({});
 
-// Disable deriver at session level
+// Disable reasoning at session level
 const session = await honcho.session("private-session", {
     config: {
-        deriver: { enabled: false }
+        reasoning: { enabled: false }
     }
 });
 ```
@@ -66,7 +64,7 @@ Controls how peer cards (concise summaries of what's known about a peer) are gen
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `use` | `bool` | Whether to use peer cards during the deriver process. |
+| `use` | `bool` | Whether to use peer cards during the reasoning process. |
 | `create` | `bool` | Whether to generate peer cards based on message content. |
 
 <CodeGroup>
@@ -127,7 +125,7 @@ Controls the "dreaming" process that consolidates and refines representations. A
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `enabled` | `bool` | Whether to enable dream functionality. Automatically disabled if deriver is disabled. |
+| `enabled` | `bool` | Whether to enable dream functionality. Automatically disabled if reasoning is disabled. |
 
 <CodeGroup>
 ```python Python
@@ -191,7 +189,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 ## Session Configuration
 
-Sessions support the full configuration schema. You can disable the deriver entirely for a session, customize summary behavior, or adjust peer card settings.
+Sessions support the full configuration schema. You can disable reasoning entirely for a session, customize summary behavior, or adjust peer card settings.
 
 <CodeGroup>
 ```python Python
@@ -200,9 +198,9 @@ from honcho import Honcho
 # Initialize client
 honcho = Honcho()
 
-# Create session with deriver disabled
+# Create session with reasoning disabled
 session = honcho.session("my-session", config={
-    "deriver": {"enabled": False}
+    "reasoning": {"enabled": False}
 })
 
 # Create session with custom summary settings
@@ -220,9 +218,9 @@ import { Honcho } from "@honcho-ai/sdk";
     // Initialize client
     const honcho = new Honcho({});
 
-    // Create session with deriver disabled
+    // Create session with reasoning disabled
     const session = await honcho.session("my-session", {
-        config: { deriver: { enabled: false } }
+        config: { reasoning: { enabled: false } }
     });
 
     // Create session with custom summary settings
@@ -250,10 +248,10 @@ honcho = Honcho()
 session = honcho.session("my-session")
 user = honcho.peer("user")
 
-# Create a message that skips deriver processing
+# Create a message that skips the reasoning process
 session.add_messages([
     user.message("This message won't be analyzed", config={
-        "deriver": {"enabled": False}
+        "reasoning": {"enabled": False}
     })
 ])
 
@@ -272,10 +270,10 @@ import { Honcho } from "@honcho-ai/sdk";
     const session = await honcho.session("my-session");
     const user = await honcho.peer("user");
 
-    // Create a message that skips deriver processing
+    // Create a message that skips the reasoning process
     await session.addMessages([
         user.message("This message won't be analyzed", {
-            configuration: { deriver: { enabled: false } }
+            configuration: { reasoning: { enabled: false } }
         })
     ]);
 })();
@@ -288,7 +286,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 ```json
 {
-  "deriver": {
+  "reasoning": {
     "enabled": true
   },
   "peer_card": {
@@ -310,7 +308,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 ```json
 {
-  "deriver": {
+  "reasoning": {
     "enabled": true
   },
   "peer_card": {
@@ -321,5 +319,5 @@ import { Honcho } from "@honcho-ai/sdk";
 ```
 
 <Note>
-Message configuration only supports `deriver` and `peer_card` settings. Summary and dream configurations are session/workspace-level only.
+Message configuration only supports reasoning and `peer_card` settings. Summary and dream configurations are session/workspace-level only.
 </Note>
