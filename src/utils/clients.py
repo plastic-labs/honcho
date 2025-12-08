@@ -448,6 +448,423 @@ class HonchoLLMCallStreamChunk(BaseModel):
     output_tokens: int | None = None
 
 
+# Bounds for max_tool_iterations to prevent runaway loops
+MIN_TOOL_ITERATIONS = 1
+MAX_TOOL_ITERATIONS = 100
+
+
+async def _execute_tool_loop(
+    llm_settings: "LLMComponentSettings",
+    prompt: str,
+    max_tokens: int,
+    messages: list[dict[str, Any]] | None,
+    tools: list[dict[str, Any]],
+    tool_choice: str | dict[str, Any] | None,
+    tool_executor: Callable[[str, dict[str, Any]], Any],
+    max_tool_iterations: int,
+    response_model: type[BaseModel] | None,
+    json_mode: bool,
+    stop_seqs: list[str] | None,
+    reasoning_effort: ReasoningEffortType,
+    verbosity: VerbosityType,
+    thinking_budget_tokens: int | None,
+    enable_retry: bool,
+    retry_attempts: int,
+    max_input_tokens: int | None,
+    get_provider_and_model: Callable[
+        [],
+        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType],
+    ],
+    before_retry_callback: Callable[[Any], None],
+) -> HonchoLLMCallResponse[Any]:
+    """
+    Execute the tool calling loop for agentic LLM interactions.
+
+    This function handles the iterative process of:
+    1. Making an LLM call with tools available
+    2. Executing any tool calls the LLM requests
+    3. Feeding tool results back to the LLM
+    4. Repeating until the LLM stops calling tools or max iterations reached
+
+    Args:
+        llm_settings: Settings for the LLM provider
+        prompt: Initial prompt (used if messages is None)
+        max_tokens: Maximum tokens to generate per call
+        messages: Conversation history
+        tools: Tool definitions in Anthropic format
+        tool_choice: Tool selection strategy
+        tool_executor: Async function to execute tools
+        max_tool_iterations: Maximum iterations before forcing completion
+        response_model: Optional Pydantic model for structured output
+        json_mode: Whether to use JSON mode
+        stop_seqs: Stop sequences
+        reasoning_effort: OpenAI reasoning effort (GPT-5 only)
+        verbosity: OpenAI verbosity (GPT-5 only)
+        thinking_budget_tokens: Anthropic thinking budget
+        enable_retry: Whether to enable retry with exponential backoff
+        retry_attempts: Number of retry attempts
+        max_input_tokens: Maximum input tokens (for truncation)
+        get_provider_and_model: Function to get current provider/model based on attempt
+        before_retry_callback: Callback for retry events
+
+    Returns:
+        Final HonchoLLMCallResponse with accumulated token counts and tool call history
+    """
+    # Initialize conversation messages
+    conversation_messages: list[dict[str, Any]] = (
+        messages.copy() if messages else [{"role": "user", "content": prompt}]
+    )
+
+    iteration = 0
+    all_tool_calls: list[dict[str, Any]] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cache_creation_tokens = 0
+    total_cache_read_tokens = 0
+    # Track effective tool_choice - switches from "required" to "auto" after first iteration
+    effective_tool_choice = tool_choice
+
+    while iteration < max_tool_iterations:
+        logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
+
+        # Truncate BEFORE making the API call to avoid context length errors
+        if max_input_tokens is not None:
+            conversation_messages = truncate_messages_to_fit(
+                conversation_messages, max_input_tokens
+            )
+
+        # Create a wrapper that injects our messages
+        async def _call_with_messages(
+            effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
+            conversation_messages: list[dict[str, Any]] = conversation_messages,
+        ) -> HonchoLLMCallResponse[Any]:
+            # Use shared provider selection helper
+            provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
+                get_provider_and_model()
+            )
+
+            client = CLIENTS.get(provider)
+            if not client:
+                raise ValueError(f"Missing client for {provider}")
+
+            converted_tools = (
+                convert_tools_for_provider(tools, provider) if tools else None
+            )
+
+            return await honcho_llm_call_inner(
+                provider,
+                model,
+                prompt,  # Will be ignored since we pass messages
+                max_tokens,
+                response_model,
+                json_mode,
+                stop_seqs,
+                gpt5_reasoning_effort,
+                gpt5_verbosity,
+                thinking_budget,
+                False,
+                converted_tools,
+                effective_tool_choice,
+                conversation_messages,
+            )
+
+        # Apply retry if enabled
+        if enable_retry:
+            call_func = retry(
+                stop=stop_after_attempt(retry_attempts),
+                wait=wait_exponential(multiplier=1, min=4, max=10),
+                before_sleep=before_retry_callback,
+            )(_call_with_messages)
+        else:
+            call_func = _call_with_messages
+
+        # Make the call
+        response = await call_func()
+
+        # Accumulate tokens from this iteration
+        total_input_tokens += response.input_tokens
+        total_output_tokens += response.output_tokens
+        total_cache_creation_tokens += response.cache_creation_input_tokens
+        total_cache_read_tokens += response.cache_read_input_tokens
+
+        # Check if there are tool calls
+        if not response.tool_calls_made:
+            # No tool calls, return final response
+            logger.debug("No tool calls in response, finishing")
+            response.tool_calls_made = all_tool_calls
+            response.input_tokens = total_input_tokens
+            response.output_tokens = total_output_tokens
+            response.cache_creation_input_tokens = total_cache_creation_tokens
+            response.cache_read_input_tokens = total_cache_read_tokens
+            return response
+
+        # Determine which provider we're using (reuse the helper)
+        current_provider, _, _, _, _ = get_provider_and_model()
+
+        # Add assistant message with tool calls to conversation
+        assistant_message = _format_assistant_tool_message(
+            current_provider, response.content, response.tool_calls_made
+        )
+        conversation_messages.append(assistant_message)
+
+        # Execute tools and add results
+        tool_results: list[dict[str, Any]] = []
+        for tool_call in response.tool_calls_made:
+            tool_name = tool_call["name"]
+            tool_input = tool_call["input"]
+            tool_id = tool_call.get("id", "")
+
+            logger.debug(f"Executing tool: {tool_name}")
+
+            try:
+                # Execute the tool
+                tool_result = await tool_executor(tool_name, tool_input)
+
+                # Store for Anthropic format
+                tool_results.append(
+                    {
+                        "tool_id": tool_id,
+                        "tool_name": tool_name,
+                        "result": tool_result,
+                    }
+                )
+
+                all_tool_calls.append(
+                    {
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                        "tool_result": tool_result,
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Tool execution failed for {tool_name}: {e}")
+                tool_results.append(
+                    {
+                        "tool_id": tool_id,
+                        "tool_name": tool_name,
+                        "result": f"Error: {str(e)}",
+                        "is_error": True,
+                    }
+                )
+
+        # Add tool result message in provider-specific format
+        _append_tool_results(current_provider, tool_results, conversation_messages)
+
+        # After first iteration, switch from "required" to "auto" to allow model to stop
+        if iteration == 0 and effective_tool_choice in ("required", "any"):
+            effective_tool_choice = "auto"
+            logger.debug(
+                "Switched tool_choice from 'required'/'any' to 'auto' after first iteration"
+            )
+
+        iteration += 1
+
+    # Max iterations reached
+    logger.warning(
+        f"Tool execution loop reached max iterations ({max_tool_iterations})"
+    )
+
+    # Make one final call to get a text response
+    _current_attempt.set(1)  # Reset attempt counter
+
+    async def _final_call() -> HonchoLLMCallResponse[Any]:
+        provider = llm_settings.PROVIDER
+        model = llm_settings.MODEL
+
+        client = CLIENTS.get(provider)
+        if not client:
+            raise ValueError(f"Missing client for {provider}")
+
+        # No tools for final call
+        return await honcho_llm_call_inner(
+            provider,
+            model,
+            prompt,
+            max_tokens,
+            response_model,
+            json_mode,
+            stop_seqs,
+            reasoning_effort,
+            verbosity,
+            thinking_budget_tokens,
+            False,
+            None,  # No tools
+            None,  # No tool_choice
+            conversation_messages,
+        )
+
+    if enable_retry:
+        final_call_func = retry(
+            stop=stop_after_attempt(retry_attempts),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            before_sleep=before_retry_callback,
+        )(_final_call)
+    else:
+        final_call_func = _final_call
+
+    final_response = await final_call_func()
+    final_response.tool_calls_made = all_tool_calls
+    # Include accumulated tokens from all iterations plus the final call
+    final_response.input_tokens = total_input_tokens + final_response.input_tokens
+    final_response.output_tokens = total_output_tokens + final_response.output_tokens
+    final_response.cache_creation_input_tokens = (
+        total_cache_creation_tokens + final_response.cache_creation_input_tokens
+    )
+    final_response.cache_read_input_tokens = (
+        total_cache_read_tokens + final_response.cache_read_input_tokens
+    )
+    return final_response
+
+
+def _format_assistant_tool_message(
+    provider: SupportedProviders,
+    content: Any,
+    tool_calls: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Format an assistant message with tool calls for a specific provider.
+
+    Args:
+        provider: The LLM provider
+        content: The text content from the response
+        tool_calls: List of tool call dicts with id, name, input keys
+
+    Returns:
+        Provider-formatted assistant message dict
+    """
+    if provider == "anthropic":
+        # Anthropic requires content to be a list of blocks including tool use blocks
+        content_blocks: list[dict[str, Any]] = []
+
+        # Add text content if present
+        if isinstance(content, str) and content:
+            content_blocks.append({"type": "text", "text": content})
+
+        # Add tool use blocks
+        for tool_call in tool_calls:
+            content_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": tool_call["id"],
+                    "name": tool_call["name"],
+                    "input": tool_call["input"],
+                }
+            )
+
+        return {
+            "role": "assistant",
+            "content": content_blocks,
+        }
+    elif provider == "google":
+        # Google format: model role with function_call parts
+        parts: list[dict[str, Any]] = []
+
+        # Add text content if present
+        if isinstance(content, str) and content:
+            parts.append({"text": content})
+
+        # Add function call parts with thought_signature if present
+        for tool_call in tool_calls:
+            part_data: dict[str, Any] = {
+                "function_call": {
+                    "name": tool_call["name"],
+                    "args": tool_call["input"],
+                }
+            }
+            # Include thought_signature if present (required by Gemini)
+            if "thought_signature" in tool_call:
+                part_data["thought_signature"] = tool_call["thought_signature"]
+            parts.append(part_data)
+
+        return {
+            "role": "model",
+            "parts": parts,
+        }
+    else:
+        # OpenAI format - must include tool_calls in the assistant message
+        openai_tool_calls: list[Any] = []
+        for tool_call in tool_calls:
+            openai_tool_calls.append(
+                {
+                    "id": tool_call["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tool_call["name"],
+                        "arguments": json.dumps(tool_call["input"]),
+                    },
+                }
+            )
+        return {
+            "role": "assistant",
+            "content": content if isinstance(content, str) else None,
+            "tool_calls": openai_tool_calls,
+        }
+
+
+def _append_tool_results(
+    provider: SupportedProviders,
+    tool_results: list[dict[str, Any]],
+    conversation_messages: list[dict[str, Any]],
+) -> None:
+    """
+    Append tool results to conversation messages in provider-specific format.
+
+    Args:
+        provider: The LLM provider
+        tool_results: List of tool result dicts with tool_id, tool_name, result, is_error keys
+        conversation_messages: The conversation to append to (modified in place)
+    """
+    if provider == "anthropic":
+        # Anthropic requires tool results in specific content blocks
+        result_blocks: list[dict[str, Any]] = []
+        for tr in tool_results:
+            result_blocks.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tr["tool_id"],
+                    "content": str(tr["result"]),
+                    "is_error": tr.get("is_error", False),
+                }
+            )
+
+        conversation_messages.append(
+            {
+                "role": "user",
+                "content": result_blocks,
+            }
+        )
+    elif provider == "google":
+        # Google format: user role with function_response parts
+        response_parts: list[dict[str, Any]] = []
+        for tr in tool_results:
+            response_parts.append(
+                {
+                    "function_response": {
+                        "name": tr["tool_name"],
+                        "response": {"result": str(tr["result"])},
+                    }
+                }
+            )
+
+        conversation_messages.append(
+            {
+                "role": "user",
+                "parts": response_parts,
+            }
+        )
+    else:
+        # OpenAI format - add each tool result as a separate message with role="tool"
+        for tr in tool_results:
+            conversation_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tr["tool_id"],
+                    "content": str(tr["result"]),
+                }
+            )
+
+
 @overload
 async def honcho_llm_call(
     llm_settings: LLMComponentSettings,
@@ -749,327 +1166,38 @@ async def honcho_llm_call(
     if not tools or not tool_executor:
         return await decorated()
 
-    # Tool execution loop
-    # Initialize conversation messages
-    conversation_messages: list[dict[str, Any]] = (
-        messages.copy() if messages else [{"role": "user", "content": prompt}]
+    # Validate and clamp max_tool_iterations
+    clamped_iterations = max(
+        MIN_TOOL_ITERATIONS, min(max_tool_iterations, MAX_TOOL_ITERATIONS)
     )
-
-    iteration = 0
-    all_tool_calls: list[dict[str, Any]] = []
-    total_input_tokens = 0  # Accumulate input tokens across all tool iterations
-    total_output_tokens = 0  # Accumulate output tokens across all tool iterations
-    total_cache_creation_tokens = 0  # Accumulate cache creation tokens
-    total_cache_read_tokens = 0  # Accumulate cache read tokens
-    # Track effective tool_choice - switches from "required" to "auto" after first iteration
-    effective_tool_choice = tool_choice
-
-    while iteration < max_tool_iterations:
-        logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
-
-        # Truncate BEFORE making the API call to avoid context length errors
-        if max_input_tokens is not None:
-            conversation_messages = truncate_messages_to_fit(
-                conversation_messages, max_input_tokens
-            )
-
-        # Create a wrapper that injects our messages
-        async def _call_with_messages(
-            effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
-            conversation_messages: list[dict[str, Any]] = conversation_messages,
-        ) -> HonchoLLMCallResponse[Any]:
-            # Use shared provider selection helper
-            provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
-                _get_provider_and_model()
-            )
-
-            client = CLIENTS.get(provider)
-            if not client:
-                raise ValueError(f"Missing client for {provider}")
-
-            converted_tools = (
-                convert_tools_for_provider(tools, provider) if tools else None
-            )
-
-            return await honcho_llm_call_inner(
-                provider,
-                model,
-                prompt,  # Will be ignored since we pass messages
-                max_tokens,
-                response_model,
-                json_mode,
-                stop_seqs,
-                gpt5_reasoning_effort,
-                gpt5_verbosity,
-                thinking_budget,
-                False,
-                converted_tools,
-                effective_tool_choice,
-                conversation_messages,
-            )
-
-        # Apply retry if enabled
-        if enable_retry:
-            call_func = retry(
-                stop=stop_after_attempt(retry_attempts),
-                wait=wait_exponential(multiplier=1, min=4, max=10),
-                before_sleep=before_retry_callback,
-            )(_call_with_messages)
-        else:
-            call_func = _call_with_messages
-
-        # Make the call
-        response = await call_func()
-
-        # Accumulate tokens from this iteration
-        total_input_tokens += response.input_tokens
-        total_output_tokens += response.output_tokens
-        total_cache_creation_tokens += response.cache_creation_input_tokens
-        total_cache_read_tokens += response.cache_read_input_tokens
-
-        # Check if there are tool calls
-        if not response.tool_calls_made:
-            # No tool calls, return final response
-            logger.debug("No tool calls in response, finishing")
-            response.tool_calls_made = all_tool_calls
-            response.input_tokens = total_input_tokens
-            response.output_tokens = total_output_tokens
-            response.cache_creation_input_tokens = total_cache_creation_tokens
-            response.cache_read_input_tokens = total_cache_read_tokens
-            return response
-
-        # Determine which provider we're using (reuse the helper)
-        current_provider, _, _, _, _ = _get_provider_and_model()
-
-        # Add assistant message with tool calls to conversation
-        # Format depends on provider
-        if current_provider == "anthropic":
-            # Anthropic requires content to be a list of blocks including tool use blocks
-            content_blocks: list[dict[str, Any]] = []
-
-            # Add text content if present
-            if isinstance(response.content, str) and response.content:
-                content_blocks.append({"type": "text", "text": response.content})
-
-            # Add tool use blocks
-            for tool_call in response.tool_calls_made:
-                content_blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": tool_call["id"],
-                        "name": tool_call["name"],
-                        "input": tool_call["input"],
-                    }
-                )
-
-            assistant_message: dict[str, Any] = {
-                "role": "assistant",
-                "content": content_blocks,
-            }
-        elif current_provider == "google":
-            # Google format: model role with function_call parts
-            parts: list[dict[str, Any]] = []
-
-            # Add text content if present
-            if isinstance(response.content, str) and response.content:
-                parts.append({"text": response.content})
-
-            # Add function call parts with thought_signature if present
-            for tool_call in response.tool_calls_made:
-                part_data: dict[str, Any] = {
-                    "function_call": {
-                        "name": tool_call["name"],
-                        "args": tool_call["input"],
-                    }
-                }
-                # Include thought_signature if present (required by Gemini)
-                if "thought_signature" in tool_call:
-                    part_data["thought_signature"] = tool_call["thought_signature"]
-                parts.append(part_data)
-
-            assistant_message = {
-                "role": "model",
-                "parts": parts,
-            }
-        else:
-            # OpenAI format - must include tool_calls in the assistant message
-            openai_tool_calls: list[Any] = []
-            for tool_call in response.tool_calls_made:
-                openai_tool_calls.append(
-                    {
-                        "id": tool_call["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tool_call["name"],
-                            "arguments": json.dumps(tool_call["input"]),
-                        },
-                    }
-                )
-            assistant_message = {
-                "role": "assistant",
-                "content": response.content
-                if isinstance(response.content, str)
-                else None,
-                "tool_calls": openai_tool_calls,
-            }
-
-        conversation_messages.append(assistant_message)
-
-        # Execute tools and add results
-        tool_results: list[dict[str, Any]] = []
-        for tool_call in response.tool_calls_made:
-            tool_name = tool_call["name"]
-            tool_input = tool_call["input"]
-            tool_id = tool_call.get("id", "")
-
-            logger.debug(f"Executing tool: {tool_name}")
-
-            try:
-                # Execute the tool
-                tool_result = await tool_executor(tool_name, tool_input)
-
-                # Store for Anthropic format
-                tool_results.append(
-                    {
-                        "tool_id": tool_id,
-                        "tool_name": tool_name,
-                        "result": tool_result,
-                    }
-                )
-
-                all_tool_calls.append(
-                    {
-                        "tool_name": tool_name,
-                        "tool_input": tool_input,
-                        "tool_result": tool_result,
-                    }
-                )
-
-            except Exception as e:
-                logger.error(f"Tool execution failed for {tool_name}: {e}")
-                tool_results.append(
-                    {
-                        "tool_id": tool_id,
-                        "tool_name": tool_name,
-                        "result": f"Error: {str(e)}",
-                        "is_error": True,
-                    }
-                )
-
-        # Add tool result message in provider-specific format
-        if current_provider == "anthropic":
-            # Anthropic requires tool results in specific content blocks
-            result_blocks: list[dict[str, Any]] = []
-            for tr in tool_results:
-                result_blocks.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tr["tool_id"],
-                        "content": str(tr["result"]),
-                        "is_error": tr.get("is_error", False),
-                    }
-                )
-
-            tool_result_message = {
-                "role": "user",
-                "content": result_blocks,
-            }
-        elif current_provider == "google":
-            # Google format: user role with function_response parts
-            response_parts: list[dict[str, Any]] = []
-            for tr in tool_results:
-                response_parts.append(
-                    {
-                        "function_response": {
-                            "name": tr["tool_name"],
-                            "response": {"result": str(tr["result"])},
-                        }
-                    }
-                )
-
-            tool_result_message = {
-                "role": "user",
-                "parts": response_parts,
-            }
-        else:
-            # OpenAI format - add each tool result as a separate message with role="tool"
-            for tr in tool_results:
-                tool_result_message = {
-                    "role": "tool",
-                    "tool_call_id": tr["tool_id"],
-                    "content": str(tr["result"]),
-                }
-                conversation_messages.append(tool_result_message)
-            # Skip the append below since we already added messages
-            tool_result_message = None  # type: ignore
-
-        if tool_result_message is not None:
-            conversation_messages.append(tool_result_message)
-
-        # After first iteration, switch from "required" to "auto" to allow model to stop
-        if iteration == 0 and effective_tool_choice in ("required", "any"):
-            effective_tool_choice = "auto"
-            logger.debug(
-                "Switched tool_choice from 'required'/'any' to 'auto' after first iteration"
-            )
-
-        iteration += 1
-
-    # Max iterations reached
-    logger.warning(
-        f"Tool execution loop reached max iterations ({max_tool_iterations})"
-    )
-
-    # Make one final call to get a text response
-    _current_attempt.set(1)  # Reset attempt counter
-
-    async def _final_call() -> HonchoLLMCallResponse[Any]:
-        provider = llm_settings.PROVIDER
-        model = llm_settings.MODEL
-
-        client = CLIENTS.get(provider)
-        if not client:
-            raise ValueError(f"Missing client for {provider}")
-
-        # No tools for final call
-        return await honcho_llm_call_inner(
-            provider,
-            model,
-            prompt,
-            max_tokens,
-            response_model,
-            json_mode,
-            stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
-            False,
-            None,  # No tools
-            None,  # No tool_choice
-            conversation_messages,
+    if clamped_iterations != max_tool_iterations:
+        logger.warning(
+            f"max_tool_iterations {max_tool_iterations} clamped to {clamped_iterations} "
+            + f"(valid range: {MIN_TOOL_ITERATIONS}-{MAX_TOOL_ITERATIONS})"
         )
 
-    if enable_retry:
-        final_call_func = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            before_sleep=before_retry_callback,
-        )(_final_call)
-    else:
-        final_call_func = _final_call
-
-    final_response = await final_call_func()
-    final_response.tool_calls_made = all_tool_calls
-    # Include accumulated tokens from all iterations plus the final call
-    final_response.input_tokens = total_input_tokens + final_response.input_tokens
-    final_response.output_tokens = total_output_tokens + final_response.output_tokens
-    final_response.cache_creation_input_tokens = (
-        total_cache_creation_tokens + final_response.cache_creation_input_tokens
+    # Delegate to the tool execution loop
+    return await _execute_tool_loop(
+        llm_settings=llm_settings,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+        tool_executor=tool_executor,
+        max_tool_iterations=clamped_iterations,
+        response_model=response_model,
+        json_mode=json_mode,
+        stop_seqs=stop_seqs,
+        reasoning_effort=reasoning_effort,
+        verbosity=verbosity,
+        thinking_budget_tokens=thinking_budget_tokens,
+        enable_retry=enable_retry,
+        retry_attempts=retry_attempts,
+        max_input_tokens=max_input_tokens,
+        get_provider_and_model=_get_provider_and_model,
+        before_retry_callback=before_retry_callback,
     )
-    final_response.cache_read_input_tokens = (
-        total_cache_read_tokens + final_response.cache_read_input_tokens
-    )
-    return final_response
 
 
 @overload
