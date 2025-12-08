@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -550,38 +551,43 @@ class DocumentCreate(DocumentBase):
     )
 
 
-class ObservationGet(BaseModel):
-    """Schema for listing observations with optional filters"""
+class ConclusionGet(BaseModel):
+    """Schema for listing conclusions with optional filters."""
 
     filters: dict[str, Any] | None = None
 
 
-class Observation(BaseModel):
-    """Observation response - external view of a document"""
+class Conclusion(BaseModel):
+    """Conclusion response - external view of a document."""
 
     id: str
     content: str
     observer: str = Field(
-        description="The peer who made the observation",
+        description="The peer who made the conclusion",
         serialization_alias="observer_id",
     )
     observed: str = Field(
-        description="The peer being observed", serialization_alias="observed_id"
+        description="The peer the conclusion is about",
+        serialization_alias="observed_id",
     )
     session_name: str = Field(serialization_alias="session_id")
     created_at: datetime.datetime
 
     model_config = ConfigDict(  # pyright: ignore
-        from_attributes=True, populate_by_name=True
+        from_attributes=True,
+        populate_by_name=True,
     )
 
 
-class ObservationQuery(BaseModel):
-    """Query parameters for semantic search of observations"""
+class ConclusionQuery(BaseModel):
+    """Query parameters for semantic search of conclusions."""
 
     query: str = Field(..., description="Semantic search query")
     top_k: int = Field(
-        default=10, ge=1, le=100, description="Number of results to return"
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of results to return",
     )
     distance: float | None = Field(
         default=None,
@@ -590,17 +596,18 @@ class ObservationQuery(BaseModel):
         description="Maximum cosine distance threshold for results",
     )
     filters: dict[str, Any] | None = Field(
-        default=None, description="Additional filters to apply"
+        default=None,
+        description="Additional filters to apply",
     )
 
 
-class ObservationCreate(BaseModel):
-    """Schema for creating a single observation"""
+class ConclusionCreate(BaseModel):
+    """Schema for creating a single conclusion."""
 
     content: Annotated[str, Field(min_length=1, max_length=65535)]
-    observer_id: str = Field(..., description="The peer making the observation")
-    observed_id: str = Field(..., description="The peer being observed")
-    session_id: str = Field(..., description="The session this observation relates to")
+    observer_id: str = Field(..., description="The peer making the conclusion")
+    observed_id: str = Field(..., description="The peer the conclusion is about")
+    session_id: str = Field(..., description="The session this conclusion relates to")
 
     _token_count: int = PrivateAttr(default=0)
 
@@ -619,10 +626,35 @@ class ObservationCreate(BaseModel):
         return self
 
 
-class ObservationBatchCreate(BaseModel):
-    """Schema for batch observation creation with a max of 100 observations"""
+class ConclusionBatchCreate(BaseModel):
+    """Schema for batch conclusion creation with a max of 100 conclusions."""
 
-    observations: list[ObservationCreate] = Field(..., min_length=1, max_length=100)
+    conclusions: list[ConclusionCreate] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        validation_alias=AliasChoices("conclusions", "observations"),
+    )
+
+
+class ObservationGet(ConclusionGet):
+    """Deprecated: use ConclusionGet."""
+
+
+class Observation(Conclusion):
+    """Deprecated: use Conclusion."""
+
+
+class ObservationQuery(ConclusionQuery):
+    """Deprecated: use ConclusionQuery."""
+
+
+class ObservationCreate(ConclusionCreate):
+    """Deprecated: use ConclusionCreate."""
+
+
+class ObservationBatchCreate(ConclusionBatchCreate):
+    """Deprecated: use ConclusionBatchCreate."""
 
 
 class MessageSearchOptions(BaseModel):
@@ -723,9 +755,12 @@ class MessageBulkData(BaseModel):
     workspace_name: str
 
 
-class SessionDeriverStatus(BaseModel):
+class SessionQueueStatus(BaseModel):
+    """Status for a specific session within the processing queue."""
+
     session_id: str | None = Field(
-        default=None, description="Session ID if filtered by session"
+        default=None,
+        description="Session ID if filtered by session",
     )
     total_work_units: int = Field(description="Total work units")
     completed_work_units: int = Field(description="Completed work units")
@@ -735,16 +770,27 @@ class SessionDeriverStatus(BaseModel):
     pending_work_units: int = Field(description="Work units waiting to be processed")
 
 
-class DeriverStatus(BaseModel):
+class QueueStatus(BaseModel):
+    """Aggregated processing queue status."""
+
     total_work_units: int = Field(description="Total work units")
     completed_work_units: int = Field(description="Completed work units")
     in_progress_work_units: int = Field(
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
-    sessions: dict[str, SessionDeriverStatus] | None = Field(
-        default=None, description="Per-session status when not filtered by session"
+    sessions: dict[str, SessionQueueStatus] | None = Field(
+        default=None,
+        description="Per-session status when not filtered by session",
     )
+
+
+class SessionDeriverStatus(SessionQueueStatus):
+    """Deprecated: use SessionQueueStatus."""
+
+
+class DeriverStatus(QueueStatus):
+    """Deprecated: use QueueStatus."""
 
 
 # Dream trigger schema
