@@ -1,26 +1,22 @@
 ---
 title: Queue Status
-description: Learn how to check the status of the ~~Deriver~~ Reasoning
+description: Learn how to check the status of Honcho's reasoning
 icon: "lines-leaning"
 ---
 
-TODO: gotta rename this function and update these docs
+Whenever `Messages` are stored in Honcho, a background process kicks off to [reason](/docs/v2/documentation/core-concepts/architecture#reasoning-layer) about the conversation and generate insights.
 
-Whenever `Messages` are stored in Honcho, a background process called the
-[Deriver](/docs/v2/documentation/core-concepts/architecture#reasoning-layer) is
-triggered to reason about the conversation and generate insights.
-
-The Deriver is an asynchronous process and, depending on load may not immediately
-generated insights for the latest message you've sent. To help with this, Honcho
-provides several utilities to check the status of the Deriver.
+Reasoning is an asynchronous process and, depending on load may not immediately
+generate insights for the latest message you've sent. To help with this, Honcho
+provides several utilities to check the status of the queue.
 
 <CodeGroup>
 ```python Python
 from honcho import Honcho
 honcho = Honcho()
 
-status = honcho.get_deriver_status()
-honcho.poll_deriver_status()
+status = honcho.get_queue_status()
+honcho.poll_queue_status()
 ```
 
 ```typescript typescript
@@ -28,8 +24,8 @@ import { Honcho } from '@honcho-ai/sdk';
 
 const honcho = new Honcho({});
 
-const status = await honcho.getDeriverStatus();
-await honcho.pollDeriverStatus();
+const status = await honcho.getQueueStatus();
+await honcho.pollQueueStatus();
 ```
 </CodeGroup>
 
@@ -37,7 +33,7 @@ Output types
 
 <CodeGroup>
 ```python Python
-class DeriverStatus(BaseModel):
+class QueueStatus(BaseModel):
     completed_work_units: int
     """Completed work units"""
 
@@ -59,7 +55,7 @@ Promise<{
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: Record<string, QueueStatus.Sessions>
   }>
 
 ```
@@ -78,21 +74,21 @@ work_units will be processed in parallel
 - If local representations are turned in a Session then a `Message` will
   generate an additional work unit for every `Peer` that has `observe_others=True`
 
-The `get_deriver_status` and `poll_deriver_status` methods can take additional
+The `get_queue_status` and `poll_queue_status` methods can take additional
 parameters to scope the status to a specific work unit
 
 <CodeGroup>
 ```python Python
-def get_deriver_status(
+def get_queue_status(
         self,
         observer_id: str | None = None,
         sender_id: str | None = None,
         session_id: str | None = None,
-    ) -> DeriverStatus:
+    ) -> QueueStatus:
 ```
 ```typescript TypeScript
 
-export const DeriverStatusOptionsSchema = z.object({
+export const QueueStatusOptionsSchema = z.object({
   observerId: z.string().optional(),
   senderId: z.string().optional(),
   sessionId: z.string().optional(),
@@ -105,30 +101,30 @@ export const DeriverStatusOptionsSchema = z.object({
 ```
 </CodeGroup>
 
-Additionally, there are deriver status and polling deriver status methods
+Additionally, there are queue status and polling queue status methods
 available on the `Session` objects in each of the SDKs.
 
-Below are the function signatures for the session level deriver status method
+Below are the function signatures for the session level queue status method
 
 <CodeGroup>
 ```python python
 @validate_call
-    def get_deriver_status(
+    def get_queue_status(
         self,
         observer_id: str | None = None,
         sender_id: str | None = None,
-    ) -> DeriverStatus:
+    ) -> QueueStatus:
 ```
 
 ```typescript TypeScript
-async getDeriverStatus(
-    options?: Omit<DeriverStatusOptions, 'sessionId'>
+async getQueueStatus(
+    options?: Omit<QueueStatusOptions, 'sessionId'>
   ): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: Record<string, QueueStatus.Sessions>
   }>
 ```
 </CodeGroup>
