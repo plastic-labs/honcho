@@ -102,7 +102,7 @@ jobs:
             FULL_OUTPUT=$(flyctl machines run "${FLY_RUNNER_IMAGE}" \
               -a "${FLY_RUNNER_APP}" \
               --region "${FLY_RUNNER_REGION}" \
-              --env GH_TOKEN=${{ secrets.GH_TOKEN }} \
+              --env GH_TOKEN=${{ secrets.GH_TOKEN_ACTIONS }} \
               --env RUN_ID=${{ github.run_id }} \
               --env TEST_TYPE="honcho-unified-runner" \
               --vm-size shared-cpu-8x \
@@ -117,7 +117,7 @@ jobs:
       - name: Wait for runner to be online
         id: wait-for-runner
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ACTIONS }}
           MAX_WAIT: 420
         run: |
           set -euo pipefail
@@ -126,7 +126,7 @@ jobs:
             exit 1
           fi
 
-          EXPECTED_RUNNER_NAME="groudon-e2e-runner-${{ github.run_id }}"
+          EXPECTED_RUNNER_NAME="honcho-unified-runner-${{ github.run_id }}"
           echo "Waiting for runner named ${EXPECTED_RUNNER_NAME} to come online..."
 
           WAITED=0
