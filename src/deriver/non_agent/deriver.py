@@ -247,4 +247,21 @@ async def process_representation_tasks_batch(
         "count",
     )
 
+    if settings.DERIVER.LOG_OBSERVATIONS:
+        # Log actual observations created as blob metrics
+        if observations.explicit:
+            accumulate_metric(
+                f"minimal_deriver_{latest_message.id}_{observer}",
+                "explicit_observations",
+                "\n".join(f"  • {obs}" for obs in observations.explicit),
+                "blob",
+            )
+        if observations.deductive:
+            accumulate_metric(
+                f"minimal_deriver_{latest_message.id}_{observer}",
+                "deductive_observations",
+                "\n".join(f"  • {obs}" for obs in observations.deductive),
+                "blob",
+            )
+
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observer}")

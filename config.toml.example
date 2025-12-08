@@ -60,6 +60,10 @@ EMBEDDING_PROVIDER = "openai"
 # GROQ_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
 
+# Separate vLLM endpoint (for local models)
+# VLLM_API_KEY = "your-api-key"
+# VLLM_BASE_URL = "your-base-url"
+
 # Deriver settings
 [deriver]
 ENABLED = true
@@ -73,8 +77,9 @@ MODEL = "gemini-2.5-flash-lite"
 # BACKUP_PROVIDER = "anthropic"
 # BACKUP_MODEL = "claude-haiku-4-5"
 DEDUPLICATE = true
-MAX_OUTPUT_TOKENS = 10000
+MAX_OUTPUT_TOKENS = 4096
 THINKING_BUDGET_TOKENS = 1024
+LOG_OBSERVATIONS = false
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 4096
 

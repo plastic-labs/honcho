@@ -225,11 +225,11 @@ if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BAS
         base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
     )
 
-# NOTE: user must know whether they want to use 'custom' or 'vllm'
-if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
+# vLLM uses separate settings for local model serving
+if settings.LLM.VLLM_API_KEY and settings.LLM.VLLM_BASE_URL:
     CLIENTS["vllm"] = AsyncOpenAI(
-        api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
-        base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
+        api_key=settings.LLM.VLLM_API_KEY,
+        base_url=settings.LLM.VLLM_BASE_URL,
     )
 
 if settings.LLM.GEMINI_API_KEY:
