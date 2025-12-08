@@ -1,0 +1,175 @@
+---
+title: 'Representation Scopes'
+description: 'Reasoning is on—control whose perspective it runs from'
+icon: 'circle'
+---
+
+Once reasoning is enabled (see [Toggle Reasoning](/v2/documentation/features/advanced/toggle-reasoning)), you control **whose perspective** it runs from and **who gets observed**. This page covers:
+
+1. **Scoping** — global vs local representations
+2. **Configuration** — the `observe_me` and `observe_others` flags
+3. **Retrieval** — accessing scoped reasoning results via `working_rep()`
+
+Honcho supports two scoping modes:
+
+| Scope | Description |
+|-------|-------------|
+| **Global** (default) | One model per peer, aggregating all their messages across sessions. Every agent sees the same representation. |
+| **Local** | Directional models where each observer builds a separate representation based only on what they've personally witnessed. |
+
+## Why Local Representations?
+
+Global scope works well when every agent should share the same knowledge. Local scope is useful for games, multi-agent simulations, or any scenario where information asymmetry matters.
+
+**Example**: Alice lies to Bob but tells the truth to Charlie.
+
+```
+Alice → Bob:    "I had pancakes for breakfast."
+Alice → Charlie: "I didn't eat breakfast. I lied to Bob."
+```
+
+With global representations, Bob could query Honcho and discover the lie. With local representations, Bob's model of Alice only includes what Bob has directly observed—so he still believes Alice ate pancakes.
+
+<img src="/images/local-vs-global-reps.png" alt="Global vs Local Representations" />
+
+<Note>
+Local representations are disabled by default. Enable them only when you need perspective-taking or information asymmetry.
+</Note>
+
+## Session-Peer Configuration
+
+Control observation behavior per peer within a session using two flags:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `observe_me` | `bool` | `true` | Whether this peer can be observed by others. Overrides peer-level setting. |
+| `observe_others` | `bool` | `false` | Whether this peer builds local representations of other peers. |
+
+To enable local representations, set `observe_others=true` on at least one peer while keeping `observe_me=true` on the peers you want observed.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho, SessionPeerConfig
+
+honcho = Honcho()
+session = honcho.session("game-session")
+
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
+
+# Default: global representations only
+session.add_peers([alice, bob])
+
+# Enable Bob to form local representations of others
+session.set_peer_config(bob, SessionPeerConfig(observe_others=True))
+
+# Make Alice invisible to local observation (but still globally tracked)
+session.set_peer_config(alice, SessionPeerConfig(observe_me=False))
+
+# Check current config
+print(session.get_peer_config(bob))
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+const honcho = new Honcho({});
+const session = await honcho.session("game-session");
+
+const alice = await honcho.peer("alice");
+const bob = await honcho.peer("bob");
+
+await session.addPeers([alice, bob]);
+
+await session.setPeerConfig(bob, { observe_others: true });
+await session.setPeerConfig(alice, { observe_me: false });
+
+console.log(await session.getPeerConfig(bob));
+```
+</CodeGroup>
+
+## Accessing Scoped Reasoning Results
+
+The reasoning pipeline produces **working representations**—cached models stored on `Peer` objects (global) or `SessionPeer` objects (local). Retrieve them with `working_rep()` for fast access without invoking the LLM.
+
+<Info>
+Use `working_rep()` for dashboards and batch analytics. Use `peer.chat()` when you need fresh, query-specific reasoning.
+</Info>
+
+### Retrieval
+
+<CodeGroup>
+```python Python
+# Global representation of user
+user_rep = session.working_rep("user-123")
+
+# Local representation: what bob knows about alice
+local_rep = session.working_rep("bob", target="alice")
+
+# From peer object directly
+peer_rep = user.working_rep()
+```
+```typescript TypeScript
+const userRep = await session.workingRep("user-123");
+const localRep = await session.workingRep("bob", { target: "alice" });
+const peerRep = await user.workingRep();
+```
+</CodeGroup>
+
+### Semantic Search Parameters
+
+Filter cached observations by relevance:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `search_query` | `str` | Semantic query to filter observations |
+| `search_top_k` | `int` | Number of results to include (1–100) |
+| `search_max_distance` | `float` | Maximum semantic distance (0.0–1.0) |
+| `include_most_derived` | `bool` | Include most recently derived observations |
+| `max_observations` | `int` | Cap on total observations returned (1–100) |
+
+<CodeGroup>
+```python Python
+billing_context = session.working_rep(
+    "user-123",
+    search_query="billing issues",
+    search_top_k=10,
+    include_most_derived=True
+)
+```
+```typescript TypeScript
+const billingContext = await session.workingRep("user-123", {
+  searchQuery: "billing issues",
+  searchTopK: 10,
+  includeMostDerived: true
+});
+```
+</CodeGroup>
+
+### When Representations Update
+
+Representations refresh automatically through the reasoning pipeline when new messages arrive. The pipeline respects your scoping configuration—global representations aggregate across all sessions, while local representations only include what the observing peer has witnessed in sessions where `observe_others=true`.
+
+### Cached vs On-Demand
+
+| Method | Speed | Use Case |
+|--------|-------|----------|
+| `working_rep()` | Fast (cached) | Dashboards, analytics, consistent snapshots |
+| `peer.chat()` | Slower (LLM) | Custom queries, fresh analysis, relationship questions |
+
+<CodeGroup>
+```python Python
+# Fast: retrieve cached model
+cached = session.working_rep("user-123")
+
+# Fresh: ask a specific question
+fresh = user.chat("What frustrates this user most?", session_id=session.id)
+```
+```typescript TypeScript
+const cached = await session.workingRep("user-123");
+const fresh = await user.chat("What frustrates this user most?", { sessionId: session.id });
+```
+</CodeGroup>
+
+<Note>
+Call `chat()` at least once before relying on `working_rep()` to ensure a representation has been generated.
+</Note>

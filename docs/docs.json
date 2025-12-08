@@ -48,7 +48,8 @@
                     "pages": [
                       "v2/documentation/features/advanced/overview",
                       "v2/documentation/features/advanced/queue-status",
-                      "v2/documentation/features/advanced/configuration",
+                      "v2/documentation/features/advanced/toggle-reasoning",
+                      "v2/documentation/features/advanced/representation-scopes",
                       "v2/documentation/features/advanced/summarizer",
                       "v2/documentation/features/advanced/search",
                       "v2/documentation/features/advanced/using-filters",
