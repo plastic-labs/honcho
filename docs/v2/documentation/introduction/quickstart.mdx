@@ -6,6 +6,8 @@ sidebarTitle: "Quickstart"
 
 Let's start with a simple implementation.
 
+TODO: move "next Steps" up here to "tell em what you're gonna tell em"
+
 <Note>
 Running the code below requires an API key. Create and account and get your API key at [app.honcho.dev](https://app.honcho.dev) under "API KEYS".
 
@@ -47,7 +49,7 @@ TODO: change default environment to production, require an API key.
 from honcho import Honcho
 
 # Initialize client
-honcho = Honcho(workspace="first-honcho-test")
+honcho = Honcho(workspace="first-honcho-test", api_key=HONCHO_API_KEY)
 
 ```
 
@@ -55,7 +57,7 @@ honcho = Honcho(workspace="first-honcho-test")
 import { Honcho } from '@honcho-ai/sdk';
 
 // Initialize client
-const honcho = new Honcho({ workspace = "first-honcho-test" });
+const honcho = new Honcho({ workspace = "first-honcho-test", apiKey = HONCHO_API_KEY });
 
 ```
 </CodeGroup>
@@ -213,7 +215,7 @@ for (const sessionData of data.sessions) {
 
 #### 5. Query for Insights
 
-Now ask Honcho what it's learned - this is where the magic happens:
+Now ask Honcho what it's learned--this is where the magic happens:
 
 <CodeGroup>
 ```python Python

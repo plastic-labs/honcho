@@ -12,6 +12,8 @@ If you'd like to experience this methodology first-hand, try out [Honcho Chat](h
 
 ## Why Reasoning?
 
+TODO: workshop, i think it's a bit wordy?
+
 Traditional RAG systems treat memory as static storage--they retrieve what was explicitly said and surface it when semantically similar queries appear. Some approaches try to store structured "facts" in relational databases or knowledge graphs, but these assume you already know what's worth storing and how to structure it. Either way, once stored, those artifacts are static. You can only get back what was put in, not what logically follows. These systems are brittle, deal poorly with contradictions and incomplete information, and miss the dynamic nature of understanding.
 
 Honcho uses formal logic to power its system because we believe you need reasoning to access insights that are only accessible by *rigorously thinking* about your data. Static retrieval can't surface implicit connections, struggles when new information contradicts old data, and fails when you need to make predictions under uncertainty.
@@ -22,7 +24,7 @@ Formal logic reasoning is AI-native--it performs the rigorous, compute-intensive
 
 Honcho's memory system is powered by custom models trained to perform three types of formal, logical reasoning: deduction, induction, and abduction. The system takes what was explicitly stated and uses them as premises to deduce conclusions based on what the model can be certain about. It then uses those conclusions as premises to identify patterns, or induce probabilistic conclusions. And it can use all of those to arrive at the simplest explanations for previous conclusions, or abductive conclusions.
 
-Why formal logic specifically? LLMs are uniquely well-suited for this type of reasoning. Deduction, induction, and abduction tasks are well-represented in pretraining data, making them economical and reliable. LLMs can maintain consistent reasoning across thousands of observations without cognitive fatigue or belief resistance--formal logic is actually harder for humans to do reliably, which is where models demonstrate clear advantages. The structured outputs are also composable, meaning logical conclusions can be stored, retrieved, and combined programmatically for dynamic context assembly.
+Why formal logic specifically? LLMs are uniquely well-suited for this reasoning task--it's well-represented in the pretraining data. LLMs can maintain consistent reasoning across thousands of observations without cognitive fatigue or belief resistance--which is extremely hard for humans to do reliably. The outputs are also composable, meaning logical conclusions can be stored, retrieved, and combined programmatically for dynamic context assembly.
 
 Here's an example of the data structure the reasoning models generate:
 

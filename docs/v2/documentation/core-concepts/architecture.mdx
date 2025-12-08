@@ -71,7 +71,7 @@ TODO: devs tell me if this section is legit or not pls
 
 At a high level, Honcho has three main components that work together.
 
-The API layer is your primary interface--a REST API for managing workspaces, peers, sessions, and messages, plus specialized endpoints for querying representations. The chat endpoint (`/peers/{peer_id}/chat`) gives you reasoning-informed responses about a peer, and the get_context endpoint (`/sessions/{session_id}/context`) retrieves relevant context for generating agent responses. Authentication uses JWTs that can be scoped to workspace, peer, or session level for fine-grained access control.
+The API layer is your primary interface--a REST API for managing workspaces, peers, sessions, and messages, plus specialized endpoints for querying representations. The chat endpoint (`/peers/{peer_id}/chat`) gives you reasoning-informed responses about a peer, and the get_context endpoint (`/sessions/{session_id}/get_context`) retrieves relevant context for generating agent responses. Authentication uses JWTs that can be scoped to workspace, peer, or session level for fine-grained access control.
 
 Storage runs on PostgreSQL with pgvector for semantic search. All the structured data--workspaces, peers, sessions, messages--lives in relational tables, while reasoning outputs are stored as vectors in internal collections for similarity search. Token counts are tracked automatically for usage monitoring, and JSONB metadata fields let you extend primitives with custom data.
 
