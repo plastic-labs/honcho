@@ -14,8 +14,6 @@ jobs:
     name: Start Fly Runner
     uses: ./.github/workflows/start-fly-runner.yml
     secrets: inherit
-    with:
-      test-type: unified
 
   wait-for-runner:
     name: Wait for Runner
@@ -33,22 +31,6 @@ jobs:
     needs: [start-runner, wait-for-runner]
     if: needs.start-runner.outputs.runner-ready == 'true'
     timeout-minutes: 90
-
-    services:
-      database:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_DB: test_db
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     env:
       PYTHONUNBUFFERED: "1"
@@ -78,6 +60,27 @@ jobs:
       - name: Verify Docker is available
         run: docker info
 
+      - name: Start PostgreSQL database
+        run: |
+          docker run -d \
+            --name postgres \
+            -e POSTGRES_DB=test_db \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -p 5433:5432 \
+            pgvector/pgvector:pg15
+
+          # Wait for database to be ready
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..30}; do
+            if docker exec postgres pg_isready -U postgres; then
+              echo "✅ PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+
       - name: Install uv
         uses: astral-sh/setup-uv@v2
         with:
@@ -101,9 +104,9 @@ jobs:
     needs: [start-runner, unified-tests]
     if: always() && needs.start-runner.outputs.machine-id != ''
     env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
       GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-      FLY_RUNNER_APP: ${{ vars.FLY_RUNNER_APP || 'honcho-runner' }}
+      FLY_RUNNER_APP: ivysaur
     steps:
       - name: Setup Fly CLI
         uses: superfly/flyctl-actions/setup-flyctl@1.5
