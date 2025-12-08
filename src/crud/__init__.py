@@ -1,5 +1,5 @@
 from .collection import get_collection, get_or_create_collection
-from .deriver import get_deriver_status
+from .deriver import get_deriver_status, get_queue_status
 from .document import (
     create_documents,
     create_observations,
@@ -61,6 +61,7 @@ __all__ = [
     "get_or_create_collection",
     # Deriver
     "get_deriver_status",
+    "get_queue_status",
     # Document
     "create_documents",
     "create_observations",

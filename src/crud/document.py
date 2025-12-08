@@ -299,7 +299,7 @@ async def delete_document_by_id(
 
 async def create_observations(
     db: AsyncSession,
-    observations: list[schemas.ObservationCreate],
+    observations: Sequence[schemas.ConclusionCreate],
     workspace_name: str,
 ) -> list[models.Document]:
     """
