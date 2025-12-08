@@ -1,7 +1,7 @@
 import datetime
 import ipaddress
 from enum import Enum
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, ClassVar, Self
 from urllib.parse import urlparse
 
 import tiktoken
@@ -608,21 +608,42 @@ class ConclusionBatchCreate(BaseModel):
 class ObservationGet(ConclusionGet):
     """Deprecated: use ConclusionGet."""
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(title="ObservationGet")
+
 
 class Observation(Conclusion):
     """Deprecated: use Conclusion."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(title="Observation")
 
 
 class ObservationQuery(ConclusionQuery):
     """Deprecated: use ConclusionQuery."""
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(title="ObservationQuery")
+
 
 class ObservationCreate(ConclusionCreate):
     """Deprecated: use ConclusionCreate."""
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(title="ObservationCreate")
+
 
 class ObservationBatchCreate(ConclusionBatchCreate):
     """Deprecated: use ConclusionBatchCreate."""
+
+    observations: list[ObservationCreate] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        serialization_alias="observations",
+        validation_alias=AliasChoices("observations", "conclusions"),
+    )
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        title="ObservationBatchCreate",
+        populate_by_name=True,
+    )
 
 
 class MessageSearchOptions(BaseModel):
@@ -752,9 +773,13 @@ class QueueStatus(BaseModel):
 class SessionDeriverStatus(SessionQueueStatus):
     """Deprecated: use SessionQueueStatus."""
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(title="SessionDeriverStatus")
+
 
 class DeriverStatus(QueueStatus):
     """Deprecated: use QueueStatus."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(title="DeriverStatus")
 
 
 # Dream trigger schema

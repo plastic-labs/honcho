@@ -133,9 +133,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     servers=[
-        {"url": "http://localhost:8000", "description": "Local Development Server"},
-        {"url": "https://demo.honcho.dev", "description": "Demo Server"},
         {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"},
+        {"url": "http://localhost:8000", "description": "Local Development Server"},
     ],
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",

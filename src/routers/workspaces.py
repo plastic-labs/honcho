@@ -159,7 +159,7 @@ async def get_queue_status(
 
 @router.get(
     "/{workspace_id}/deriver/status",
-    response_model=schemas.QueueStatus,
+    response_model=schemas.DeriverStatus,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
     deprecated=True,
 )
