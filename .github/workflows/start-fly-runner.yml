@@ -53,6 +53,14 @@ jobs:
           echo "Getting app info for ${FLY_RUNNER_APP}..."
           flyctl status -a "${FLY_RUNNER_APP}"
 
+      - name: Debug - Check GH_TOKEN_ACTIONS
+        run: |
+          echo "Token length: ${#GH_TOKEN}"
+          echo "Token starts with: ${GH_TOKEN:0:4}"
+          echo "Token ends with: ${GH_TOKEN: -4}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN_ACTIONS }}
+
       - name: Fly machine management
         id: machine-management
         env:
