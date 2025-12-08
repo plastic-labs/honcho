@@ -62,6 +62,9 @@ jobs:
 
       - name: Start PostgreSQL database
         run: |
+          # Clean up any existing postgres container from previous runs
+          docker rm -f postgres 2>/dev/null || true
+
           docker run -d \
             --name postgres \
             -e POSTGRES_DB=test_db \
