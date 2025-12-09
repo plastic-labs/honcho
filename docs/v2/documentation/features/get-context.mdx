@@ -6,6 +6,8 @@ icon: 'messages'
 
 The `get_context()` method is a powerful feature that retrieves formatted conversation context from sessions, making it easy to integrate with LLMs like OpenAI, Anthropic, and others. This guide covers everything you need to know about working with session context.
 
+TODO: if reasoning is on by default (which we're changing the package to do), doesn't this mean that a working rep gets assembled?
+
 By default, the context includes a blend of summary and messages which covers the entire history of the session. Summaries are automatically generated at intervals and recent messages are included depending on how many tokens the context is intended to be. You can specify any token limit you want, and can disable summaries to fill that limit entirely with recent messages.
 
 ## Basic Usage
@@ -95,7 +97,7 @@ context = session.get_context(summary=False, tokens=2000)
 
 ### Peer Representation in Context
 
-You can include a peer's representation and peer card in the context by specifying `peer_target`. This is useful for providing the LLM with knowledge about a specific peer.
+You can include a peer's [representation](/v2/documentation/core-concepts/representation) and peer card in the context by specifying `peer_target`. This is useful for providing the LLM with knowledge about a specific peer.
 
 <CodeGroup>
 ```python Python
@@ -141,7 +143,9 @@ context = session.get_context(
 
 ### Semantic Search with Last Message
 
-Use `last_user_message` to fetch semantically relevant observations based on the most recent message:
+Use `last_user_message` to fetch semantically relevant conclusions based on the most recent message:
+
+TODO: Update code here
 
 <CodeGroup>
 ```python Python

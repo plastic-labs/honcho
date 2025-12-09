@@ -18,7 +18,7 @@ Traditional RAG systems treat memory as static storage--they retrieve what was e
 
 Honcho uses formal logic to power its system because we believe you need reasoning to access insights that are only accessible by *rigorously thinking* about your data. Static retrieval can't surface implicit connections, struggles when new information contradicts old data, and fails when you need to make predictions under uncertainty.
 
-Formal logic reasoning is AI-native--it performs the rigorous, compute-intensive type of reasoning that humans struggle with, instantly and consistently. Honcho uses this capability to generate new insights that go beyond simple recall, transforming retrieved context into something richer and more useful.
+Formal logical reasoning is AI-native--it performs the rigorous, compute-intensive type of reasoning that humans struggle with, instantly and consistently. Honcho uses this capability to generate new insights that go beyond simple recall, transforming retrieved context into something richer and more useful.
 
 ## Formal Logic Framework
 
@@ -26,7 +26,7 @@ Honcho's memory system is powered by custom models trained to perform three type
 
 Why formal logic specifically? LLMs are uniquely well-suited for this reasoning task--it's well-represented in the pretraining data. LLMs can maintain consistent reasoning across thousands of observations without cognitive fatigue or belief resistance--which is extremely hard for humans to do reliably. The outputs are also composable, meaning logical conclusions can be stored, retrieved, and combined programmatically for dynamic context assembly.
 
-Here's an example of the data structure the reasoning models generate:
+Here's an example of a data structure the reasoning models generate:
 
 ```json
 {
@@ -54,7 +54,7 @@ Here's an example of the data structure the reasoning models generate:
 }
 ```
 
-The reasoning models output their "thinking" followed by things that were explicitly stated, which serve as premises to scaffold deductive conclusions. It's on top of this reasoning foundation that further reasoning is scaffolded. Currently that includes peer cards (key biographical information about the peer), duplicate checking (identifying redundant or contradictory information), induction (pattern recognition across multiple messages), and abduction (inferring the simplest explanations for observed behavior).
+The explicit reasoning model ([Neuromancer XR](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR)) outputs its "thinking" followed by things that were explicitly stated, which serve as premises to scaffold deductive conclusions. It's on top of this reasoning foundation that further reasoning is scaffolded. Currently that includes peer cards (key biographical information about the peer), consolidation (identifying redundant or contradictory information), induction (pattern recognition across multiple messages), and abduction (inferring the simplest explanations for observed behavior).
 
 The reasoning that Honcho does is something we're constantly iterating and improving on. Our goal is simple--provide the richest, most relevant context in the fastest, cheapest way possible in order to simulate statefulness in whatever setting you need.
 
@@ -62,7 +62,7 @@ The reasoning that Honcho does is something we're constantly iterating and impro
 
 When you write messages to Honcho, they're stored immediately and enqueued for background processing. Reasoning is computationally expensive, so processing asynchronously ensures fast writes while still providing rich reasoning capabilities. Messages are stored immediately without blocking, and session-based queues maintain chronological consistency so reasoning tasks affecting the same peer representation are always processed in order.
 
-The reasoning models extract explicit premises from message content, draw deductive conclusions from those premises, and use those conclusions to generate higher-order reasoning. These artifacts--observations, conclusions, summaries, peer cards--are stored as part of peer representations and indexed in vector collections for retrieval.
+The reasoning models extract explicit premises from message content, draw deductive conclusions from those premises, and use those conclusions to scaffold higher-order reasoning. These artifacts--observations, conclusions, summaries, peer cards--are stored as part of peer representations and indexed in vector collections for retrieval.
 
 ![Diagram for reasoning in Honcho](/images/reasoning.png)
 
@@ -70,14 +70,14 @@ The diagram above shows how agents write messages to Honcho, which triggers reas
 
 ## Balances & Design Choices
 
-Off-the-shelf LLMs can perform reasoning, but they aren't optimized for it. Honcho uses custom models trained specifically for structured output (consistent JSON schema with premises and conclusions), logical rigor (following formal reasoning rules rather than plausible-sounding text), and efficiency (smaller, faster models tuned for this specific task). This allows Honcho to reason more reliably and at lower cost than general-purpose frontier LLMs.
+Off-the-shelf LLMs can perform reasoning, but they aren't optimized for it. Honcho uses custom models trained specifically for logical rigor (following formal reasoning rules rather than plausible-sounding text), structured output (consistent JSON schema with premises and conclusions), and efficiency (smaller, faster models tuned for this specific task). This allows Honcho to reason more reliably and at lower cost than general-purpose frontier LLMs.
 
 The approach balances quality with practical constraints. Custom models are smaller and cheaper to run, background processing means reasoning doesn't block user interactions, and structured conclusions are more token-efficient than raw conversation history. Not every message requires full reasoning--we batch where appropriate to optimize update frequency.
 
-Honcho's reasoning capabilities are actively being improved. Current areas of development include enhanced inductive and abductive reasoning, multi-hop reasoning, and temporal reasoning. The system is designed to be extensible--new reasoning capabilities can be added without breaking existing functionality.
+Honcho's reasoning capabilities are actively being improved. Current areas of development include enhanced inductive and abductive reasoning, multi-hop  and temporal reasoning, and expanded file types and modalities. The system is designed to be extensible--new reasoning capabilities can be added without breaking existing functionality.
 
 <Note>
-If you find that the data you're uploading to Honcho isn't being reasoned over to your liking, we'd love to improve it for you and get your data ingested for free--reach out via [Discord](https://discord.gg/plasticlabs) or [email](mailto:support@plasticlabs.ai)!
+If you find that the data you're uploading to Honcho isn't being reasoned over to your liking, we'd love to improve it for you and ingest your data for free--reach out via [Discord](https://discord.gg/plasticlabs) or [email](mailto:support@plasticlabs.ai)!
 </Note>
 
 ## Next Steps

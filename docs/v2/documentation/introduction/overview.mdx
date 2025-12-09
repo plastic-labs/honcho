@@ -38,12 +38,27 @@ All the while usage dwindles, customers churn, and motivation to solve the probl
 
 Honcho has four storage primitives that work together:
 
+```mermaid
+ graph LR
+      W[Workspaces] -->|have| P[Peers]
+      W -->|have| S[Sessions]
+
+      S -->|have| SM[Messages]
+
+      P <-.->|many-to-many| S
+
+      style W fill:#B6DBFF,stroke:#333,color:#000
+      style P fill:#B6DBFF,stroke:#333,color:#000
+      style S fill:#B6DBFF,stroke:#333,color:#000
+      style SM fill:#B6DBFF,stroke:#333,color:#000
+```
+
 - **Workspaces** - Top-level containers that isolate different applications or environments
 - **Peers** - Any entity that persists over time (users, agents, objects, and more)
 - **Sessions** - Interaction threads between peers with temporal boundaries
 - **Messages** - Units of interaction that trigger reasoning
 
-When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical [*reasoning*](/v2/documentation/core-concepts/reasoning) to generate insights about each peer. These conclusions are stored as [*representations*](/v2/documentation/core-concepts/representation) that you can query to provide rich context for your agents.
+When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical [*reasoning*](/v2/documentation/core-concepts/reasoning) to generate conclusions about each peer. These conclusions are stored as [*representations*](/v2/documentation/core-concepts/representation) that you can query to provide rich context for your agents.
 
 ![Honcho Architecture](/images/architecture.png)
 

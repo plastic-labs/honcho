@@ -5,11 +5,11 @@ sidebarTitle: "Chat Endpoint"
 icon: "message-question"
 ---
 
-The Chat endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving observations or conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
+The Chat endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
 
 ## Basic Usage
 
-The simplest way to use the Dialectic endpoint is to ask a question and get a text response:
+The simplest way to use the chat endpoint is to ask a question and get a text response:
 
 <CodeGroup>
 ```python Python
@@ -41,7 +41,7 @@ console.log(answer);
 ```
 </CodeGroup>
 
-The Dialectic endpoint searches through the peer's representation--all the conclusions Honcho has reasoned about them--and synthesizes a natural language answer.
+The chat endpoint searches through the peer's representation--all the conclusions Honcho has reasoned about them--and synthesizes a natural language answer.
 
 ## Streaming Responses
 
@@ -112,7 +112,7 @@ Respond appropriately based on the context.
 
 ### Conditional Logic
 
-Use Dialectic responses to drive application logic:
+Use chat endpoint responses to drive application logic:
 
 <CodeGroup>
 ```python Python
@@ -167,12 +167,14 @@ const goals = await peer.chat("What are the user's main goals or objectives?");
 
 When you call `peer.chat(query)`:
 
-1. Honcho searches through the peer's representation - conclusions drawn from reasoning over their messages
+TODO: update with agentic approach?
+
+1. Honcho searches through the peer's representation--conclusions drawn from reasoning over their messages
 2. Retrieves conclusions semantically relevant to your query
 3. Synthesizes them into a coherent natural language answer
 4. Returns the answer to your application
 
-The *deriver* runs continuously in the background, reasoning over new messages and updating representations. The Dialectic endpoint always has access to Honcho's latest conclusions about the peer.
+Honcho [reasoning](/v2/documentation/core-concepts/reasoning) runs continuously in the background, processing new messages and updating representations. The chat endpoint always has access to Honcho's latest conclusions about the peer.
 
 ## Best Practices
 
@@ -180,12 +182,12 @@ The *deriver* runs continuously in the background, reasoning over new messages a
 Instead of "Tell me about the user", ask "What communication style does the user prefer?" You'll get more actionable answers.
 
 ### Let your LLM formulate queries
-The Dialectic endpoint shines when your LLM decides what it needs to know. This creates dynamic, context-aware personalization.
+The chat endpoint shines when your LLM decides what it needs to know. This creates dynamic, context-aware personalization.
 
 ### Use for runtime decisions
-Don't just use Dialectic for LLM prompts - use it to drive application logic, routing, and feature flags based on user behavior.
+Don't just use chat for LLM prompts - use it to drive application logic, routing, and feature flags based on user behavior.
 
 ### Combine with get_context()
 Use `get_context()` for conversation context and `peer.chat()` for specific insights. They complement each other.
 
-For more ideas on using the Dialectic endpoint, see our blog post on [flexible agent communication](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API#how-it-works).
+For more ideas on using the chat endpoint, see our blog post on [flexible agent communication](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-chat-API#how-it-works).
