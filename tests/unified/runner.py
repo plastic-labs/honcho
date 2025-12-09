@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -64,6 +65,72 @@ JUDGE_MODEL: str = "claude-haiku-4-5"
 
 class TestExecutionError(Exception):
     pass
+
+
+async def save_results_to_s3(
+    results: dict[str, tuple[str, float]],
+    failed_count: int,
+    total_count: int,
+    execution_time: float,
+) -> None:
+    """Save comprehensive test results to S3."""
+    try:
+        import boto3
+
+        s3_bucket = "honcho-unified-tests"
+        s3_prefix = "unified-test-results"
+        aws_region = "us-east-1"
+
+        if not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"):
+            logger.warning(
+                "AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set, skipping S3 upload"
+            )
+            return
+
+        # Create comprehensive results object
+        timestamp = datetime.now(timezone.utc).isoformat()
+        github_run_id = os.getenv("GITHUB_RUN_ID", "local")
+        github_sha = os.getenv("GITHUB_SHA", "unknown")
+        github_ref = os.getenv("GITHUB_REF_NAME", "unknown")
+
+        comprehensive_results = {
+            "timestamp": timestamp,
+            "summary": {
+                "total": total_count,
+                "passed": total_count - failed_count,
+                "failed": failed_count,
+                "execution_time": execution_time,
+            },
+            "metadata": {
+                "github_run_id": github_run_id,
+                "github_sha": github_sha,
+                "github_ref": github_ref,
+            },
+            "tests": [
+                {
+                    "name": name,
+                    "status": status,
+                    "duration": duration,
+                }
+                for name, (status, duration) in results.items()
+            ],
+        }
+
+        # Upload to S3
+        s3_client = boto3.client("s3", region_name=aws_region)  # pyright: ignore
+        key = f"{s3_prefix}/{github_run_id}-{timestamp}.json"
+
+        s3_client.put_object(  # pyright: ignore
+            Bucket=s3_bucket,
+            Key=key,
+            Body=json.dumps(comprehensive_results, indent=2).encode("utf-8"),
+            ContentType="application/json",
+        )
+
+        logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
+
+    except Exception as e:
+        logger.error(f"Failed to save results to S3: {e}", exc_info=True)
 
 
 class UnifiedTestExecutor:
@@ -511,8 +578,18 @@ class UnifiedTestRunner:
             print(f"Total execution time: {total_suite_time:.2f}s")
             print("=" * 60)
 
+            # 5. Save results and send notifications
+            if os.getenv("TEST_RESULTS_S3_BUCKET"):
+                await save_results_to_s3(
+                    results, failed_count, total_count, total_suite_time
+                )
+
+            # 6. Return non-zero exit code if tests failed
+            if failed_count > 0:
+                sys.exit(1)
+
         finally:
-            # 5. Cleanup
+            # 7. Cleanup
             logger.info("Cleaning up harness...")
             await self.harness.cleanup()
 

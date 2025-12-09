@@ -105,6 +105,9 @@ jobs:
       # Cache configuration
       CACHE_ENABLED: ${{ vars.CACHE_ENABLED }}
       CACHE_URL: ${{ secrets.CACHE_URL }}
+
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
