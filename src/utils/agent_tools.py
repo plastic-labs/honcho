@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -1120,6 +1121,7 @@ async def extract_preferences(
     }
 
 
+@dataclass
 class ToolContext:
     """Context object passed to tool handlers."""
 
@@ -1131,26 +1133,6 @@ class ToolContext:
     current_messages: list[models.Message] | None
     include_observation_ids: bool
     history_token_limit: int
-
-    def __init__(
-        self,
-        db: AsyncSession,
-        workspace_name: str,
-        observer: str,
-        observed: str,
-        session_name: str | None,
-        current_messages: list[models.Message] | None,
-        include_observation_ids: bool,
-        history_token_limit: int,
-    ):
-        self.db = db
-        self.workspace_name = workspace_name
-        self.observer = observer
-        self.observed = observed
-        self.session_name = session_name
-        self.current_messages = current_messages
-        self.include_observation_ids = include_observation_ids
-        self.history_token_limit = history_token_limit
 
 
 async def _handle_create_observations(

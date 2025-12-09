@@ -414,7 +414,7 @@ def mock_llm_call_functions():
             "src.utils.summarizer.create_long_summary", new_callable=AsyncMock
         ) as mock_long_summary,
         patch(
-            "src.dialectic.chat.agentic_chat", new_callable=AsyncMock
+            "src.routers.peers.agentic_chat", new_callable=AsyncMock
         ) as mock_agentic_chat,
     ):
         # Mock return values for different function types
