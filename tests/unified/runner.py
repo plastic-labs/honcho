@@ -579,7 +579,8 @@ class UnifiedTestRunner:
             print("=" * 60)
 
             # 5. Save results and send notifications
-            if os.getenv("TEST_RESULTS_S3_BUCKET"):
+            if os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"):
+                print("Saving results to S3...")
                 await save_results_to_s3(
                     results, failed_count, total_count, total_suite_time
                 )
