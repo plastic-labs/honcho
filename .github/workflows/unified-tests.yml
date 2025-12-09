@@ -1,0 +1,207 @@
+name: Unified Tests (Fly Runner)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  start-runner:
+    name: Start Fly Runner
+    uses: ./.github/workflows/start-fly-runner.yml
+    secrets: inherit
+
+  wait-for-runner:
+    name: Wait for Runner
+    runs-on: ubuntu-latest
+    needs: start-runner
+    if: needs.start-runner.outputs.runner-ready == 'true'
+    steps:
+      - run: |
+          echo "✅ Runner is ready. Waiting a few seconds before scheduling tests..."
+          sleep 5
+
+  unified-tests:
+    name: Run Unified Tests
+    runs-on: ${{ fromJSON(format('[{0}]', needs.start-runner.outputs.runner-labels)) }}
+    needs: [start-runner, wait-for-runner]
+    if: needs.start-runner.outputs.runner-ready == 'true'
+    timeout-minutes: 90
+    environment: unified-tests
+    permissions:
+      id-token: write  # Required for OIDC authentication with AWS
+      contents: read
+
+    env:
+      PYTHONUNBUFFERED: "1"
+
+      # Session and embedding configuration
+      SESSION_OBSERVERS_LIMIT: ${{ vars.SESSION_OBSERVERS_LIMIT }}
+      EMBED_MESSAGES: ${{ vars.EMBED_MESSAGES }}
+      MAX_EMBEDDING_TOKENS: ${{ vars.MAX_EMBEDDING_TOKENS }}
+      MAX_EMBEDDING_TOKENS_PER_REQUEST: ${{ vars.MAX_EMBEDDING_TOKENS_PER_REQUEST }}
+
+      # Auth configuration
+      AUTH_USE_AUTH: ${{ vars.AUTH_USE_AUTH }}
+      SENTRY_ENABLED: ${{ vars.SENTRY_ENABLED }}
+      VECTOR_STORE_TYPE: ${{ vars.VECTOR_STORE_TYPE }}
+
+      # LLM API Keys (secrets)
+      LLM_ANTHROPIC_API_KEY: ${{ secrets.LLM_ANTHROPIC_API_KEY }}
+      LLM_GEMINI_API_KEY: ${{ secrets.LLM_GEMINI_API_KEY }}
+      LLM_GROQ_API_KEY: ${{ secrets.LLM_GROQ_API_KEY }}
+      LLM_OPENAI_API_KEY: ${{ secrets.LLM_OPENAI_API_KEY }}
+      LLM_OPENAI_COMPATIBLE_API_KEY: ${{ secrets.LLM_OPENAI_COMPATIBLE_API_KEY }}
+      LLM_OPENAI_COMPATIBLE_BASE_URL: ${{ secrets.LLM_OPENAI_COMPATIBLE_BASE_URL }}
+      LLM_DEFAULT_MAX_TOKENS: ${{ vars.LLM_DEFAULT_MAX_TOKENS }}
+
+      # Deriver configuration
+      DERIVER_WORKERS: ${{ vars.DERIVER_WORKERS }}
+      DERIVER_POLLING_SLEEP_INTERVAL_SECONDS: ${{ vars.DERIVER_POLLING_SLEEP_INTERVAL_SECONDS }}
+      DERIVER_STALE_SESSION_TIMEOUT_MINUTES: ${{ vars.DERIVER_STALE_SESSION_TIMEOUT_MINUTES }}
+      DERIVER_PROVIDER: ${{ vars.DERIVER_PROVIDER }}
+      DERIVER_MODEL: ${{ vars.DERIVER_MODEL }}
+      DERIVER_MAX_OUTPUT_TOKENS: ${{ vars.DERIVER_MAX_OUTPUT_TOKENS }}
+      DERIVER_THINKING_BUDGET_TOKENS: ${{ vars.DERIVER_THINKING_BUDGET_TOKENS }}
+      DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS: ${{ vars.DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS }}
+      DERIVER_MAX_INPUT_TOKENS: ${{ vars.DERIVER_MAX_INPUT_TOKENS }}
+      DERIVER_REPRESENTATION_BATCH_MAX_TOKENS: ${{ vars.DERIVER_REPRESENTATION_BATCH_MAX_TOKENS }}
+      DERIVER_BACKUP_PROVIDER: ${{ vars.DERIVER_BACKUP_PROVIDER }}
+      DERIVER_BACKUP_MODEL: ${{ vars.DERIVER_BACKUP_MODEL }}
+
+      # Peer Card configuration
+      PEER_CARD_ENABLED: ${{ vars.PEER_CARD_ENABLED }}
+      PEER_CARD_PROVIDER: ${{ vars.PEER_CARD_PROVIDER }}
+      PEER_CARD_MODEL: ${{ vars.PEER_CARD_MODEL }}
+      PEER_CARD_MAX_OUTPUT_TOKENS: ${{ vars.PEER_CARD_MAX_OUTPUT_TOKENS }}
+      PEER_CARD_BACKUP_PROVIDER: ${{ vars.PEER_CARD_BACKUP_PROVIDER }}
+      PEER_CARD_BACKUP_MODEL: ${{ vars.PEER_CARD_BACKUP_MODEL }}
+
+      # Dialectic configuration
+      DIALECTIC_PROVIDER: ${{ vars.DIALECTIC_PROVIDER }}
+      DIALECTIC_MODEL: ${{ vars.DIALECTIC_MODEL }}
+      DIALECTIC_PERFORM_QUERY_GENERATION: ${{ vars.DIALECTIC_PERFORM_QUERY_GENERATION }}
+      DIALECTIC_MAX_OUTPUT_TOKENS: ${{ vars.DIALECTIC_MAX_OUTPUT_TOKENS }}
+      DIALECTIC_SEMANTIC_SEARCH_TOP_K: ${{ vars.DIALECTIC_SEMANTIC_SEARCH_TOP_K }}
+      DIALECTIC_SEMANTIC_SEARCH_MAX_DISTANCE: ${{ vars.DIALECTIC_SEMANTIC_SEARCH_MAX_DISTANCE }}
+      DIALECTIC_THINKING_BUDGET_TOKENS: ${{ vars.DIALECTIC_THINKING_BUDGET_TOKENS }}
+      DIALECTIC_BACKUP_PROVIDER: ${{ vars.DIALECTIC_BACKUP_PROVIDER }}
+      DIALECTIC_BACKUP_MODEL: ${{ vars.DIALECTIC_BACKUP_MODEL }}
+
+      # Summary configuration
+      SUMMARY_MESSAGES_PER_SHORT_SUMMARY: ${{ vars.SUMMARY_MESSAGES_PER_SHORT_SUMMARY }}
+      SUMMARY_MESSAGES_PER_LONG_SUMMARY: ${{ vars.SUMMARY_MESSAGES_PER_LONG_SUMMARY }}
+      SUMMARY_PROVIDER: ${{ vars.SUMMARY_PROVIDER }}
+      SUMMARY_MODEL: ${{ vars.SUMMARY_MODEL }}
+      SUMMARY_MAX_TOKENS_SHORT: ${{ vars.SUMMARY_MAX_TOKENS_SHORT }}
+      SUMMARY_MAX_TOKENS_LONG: ${{ vars.SUMMARY_MAX_TOKENS_LONG }}
+      SUMMARY_BACKUP_PROVIDER: ${{ vars.SUMMARY_BACKUP_PROVIDER }}
+      SUMMARY_BACKUP_MODEL: ${{ vars.SUMMARY_BACKUP_MODEL }}
+
+      # Dream configuration
+      DREAM_ENABLED: ${{ vars.DREAM_ENABLED }}
+
+      # Cache configuration
+      CACHE_ENABLED: ${{ vars.CACHE_ENABLED }}
+
+      TEST_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsS3Role
+          aws-region: us-east-1
+
+      - name: Verify Docker is available
+        run: docker info
+
+      - name: Verify uv and Python
+        run: |
+          uv --version
+          python3.12 --version
+          which python3.12
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run unified tests
+        run: uv run python -m tests.unified.run
+
+  cleanup-machine:
+    name: Cleanup Fly Machine and Runner
+    runs-on: ubuntu-latest
+    needs: [start-runner, unified-tests]
+    if: always() && needs.start-runner.outputs.machine-id != ''
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ACTIONS }}
+      FLY_RUNNER_APP: ivysaur
+    steps:
+      - name: Setup Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Cleanup fly machine
+        run: |
+          set -euo pipefail
+          MACHINE_ID="${{ needs.start-runner.outputs.machine-id }}"
+          if [ -z "$MACHINE_ID" ]; then
+            echo "No machine ID provided, skipping Fly cleanup."
+            exit 0
+          fi
+
+          echo "🧹 Cleaning up machine: $MACHINE_ID"
+          flyctl machines stop "$MACHINE_ID" -a "$FLY_RUNNER_APP" || echo "Machine may already be stopped"
+          flyctl machines destroy "$MACHINE_ID" -a "$FLY_RUNNER_APP" --force || echo "Failed to destroy machine"
+
+      - name: Cleanup GitHub runner
+        run: |
+          set -euo pipefail
+          RUNNER_NAME="${{ needs.start-runner.outputs.runner-name }}"
+          FALLBACK_LABEL="${{ github.run_id }}"
+
+          echo "🗑️ Cleaning up GitHub runner (name: ${RUNNER_NAME:-unknown}, label: ${FALLBACK_LABEL})"
+
+          RUNNERS_RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners")
+
+          if echo "$RUNNERS_RESPONSE" | grep -q '"message"'; then
+            echo "⚠️ Failed to fetch runners: $(echo "$RUNNERS_RESPONSE" | jq -r '.message')"
+            exit 0
+          fi
+
+          RUNNER_ID="" 
+          if [ -n "$RUNNER_NAME" ]; then
+            RUNNER_ID=$(echo "$RUNNERS_RESPONSE" | jq -r --arg name "$RUNNER_NAME" '.runners[]? | select(.name == $name) | .id')
+          fi
+
+          if [ -z "$RUNNER_ID" ]; then
+            RUNNER_ID=$(echo "$RUNNERS_RESPONSE" | jq -r --arg label "$FALLBACK_LABEL" '.runners[]? | select([.labels[].name] | index($label)) | .id' | head -n 1)
+          fi
+
+          if [ -z "$RUNNER_ID" ] || [ "$RUNNER_ID" = "null" ]; then
+            echo "⚠️ Runner not found, nothing to delete."
+            exit 0
+          fi
+
+          DELETE_RESPONSE=$(curl -s -w "%{http_code}" \
+            -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners/$RUNNER_ID")
+
+          HTTP_CODE="${DELETE_RESPONSE: -3}"
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "✅ Successfully deleted runner."
+          else
+            echo "⚠️ Failed to delete runner. HTTP code: $HTTP_CODE"
+            echo "Response: ${DELETE_RESPONSE%???}"
+          fi
