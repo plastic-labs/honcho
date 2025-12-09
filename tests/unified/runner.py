@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 from anthropic import AsyncAnthropic
 from honcho.async_client.session import AsyncSession
 from honcho.session_context import SessionContext
@@ -67,6 +68,17 @@ class TestExecutionError(Exception):
     pass
 
 
+async def send_discord_message(webhook_url: str, message: str) -> None:
+    """Send a message to Discord via webhook."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(webhook_url, json={"content": message})
+            response.raise_for_status()
+            logger.info("Discord notification sent successfully")
+    except Exception as e:
+        logger.error(f"Failed to send Discord notification: {e}", exc_info=True)
+
+
 async def save_results_to_s3(
     results: dict[str, tuple[str, float]],
     failed_count: int,
@@ -86,6 +98,9 @@ async def save_results_to_s3(
                 "AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set, skipping S3 upload"
             )
             return
+
+        print("Access key last 4 digits:", os.getenv("AWS_ACCESS_KEY_ID", "")[-4:])
+        print("Secret key last 4 digits:", os.getenv("AWS_SECRET_ACCESS_KEY", "")[-4:])
 
         # Create comprehensive results object
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -584,6 +599,24 @@ class UnifiedTestRunner:
                 await save_results_to_s3(
                     results, failed_count, total_count, total_suite_time
                 )
+
+            # 6. Send Discord notification
+            discord_webhook_url = os.getenv("TEST_DISCORD_WEBHOOK_URL")
+            if discord_webhook_url:
+                passed_count = total_count - failed_count
+                status_emoji = "✅" if failed_count == 0 else "⚠️"
+                github_run_id = os.getenv("GITHUB_RUN_ID", "local")
+                github_ref = os.getenv("GITHUB_REF_NAME", "unknown")
+
+                message = (
+                    f"{status_emoji} **Unified Test Results**\n"
+                    f"Branch: `{github_ref}`\n"
+                    f"Results: {passed_count}/{total_count} passed, {failed_count}/{total_count} failed\n"
+                    f"Execution time: {total_suite_time:.2f}s\n"
+                    f"Run ID: {github_run_id}"
+                )
+
+                await send_discord_message(discord_webhook_url, message)
 
         finally:
             # 7. Cleanup
