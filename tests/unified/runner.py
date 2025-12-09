@@ -151,7 +151,7 @@ async def save_results_to_s3(
             url: str = s3_client.generate_presigned_url(  # pyright: ignore
                 "get_object",
                 Params={"Bucket": s3_bucket, "Key": key},
-                ExpiresIn=604800,  # 7 days
+                ExpiresIn=259200,  # 3 days
             )
             logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
             return url  # pyright: ignore
@@ -629,7 +629,7 @@ class UnifiedTestRunner:
                     f"Run ID: {github_run_id}",
                 ]
                 if url:
-                    message_lines.append(f"Complete results: {url}")
+                    message_lines.append(f"[View Complete Results]({url})")
                 message = "\n".join(message_lines)
 
                 await send_discord_message(discord_webhook_url, message)
