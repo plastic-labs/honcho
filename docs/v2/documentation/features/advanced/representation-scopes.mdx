@@ -1,53 +1,82 @@
 ---
 title: 'Representation Scopes'
-description: 'Reasoning is on—control whose perspective it runs from'
+description: 'Advanced configuration techniques for simulating perspective-taking'
 icon: 'circle'
 ---
 
-TODO: re-work, local and global aren't a thing anymore
+Assuming reasoning is enabled, you can control the perspectives representations are built from. This page covers:
 
-Once reasoning is enabled (see [Toggle Reasoning](/v2/documentation/features/advanced/toggle-reasoning)), you control whose perspective it runs from and who gets observed. This page covers:
+1. **Default Behavior** — Honcho reasons over every message written to a peer
+2. **Observer-Observed Model** — How peers build representations of other peers
+3. **Querying with Target** — Accessing perspective-specific representations
+4. **Use Cases** — When to use directional representations
 
-1. **Scoping** — global vs local representations
-2. **Configuration** — the `observe_me` and `observe_others` flags
-3. **Retrieval** — accessing scoped reasoning results via `working_rep()`
+## Default: Reasoning On
 
-Honcho supports two scoping modes:
+When `observe_me=true` (the default), Honcho forms one representation per peer, reasoning over every message written to that peer across all sessions.
 
-| Scope | Description |
-|-------|-------------|
-| **Global** (default) | One model per peer, aggregating all their messages across sessions. Every agent sees the same representation. |
-| **Local** | Directional models where each observer builds a separate representation based only on what they've personally witnessed. |
+You can retrieve a subset of conclusions from a peer's representation using `working_rep()`:
 
-## Why Local Representations?
+```python
+# Retrieve conclusions from Honcho's representation of Alice (across all sessions)
+alice_rep = session.working_rep("alice")
 
-Global scope works well when every agent should share the same knowledge. Local scope is useful for games, multi-agent simulations, or any scenario where information asymmetry matters.
-
-**Example**: Alice lies to Bob but tells the truth to Charlie.
-
-```
-Alice → Bob:    "I had pancakes for breakfast."
-Alice → Charlie: "I didn't eat breakfast. I lied to Bob."
+# Or via chat
+response = alice.chat("What are Alice's main interests?", session_id=session.id)
 ```
 
-With global representations, Bob could query Honcho and discover the lie. With local representations, Bob's model of Alice only includes what Bob has directly observed—so he still believes Alice ate pancakes.
+This is sufficient for most applications—Honcho reasons over every message written to the peer, storing conclusions that any part of your system can retrieve.
+
+## Observer-Observed Representations
+
+When you enable `observe_others=true` at the session level, peers begin forming **directional representations** of other peers they interact with. These representations are scoped to what that observer has actually witnessed.
+
+### How It Works
+
+Each peer has **one representation**, but that representation can contain reasoning about:
+- **Itself** (when Honcho observes the peer with `observe_me=true`)
+- **Other peers** (when the peer observes others with `observe_others=true`)
+
+These are stored as separate (observer, observed) pairs in Honcho's internal collections:
+
+| Observer | Observed | What This Represents |
+|----------|----------|---------------------|
+| alice | alice | Honcho's representation of Alice (across all sessions) |
+| bob | alice | Bob's representation of Alice (from sessions Bob participated in) |
+| carol | alice | Carol's representation of Alice (from sessions Carol participated in) |
+
+### Information Segmentation
+
+This enables sophisticated scenarios where different agents have different knowledge based on what they've actually witnessed.
+
+**Example**: Alice tells different things to Bob and Carol.
+
+```
+Session 1 (Alice + Bob):
+Alice → "I had pancakes for breakfast."
+
+Session 2 (Alice + Carol):
+Alice → "I didn't eat breakfast. I lied to Bob."
+```
+
+With `observe_others=true` enabled:
+- **Bob's representation of Alice** only includes Session 1 (he believes she had pancakes)
+- **Carol's representation of Alice** only includes Session 2 (she knows Alice lied)
+- **Honcho's representation of Alice** reasons over both sessions
 
 ![](/images/observe_config.png)
 
-<Note>
-Local representations are disabled by default. Enable them only when you need perspective-taking or information asymmetry.
-</Note>
+## Querying with Target
 
-## Session-Peer Configuration
+The `target` parameter controls which representation you retrieve:
 
-Control observation behavior per peer within a session using two flags:
+| Query | Returns |
+|-------|---------|
+| `working_rep("alice")` | Conclusions from Honcho's representation of Alice (across all sessions) |
+| `working_rep("bob", target="alice")` | Conclusions from Bob's representation of Alice (from sessions Bob participated in) |
+| `working_rep("carol", target="alice")` | Conclusions from Carol's representation of Alice (from sessions Carol participated in) |
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `observe_me` | `bool` | `true` | Whether this peer can be observed by others. Overrides peer-level setting. |
-| `observe_others` | `bool` | `false` | Whether this peer builds local representations of other peers. |
-
-To enable local representations, set `observe_others=true` on at least one peer while keeping `observe_me=true` on the peers you want observed.
+### Code Examples
 
 <CodeGroup>
 ```python Python
@@ -58,19 +87,35 @@ session = honcho.session("game-session")
 
 alice = honcho.peer("alice")
 bob = honcho.peer("bob")
+carol = honcho.peer("carol")
 
-# Default: global representations only
-session.add_peers([alice, bob])
+# Add peers to session
+session.add_peers([alice, bob, carol])
 
-# Enable Bob to form local representations of others
+# Enable Bob and Carol to form representations of others
 session.set_peer_config(bob, SessionPeerConfig(observe_others=True))
+session.set_peer_config(carol, SessionPeerConfig(observe_others=True))
 
-# Make Alice invisible to local observation (but still globally tracked)
-session.set_peer_config(alice, SessionPeerConfig(observe_me=False))
+# Add messages
+session.add_messages([
+    alice.message("I had pancakes for breakfast.")
+])
 
-# Check current config
-print(session.get_peer_config(bob))
+# Different sessions with different participants
+session2 = honcho.session("game-session-2")
+session2.add_peers([alice, carol])
+session2.set_peer_config(carol, SessionPeerConfig(observe_others=True))
+
+session2.add_messages([
+    alice.message("I didn't eat breakfast. I lied to Bob.")
+])
+
+# Retrieve conclusions from different perspectives
+honcho_view = session.working_rep("alice")  # Across all sessions
+bob_view = session.working_rep("bob", target="alice")  # From Bob's sessions
+carol_view = session2.working_rep("carol", target="alice")  # From Carol's sessions
 ```
+
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
@@ -79,99 +124,148 @@ const session = await honcho.session("game-session");
 
 const alice = await honcho.peer("alice");
 const bob = await honcho.peer("bob");
+const carol = await honcho.peer("carol");
 
-await session.addPeers([alice, bob]);
+await session.addPeers([alice, bob, carol]);
 
 await session.setPeerConfig(bob, { observe_others: true });
-await session.setPeerConfig(alice, { observe_me: false });
+await session.setPeerConfig(carol, { observe_others: true });
 
-console.log(await session.getPeerConfig(bob));
+await session.addMessages([
+    alice.message("I had pancakes for breakfast.")
+]);
+
+const session2 = await honcho.session("game-session-2");
+await session2.addPeers([alice, carol]);
+await session2.setPeerConfig(carol, { observe_others: true });
+
+await session2.addMessages([
+    alice.message("I didn't eat breakfast. I lied to Bob.")
+]);
+
+// Retrieve conclusions from different perspectives
+const honchoView = await session.workingRep("alice");  // Across all sessions
+const bobView = await session.workingRep("bob", { target: "alice" });  // From Bob's sessions
+const carolView = await session2.workingRep("carol", { target: "alice" });  // From Carol's sessions
 ```
 </CodeGroup>
 
-## Accessing Scoped Reasoning Results
+### Chat Endpoint with Target
 
-The reasoning pipeline produces **working representations**—cached models stored on `Peer` objects (global) or `SessionPeer` objects (local). Retrieve them with `working_rep()` for fast access without invoking the LLM.
-
-<Info>
-Use `working_rep()` for dashboards and batch analytics. Use `peer.chat()` when you need fresh, query-specific reasoning.
-</Info>
-
-### Retrieval
+The `target` parameter also works with the chat endpoint:
 
 <CodeGroup>
 ```python Python
-# Global representation of user
-user_rep = session.working_rep("user-123")
+# Query using conclusions from Honcho's representation (across all sessions)
+honcho_answer = alice.chat(
+    "What did Alice say about breakfast?",
+    session_id=session.id
+)
 
-# Local representation: what bob knows about alice
-local_rep = session.working_rep("bob", target="alice")
-
-# From peer object directly
-peer_rep = user.working_rep()
+# Query using conclusions from Bob's representation of Alice (from Bob's sessions only)
+bob_answer = bob.chat(
+    "What did Alice say about breakfast?",
+    session_id=session.id,
+    target="alice"
+)
 ```
+
 ```typescript TypeScript
-const userRep = await session.workingRep("user-123");
-const localRep = await session.workingRep("bob", { target: "alice" });
-const peerRep = await user.workingRep();
+// Query using conclusions from Honcho's representation (across all sessions)
+const honchoAnswer = await alice.chat(
+    "What did Alice say about breakfast?",
+    { sessionId: session.id }
+);
+
+// Query using conclusions from Bob's representation of Alice (from Bob's sessions only)
+const bobAnswer = await bob.chat(
+    "What did Alice say about breakfast?",
+    { sessionId: session.id, target: "alice" }
+);
 ```
 </CodeGroup>
 
-### Semantic Search Parameters
+<Note>
+The `target` parameter only returns meaningful results if the observer peer has `observe_others=true` and has actually participated in sessions with the observed peer. Otherwise, the representation will be empty or non-existent.
+</Note>
 
-Filter cached observations by relevance:
+## When to Use Directional Representations
+
+### Use Cases Where This Matters
+
+1. **Multi-agent games**: NPCs should only know what they've witnessed, not omniscient game state
+2. **Information asymmetry scenarios**: Different agents have access to different information
+3. **Perspective-dependent agents**: Agent behavior depends on their unique understanding of other agents
+4. **Privacy-segmented systems**: Users should only see representations based on their interactions
+
+### Use Cases Where Default Is Sufficient
+
+1. **Single-user applications**: Only one user, so perspective doesn't matter
+2. **Centralized knowledge systems**: All agents should share the same understanding
+3. **Simple chatbots**: No multi-agent interaction or information segmentation needed
+
+<Info>
+Most applications don't need directional representations. Start with the default Honcho-observes-all behavior and only enable `observe_others` when you need information segmentation between agents.
+</Info>
+
+## Architecture: How It's Stored
+
+Under the hood, Honcho stores representations as (observer, observed) pairs in internal collections:
+
+- **Collection**: A unique (observer, observed, workspace) tuple containing documents
+- **Documents**: Individual conclusions and artifacts (deductive, inductive, abductive conclusions, summaries, peer cards) with session scoping
+
+When you retrieve with `target`, Honcho fetches documents from the specific (observer, observed) collection. When you retrieve without `target`, it fetches from the (peer, peer) collection—the peer's self-representation.
+
+This architecture enables:
+- **Efficient querying**: Each perspective is isolated and can be queried independently
+- **Session filtering**: Within a collection, documents can be filtered by session
+- **Scalability**: Adding more observers doesn't degrade query performance
+
+## Semantic Search Parameters
+
+Both `working_rep()` and `chat()` support semantic filtering to retrieve a subset of relevant conclusions. You can optionally filter by session to retrieve only conclusions from specific session context:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `search_query` | `str` | Semantic query to filter observations |
+| `search_query` | `str` | Semantic query to filter conclusions |
 | `search_top_k` | `int` | Number of results to include (1–100) |
 | `search_max_distance` | `float` | Maximum semantic distance (0.0–1.0) |
-| `include_most_derived` | `bool` | Include most recently derived observations |
-| `max_observations` | `int` | Cap on total observations returned (1–100) |
+| `include_most_derived` | `bool` | Include most recently derived conclusions |
+| `max_observations` | `int` | Cap on total conclusions returned (1–100) |
 
 <CodeGroup>
 ```python Python
-billing_context = session.working_rep(
-    "user-123",
+# Retrieve conclusions about billing from Bob's representation of Alice
+bob_view_billing = session.working_rep(
+    "bob",
+    target="alice",
     search_query="billing issues",
     search_top_k=10,
     include_most_derived=True
 )
 ```
+
 ```typescript TypeScript
-const billingContext = await session.workingRep("user-123", {
-  searchQuery: "billing issues",
-  searchTopK: 10,
-  includeMostDerived: true
+const bobViewBilling = await session.workingRep("bob", {
+    target: "alice",
+    searchQuery: "billing issues",
+    searchTopK: 10,
+    includeMostDerived: true
 });
 ```
 </CodeGroup>
 
-### When Representations Update
+## When Representations Update
 
-Representations refresh automatically through the reasoning pipeline when new messages arrive. The pipeline respects your scoping configuration—global representations aggregate across all sessions, while local representations only include what the observing peer has witnessed in sessions where `observe_others=true`.
+Directional representations update automatically through the reasoning pipeline when:
 
-### Cached vs On-Demand
+1. A message is created in a session
+2. The message sender has `observe_me=true` (or session-level equivalent)
+3. Other peers in the session have `observe_others=true`
 
-| Method | Speed | Use Case |
-|--------|-------|----------|
-| `working_rep()` | Fast (cached) | Dashboards, analytics, consistent snapshots |
-| `peer.chat()` | Slower (LLM) | Custom queries, fresh analysis, relationship questions |
-
-<CodeGroup>
-```python Python
-# Fast: retrieve cached model
-cached = session.working_rep("user-123")
-
-# Fresh: ask a specific question
-fresh = user.chat("What frustrates this user most?", session_id=session.id)
-```
-```typescript TypeScript
-const cached = await session.workingRep("user-123");
-const fresh = await user.chat("What frustrates this user most?", { sessionId: session.id });
-```
-</CodeGroup>
+The pipeline respects scoping—Honcho's representations reason over messages across all sessions, while directional representations only reason over messages from sessions where the observer was an active participant.
 
 <Note>
-Call `chat()` at least once before relying on `working_rep()` to ensure a representation has been generated.
+Conclusions are cached for fast retrieval. Use `working_rep()` to retrieve stored conclusions for dashboards and analytics. Use `peer.chat()` when you need query-specific reasoning with natural language.
 </Note>
