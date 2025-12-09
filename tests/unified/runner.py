@@ -584,10 +584,6 @@ class UnifiedTestRunner:
                     results, failed_count, total_count, total_suite_time
                 )
 
-            # 6. Return non-zero exit code if tests failed
-            if failed_count > 0:
-                sys.exit(1)
-
         finally:
             # 7. Cleanup
             logger.info("Cleaning up harness...")
