@@ -193,14 +193,14 @@ After generating the response, we save both the user's input and the bot's respo
 
 ## Slash Commands
 
-Discord bots also offer slash command functionality. Here's an example using Honcho's dialectic feature:
+Discord bots also offer slash command functionality. Here's an example using Honcho's chat endpoint feature:
 
 ```python
 @bot.slash_command(
-    name="dialectic",
-    description="Query the Honcho Dialectic endpoint.",
+    name="chat",
+    description="Query the peer's representation in natural language.",
 )
-async def dialectic(ctx, query: str):
+async def chat(ctx, query: str):
     await ctx.defer()
 
     try:
@@ -225,7 +225,7 @@ async def dialectic(ctx, query: str):
         )
 ```
 
-This slash command uses Honcho's dialectic functionality to answer questions about the user based on their conversation history.
+This slash command uses Honcho's chat endpoint functionality to answer questions about the user based on their conversation history.
 
 ## Setup and Configuration
 
@@ -248,7 +248,7 @@ The new Honcho peer/session API makes Discord bot integration much simpler and m
 - **Peer/Session Model**: Users are represented as peers, conversations as sessions
 - **Automatic Context Management**: `session.get_context().to_openai()` automatically formats chat history
 - **Message Storage**: `session.add_messages()` stores both user and assistant messages
-- **Dialectic Queries**: `peer.chat()` enables querying conversation history
+- **Representation Queries**: `peer.chat()` enables querying conversation history
 - **Helper Functions**: Clean code organization with focused helper functions
 
 This approach provides a clean, maintainable structure for building Discord bots with conversational memory and context management.

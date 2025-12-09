@@ -1,18 +1,18 @@
 ---
 title: 'Toggle Reasoning'
-description: 'Concerned with all the places you can turn reasoning off'
+description: 'Customize how Honcho reasons over peers, sessions, and messages'
 icon: 'wrench'
 ---
 
-Customizing how Honcho handles peers, sessions, and messages
-
-Honcho's reasoning engine can be configured at multiple levels to control how it processes messages, generates facts, creates summaries, and builds peer representations.
+Honcho's reasoning can be configured at multiple levels to control how it processes messages, generates conclusions, creates summaries, and builds peer representations.
 
 Configuration follows a hierarchy: **message > session > workspace > global defaults**. Settings at lower levels override those at higher levels, giving you fine-grained control over behavior.
 
 ## Configuration Hierarchy
 
 Honcho uses a hierarchical configuration system where more specific settings override more general ones:
+
+TODO: should peer be included here?
 
 1. **Global Defaults**: Built-in system defaults
 2. **Workspace Configuration**: Settings that apply to all sessions in a workspace
@@ -27,7 +27,7 @@ All configuration fields are optional. If not specified, the value is inherited 
 
 ### Reasoning Configuration
 
-Controls the core reasoning engine that extracts facts and insights from messages.
+Controls whether the system should reason over messages.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -60,7 +60,9 @@ const session = await honcho.session("private-session", {
 
 ### Peer Card Configuration
 
-Controls how peer cards (concise summaries of what's known about a peer) are generated and used.
+TODO: is create a catch-all for update?
+
+Controls how peer cards (containing key biographical information) are generated and used.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -121,6 +123,8 @@ const session = await honcho.session("verbose-session", {
 
 ### Dream Configuration
 
+TODO: fill out code blocks? or get rid of them? having them there for comments seems silly
+
 Controls the "dreaming" process that consolidates and refines representations. Available at workspace and session levels only.
 
 | Field | Type | Description |
@@ -142,7 +146,7 @@ Controls the "dreaming" process that consolidates and refines representations. A
 
 ## Peer Configuration
 
-By default, all peers are "observed" by Honcho. This means that Honcho will derive facts from messages sent by the peer and generate a representation of them. In most cases, this is why you use Honcho! However, sometimes an application requires a peer that should not be observed: for example, an assistant or game NPC that your program will never need to ask questions about.
+By default, all peers are "observed" by Honcho. This means that Honcho will reason over messages sent by the peer and generate a representation of them. In most cases, this is why you use Honcho! However, sometimes an application requires a peer that should not be observed: for example, an assistant or game NPC that your program will never need to access advanced reasoning for.
 
 You may therefore disable observation of a peer by setting the `observe_me` flag in their configuration to `false`.
 

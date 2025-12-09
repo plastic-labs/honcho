@@ -33,7 +33,7 @@ In the diagram below, assume `observe_me` isn't turned off (again, default behav
 
 ![](/images/observe_config.png)
 
-The shared session that Alice and Bob have informs their respective representations of each other. Alice has a small set of conclusions that pertain to Bob, and Bob has a small set of conclusions that pertain to Alice. Honcho can observe the totality of each peer's interactions, forming representations of the peers themselves, and enable peers to store conclusions about peers they interact with based only on what they witness in shared sessions. 
+The shared session that Alice and Bob have informs their respective representations of each other. Alice has a small set of conclusions that pertain to Bob, and Bob has a small set of conclusions that pertain to Alice. Honcho can observe the totality of each peer's interactions, forming representations of the peers themselves, and enable peers to store conclusions about peers they interact with based only on what they witness in shared sessions.
 
 Why would you want peers observing others? So you can simulate stateful *perspectives*. If Bob participates in sessions 1 and 2 with Alice, while Carol only participates in session 3, Bob's representation of Alice will be built from sessions 1 and 2, while Carol's representation will only include what happened in session 3. This information segmentation based on what each agent observed is critical for accurately segmenting statefulness in multi-agent scenarios.
 
