@@ -352,6 +352,26 @@ def mock_langfuse():
                 logging.getLogger().removeHandler(handler)
 
 
+def _content_to_embedding(content: str) -> list[float]:
+    """Generate a deterministic embedding from content hash.
+
+    This ensures different content produces different embeddings,
+    which is critical for deduplication logic to work correctly in tests.
+    """
+    import hashlib
+
+    # Hash the content to get a deterministic seed
+    content_hash = hashlib.sha256(content.encode()).digest()
+    # Use hash bytes to generate 1536 floats between -1 and 1
+    embedding: list[float] = []
+    for i in range(1536):
+        # Use different bytes from hash (cycling through)
+        byte_val = content_hash[i % len(content_hash)]
+        # Normalize to [-1, 1] range
+        embedding.append((byte_val / 255.0) * 2 - 1)
+    return embedding
+
+
 @pytest.fixture(autouse=True)
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
@@ -359,17 +379,20 @@ def mock_openai_embeddings():
         patch("src.embedding_client.embedding_client.embed") as mock_embed,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
-        # Mock the embed method to return a fake embedding vector
-        mock_embed.return_value = [0.1] * 1536
+        # Mock the embed method to return content-dependent embedding
+        def embed_side_effect(content: str) -> list[float]:
+            return _content_to_embedding(content)
 
-        # Mock the batch_embed method to return a dict of fake embedding vectors
-        # Updated to support chunking - each text_id maps to a list of embedding vectors
+        mock_embed.side_effect = embed_side_effect
+
+        # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
             id_resource_dict: dict[str, tuple[str, list[int]]],
         ) -> dict[str, list[list[float]]]:
             return {
-                text_id: [[0.1] * 1536] for text_id in id_resource_dict
-            }  # Single chunk per text
+                text_id: [_content_to_embedding(resource[0])]
+                for text_id, resource in id_resource_dict.items()
+            }
 
         mock_batch_embed.side_effect = mock_batch_embed_func
 

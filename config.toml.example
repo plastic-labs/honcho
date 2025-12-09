@@ -51,6 +51,8 @@ PROFILES_SAMPLE_RATE = 0.1
 [llm]
 DEFAULT_MAX_TOKENS = 2500
 EMBEDDING_PROVIDER = "openai"
+MAX_TOOL_OUTPUT_CHARS = 30000  # Max chars for tool output (~7500 tokens)
+MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
 # API Keys for LLM providers
 # ANTHROPIC_API_KEY = "your-api-key"

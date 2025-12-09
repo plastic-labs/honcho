@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.config import settings
 from src.embedding_client import embedding_client
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
@@ -15,12 +16,11 @@ from src.utils.types import DocumentLevel
 
 logger = logging.getLogger(__name__)
 
-# Maximum characters for tool output to prevent token explosion
-MAX_TOOL_OUTPUT_CHARS = 30000  # ~7500 tokens
 
-
-def _truncate_tool_output(output: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+def _truncate_tool_output(output: str, max_chars: int | None = None) -> str:
     """Truncate tool output to prevent token explosion."""
+    if max_chars is None:
+        max_chars = settings.LLM.MAX_TOOL_OUTPUT_CHARS
     if len(output) <= max_chars:
         return output
     truncated = output[:max_chars]
@@ -30,20 +30,26 @@ def _truncate_tool_output(output: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -
     )
 
 
-def _truncate_message_content(content: str, max_chars: int = 2000) -> str:
+def _truncate_message_content(content: str, max_chars: int | None = None) -> str:
     """Truncate individual message content (simple beginning truncation)."""
+    if max_chars is None:
+        max_chars = settings.LLM.MAX_MESSAGE_CONTENT_CHARS
     if len(content) <= max_chars:
         return content
     return content[:max_chars] + "..."
 
 
-def _extract_pattern_snippet(content: str, pattern: str, max_chars: int = 2000) -> str:
+def _extract_pattern_snippet(
+    content: str, pattern: str, max_chars: int | None = None
+) -> str:
     """Extract snippet around a regex pattern match.
 
     For grep/exact text search, finds the pattern and extracts context around it.
     """
     import re
 
+    if max_chars is None:
+        max_chars = settings.LLM.MAX_MESSAGE_CONTENT_CHARS
     if len(content) <= max_chars:
         return content
 

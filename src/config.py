@@ -215,6 +215,19 @@ class LLMSettings(HonchoSettings):
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
+    # Maximum characters for tool output to prevent token explosion.
+    # Set to 30,000 chars (~7,500 tokens at 4 chars/token) to stay well under
+    # typical context limits while providing substantial tool output.
+    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=30000, gt=0, le=100_000)] = (
+        30000
+    )
+
+    # Maximum characters for individual message content in tool results.
+    # Keeps each message preview concise while preserving key context.
+    MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
+        2000
+    )
+
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
