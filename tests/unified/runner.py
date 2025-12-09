@@ -93,14 +93,19 @@ async def save_results_to_s3(
         s3_prefix = "unified-test-results"
         aws_region = "us-east-1"
 
-        if not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"):
-            logger.warning(
-                "AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set, skipping S3 upload"
-            )
-            return
+        # AWS credentials are configured via OIDC in GitHub Actions
+        # Check if boto3 can access credentials (either from environment or OIDC)
+        try:
+            import boto3
 
-        print("Access key last 4 digits:", os.getenv("AWS_ACCESS_KEY_ID", "")[-4:])
-        print("Secret key last 4 digits:", os.getenv("AWS_SECRET_ACCESS_KEY", "")[-4:])
+            session = boto3.Session()
+            credentials = session.get_credentials()  # pyright: ignore
+            if not credentials:
+                logger.warning("No AWS credentials available, skipping S3 upload")
+                return
+        except Exception as e:
+            logger.warning(f"Could not verify AWS credentials: {e}, skipping S3 upload")
+            return
 
         # Create comprehensive results object
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -594,29 +599,28 @@ class UnifiedTestRunner:
             print("=" * 60)
 
             # 5. Save results and send notifications
-            if os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"):
-                print("Saving results to S3...")
-                await save_results_to_s3(
-                    results, failed_count, total_count, total_suite_time
-                )
+            # Always attempt S3 upload - save_results_to_s3 will check for credentials
+            await save_results_to_s3(
+                results, failed_count, total_count, total_suite_time
+            )
 
             # 6. Send Discord notification
-            discord_webhook_url = os.getenv("TEST_DISCORD_WEBHOOK_URL")
-            if discord_webhook_url:
-                passed_count = total_count - failed_count
-                status_emoji = "✅" if failed_count == 0 else "⚠️"
-                github_run_id = os.getenv("GITHUB_RUN_ID", "local")
-                github_ref = os.getenv("GITHUB_REF_NAME", "unknown")
+            # discord_webhook_url = os.getenv("TEST_DISCORD_WEBHOOK_URL")
+            # if discord_webhook_url:
+            #     passed_count = total_count - failed_count
+            #     status_emoji = "✅" if failed_count == 0 else "⚠️"
+            #     github_run_id = os.getenv("GITHUB_RUN_ID", "local")
+            #     github_ref = os.getenv("GITHUB_REF_NAME", "unknown")
 
-                message = (
-                    f"{status_emoji} **Unified Test Results**\n"
-                    f"Branch: `{github_ref}`\n"
-                    f"Results: {passed_count}/{total_count} passed, {failed_count}/{total_count} failed\n"
-                    f"Execution time: {total_suite_time:.2f}s\n"
-                    f"Run ID: {github_run_id}"
-                )
+            #     message = (
+            #         f"{status_emoji} **Unified Test Results**\n"
+            #         f"Branch: `{github_ref}`\n"
+            #         f"Results: {passed_count}/{total_count} passed, {failed_count}/{total_count} failed\n"
+            #         f"Execution time: {total_suite_time:.2f}s\n"
+            #         f"Run ID: {github_run_id}"
+            #     )
 
-                await send_discord_message(discord_webhook_url, message)
+            #     await send_discord_message(discord_webhook_url, message)
 
         finally:
             # 7. Cleanup
