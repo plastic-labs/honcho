@@ -107,7 +107,6 @@ jobs:
 
       # Cache configuration
       CACHE_ENABLED: ${{ vars.CACHE_ENABLED }}
-      CACHE_URL: ${{ secrets.CACHE_URL }}
 
       TEST_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
     steps:
@@ -119,7 +118,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsHonchoTestsRole
+          role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsS3Role
           aws-region: us-east-1
 
       - name: Verify Docker is available
