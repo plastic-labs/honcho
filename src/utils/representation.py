@@ -36,12 +36,12 @@ class PromptRepresentation(BaseModel):
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
         default_factory=list,
     )
-    deductive: list[DeductiveObservationBase] = Field(
-        description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
-        default_factory=list,
-    )
+    # deductive: list[DeductiveObservationBase] = Field(
+    #     description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
+    #     default_factory=list,
+    # )
 
-    @field_validator("explicit", "deductive", mode="before")
+    @field_validator("explicit", mode="before")
     @classmethod
     def convert_none_to_empty_list(cls, v: Any) -> Any:
         """Convert None to empty list - handles LLMs returning null instead of []."""
@@ -364,14 +364,14 @@ class Representation(BaseModel):
                 for e in prompt_representation.explicit
             ],
             deductive=[
-                DeductiveObservation(
-                    conclusion=d.conclusion,
-                    created_at=created_at,
-                    message_ids=message_ids,
-                    session_name=session_name,
-                    premises=d.premises,
-                )
-                for d in prompt_representation.deductive
+                # DeductiveObservation(
+                #     conclusion=d.conclusion,
+                #     created_at=created_at,
+                #     message_ids=message_ids,
+                #     session_name=session_name,
+                #     premises=d.premises,
+                # )
+                # for d in prompt_representation.deductive
             ],
         )
 

@@ -248,6 +248,13 @@ async def process_representation_tasks_batch(
     )
 
     if settings.DERIVER.LOG_OBSERVATIONS:
+        # Log messages fed into deriver
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observer}",
+            "messages",
+            formatted_messages,
+            "blob",
+        )
         # Log actual observations created as blob metrics
         if observations.explicit:
             accumulate_metric(

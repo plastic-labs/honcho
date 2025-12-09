@@ -1565,7 +1565,7 @@ async def honcho_llm_call_inner(
                     logger.warning(
                         "Using fallback empty Representation due to validation error"
                     )
-                    response_obj = PromptRepresentation(explicit=[], deductive=[])
+                    response_obj = PromptRepresentation(explicit=[])  # , deductive=[])
 
                 cache_creation, cache_read = extract_openai_cache_tokens(usage)
                 return HonchoLLMCallResponse(
