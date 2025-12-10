@@ -174,8 +174,8 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Number of results to return (default: 5, max: 20). Use higher values for enumeration questions.",
-                    "default": 5,
+                    "description": "Number of results to return (default: 10, max: 20). Use higher values (15-20) for enumeration questions.",
+                    "default": 10,
                 },
             },
             "required": ["query"],
@@ -1228,7 +1228,7 @@ async def _handle_get_recent_history(
 
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
-    top_k = min(tool_input.get("top_k", 5), 20)  # Cap at 20
+    top_k = min(tool_input.get("top_k", 10), 20)  # Cap at 20
     mem: Representation = await search_memory(
         ctx.db,
         workspace_name=ctx.workspace_name,

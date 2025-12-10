@@ -143,14 +143,38 @@ You have multiple tools for searching conversation history. Choose wisely:
      - grep for the UNIT being counted: "hours", "minutes", "dollars", "$", "%", "times"
      - grep for the CATEGORY noun: the thing being enumerated
      - grep catches exact mentions that semantic search might miss
-   - **THEN USE SEMANTIC SEARCH**: Do at least 3 `search_messages` calls with different phrasings
+   - **THEN USE SEMANTIC SEARCH**: Do at least 3 `search_memory` or `search_messages` calls with different phrasings
    - Use synonyms, related terms, specific instances
    - Use top_k=15 or higher to get more results per search
    - **SEARCH FOR SPECIFIC ITEMS**: After finding some items, search for each by name to find additional mentions
-   - **FINAL SWEEP**: Do one last broad search for the category before answering
    - Cross-reference results to avoid double-counting the same item mentioned with different wording
-   - When stating a count, NUMBER EACH ITEM (1, 2, 3...) and verify the final number matches how many you listed
    - A single search is NEVER sufficient for enumeration questions
+
+   **MANDATORY CHECKLIST** - Before answering ANY enumeration question, verify:
+   [ ] Did I grep for the unit being counted (hours, dollars, items, etc.)?
+   [ ] Did I grep for the category noun (games, trips, events, etc.)?
+   [ ] Did I do at least 2-3 semantic searches with different query phrasings?
+   [ ] Did I use top_k >= 15 for my searches?
+   [ ] For each item found, did I search for that specific item to find all mentions?
+
+   **MANDATORY VERIFICATION STEP**: After you think you have all items:
+   1. List every item you found with its value
+   2. Check if any NEW items appear that you missed
+   3. Only then finalize your count
+
+   **MANDATORY DEDUPLICATION STEP**: Before stating your final count:
+   1. Create a deduplication table listing each candidate item with:
+      - Item name/description
+      - Distinguishing feature (specific date, location, or unique detail)
+      - Source date (when was this mentioned?)
+   2. Compare items and ask: "Are any of these the SAME thing mentioned differently?"
+      - Same item in different recipes/contexts = ONE item
+      - Same event mentioned on multiple dates = ONE event
+      - Same person/place with slightly different wording = ONE entity
+   3. Mark duplicates and remove them from your count
+   4. State your final count based on UNIQUE items only
+
+   When stating a count, NUMBER EACH ITEM (1, 2, 3...) and verify the final number matches how many you listed
 
 5. **For SUMMARIZATION questions** (questions asking to summarize, recap, or describe patterns over time):
    - Do MULTIPLE searches with different query terms to ensure comprehensive coverage
@@ -250,9 +274,14 @@ When you find temporal information, quote the exact phrasing from the source to 
 After gathering context, reason through the information you found BEFORE stating your final answer. For comparison questions, explicitly compare the values. Only after you've verified your reasoning should you state your conclusion.
 
 **For enumeration/aggregation questions:**
-- List each item you found with its value
+- STOP before answering and ask: "Did I complete the MANDATORY VERIFICATION STEP?"
+- If not, do one more broad search for the category before proceeding
+- STOP again and ask: "Did I complete the MANDATORY DEDUPLICATION STEP?"
+- If not, review your items for duplicates (same thing mentioned differently)
+- List each UNIQUE item you found with its value (numbered: 1, 2, 3...)
 - Show your math explicitly (X + Y + Z = total)
 - Verify the count matches the number of items listed
+- State your confidence: "I found N unique items after thorough searching and deduplication"
 
 Do not explain your tool usage - just provide the synthesized answer.
 """  # nosec B608
