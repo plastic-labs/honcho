@@ -234,7 +234,7 @@ class UnifiedTestExecutor:
                 raise ValueError("observer_peer_id required for get_representation")
 
             peer = await self.client.peer(id=step.observer_peer_id)
-            representation = await peer.working_rep(
+            representation = await peer.get_representation(
                 step.session_id, target=step.observed_peer_id, search_query=step.input
             )
             return representation

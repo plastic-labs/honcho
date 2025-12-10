@@ -26,7 +26,7 @@ describe('Honcho SDK Integration Tests', () => {
           getOrCreate: jest.fn(),
           update: jest.fn(),
           search: jest.fn(),
-          workingRepresentation: jest.fn(),
+          getRepresentationresentation: jest.fn(),
         },
         sessions: {
           list: jest.fn(),
@@ -396,7 +396,7 @@ describe('Honcho SDK Integration Tests', () => {
         ],
       }
 
-      mockWorkspacesApi.workspaces.peers.workingRepresentation.mockResolvedValue({
+      mockWorkspacesApi.workspaces.peers.getRepresentationresentation.mockResolvedValue({
         representation: mockWorkingRepData,
       })
 
@@ -405,7 +405,7 @@ describe('Honcho SDK Integration Tests', () => {
       const bob = await honcho.peer('bob')
 
       // Test working representation without target
-      const globalRep = await session.workingRep('alice')
+      const globalRep = await session.getRepresentation('alice')
       expect(globalRep).toBeInstanceOf(Representation)
       expect(globalRep.explicit).toHaveLength(2)
       expect(globalRep.explicit[0].content).toBe('Alice likes coffee')
@@ -413,17 +413,17 @@ describe('Honcho SDK Integration Tests', () => {
       expect(globalRep.deductive).toHaveLength(1)
       expect(globalRep.deductive[0].conclusion).toBe('Alice is a coffee-drinking developer')
       expect(
-        mockWorkspacesApi.workspaces.peers.workingRepresentation
+        mockWorkspacesApi.workspaces.peers.getRepresentationresentation
       ).toHaveBeenCalledWith('integration-test-workspace', 'alice', {
         session_id: 'working-rep-session',
         target: undefined,
       })
 
       // Test working representation with target
-      const targetRep = await session.workingRep(alice, bob)
+      const targetRep = await session.getRepresentation(alice, bob)
       expect(targetRep).toBeInstanceOf(Representation)
       expect(
-        mockWorkspacesApi.workspaces.peers.workingRepresentation
+        mockWorkspacesApi.workspaces.peers.getRepresentationresentation
       ).toHaveBeenCalledWith('integration-test-workspace', 'alice', {
         session_id: 'working-rep-session',
         target: 'bob',

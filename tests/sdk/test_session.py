@@ -355,7 +355,9 @@ async def test_session_add_messages_return_value(
 
 
 @pytest.mark.asyncio
-async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, str]):
+async def test_session_get_representation(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
     """
     Tests getting the working representation of a peer in a session.
     """
@@ -368,7 +370,7 @@ async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, s
         peer = await honcho_client.peer(id="peer-wr")
         assert isinstance(peer, AsyncPeer)
         await session.add_messages([peer.message("test message for working rep")])
-        _working_rep = await session.working_rep(peer)
+        _get_representation = await session.get_representation(peer)
     else:
         assert isinstance(honcho_client, Honcho)
         session = honcho_client.session(id="test-session-wr")
@@ -376,7 +378,7 @@ async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, s
         peer = honcho_client.peer(id="peer-wr")
         assert isinstance(peer, Peer)
         session.add_messages([peer.message("test message for working rep")])
-        _working_rep = session.working_rep(peer)
+        _get_representation = session.get_representation(peer)
 
 
 @pytest.mark.asyncio

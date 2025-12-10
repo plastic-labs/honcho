@@ -834,7 +834,7 @@ class Session(SessionBase):
 
         return [Message.model_validate(msg) for msg in response]
 
-    def working_rep(
+    def get_representation(
         self,
         peer: str | PeerBase,
         *,
@@ -846,10 +846,10 @@ class Session(SessionBase):
         max_observations: int | None = None,
     ) -> "Representation":
         """
-        Get the current working representation of the peer in this session.
+        Get the current representation of the peer in this session.
 
         Args:
-            peer: Peer to get the working representation of.
+            peer: Peer to get the representation of.
             target: Optional target peer to get the representation of. If provided,
             queries what `peer` knows about the `target`.
             search_query: Semantic search query to filter relevant observations
@@ -864,14 +864,14 @@ class Session(SessionBase):
         Example:
             ```python
             # Get peer's representation in this session
-            rep = session.working_rep('user123')
+            rep = session.get_representation('user123')
             print(rep)
 
             # Get what user123 knows about assistant in this session
-            local_rep = session.working_rep('user123', target='assistant')
+            local_rep = session.get_representation('user123', target='assistant')
 
             # Get representation with semantic search
-            searched_rep = session.working_rep(
+            searched_rep = session.get_representation(
                 'user123',
                 search_query='preferences',
                 search_top_k=10

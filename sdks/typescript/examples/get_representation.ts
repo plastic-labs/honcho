@@ -41,15 +41,15 @@ async function main() {
   const alice = peers[0];
   const bob = peers[1];
 
-  console.log('Getting alice\'s working representation in session...');
-  // Get alice's working representation in the session
-  const workingRepresentation = await session.workingRep(alice);
-  console.log('Working representation returned:', workingRepresentation);
+  console.log('Getting alice\'s representation in session...');
+  // Get alice's representation in the session
+  const representation = await session.getRepresentation(alice);
+  console.log('Representation returned:', representation);
 
-  console.log('Getting alice\'s working representation *of bob* in session...');
-  // Get alice's working representation *of bob* in the session
-  const workingRepresentationOfBob = await session.workingRep(alice, bob);
-  console.log('Working representation returned:', workingRepresentationOfBob);
+  console.log('Getting alice\'s representation *of bob* in session...');
+  // Get alice's representation *of bob* in the session
+  const representationOfBob = await session.getRepresentation(alice, bob);
+  console.log('Representation returned:', representationOfBob);
 
   console.log('Example completed successfully!');
 }

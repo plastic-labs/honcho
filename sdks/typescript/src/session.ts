@@ -1101,7 +1101,7 @@ export class Session {
    * built for a peer. This can be either the peer's global representation or
    * their local representation of another peer (theory-of-mind).
    *
-   * @param peer - The peer to get the working representation of. Can be peer ID string or Peer object
+   * @param peer - The peer to get the representation of. Can be peer ID string or Peer object
    * @param target - Optional target peer. If provided, returns what `peer` knows about
    *                 `target` within this session context rather than `peer`'s global representation
    * @param options - Optional representation options to filter and configure the results
@@ -1110,20 +1110,20 @@ export class Session {
    * @example
    * ```typescript
    * // Get peer's global representation in this session
-   * const globalRep = await session.workingRep('user123')
+   * const globalRep = await session.getRepresentation('user123')
    * console.log(globalRep.toString())
    *
    * // Get what user123 knows about assistant in this session
-   * const localRep = await session.workingRep('user123', 'assistant')
+   * const localRep = await session.getRepresentation('user123', 'assistant')
    *
    * // Get representation with semantic search
-   * const searchedRep = await session.workingRep('user123', undefined, {
+   * const searchedRep = await session.getRepresentation('user123', undefined, {
    *   searchQuery: 'preferences',
    *   searchTopK: 10
    * })
    * ```
    */
-  async workingRep(
+  async getRepresentation(
     peer: string | Peer,
     target?: string | Peer,
     options?: {
