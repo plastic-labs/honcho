@@ -173,6 +173,7 @@ class ResolvedConfiguration(BaseModel):
 
 
 class PeerConfig(BaseModel):
+    # TODO: Update description - should say "Whether honcho forms a representation of the peer itself"
     observe_me: bool | None = Field(
         default=None,
         description="Whether honcho should form a global theory-of-mind representation of this peer",
@@ -180,6 +181,7 @@ class PeerConfig(BaseModel):
 
 
 class SessionPeerConfig(PeerConfig):
+    # TODO: Update description - should say "Whether this peer forms representations of other peers in the session"
     observe_others: bool | None = Field(
         default=None,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
