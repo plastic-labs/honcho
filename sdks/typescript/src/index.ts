@@ -3,19 +3,22 @@
 
 export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 export { Honcho } from './client'
+export { Observation, ObservationScope } from './observations'
 export { Page } from './pagination'
-export { Peer } from './peer'
+export { Peer, PeerContext } from './peer'
 export { Session, SessionPeerConfig } from './session'
 export {
   SessionContext,
   SessionSummaries,
   Summary,
-  SummaryData,
+  type SummaryData,
 } from './session_context'
 export {
   type DialecticStreamChunk,
   type DialecticStreamDelta,
   DialecticStreamResponse,
+  type Observation as ObservationData,
+  type ObservationQueryParams,
 } from './types'
 
 // Export validation types for advanced usage
@@ -35,5 +38,6 @@ export type {
   SessionConfig,
   SessionMetadata,
   WorkingRepParams,
+  WorkspaceConfig,
   WorkspaceMetadata,
 } from './validation'

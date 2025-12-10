@@ -33,7 +33,7 @@ response = alice.chat("what did alice have for breakfast today?")
 print("response returned:", response)
 
 # Chat with alice in the session
-response = alice.chat("what did alice have for breakfast today?", session_id=session.id)
+response = alice.chat("what did alice have for breakfast today?", session=session.id)
 print("response returned:", response)
 
 # Chat with alice in the session with a target

@@ -76,6 +76,27 @@ for provider_name, provider_value in SELECTED_PROVIDERS:
     if provider_value not in CLIENTS:
         raise ValueError(f"Missing client for {provider_name}: {provider_value}")
 
+# Validate backup providers are initialized if configured
+BACKUP_PROVIDERS = [
+    ("Deriver", settings.DERIVER),
+    ("PeerCard", settings.PEER_CARD),
+    ("Dialectic", settings.DIALECTIC),
+    ("Summary", settings.SUMMARY),
+    ("Dream", settings.DREAM),
+]
+
+for component_name, component_settings in BACKUP_PROVIDERS:
+    if (
+        hasattr(component_settings, "BACKUP_PROVIDER")
+        and component_settings.BACKUP_PROVIDER is not None
+        and component_settings.BACKUP_PROVIDER not in CLIENTS
+    ):
+        raise ValueError(
+            f"Backup provider for {component_name} is set to {component_settings.BACKUP_PROVIDER}, "
+            + "but this provider is not initialized. Please set the required API key/URL environment "
+            + "variables or remove the backup configuration."
+        )
+
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
@@ -101,11 +122,13 @@ class HonchoLLMCallStreamChunk(BaseModel):
         content: The text content for this chunk. Empty for chunks that only contain metadata.
         is_done: Whether this is the final chunk in the stream.
         finish_reasons: List of finish reasons if the stream is complete.
+        output_tokens: Number of tokens generated in the response. Only set on the final chunk.
     """
 
     content: str
     is_done: bool = False
     finish_reasons: list[str] = Field(default_factory=list)
+    output_tokens: int | None = None
 
 
 @overload
@@ -230,8 +253,8 @@ async def honcho_llm_call(
         ):
             provider: SupportedProviders = llm_settings.BACKUP_PROVIDER
             model: str = llm_settings.BACKUP_MODEL
-            logger.info(
-                f"Final retry attempt {attempt}: switching from "
+            logger.warning(
+                f"Final retry attempt {attempt}/{retry_attempts}: switching from "
                 + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
                 + f"backup {provider}/{model}"
             )
@@ -304,14 +327,20 @@ async def honcho_llm_call(
     if enable_retry:
 
         def before_retry_callback(retry_state: Any) -> None:
-            """Update attempt counter before each retry."""
-            _current_attempt.set(retry_state.attempt_number)
+            """Update attempt counter before each retry.
+
+            Note: before_sleep is called AFTER an attempt fails and BEFORE sleeping,
+            so we need to increment to the next attempt number.
+            """
+            next_attempt = retry_state.attempt_number + 1
+            _current_attempt.set(next_attempt)
             exc = retry_state.outcome.exception() if retry_state.outcome else None
             if exc:
                 logger.warning(
-                    f"Error on attempt {retry_state.attempt_number} with "
+                    f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
                     + f"{llm_settings.PROVIDER}/{llm_settings.MODEL}: {exc}"
                 )
+                logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
         decorated = retry(
             stop=stop_after_attempt(retry_attempts),
@@ -756,12 +785,15 @@ async def handle_streaming_response(
                         text_content = getattr(chunk.delta, "text", "")
                         yield HonchoLLMCallStreamChunk(content=text_content)
                 final_message = await anthropic_stream.get_final_message()
+                usage = final_message.usage
+                output_tokens = usage.output_tokens if usage else None
                 yield HonchoLLMCallStreamChunk(
                     content="",
                     is_done=True,
                     finish_reasons=[final_message.stop_reason]
                     if final_message.stop_reason
                     else [],
+                    output_tokens=output_tokens,
                 )
 
         case AsyncOpenAI():
@@ -769,6 +801,7 @@ async def handle_streaming_response(
                 "model": params["model"],
                 "messages": params["messages"],
                 "stream": True,
+                "stream_options": {"include_usage": True},
             }
 
             model_name = params["model"]
@@ -787,18 +820,35 @@ async def handle_streaming_response(
                 openai_params["response_format"] = {"type": "json_object"}
 
             openai_stream = await client.chat.completions.create(**openai_params)  # pyright: ignore
+            finish_reason: str | None = None
+            usage_chunk_received = False
             async for chunk in openai_stream:  # pyright: ignore
                 chunk = cast(ChatCompletionChunk, chunk)
                 if chunk.choices and chunk.choices[0].delta.content:
-                    yield HonchoLLMCallStreamChunk(
-                        content=chunk.choices[0].delta.content
-                    )
+                    content = chunk.choices[0].delta.content
+                    yield HonchoLLMCallStreamChunk(content=content)
+                # Track finish_reason when it appears (before usage chunk)
                 if chunk.choices and chunk.choices[0].finish_reason:
+                    finish_reason = chunk.choices[0].finish_reason
+                # Check for usage info in chunk (with include_usage, this is a separate chunk with empty choices)
+                if hasattr(chunk, "usage") and chunk.usage:
                     yield HonchoLLMCallStreamChunk(
                         content="",
                         is_done=True,
-                        finish_reasons=[chunk.choices[0].finish_reason],
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                        output_tokens=chunk.usage.completion_tokens,
                     )
+                    usage_chunk_received = True
+
+            # If stream ended without usage chunk (interrupted), still yield final chunk
+            if not usage_chunk_received and finish_reason:
+                logger.warning("OpenAI stream ended without usage chunk (interrupted)")
+                yield HonchoLLMCallStreamChunk(
+                    content="",
+                    is_done=True,
+                    finish_reasons=[finish_reason],
+                    output_tokens=None,
+                )
 
         case genai.Client():
             prompt_text = params["messages"][0]["content"] if params["messages"] else ""
@@ -828,6 +878,7 @@ async def handle_streaming_response(
                 final_chunk = chunk
 
             finish_reason = "stop"  # Default fallback
+            gemini_output_tokens: int | None = None
             if (
                 final_chunk
                 and hasattr(final_chunk, "candidates")
@@ -837,8 +888,22 @@ async def handle_streaming_response(
             ):
                 finish_reason = final_chunk.candidates[0].finish_reason.name
 
+            # Extract output tokens from usage_metadata if available
+            if (
+                final_chunk
+                and hasattr(final_chunk, "usage_metadata")
+                and final_chunk.usage_metadata
+                and hasattr(final_chunk.usage_metadata, "candidates_token_count")
+            ):
+                gemini_output_tokens = (
+                    final_chunk.usage_metadata.candidates_token_count or None
+                )
+
             yield HonchoLLMCallStreamChunk(
-                content="", is_done=True, finish_reasons=[finish_reason]
+                content="",
+                is_done=True,
+                finish_reasons=[finish_reason],
+                output_tokens=gemini_output_tokens,
             )
 
         case AsyncGroq():

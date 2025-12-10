@@ -9,14 +9,21 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "navigation": {
     "versions": [
       {
-        "version": "v2.4.2",
+        "version": "v2.5.0",
         "api": {
-          "openapi": ["openapi.documented.yml"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -125,7 +132,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v2/api-reference/introduction"]
+                "pages": [
+                  "v2/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -135,7 +144,8 @@
                   "v2/api-reference/endpoint/workspaces/update-workspace",
                   "v2/api-reference/endpoint/workspaces/delete-workspace",
                   "v2/api-reference/endpoint/workspaces/search-workspace",
-                  "v2/api-reference/endpoint/workspaces/get-deriver-status"
+                  "v2/api-reference/endpoint/workspaces/get-deriver-status",
+                  "v2/api-reference/endpoint/workspaces/trigger-dream"
                 ]
               },
               {
@@ -147,8 +157,10 @@
                   "v2/api-reference/endpoint/peers/get-sessions-for-peer",
                   "v2/api-reference/endpoint/peers/chat",
                   "v2/api-reference/endpoint/peers/get-working-representation",
-                  "v2/api-reference/endpoint/peers/search-peer",
-                  "v2/api-reference/endpoint/peers/get-peer-card"
+                  "v2/api-reference/endpoint/peers/get-peer-card",
+                  "v2/api-reference/endpoint/peers/set-peer-card",
+                  "v2/api-reference/endpoint/peers/get-peer-context",
+                  "v2/api-reference/endpoint/peers/search-peer"
                 ]
               },
               {
@@ -178,6 +190,15 @@
                   "v2/api-reference/endpoint/messages/get-message",
                   "v2/api-reference/endpoint/messages/update-message",
                   "v2/api-reference/endpoint/messages/create-messages-with-file"
+                ]
+              },
+              {
+                "group": "observations",
+                "pages": [
+                  "v2/api-reference/endpoint/observations/create-observations",
+                  "v2/api-reference/endpoint/observations/list-observations",
+                  "v2/api-reference/endpoint/observations/query-observations",
+                  "v2/api-reference/endpoint/observations/delete-observation"
                 ]
               },
               {
@@ -215,7 +236,9 @@
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -245,15 +268,23 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
+                "pages": [
+                  "v1/guides/overview",
+                  "v1/guides/streaming-response"
+                ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
+                "pages": [
+                  "v1/guides/discord",
+                  "v1/guides/honcho-mcp"
+                ]
               },
               {
                 "group": "Personal Memory",
-                "pages": ["v1/guides/dialectic-endpoint"]
+                "pages": [
+                  "v1/guides/dialectic-endpoint"
+                ]
               }
             ]
           },
@@ -262,7 +293,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v1/api-reference/introduction"]
+                "pages": [
+                  "v1/api-reference/introduction"
+                ]
               },
               {
                 "group": "apps",
@@ -310,7 +343,9 @@
               },
               {
                 "group": "keys",
-                "pages": ["v1/api-reference/endpoint/keys/create-key"]
+                "pages": [
+                  "v1/api-reference/endpoint/keys/create-key"
+                ]
               },
               {
                 "group": "metamessages",

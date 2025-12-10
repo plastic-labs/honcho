@@ -27,7 +27,42 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v2.4.2 (Current)">
+        <Update label="v2.5.0 (Current)">
+        ### Added
+
+        - Message level configurations
+        - CRUD operations for observations
+        - Comprehensive test cases for harness
+        - Peer level get_context
+        - Set Peer Card Method
+        - Manual dreaming trigger endpoint
+
+        ### Changed
+
+        - Configurations to support more flags for fine-grained control of the deriver, peer cards, summaries, etc.
+        - Working Representations to support more fine-grained parameters
+
+        ### Fixed
+
+        - File uploads to match `MessageCreate` structure
+        - Cache invalidation strategy
+        </Update>
+
+        <Update label="v2.4.3">
+        ### Added
+
+        - Redis caching to improve DB IO
+        - Backup LLM provider to avoid failures when a provider is down
+
+        ### Changed
+
+        - QueueItems to use standardized columns
+        - Improved Deduplication logic for Representation Tasks
+        - More finegrained metrics for representation, summary, and peer card tasks
+        - DB constraint to follow standard naming conventions
+        </Update>
+
+        <Update label="v2.4.2">
         ### Fixed
 
         - Langfuse tracing to have readable waterfalls
@@ -365,6 +400,19 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
+        <Update label="v1.6.0 (Current)">
+            ### Added
+
+            - metadata and configuration fields to Workspace, Peer, Session, and Message objects
+            - Session Clone methods
+            - Peer level get_context method
+            - `ObservationScope` object to perform CRUD operations on observations
+            - Representation object for WorkingRepresentations
+
+            ### Changed
+
+            - methods that take IDs, can all optionally take an object of the same type
+        </Update>
         <Update label="v1.5.0">
         ### Added
 
@@ -439,6 +487,19 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
+        <Update label="v1.6.0 (Current)">
+            ### Added
+
+            - metadata and configuration fields to Workspace, Peer, Session, and Message objects
+            - Session Clone methods
+            - Peer level get_context method
+            - `ObservationScope` object to perform CRUD operations on observations
+            - Representation object for WorkingRepresentations
+
+            ### Changed
+
+            - methods that take IDs, can all optionally take an object of the same type
+        </Update>
         <Update label="v1.5.0">
         ### Added
 

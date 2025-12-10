@@ -86,7 +86,7 @@ DIALECTIC_CALLS = NamespacedCounter(
 # Incremented in: src/deriver/queue_manager.py when queue items are processed
 # Labels:
 #   - workspace_name: The workspace where items were processed
-#   - task_type: The type of task processed (e.g., "representation", "summary")
+#   - task_type: The type of task processed (e.g., "representation", "summary", "peer_card")
 DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
     "deriver_queue_items_processed_total",
     "Total deriver queue items processed",
@@ -97,13 +97,31 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
 #
 # Incremented in: src/deriver/deriver.py after the critical analysis call is made
 # Labels:
-#   - task_type: The type of task that processed the tokens (e.g., "representation")
+#   - task_type: The type of task that processed the tokens (e.g., "representation", "summary")
+#   - token_type: The type of tokens ("input" or "output")
+#   - component: The component of the input (e.g., "peer_card", "working_representation", "prompt", "new_turns", "session_context")
 DERIVER_TOKENS_PROCESSED = NamespacedCounter(
-    "tokens_processed_total",
-    "Total tokens processed",
+    "deriver_tokens_processed_total",
+    "Total tokens processed by the deriver",
     [
         "namespace",
         "task_type",
+        "token_type",
+        "component",
+    ],
+)
+
+# Tracks the total number of input and output tokens processed by the dialectic.
+#
+# Incremented in: src/dialectic/chat.py after the dialectic call is made
+# Labels:
+#   - token_type: The type of tokens ("input" or "output")
+DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
+    "dialectic_tokens_processed_total",
+    "Total tokens processed by the dialectic",
+    [
+        "namespace",
+        "token_type",
     ],
 )
 

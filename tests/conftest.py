@@ -564,12 +564,12 @@ def mock_tracked_db(db_session: AsyncSession):
 
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.deriver.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dreamer.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.consolidate.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),

@@ -11,6 +11,7 @@ from src.cache.client import cache, get_cache_namespace
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
+from src.models import Peer
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
@@ -63,21 +64,37 @@ async def get_or_create_peers(
         .where(models.Peer.name.in_(peer_names))
     )
     result = await db.execute(stmt)
-    existing_peers = list(result.scalars().all())
+    existing_peers: list[Peer] = list(result.scalars().all())
 
     # Create a mapping of peer names to peer schemas for easy lookup
     peer_schema_map = {p.name: p for p in peers}
 
+    # Track which peers actually changed
+    changed_peers: list[Peer] = []
+
     # Update existing peers with metadata and configuration if provided
     for existing_peer in existing_peers:
         peer_schema = peer_schema_map[existing_peer.name]
+        changed = False
 
-        # Update with metadata and configuration if provided
-        if peer_schema.metadata is not None:
+        # Update with metadata if provided AND different
+        if (
+            peer_schema.metadata is not None
+            and existing_peer.h_metadata != peer_schema.metadata
+        ):
             existing_peer.h_metadata = peer_schema.metadata
+            changed = True
 
-        if peer_schema.configuration is not None:
+        # Update with configuration if provided AND different
+        if (
+            peer_schema.configuration is not None
+            and existing_peer.configuration != peer_schema.configuration
+        ):
             existing_peer.configuration = peer_schema.configuration
+            changed = True
+
+        if changed:
+            changed_peers.append(existing_peer)
 
     # Find which peers need to be created
     existing_names = {p.name for p in existing_peers}
@@ -104,10 +121,15 @@ async def get_or_create_peers(
             ) from None
         return await get_or_create_peers(db, workspace_name, peers, _retry=True)
 
-    # Invalidate cache for all updated/created peers - read-through pattern
-    for peer_obj in existing_peers + new_peers:
+    # Only invalidate cache for changed/new peers - read-through pattern
+    for peer_obj in changed_peers + new_peers:
         cache_key = peer_cache_key(workspace_name, peer_obj.name)
         await cache.delete(cache_key)
+        logger.debug(
+            "Peer %s cache invalidated in workspace %s (changed or new)",
+            peer_obj.name,
+            workspace_name,
+        )
 
     # Return combined list of existing and new peers
     return existing_peers + new_peers
@@ -150,7 +172,7 @@ async def get_peer(
         peer: Peer creation schema
 
     Returns:
-        The peer if found or created
+        The peer if found
 
     Raises:
         ResourceNotFoundException: If the peer does not exist
@@ -204,16 +226,31 @@ async def update_peer(
         )
     )[0]
 
-    if peer.metadata is not None:
-        honcho_peer.h_metadata = peer.metadata
+    needs_update = False
 
-    if peer.configuration is not None:
+    if peer.metadata is not None and honcho_peer.h_metadata != peer.metadata:
+        honcho_peer.h_metadata = peer.metadata
+        needs_update = True
+
+    if (
+        peer.configuration is not None
+        and honcho_peer.configuration != peer.configuration
+    ):
         honcho_peer.configuration = peer.configuration
+        needs_update = True
+
+    # Early exit if unchanged
+    if not needs_update:
+        logger.debug(
+            "Peer %s unchanged in workspace %s, skipping update",
+            peer_name,
+            workspace_name,
+        )
+        return honcho_peer
 
     await db.commit()
     await db.refresh(honcho_peer)
 
-    # Invalidate cache - read-through pattern
     cache_key = peer_cache_key(workspace_name, honcho_peer.name)
     await cache.delete(cache_key)
 

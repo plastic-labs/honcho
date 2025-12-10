@@ -32,19 +32,26 @@ class HonchoHarness:
     """
 
     def __init__(
-        self, db_port: int, api_port: int, project_root: Path, instance_id: int = 0
+        self,
+        db_port: int,
+        api_port: int,
+        redis_port: int,
+        project_root: Path,
+        instance_id: int = 0,
     ) -> None:
         """
-        Initialize the harness with database port, API port, and project root.
+        Initialize the harness with database port, API port, Redis port, and project root.
 
         Args:
             db_port: Port for the PostgreSQL database
             api_port: Port for the FastAPI server
+            redis_port: Port for the Redis server
             project_root: Path to the Honcho project root
             instance_id: Instance identifier for pool management
         """
         self.db_port: int = db_port
         self.api_port: int = api_port
+        self.redis_port: int = redis_port
         self.project_root: Path = project_root
         self.instance_id: int = instance_id
         self.temp_dir: Path | None = None
@@ -68,19 +75,54 @@ class HonchoHarness:
         # Update the database port
         compose_data["services"]["database"]["ports"] = [f"{self.db_port}:5432"]
 
+        # Increase shared memory size
+        compose_data["services"]["database"]["shm_size"] = "4gb"
+
+        # Configure Postgres for larger workloads
+        cmd = ["postgres"]
+        params = {
+            "max_connections": "800",
+            "max_wal_size": "8GB",
+            "min_wal_size": "2GB",
+            "checkpoint_timeout": "15min",
+            "maintenance_work_mem": "1GB",
+            "work_mem": "64MB",
+        }
+        for k, v in params.items():
+            cmd.extend(["-c", f"{k}={v}"])
+        compose_data["services"]["database"]["command"] = cmd
+
         # Update the Redis port
-        compose_data["services"]["redis"]["ports"] = ["6379:6379"]
+        compose_data["services"]["redis"]["ports"] = [f"{self.redis_port}:6379"]
 
         # Add a unique project name to avoid conflicts
         compose_data["name"] = f"honcho_harness_{self.db_port}"
 
-        # remove init.sql mount since we use provision_db.py for setup
+        # Configure named volumes for better performance and cleanup
+        compose_data.setdefault("volumes", {})
+        db_vol_name = f"pgdata_{self.db_port}"
+        redis_vol_name = f"redis_data_{self.db_port}"
+        compose_data["volumes"][db_vol_name] = {}
+        compose_data["volumes"][redis_vol_name] = {}
+
+        # Update database volumes - use named volume instead of bind mount
+        new_db_volumes: list[str] = []
         if "volumes" in compose_data["services"]["database"]:
-            compose_data["services"]["database"]["volumes"] = [
-                vol
-                for vol in compose_data["services"]["database"]["volumes"]
-                if "init.sql" not in vol
-            ]
+            for vol in compose_data["services"]["database"]["volumes"]:
+                # Filter out init.sql (handled by provision script) and existing data mounts
+                if "init.sql" not in vol and ":/var/lib/postgresql/data/" not in vol:
+                    new_db_volumes.append(vol)
+        new_db_volumes.append(f"{db_vol_name}:/var/lib/postgresql/data/")
+        compose_data["services"]["database"]["volumes"] = new_db_volumes
+
+        # Update redis volumes - use named volume
+        new_redis_volumes: list[str] = []
+        if "volumes" in compose_data["services"]["redis"]:
+            for vol in compose_data["services"]["redis"]["volumes"]:
+                if ":/data" not in vol:
+                    new_redis_volumes.append(vol)
+        new_redis_volumes.append(f"{redis_vol_name}:/data")
+        compose_data["services"]["redis"]["volumes"] = new_redis_volumes
 
         # Create temporary file
         self.temp_dir = Path(tempfile.mkdtemp(prefix="honcho_harness_"))
@@ -125,7 +167,7 @@ class HonchoHarness:
         return {
             "DB_CONNECTION_URI": f"postgresql+psycopg://testuser:testpwd@localhost:{self.db_port}/honcho",
             "CACHE_ENABLED": "true",
-            "CACHE_URL": "redis://localhost:6379/0",
+            "CACHE_URL": f"redis://localhost:{self.redis_port}/0",
         }
 
     def start_database(self) -> None:
@@ -134,10 +176,29 @@ class HonchoHarness:
         """
         print(f"Starting PostgreSQL database on port {self.db_port}...")
 
+        # Ensure clean state by removing any existing containers/volumes
+        # This handles cases where a previous run was interrupted
+        subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(self.docker_compose_file),
+                "-p",
+                f"honcho_harness_{self.db_port}",
+                "down",
+                "--volumes",
+                "--remove-orphans",
+            ],
+            cwd=self.temp_dir,
+            capture_output=True,
+        )
+
         # Change to the temp directory and start the database service
         result = subprocess.run(
             [
-                "docker-compose",
+                "docker",
+                "compose",
                 "-f",
                 str(self.docker_compose_file),
                 "-p",
@@ -161,12 +222,13 @@ class HonchoHarness:
         """
         Start the Redis cache server using Docker Compose.
         """
-        print("Starting Redis cache server on port 6379...")
+        print(f"Starting Redis cache server on port {self.redis_port}...")
 
         # Change to the temp directory and start the redis service
         result = subprocess.run(
             [
-                "docker-compose",
+                "docker",
+                "compose",
                 "-f",
                 str(self.docker_compose_file),
                 "-p",
@@ -198,7 +260,7 @@ class HonchoHarness:
         """
         print("Waiting for Redis to be ready...")
         start_time = time.time()
-        redis_port = 6379
+        redis_port = self.redis_port
 
         while time.time() - start_time < timeout:
             try:
@@ -367,7 +429,7 @@ class HonchoHarness:
                 sys.exit(1)
 
             print(
-                f"[Instance {self.instance_id}] ✅ Database verification passed: Database is empty"
+                f"[Instance {self.instance_id}] Database verification passed: Database is empty"
             )
 
         except Exception as e:
@@ -613,7 +675,7 @@ except Exception as e:
 
         print("=" * 60)
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         """
         Clean up resources and stop all processes.
         """
@@ -643,7 +705,8 @@ except Exception as e:
                 # More aggressive cleanup - remove containers, volumes, and orphaned containers
                 subprocess.run(
                     [
-                        "docker-compose",
+                        "docker",
+                        "compose",
                         "-f",
                         str(self.docker_compose_file),
                         "-p",
@@ -654,7 +717,6 @@ except Exception as e:
                     ],
                     cwd=self.temp_dir,
                     capture_output=True,
-                    text=True,
                 )
 
                 # Also try to remove any containers that might still be running
@@ -679,7 +741,7 @@ except Exception as e:
 
         # Close cache
         try:
-            asyncio.run(self.close_cache())
+            await self.close_cache()
         except Exception as e:
             print(f"Error closing cache: {e}")
 
@@ -782,7 +844,7 @@ except Exception as e:
         except Exception as e:
             print(f"❌ Error: {e}")
         finally:
-            self.cleanup()
+            await self.cleanup()
 
 
 class HonchoHarnessPool:
@@ -791,7 +853,12 @@ class HonchoHarnessPool:
     """
 
     def __init__(
-        self, pool_size: int, base_db_port: int, base_api_port: int, project_root: Path
+        self,
+        pool_size: int,
+        base_db_port: int,
+        base_api_port: int,
+        base_redis_port: int,
+        project_root: Path,
     ) -> None:
         """
         Initialize a pool of Honcho harnesses.
@@ -800,11 +867,13 @@ class HonchoHarnessPool:
             pool_size: Number of Honcho instances to create
             base_db_port: Base port for PostgreSQL databases (each instance gets base + instance_id)
             base_api_port: Base port for FastAPI servers (each instance gets base + instance_id)
+            base_redis_port: Base port for Redis servers (each instance gets base + instance_id)
             project_root: Path to the Honcho project root
         """
         self.pool_size: int = pool_size
         self.base_db_port: int = base_db_port
         self.base_api_port: int = base_api_port
+        self.base_redis_port: int = base_redis_port
         self.project_root: Path = project_root
         self.harnesses: list[HonchoHarness] = []
 
@@ -813,6 +882,7 @@ class HonchoHarnessPool:
             harness = HonchoHarness(
                 db_port=base_db_port + i,
                 api_port=base_api_port + i,
+                redis_port=base_redis_port + i,
                 project_root=project_root,
                 instance_id=i,
             )
@@ -944,16 +1014,16 @@ class HonchoHarnessPool:
         except Exception as e:
             print(f"❌ Error: {e}")
         finally:
-            self.cleanup()
+            await self.cleanup()
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         """
         Clean up all harnesses in the pool.
         """
         print("\nCleaning up pool...")
         for harness in self.harnesses:
             print(f"\n--- Cleaning up Instance {harness.instance_id} ---")
-            harness.cleanup()
+            await harness.cleanup()
 
 
 def main():
@@ -983,6 +1053,13 @@ Examples:
         type=int,
         default=8000,
         help="Base port for the FastAPI server (default: 8000)",
+    )
+
+    parser.add_argument(
+        "--redis-port",
+        type=int,
+        default=6379,
+        help="Base port for the Redis server (default: 6379)",
     )
 
     parser.add_argument(
@@ -1032,6 +1109,7 @@ Examples:
             pool_size=args.pool_size,
             base_db_port=args.port,
             base_api_port=args.api_port,
+            base_redis_port=args.redis_port,
             project_root=args.project_root,
         )
         asyncio.run(pool.run())
@@ -1039,6 +1117,7 @@ Examples:
         harness = HonchoHarness(
             db_port=args.port,
             api_port=args.api_port,
+            redis_port=args.redis_port,
             project_root=args.project_root,
             instance_id=0,
         )
