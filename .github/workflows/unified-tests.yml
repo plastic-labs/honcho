@@ -3,6 +3,8 @@ name: Unified Tests (Fly Runner)
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -53,8 +55,95 @@ jobs:
         uses: aws-actions/aws-secretsmanager-get-secrets@v2
         with:
           secret-ids: |
-            testing/unified/tests
+            ,testing/unified/tests
           parse-json-secrets: true
+
+      - name: Debug - Check what was loaded
+        run: |
+          echo "Checking environment variables..."
+          # Count Honcho-related env vars
+          count=$(env | grep -E '^(SESSION_|EMBED_|MAX_|AUTH_|SENTRY_|VECTOR_|LLM_|DERIVER_|PEER_|DIALECTIC_|SUMMARY_|DREAM_|CACHE_)' | wc -l)
+          echo "Found $count Honcho configuration variables"
+
+          # List all env vars to see what format they're in (without values)
+          env | grep -E '^(SESSION_|EMBED_|MAX_|AUTH_|SENTRY_|VECTOR_|LLM_|DERIVER_|PEER_|DIALECTIC_|SUMMARY_|DREAM_|CACHE_|TESTING_)' | cut -d= -f1 | sort || echo "No matching vars found"
+
+      - name: Verify secrets are loaded
+        run: |
+          echo "Checking required environment variables..."
+
+          REQUIRED_VARS=(
+            "SESSION_OBSERVERS_LIMIT"
+            "EMBED_MESSAGES"
+            "MAX_EMBEDDING_TOKENS"
+            "MAX_EMBEDDING_TOKENS_PER_REQUEST"
+            "AUTH_USE_AUTH"
+            "SENTRY_ENABLED"
+            "VECTOR_STORE_TYPE"
+            "LLM_ANTHROPIC_API_KEY"
+            "LLM_GEMINI_API_KEY"
+            "LLM_GROQ_API_KEY"
+            "LLM_OPENAI_API_KEY"
+            "LLM_OPENAI_COMPATIBLE_API_KEY"
+            "LLM_OPENAI_COMPATIBLE_BASE_URL"
+            "LLM_DEFAULT_MAX_TOKENS"
+            "DERIVER_WORKERS"
+            "DERIVER_POLLING_SLEEP_INTERVAL_SECONDS"
+            "DERIVER_STALE_SESSION_TIMEOUT_MINUTES"
+            "DERIVER_PROVIDER"
+            "DERIVER_MODEL"
+            "DERIVER_MAX_OUTPUT_TOKENS"
+            "DERIVER_THINKING_BUDGET_TOKENS"
+            "DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS"
+            "DERIVER_MAX_INPUT_TOKENS"
+            "DERIVER_REPRESENTATION_BATCH_MAX_TOKENS"
+            "DERIVER_BACKUP_PROVIDER"
+            "DERIVER_BACKUP_MODEL"
+            "PEER_CARD_ENABLED"
+            "PEER_CARD_PROVIDER"
+            "PEER_CARD_MODEL"
+            "PEER_CARD_MAX_OUTPUT_TOKENS"
+            "PEER_CARD_BACKUP_PROVIDER"
+            "PEER_CARD_BACKUP_MODEL"
+            "DIALECTIC_PROVIDER"
+            "DIALECTIC_MODEL"
+            "DIALECTIC_PERFORM_QUERY_GENERATION"
+            "DIALECTIC_MAX_OUTPUT_TOKENS"
+            "DIALECTIC_SEMANTIC_SEARCH_TOP_K"
+            "DIALECTIC_SEMANTIC_SEARCH_MAX_DISTANCE"
+            "DIALECTIC_THINKING_BUDGET_TOKENS"
+            "DIALECTIC_BACKUP_PROVIDER"
+            "DIALECTIC_BACKUP_MODEL"
+            "SUMMARY_MESSAGES_PER_SHORT_SUMMARY"
+            "SUMMARY_MESSAGES_PER_LONG_SUMMARY"
+            "SUMMARY_PROVIDER"
+            "SUMMARY_MODEL"
+            "SUMMARY_MAX_TOKENS_SHORT"
+            "SUMMARY_MAX_TOKENS_LONG"
+            "SUMMARY_BACKUP_PROVIDER"
+            "SUMMARY_BACKUP_MODEL"
+            "DREAM_ENABLED"
+            "CACHE_ENABLED"
+          )
+
+          MISSING=0
+          for var in "${REQUIRED_VARS[@]}"; do
+            if [ -z "${!var}" ]; then
+              echo "❌ Missing: $var"
+              MISSING=$((MISSING + 1))
+            else
+              # Show first 4 chars + length for verification
+              value="${!var}"
+              echo "✅ $var: ${value:0:4}*** (length: ${#value})"
+            fi
+          done
+
+          if [ $MISSING -gt 0 ]; then
+            echo "❌ $MISSING required variables are missing"
+            exit 1
+          fi
+
+          echo "✅ All required secrets loaded successfully"
 
       - name: Verify Docker is available
         run: docker info
