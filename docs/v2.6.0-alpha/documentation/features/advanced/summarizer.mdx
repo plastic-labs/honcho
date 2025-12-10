@@ -27,7 +27,7 @@ It's important to keep in mind that summary tasks run in the background and are 
 
 ### Retrieving Summaries
 
-Summaries are retrieved from the session by the `get_context` method. This method has two parameters:
+Summaries are retrieved from the session by the [`get_context`](/v2.6.0-alpha/documentation/features/get-context) method. This method has two parameters:
 
 * `summary`: A boolean indicating whether to include the summary in the return type. The default is true.
 * `tokens`: An integer indicating the maximum number of tokens to use for the context. **If not provided, `get_context` will retrieve as many tokens as are required to create exhaustive conversation coverage.**
