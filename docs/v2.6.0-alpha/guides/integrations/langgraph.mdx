@@ -109,7 +109,7 @@ const llm = new OpenAI({
 Define your state schema to pass data through the graph. The state stores Honcho objects directly along with the current user message and assistant response.
 
 <Note>
-Before proceeding, it's important to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v2/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
+Before proceeding, it's important to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v2.6.0-alpha/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
 </Note>
 
 <CodeGroup>
@@ -227,7 +227,7 @@ const graph = new StateGraph(StateAnnotation)
 
 ### Understanding get_context()
 
-The [`get_context()`](/v2/documentation/core-concepts/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
+The [`get_context()`](/v2.6.0-alpha/documentation/core-concepts/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
 
 - **Manages conversation history** - Tracks all messages and determines what's relevant
 - **Respects token limits** - Stays within context window constraints without manual counting
@@ -248,7 +248,7 @@ That's it. Call `session.get_context().to_openai(assistant)` and you get properl
 </Tip>
 
 <Note>
-For more details on all available parameters, see [`get_context() documentation`](/v2/documentation/core-concepts/features/get-context)
+For more details on all available parameters, see [`get_context() documentation`](/v2.6.0-alpha/documentation/core-concepts/features/get-context)
 </Note>
 
 ## Chat Loop
@@ -354,10 +354,10 @@ Now that you have a working LangGraph integration with Honcho, you can:
 ## Related Resources
 
 <CardGroup cols={2}>
-  <Card title="Get Context" icon="messages" href="/v2/documentation/core-concepts/features/get-context">
+  <Card title="Get Context" icon="messages" href="/v2.6.0-alpha/documentation/core-concepts/features/get-context">
     Learn more about retrieving and formatting conversation context
   </Card>
-  <Card title="MCP Integration" icon="star-of-life" href="/v2/integrations/mcp">
+  <Card title="MCP Integration" icon="star-of-life" href="/v2.6.0-alpha/integrations/mcp">
     Use Honcho in Claude Desktop with MCP
   </Card>
 </CardGroup>
