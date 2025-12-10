@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -826,7 +826,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.6.1" },
+    { name = "honcho-core", specifier = ">=1.7.0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -837,7 +837,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.6.1"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -847,9 +847,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/ca/5d0229382771d489b838805eb45829817d22b5c7c05d4838cd0a04f59081/honcho_core-1.6.1.tar.gz", hash = "sha256:e2baba3eaf2dfa59c2ecee164f1fb6cca121177167c194d4b861898cbfb5df2e", size = 142082, upload-time = "2025-12-04T16:37:32.725Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/75/0185a8b1c85d6947b3c7fe1a3ee5793fdedb944aec4798a370fcc27ec34f/honcho_core-1.7.0.tar.gz", hash = "sha256:b2eac28bc8b47ef8a1da404a1fce12180f12a8ea014f2bd68ad95d6e37bf90c4", size = 145919, upload-time = "2025-12-10T16:05:09.387Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/a6/8108dcedfcfa9c2eb1e9fdbcea4bd183e6f89b04b9acb8c9d1c71cf3981b/honcho_core-1.6.1-py3-none-any.whl", hash = "sha256:68ac553ea32c0f91ab47fce1be6637ccc0991d0a5a360155ea91a5ae9b7859b3", size = 139798, upload-time = "2025-12-04T16:37:31.692Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/4d/74611a5055116ae683b5b256349f23913b2e35cc2ea2d96c28a5ddf23e76/honcho_core-1.7.0-py3-none-any.whl", hash = "sha256:2d9b31b0439513518e3156a798f5096fd92ab71fe46bc40b4b5507e23dd1116f", size = 148271, upload-time = "2025-12-10T16:05:07.964Z" },
 ]
 
 [[package]]
