@@ -218,6 +218,221 @@
         ]
       },
       {
+        "version": "v2.6.0-alpha",
+        "api": {
+          "openapi": [
+            "openapi.json"
+          ]
+        },
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Introduction",
+                "pages": [
+                  "v2.6.0-alpha/documentation/introduction/overview",
+                  "v2.6.0-alpha/documentation/introduction/quickstart",
+                  "v2.6.0-alpha/documentation/introduction/vibecoding"
+                ]
+              },
+              {
+                "group": "Core Concepts",
+                "pages": [
+                  "v2.6.0-alpha/documentation/core-concepts/architecture",
+                  "v2.6.0-alpha/documentation/core-concepts/reasoning",
+                  "v2.6.0-alpha/documentation/core-concepts/representation"
+                ]
+              },
+              {
+                "group": "Features",
+                "pages": [
+                  "v2.6.0-alpha/documentation/features/get-context",
+                  "v2.6.0-alpha/documentation/features/chat",
+                  {
+                    "group": "Advanced",
+                    "pages": [
+                      "v2.6.0-alpha/documentation/features/advanced/overview",
+                      "v2.6.0-alpha/documentation/features/advanced/queue-status",
+                      "v2.6.0-alpha/documentation/features/advanced/toggle-reasoning",
+                      "v2.6.0-alpha/documentation/features/advanced/representation-scopes",
+                      "v2.6.0-alpha/documentation/features/advanced/summarizer",
+                      "v2.6.0-alpha/documentation/features/advanced/search",
+                      "v2.6.0-alpha/documentation/features/advanced/using-filters",
+                      "v2.6.0-alpha/documentation/features/advanced/streaming-response"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "Reference",
+                "pages": [
+                  "v2.6.0-alpha/documentation/reference/platform",
+                  "v2.6.0-alpha/documentation/reference/sdk"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "v2.6.0-alpha/guides/overview",
+                  "v2.6.0-alpha/guides/file-uploads",
+                  "v2.6.0-alpha/guides/storing-data"
+                ]
+              },
+              {
+                "group": "Integrations",
+                "pages": [
+                  "v2.6.0-alpha/guides/integrations/crewai",
+                  "v2.6.0-alpha/guides/integrations/langgraph",
+                  "v2.6.0-alpha/guides/integrations/mcp"
+                ]
+              },
+              {
+                "group": "Migrations",
+                "pages": [
+                  "v2.6.0-alpha/guides/migrations/mem0"
+                ]
+              },
+              {
+                "group": "Chatbots",
+                "pages": [
+                  "v2.6.0-alpha/guides/discord",
+                  "v2.6.0-alpha/guides/telegram"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Open Source",
+            "groups": [
+              {
+                "group": "Self-Hosting",
+                "pages": [
+                  "v2.6.0-alpha/contributing/self-hosting",
+                  "v2.6.0-alpha/contributing/configuration"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2.6.0-alpha/contributing/guidelines",
+                  "v2.6.0-alpha/contributing/license"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/introduction"
+                ]
+              },
+              {
+                "group": "workspaces",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/get-or-create-workspace",
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/get-all-workspaces",
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/update-workspace",
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/delete-workspace",
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/search-workspace",
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/get-deriver-status",
+                  "v2.6.0-alpha/api-reference/endpoint/workspaces/trigger-dream"
+                ]
+              },
+              {
+                "group": "peers",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/peers/get-peers",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/get-or-create-peer",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/update-peer",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/get-sessions-for-peer",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/chat",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/get-working-representation",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/get-peer-card",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/set-peer-card",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/get-peer-context",
+                  "v2.6.0-alpha/api-reference/endpoint/peers/search-peer"
+                ]
+              },
+              {
+                "group": "sessions",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-or-create-session",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-sessions",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/update-session",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/delete-session",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/clone-session",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-session-peers",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/set-session-peers",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/add-peers-to-session",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/remove-peers-from-session",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-peer-config",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/set-peer-config",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-session-context",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-session-summaries",
+                  "v2.6.0-alpha/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "messages",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/messages/create-messages-for-session",
+                  "v2.6.0-alpha/api-reference/endpoint/messages/get-messages",
+                  "v2.6.0-alpha/api-reference/endpoint/messages/get-message",
+                  "v2.6.0-alpha/api-reference/endpoint/messages/update-message",
+                  "v2.6.0-alpha/api-reference/endpoint/messages/create-messages-with-file"
+                ]
+              },
+              {
+                "group": "observations",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/observations/create-observations",
+                  "v2.6.0-alpha/api-reference/endpoint/observations/list-observations",
+                  "v2.6.0-alpha/api-reference/endpoint/observations/query-observations",
+                  "v2.6.0-alpha/api-reference/endpoint/observations/delete-observation"
+                ]
+              },
+              {
+                "group": "webhooks",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/webhooks/list-webhook-endpoints",
+                  "v2.6.0-alpha/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint",
+                  "v2.6.0-alpha/api-reference/endpoint/webhooks/delete-webhook-endpoint",
+                  "v2.6.0-alpha/api-reference/endpoint/webhooks/test-emit"
+                ]
+              },
+              {
+                "group": "miscellaneous",
+                "pages": [
+                  "v2.6.0-alpha/api-reference/endpoint/keys/create-key",
+                  "v2.6.0-alpha/api-reference/endpoint/metrics"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Changelog",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "changelog/introduction",
+                  "changelog/compatibility-guide"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
         "version": "v1.1.0",
         "api": {
           "openapi": [
@@ -378,26 +593,7 @@
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Dashboard",
-          "href": "https://app.honcho.dev",
-          "icon": "table-columns"
-        },
-        {
-          "anchor": "Community",
-          "href": "https://discord.gg/honcho",
-          "icon": "discord"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://blog.plasticlabs.ai",
-          "icon": "newspaper"
-        }
-      ]
-    }
+    ]
   },
   "logo": {
     "light": "/logo/honcho-dark.svg",
@@ -411,9 +607,11 @@
   },
   "footer": {
     "socials": {
-      "twitter": "https://twitter.com/plastic_labs",
-      "github": "https://github.com/plastic-labs",
-      "linkedin": "https://www.linkedin.com/company/plasticlabs"
+      "twitter": "https://x.com/honchodotdev",
+      "github": "https://github.com/plastic-labs/honcho",
+      "discord": "https://discord.gg/honcho",
+      "linkedin": "https://www.linkedin.com/company/plasticlabs",
+      "youtube": "https://www.youtube.com/@plasticlabs"
     }
   },
   "integrations": {

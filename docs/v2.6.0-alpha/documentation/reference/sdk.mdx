@@ -1,0 +1,1110 @@
+---
+title: 'SDK Reference'
+description: 'Complete SDK documentation and examples for Python and TypeScript'
+icon: 'code'
+---
+
+The Honcho SDKs provide ergonomic interfaces for building agentic AI applications with Honcho in Python and TypeScript/JavaScript.
+
+## Installation
+
+<CodeGroup>
+```bash Python (uv)
+uv add honcho-ai
+```
+
+```bash Python (pip)
+pip install honcho-ai
+```
+
+```bash TypeScript (npm)
+npm install @honcho-ai/sdk
+```
+
+```bash TypeScript (yarn)
+yarn add @honcho-ai/sdk
+```
+
+```bash TypeScript (pnpm)
+pnpm add @honcho-ai/sdk
+```
+</CodeGroup>
+
+## Quickstart
+
+<Info>
+Without configuration, the SDK defaults to the demo server. For production use:
+1. Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys)
+2. Set `environment="production"` and provide your `api_key`
+</Info>
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client (using the default workspace)
+honcho = Honcho()
+
+# Create peers
+alice = honcho.peer("alice")
+assistant = honcho.peer("assistant")
+
+# Create a session for conversation
+session = honcho.session("conversation-1")
+
+# Add messages to conversation
+session.add_messages([
+    alice.message("What's the weather like today?"),
+    assistant.message("It's sunny and 75°F outside!")
+])
+
+# Query peer representations in natural language
+response = alice.chat("What did the assistant tell this user about the weather?")
+
+# Get conversation context for LLM completions
+context = session.get_context()
+openai_messages = context.to_openai(assistant=assistant)
+```
+
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+// Initialize client (using the default workspace)
+const honcho = new Honcho({});
+
+// Create peers
+const alice = await honcho.peer("alice");
+const assistant = await honcho.peer("assistant");
+
+// Create a session for conversation
+const session = await honcho.session("conversation-1");
+
+// Add messages to conversation
+await session.addMessages([
+  alice.message("What's the weather like today?"),
+  assistant.message("It's sunny and 75°F outside!")
+]);
+
+// Query peer representations in natural language
+const response = await alice.chat("What did the assistant tell this user about the weather?");
+
+// Get conversation context for LLM completions
+const context = await session.getContext();
+const openaiMessages = context.toOpenAI(assistant);
+```
+</CodeGroup>
+
+## Core Concepts
+
+### Peers and Representations
+
+<Info>
+**Representations** are how Honcho models what peers know. Each peer has a **global representation** (everything they know across all sessions) and **local representations** (what other specific peers know about them, scoped by session or globally).
+</Info>
+
+<CodeGroup>
+```python Python
+# Query alice's global knowledge
+response = alice.chat("What does the user know about weather?")
+
+# Query what alice knows about the assistant (local representation)
+response = alice.chat("What does the user know about the assistant?", target=assistant)
+
+# Query scoped to a specific session
+response = alice.chat("What happened in our conversation?", session=session.id)
+```
+
+```typescript TypeScript
+// Query alice's global knowledge
+const response = await alice.chat("What does the user know about weather?");
+
+// Query what alice knows about the assistant (local representation)
+const targetResponse = await alice.chat("What does the user know about the assistant?", {
+  target: assistant
+});
+
+// Query scoped to a specific session
+const sessionResponse = await alice.chat("What happened in our conversation?", {
+  sessionId: session.id
+});
+```
+</CodeGroup>
+
+## Core Classes
+
+### Honcho Client
+
+The main entry point for workspace operations:
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Basic initialization (uses environment variables)
+honcho = Honcho(workspace_id="my-app-name")
+
+# Full configuration
+honcho = Honcho(
+    workspace_id="my-app-name",
+    api_key="my-api-key",
+    environment="production",  # or "local", "demo"
+    base_url="https://api.honcho.dev",
+    timeout=30.0,
+    max_retries=3
+)
+```
+
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+// Basic initialization (uses environment variables)
+const honcho = new Honcho({
+  workspaceId: "my-app-name"
+});
+
+// Full configuration
+const honcho = new Honcho({
+  workspaceId: "my-app-name",
+  apiKey: "my-api-key",
+  environment: "production",  // or "local", "demo"
+  baseURL: "https://api.honcho.dev",
+  timeout: 30000,
+  maxRetries: 3,
+  defaultHeaders: { "X-Custom-Header": "value" },
+  defaultQuery: { "param": "value" }
+});
+```
+</CodeGroup>
+
+**Environment Variables:**
+- `HONCHO_API_KEY` - API key for authentication
+- `HONCHO_BASE_URL` - Base URL for the Honcho API
+- `HONCHO_WORKSPACE_ID` - Default workspace ID
+
+**Key Methods:**
+
+<CodeGroup>
+```python Python
+# Get or create a peer
+peer = honcho.peer(id)
+
+# Get or create a session
+session = honcho.session(id)
+
+# List all peers in workspace
+peers = honcho.get_peers()
+
+# List all sessions in workspace
+sessions = honcho.get_sessions()
+
+# Search across all content in workspace
+results = honcho.search(query)
+
+# Workspace metadata management
+metadata = honcho.get_metadata()
+honcho.set_metadata(dict)
+
+# Get list of all workspace IDs
+workspaces = honcho.get_workspaces()
+```
+
+```typescript TypeScript
+// Get or create a peer
+const peer = await honcho.peer(id);
+
+// Get or create a session
+const session = await honcho.session(id);
+
+// List all peers in workspace (returns Page<Peer>)
+const peers = await honcho.getPeers();
+
+// List all sessions in workspace (returns Page<Session>)
+const sessions = await honcho.getSessions();
+
+// Search across all content in workspace (returns Page<any>)
+const results = await honcho.search(query);
+
+// Workspace metadata management
+const metadata = await honcho.getMetadata();
+await honcho.setMetadata(metadata);
+
+// Get list of all workspace IDs
+const workspaces = await honcho.getWorkspaces();
+```
+</CodeGroup>
+
+<Info>
+Peer and session creation is **lazy** - no API calls are made until you actually use the peer or session.
+</Info>
+
+### Peer
+
+Represents an entity that can participate in conversations:
+
+<CodeGroup>
+```python Python
+# Create peers (lazy creation - no API call yet)
+alice = honcho.peer("alice")
+assistant = honcho.peer("assistant")
+
+# Create with immediate configuration
+# This will make an API call to create the peer with the custom configuration and/or metadata
+alice = honcho.peer("bob", config={"role": "user", "active": True}, metadata={"location": "NYC", "role": "developer"})
+
+# Peer properties
+print(f"Peer ID: {alice.id}")
+print(f"Workspace: {alice.workspace_id}")
+
+# Chat with peer's representations (supports streaming)
+response = alice.chat("What did I have for breakfast?")
+response = alice.chat("What do I know about Bob?", target="bob")
+response = alice.chat("What happened in session-1?", session="session-1")
+
+# Add content to a session with a peer
+session = honcho.session("session-1")
+session.add_messages([
+  alice.message("I love Python programming"),
+  alice.message("Today I learned about async programming"),
+  alice.message("I prefer functional programming patterns")
+])
+
+# Get peer's sessions
+sessions = alice.get_sessions()
+
+# Search peer's messages
+results = alice.search("programming")
+
+# Metadata management
+metadata = alice.get_metadata()
+metadata["location"] = "Paris"
+alice.set_metadata(metadata)
+
+# Get peer context (representation + peer card in one call)
+context = alice.get_context()
+context = alice.get_context(target="bob")  # What alice knows about bob
+
+# Get working representation with semantic search
+rep = alice.working_rep(search_query="preferences", search_top_k=10)
+
+# Access observations
+self_observations = alice.observations.list()  # Self-observations
+bob_observations = alice.observations_of("bob").list()  # Observations of bob
+```
+
+```typescript TypeScript
+// Create peers (returns Promise<Peer>)
+const alice = await honcho.peer("alice");
+const assistant = await honcho.peer("assistant");
+
+// Peer properties
+console.log(`Peer ID: ${alice.id}`);
+
+// Chat with peer's representations (supports streaming)
+const response = await alice.chat("What did I have for breakfast?");
+const targetResponse = await alice.chat("What do I know about Bob?", { target: "bob" });
+const sessionResponse = await alice.chat("What happened in session-1?", {
+  sessionId: "session-1"
+});
+
+// Chat with streaming support
+const streamResponse = await alice.chat("Tell me a story", { stream: true });
+
+// Add content to a session with a peer
+const session = await honcho.session("session-1");
+await session.addMessages([
+  alice.message("I love TypeScript programming"),
+  alice.message("Today I learned about async programming"),
+  alice.message("I prefer functional programming patterns")
+]);
+
+// Get peer's sessions
+const sessions = await alice.getSessions();
+
+// Search peer's messages
+const results = await alice.search("programming");
+
+// Metadata management
+const metadata = await alice.getMetadata();
+await alice.setMetadata({
+  ...metadata,
+  location: "Paris"
+});
+
+// Get peer context (representation + peer card in one call)
+const context = await alice.getContext();
+const targetContext = await alice.getContext("bob");  // What alice knows about bob
+
+// Get working representation with semantic search
+const rep = await alice.workingRep(undefined, undefined, {
+  searchQuery: "preferences",
+  searchTopK: 10
+});
+
+// Access observations
+const selfObs = await alice.observations.list();  // Self-observations
+const bobObs = await alice.observationsOf("bob").list();  // Observations of bob
+```
+</CodeGroup>
+
+### Peer Context
+
+The `get_context()` method on peers retrieves both the working representation and peer card in a single API call:
+
+<CodeGroup>
+```python Python
+# Get peer's own context
+context = alice.get_context()
+print(context.representation)  # Working representation
+print(context.peer_card)       # Peer card as list of strings
+
+# Get context about another peer (what alice knows about bob)
+bob_context = alice.get_context(target="bob")
+
+# Get context with semantic search
+context = alice.get_context(
+    target="bob",
+    search_query="work preferences",
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_derived=True,
+    max_observations=50
+)
+```
+
+```typescript TypeScript
+// Get peer's own context
+const context = await alice.getContext();
+console.log(context.representation);  // Working representation
+console.log(context.peerCard);        // Peer card as array of strings
+
+// Get context about another peer (what alice knows about bob)
+const bobContext = await alice.getContext("bob");
+
+// Get context with semantic search
+const searchedContext = await alice.getContext("bob", {
+  searchQuery: "work preferences",
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostDerived: true,
+  maxObservations: 50
+});
+```
+</CodeGroup>
+
+### Observations
+
+Peers can access their observations (facts derived from messages) through the `observations` property and `observations_of()` method:
+
+<CodeGroup>
+```python Python
+# Access self-observations (what honcho knows about alice)
+self_obs = alice.observations
+
+# List self-observations
+obs_list = self_obs.list()
+
+# Search self-observations semantically
+results = self_obs.query("food preferences")
+
+# Delete an observation
+self_obs.delete("observation-id")
+
+# Access observations of another peer (what alice knows about bob)
+bob_obs = alice.observations_of("bob")
+bob_obs_list = bob_obs.list()
+bob_search = bob_obs.query("work history")
+```
+
+```typescript TypeScript
+// Access self-observations (what honcho knows about alice)
+const selfObs = alice.observations;
+
+// List self-observations
+const obsList = await selfObs.list();
+
+// Search self-observations semantically
+const results = await selfObs.query("food preferences");
+
+// Delete an observation
+await selfObs.delete("observation-id");
+
+// Access observations of another peer (what alice knows about bob)
+const bobObs = alice.observationsOf("bob");
+const bobObsList = await bobObs.list();
+const bobSearch = await bobObs.query("work history");
+```
+</CodeGroup>
+
+### Peer Context
+
+The `get_context()` method on peers retrieves both the working representation and peer card in a single API call:
+
+<CodeGroup>
+```python Python
+# Get peer's own context
+context = alice.get_context()
+print(context.representation)  # Working representation
+print(context.peer_card)       # Peer card as list of strings
+
+# Get context about another peer (what alice knows about bob)
+bob_context = alice.get_context(target="bob")
+
+# Get context with semantic search
+context = alice.get_context(
+    target="bob",
+    search_query="work preferences",
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_derived=True,
+    max_observations=50
+)
+```
+
+```typescript TypeScript
+// Get peer's own context
+const context = await alice.getContext();
+console.log(context.representation);  // Working representation
+console.log(context.peerCard);        // Peer card as array of strings
+
+// Get context about another peer (what alice knows about bob)
+const bobContext = await alice.getContext("bob");
+
+// Get context with semantic search
+const searchedContext = await alice.getContext("bob", {
+  searchQuery: "work preferences",
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostDerived: true,
+  maxObservations: 50
+});
+```
+</CodeGroup>
+
+### Observations
+
+Peers can access their observations (facts derived from messages) through the `observations` property and `observations_of()` method:
+
+<CodeGroup>
+```python Python
+# Access self-observations (what honcho knows about alice)
+self_obs = alice.observations
+
+# List self-observations
+obs_list = self_obs.list()
+
+# Search self-observations semantically
+results = self_obs.query("food preferences")
+
+# Delete an observation
+self_obs.delete("observation-id")
+
+# Access observations of another peer (what alice knows about bob)
+bob_obs = alice.observations_of("bob")
+bob_obs_list = bob_obs.list()
+bob_search = bob_obs.query("work history")
+```
+
+```typescript TypeScript
+// Access self-observations (what honcho knows about alice)
+const selfObs = alice.observations;
+
+// List self-observations
+const obsList = await selfObs.list();
+
+// Search self-observations semantically
+const results = await selfObs.query("food preferences");
+
+// Delete an observation
+await selfObs.delete("observation-id");
+
+// Access observations of another peer (what alice knows about bob)
+const bobObs = alice.observationsOf("bob");
+const bobObsList = await bobObs.list();
+const bobSearch = await bobObs.query("work history");
+```
+</CodeGroup>
+
+#### Creating Observations Manually
+
+You can also create observations directly, which is useful for importing data or adding explicit facts:
+
+<CodeGroup>
+```python Python
+# Create observations for what alice knows about bob
+bob_obs = alice.observations_of("bob")
+
+# Create a single observation
+created = bob_obs.create([
+    {"content": "User prefers dark mode", "session_id": "session-1"}
+])
+
+# Create multiple observations in batch
+created = bob_obs.create([
+    {"content": "User prefers dark mode", "session_id": "session-1"},
+    {"content": "User works late at night", "session_id": "session-1"},
+    {"content": "User enjoys programming", "session_id": "session-1"},
+])
+
+# Returns list of created Observation objects with IDs
+for obs in created:
+    print(f"Created observation: {obs.id} - {obs.content}")
+```
+
+```typescript TypeScript
+// Create observations for what alice knows about bob
+const bobObs = alice.observationsOf("bob");
+
+// Create a single observation
+const created = await bobObs.create([
+    { content: "User prefers dark mode", sessionId: "session-1" }
+]);
+
+// Create multiple observations in batch
+const batchCreated = await bobObs.create([
+    { content: "User prefers dark mode", sessionId: "session-1" },
+    { content: "User works late at night", sessionId: "session-1" },
+    { content: "User enjoys programming", sessionId: "session-1" },
+]);
+
+// Returns array of created Observation objects with IDs
+for (const obs of batchCreated) {
+    console.log(`Created observation: ${obs.id} - ${obs.content}`);
+}
+```
+</CodeGroup>
+
+<Info>
+Manually created observations are marked as "explicit" and are treated the same as system-derived observations. Each observation must be tied to a session and the content length is validated against the embedding token limit.
+</Info>
+
+### Session
+
+Manages multi-party conversations:
+
+<CodeGroup>
+```python Python
+# Create session (like peers, lazy creation)
+session = honcho.session("conversation-1")
+
+# Create with immediate configuration
+# This will make an API call to create the session with the custom configuration and/or metadata
+session = honcho.session("meeting-1", config={"type": "meeting", "max_peers": 10})
+
+# Session properties
+print(f"Session ID: {session.id}")
+print(f"Workspace: {session.workspace_id}")
+
+# Peer management
+session.add_peers([alice, assistant])
+session.add_peers([(alice, SessionPeerConfig(observe_others=True))])
+session.set_peers([alice, bob, charlie])  # Replace all peers
+session.remove_peers([alice])
+
+# Get session peers and their configurations
+peers = session.get_peers()
+peer_config = session.get_peer_config(alice)
+session.set_peer_config(alice, SessionPeerConfig(observe_me=False))
+
+# Message management
+session.add_messages([
+    alice.message("Hello everyone!"),
+    assistant.message("Hi Alice! How can I help today?")
+])
+
+# Get messages
+messages = session.get_messages()
+
+# Get conversation context
+context = session.get_context(summary=True, tokens=2000)
+
+# Get context with peer representation included
+context = session.get_context(
+    tokens=2000,
+    peer_target="user",
+    peer_perspective="assistant",
+    last_user_message="What are my preferences?",
+    limit_to_session=True,
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_derived=True,
+    max_observations=25
+)
+
+# Search session content
+results = session.search("help")
+
+# Working representation queries with semantic search
+global_rep = session.working_rep("alice")
+targeted_rep = session.working_rep(alice, target=bob)
+searched_rep = session.working_rep(
+    "alice",
+    search_query="preferences",
+    search_top_k=10,
+    include_most_derived=True
+)
+
+# Upload a file to create messages
+messages = session.upload_file(
+    file=open("document.pdf", "rb"),
+    peer="user",
+    metadata={"source": "upload"},
+    created_at="2024-01-15T10:30:00Z"
+)
+
+# Clone a session (creates a copy with all data)
+# Copies: messages, metadata, configuration, peers, and peer configurations
+cloned = session.clone()
+
+# Clone up to a specific message (inclusive)
+# Only messages up to and including the specified message are copied
+cloned_partial = session.clone(message_id="msg-123")
+
+# Delete session (async - returns 202)
+session.delete()
+
+# Metadata management
+session.set_metadata({"topic": "product planning", "status": "active"})
+metadata = session.get_metadata()
+```
+
+```typescript TypeScript
+// Create session (returns Promise<Session>)
+const session = await honcho.session("conversation-1");
+
+// Session properties
+console.log(`Session ID: ${session.id}`);
+
+// Peer management
+await session.addPeers([alice, assistant]);
+await session.addPeers("single-peer-id");
+await session.setPeers([alice, bob, charlie]);  // Replace all peers
+await session.removePeers([alice]);
+await session.removePeers("single-peer-id");
+
+// Get session peers
+const peers = await session.getPeers();
+
+// Message management
+await session.addMessages([
+  alice.message("Hello everyone!"),
+  assistant.message("Hi Alice! How can I help today?")
+]);
+
+// Get messages
+const messages = await session.getMessages();
+
+// Get conversation context
+const context = await session.getContext({ summary: true, tokens: 2000 });
+
+// Get context with peer representation included
+const richContext = await session.getContext({
+  tokens: 2000,
+  peerTarget: "user",
+  peerPerspective: "assistant",
+  lastUserMessage: "What are my preferences?",
+  limitToSession: true,
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostDerived: true,
+  maxObservations: 25
+});
+
+// Search session content
+const results = await session.search("help");
+
+// Working representation queries with semantic search
+const globalRep = await session.workingRep("alice");
+const targetedRep = await session.workingRep(alice, { target: bob });
+const searchedRep = await session.workingRep("alice", undefined, {
+  searchQuery: "preferences",
+  searchTopK: 10,
+  includeMostDerived: true
+});
+
+// Upload a file to create messages
+const messages = await session.uploadFile(
+  fileBuffer,
+  "user",
+  {
+    metadata: { source: "upload" },
+    createdAt: "2024-01-15T10:30:00Z"
+  }
+);
+
+// Clone a session (creates a copy with all data)
+// Copies: messages, metadata, configuration, peers, and peer configurations
+const cloned = await session.clone();
+
+// Clone up to a specific message (inclusive)
+// Only messages up to and including the specified message are copied
+const clonedPartial = await session.clone("msg-123");
+
+// Delete session (async - returns 202)
+await session.delete();
+
+// Metadata management
+await session.setMetadata({
+  topic: "product planning",
+  status: "active"
+});
+const metadata = await session.getMetadata();
+```
+</CodeGroup>
+
+**Session-Level Theory of Mind Configuration:**
+
+<Info>
+**Theory of Mind** controls whether peers can form models of what other peers think. Use `observe_others=False` to prevent a peer from modeling others within a session, and `observe_me=False` to prevent others from modeling this peer within a session.
+</Info>
+
+<CodeGroup>
+```python Python
+from honcho import SessionPeerConfig
+
+# Configure peer observation settings
+config = SessionPeerConfig(
+    observe_others=False,  # Form theory-of-mind of other peers -- False by default
+    observe_me=True        # Don't let others form theory-of-mind of me -- True by default
+)
+
+session.add_peers([(alice, config)])
+```
+
+```typescript TypeScript
+// Configure peer observation settings
+const config = new SessionPeerConfig({
+    observeOthers: false,  // Form theory-of-mind of other peers -- False by default
+    observeMe: true        // Don't let others form theory-of-mind of me -- True by default
+});
+
+await session.addPeers([alice, config]);
+```
+</CodeGroup>
+
+### SessionContext
+
+Provides formatted conversation context for LLM integration:
+
+<CodeGroup>
+```python Python
+# Get session context
+context = session.get_context(summary=True, tokens=1500)
+
+# Convert to LLM-friendly formats
+openai_messages = context.to_openai(assistant=assistant)
+anthropic_messages = context.to_anthropic(assistant=assistant)
+```
+
+```typescript TypeScript
+// Get session context
+const context = await session.getContext({ summary: true, tokens: 1500 });
+
+// Convert to LLM-friendly formats
+const openaiMessages = context.toOpenAI(assistant);
+const anthropicMessages = context.toAnthropic(assistant);
+```
+</CodeGroup>
+
+The SessionContext object has the following structure:
+
+```json
+{
+  "id": "string",
+  "messages": [
+    {
+      "id": "string",
+      "content": "string",
+      "peer_id": "string",
+      "session_id": "string",
+      "workspace_id": "string",
+      "metadata": {},
+      "created_at": "2024-01-15T10:30:00Z",
+      "token_count": 42
+    }
+  ],
+  "summary": {
+    "content": "string",
+    "message_id": 123,
+    "summary_type": "short|long",
+    "created_at": "2024-01-15T10:30:00Z"
+  },
+  "peer_representation": "string (optional)",
+  "peer_card": ["string"] // optional, included when peer_target is provided
+}
+```
+
+**Session Context Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `summary` | `bool` | Whether to include summary (default: true) |
+| `tokens` | `int` | Maximum tokens to include |
+| `peer_target` | `str` | Peer ID to get representation for |
+| `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
+| `last_user_message` | `str` | Most recent message for semantic search |
+| `limit_to_session` | `bool` | Limit representation to session only |
+| `search_top_k` | `int` | Number of semantic search results (1-100) |
+| `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
+| `include_most_derived` | `bool` | Include most derived observations |
+| `max_observations` | `int` | Max observations to include (1-100) |
+
+## Advanced Usage
+
+### Multi-Party Conversations
+
+<CodeGroup>
+```python Python
+# Create multiple peers
+users = [honcho.peer(f"user-{i}") for i in range(5)]
+moderator = honcho.peer("moderator")
+
+# Create group session
+group_chat = honcho.session("group-discussion")
+group_chat.add_peers(users + [moderator])
+
+# Add messages from different peers
+group_chat.add_messages([
+    users[0].message("What's our agenda for today?"),
+    moderator.message("We'll discuss the new feature roadmap"),
+    users[1].message("I have some concerns about the timeline")
+])
+
+# Query different perspectives
+user_perspective = users[0].chat("What are people's concerns?")
+moderator_view = moderator.chat("What feedback am I getting?", session=group_chat.id)
+```
+
+```typescript TypeScript
+// Create multiple peers
+const users = await Promise.all(
+  Array.from({ length: 5 }, (_, i) => honcho.peer(`user-${i}`))
+);
+const moderator = await honcho.peer("moderator");
+
+// Create group session
+const groupChat = await honcho.session("group-discussion");
+await groupChat.addPeers([...users, moderator]);
+
+// Add messages from different peers
+await groupChat.addMessages([
+  users[0].message("What's our agenda for today?"),
+  moderator.message("We'll discuss the new feature roadmap"),
+  users[1].message("I have some concerns about the timeline")
+]);
+
+// Query different perspectives
+const userPerspective = await users[0].chat("What are people's concerns?");
+const moderatorView = await moderator.chat("What feedback am I getting?", {
+  sessionId: groupChat.id
+});
+```
+</CodeGroup>
+
+### LLM Integration
+
+<CodeGroup>
+```python Python
+import openai
+
+# Get conversation context
+context = session.get_context(tokens=3000)
+messages = context.to_openai(assistant=assistant)
+
+# Call OpenAI API
+response = openai.chat.completions.create(
+    model="gpt-4",
+    messages=messages + [
+        {"role": "user", "content": "Summarize the key discussion points."}
+    ]
+)
+```
+
+```typescript TypeScript
+import OpenAI from 'openai';
+
+const openai = new OpenAI();
+
+// Get conversation context
+const context = await session.getContext({ tokens: 3000 });
+const messages = context.toOpenAI(assistant);
+
+// Call OpenAI API
+const response = await openai.chat.completions.create({
+  model: "gpt-4",
+  messages: [
+    ...messages,
+    { role: "user", content: "Summarize the key discussion points." }
+  ]
+});
+```
+</CodeGroup>
+
+### Custom Message Timestamps
+
+When creating messages, you can optionally specify a custom `created_at` timestamp instead of using the server's current time:
+
+```bash
+curl -X POST "https://api.honcho.dev/v2/workspaces/{workspace_id}/sessions/{session_id}/messages" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "peer_id": "user123",
+        "content": "This message happened yesterday",
+        "created_at": "2024-01-01T12:00:00Z",
+        "metadata": {"source": "historical_data"}
+      }
+    ]
+  }'
+```
+
+This is useful for:
+- Importing historical conversation data
+- Backfilling messages from other systems
+- Maintaining accurate timeline ordering when processing batch data
+
+If `created_at` is not provided, messages will use the server's current timestamp.
+
+### Metadata and Filtering
+
+See [Using Filters](/v2/guides/using-filters) for more examples on how to use filters.
+
+<CodeGroup>
+```python Python
+# Add messages with metadata
+session.add_messages([
+    alice.message("Let's discuss the budget", metadata={
+        "topic": "finance",
+        "priority": "high"
+    }),
+    assistant.message("I'll prepare the financial report", metadata={
+        "action_item": True,
+        "due_date": "2024-01-15"
+    })
+])
+
+# Filter messages by metadata
+finance_messages = session.get_messages(filters={"metadata": {"topic": "finance"}})
+action_items = session.get_messages(filters={"metadata": {"action_item": True}})
+```
+
+```typescript TypeScript
+// Add messages with metadata
+await session.addMessages([
+  alice.message("Let's discuss the budget", {
+    metadata: {
+      topic: "finance",
+      priority: "high"
+    }
+  }),
+  assistant.message("I'll prepare the financial report", {
+    metadata: {
+      action_item: true,
+      due_date: "2024-01-15"
+    }
+  })
+]);
+
+// Filter messages by metadata
+const financeMessages = await session.getMessages({
+  filters: { metadata: { topic: "finance" } }
+});
+const actionItems = await session.getMessages({
+  filters: { metadata: { action_item: true } }
+});
+```
+</CodeGroup>
+
+### Pagination
+
+<CodeGroup>
+```python Python
+# Iterate through all sessions
+for session in honcho.get_sessions():
+    print(f"Session: {session.id}")
+
+    # Iterate through session messages
+    for message in session.get_messages():
+        print(f"  {message.peer_id}: {message.content}")
+```
+
+```typescript TypeScript
+// Get paginated results
+const peersPage = await honcho.getPeers();
+
+// Iterate through all items
+for await (const peer of peersPage) {
+  console.log(`Peer: ${peer.id}`);
+}
+
+// Manual pagination
+let currentPage = peersPage;
+while (currentPage) {
+  const data = await currentPage.data();
+  console.log(`Processing ${data.length} items`);
+  currentPage = await currentPage.nextPage();
+}
+```
+</CodeGroup>
+
+## Best Practices
+
+### Resource Management
+
+<CodeGroup>
+```python Python
+# Peers and sessions are lightweight - create as needed
+alice = honcho.peer("alice")
+session = honcho.session("chat-1")
+
+# Use descriptive IDs for better debugging
+user_session = honcho.session(f"user-{user_id}-support-{ticket_id}")
+support_agent = honcho.peer(f"agent-{agent_id}")
+```
+
+```typescript TypeScript
+// Peers and sessions are lightweight - create as needed
+const alice = await honcho.peer("alice");
+const session = await honcho.session("chat-1");
+
+// Use descriptive IDs for better debugging
+const userSession = await honcho.session(`user-${userId}-support-${ticketId}`);
+const supportAgent = await honcho.peer(`agent-${agentId}`);
+```
+</CodeGroup>
+
+### Performance Optimization
+
+<CodeGroup>
+```python Python
+# Lazy creation - no API calls until needed
+peers = [honcho.peer(f"user-{i}") for i in range(100)]  # Fast
+
+# Batch operations when possible
+session.add_messages([peer.message(f"Message {i}") for i, peer in enumerate(peers)])
+
+# Use context limits to control token usage
+context = session.get_context(tokens=1500)  # Limit context size
+```
+
+```typescript TypeScript
+// Lazy creation - no API calls until needed
+const peers = await Promise.all(
+  Array.from({ length: 100 }, (_, i) => honcho.peer(`user-${i}`))
+);
+
+// Batch operations when possible
+await session.addMessages(
+  peers.map((peer, i) => peer.message(`Message ${i}`))
+);
+
+// Use context limits to control token usage
+const context = await session.getContext({ tokens: 1500 }); // Limit context size
+
+// Iterate efficiently with async iteration
+for await (const peer of await honcho.getPeers()) {
+  // Process one peer at a time without loading all into memory
+}
+```
+</CodeGroup>
