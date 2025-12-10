@@ -742,7 +742,6 @@ version = "2.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
-    { name = "boto3" },
     { name = "cashews", extra = ["redis"] },
     { name = "fastapi", extra = ["standard"] },
     { name = "fastapi-pagination" },
@@ -774,6 +773,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
+    { name = "boto3" },
     { name = "coverage" },
     { name = "fakeredis" },
     { name = "honcho-ai" },
@@ -792,7 +792,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
-    { name = "boto3", specifier = ">=1.42.5" },
     { name = "cashews", extras = ["redis"], specifier = "==7.4.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.111.0" },
     { name = "fastapi-pagination", specifier = ">=0.12.24" },
@@ -824,6 +823,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
+    { name = "boto3", specifier = ">=1.42.5" },
     { name = "coverage", specifier = ">=7.6.0" },
     { name = "fakeredis", specifier = ">=2.32.0" },
     { name = "honcho-ai", editable = "sdks/python" },

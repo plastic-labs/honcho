@@ -75,8 +75,8 @@ async def send_discord_message(webhook_url: str, message: str) -> None:
             response = await client.post(webhook_url, json={"content": message})
             response.raise_for_status()
             logger.info("Discord notification sent successfully")
-    except Exception as e:
-        logger.error(f"Failed to send Discord notification: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Failed to send Discord notification")
 
 
 async def save_results_to_s3(
@@ -96,8 +96,6 @@ async def save_results_to_s3(
         # AWS credentials are configured via OIDC in GitHub Actions
         # Check if boto3 can access credentials (either from environment or OIDC)
         try:
-            import boto3
-
             session = boto3.Session()
             credentials = session.get_credentials()  # pyright: ignore
             if not credentials:

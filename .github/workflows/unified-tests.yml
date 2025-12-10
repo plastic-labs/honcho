@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   start-runner:
@@ -15,20 +16,10 @@ jobs:
     uses: ./.github/workflows/start-fly-runner.yml
     secrets: inherit
 
-  wait-for-runner:
-    name: Wait for Runner
-    runs-on: ubuntu-latest
-    needs: start-runner
-    if: needs.start-runner.outputs.runner-ready == 'true'
-    steps:
-      - run: |
-          echo "✅ Runner is ready. Waiting a few seconds before scheduling tests..."
-          sleep 5
-
   unified-tests:
     name: Run Unified Tests
     runs-on: ${{ fromJSON(format('[{0}]', needs.start-runner.outputs.runner-labels)) }}
-    needs: [start-runner, wait-for-runner]
+    needs: start-runner
     if: needs.start-runner.outputs.runner-ready == 'true'
     timeout-minutes: 90
     environment: unified-tests

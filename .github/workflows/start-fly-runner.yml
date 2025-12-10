@@ -25,6 +25,9 @@ jobs:
   start-runner:
     name: Start Fly Runner
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
       runner-ready: ${{ steps.wait-for-runner.outputs.ready }}
       machine-id: ${{ steps.machine-management.outputs.machine-id }}
@@ -52,6 +55,13 @@ jobs:
         run: |
           echo "Getting app info for ${FLY_RUNNER_APP}..."
           flyctl status -a "${FLY_RUNNER_APP}"
+
+      - name: Set GH_TOKEN in Fly secrets
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
+        run: |
+          echo "Setting GH_TOKEN in Fly secrets..."
+          flyctl secrets set GH_TOKEN="${{ secrets.GH_TOKEN_ACTIONS }}" -a "${FLY_RUNNER_APP}"
 
       - name: Fly machine management
         id: machine-management
@@ -99,10 +109,10 @@ jobs:
             echo "📁 Using available volume: $AVAILABLE_VOLUME"
 
             # Create new machine with the available volume
+            # Note: GH_TOKEN should be set via Fly secrets: flyctl secrets set GH_TOKEN=...
             FULL_OUTPUT=$(flyctl machines run "${FLY_RUNNER_IMAGE}" \
               -a "${FLY_RUNNER_APP}" \
               --region "${FLY_RUNNER_REGION}" \
-              --env GH_TOKEN=${{ secrets.GH_TOKEN_ACTIONS }} \
               --env RUN_ID=${{ github.run_id }} \
               --env TEST_TYPE="honcho-unified-runner" \
               --vm-size shared-cpu-8x \
