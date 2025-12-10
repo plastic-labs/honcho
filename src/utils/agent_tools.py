@@ -164,7 +164,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_memory": {
         "name": "search_memory",
-        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details. For enumeration questions, call this MULTIPLE times with different query terms.",
+        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -174,8 +174,8 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Number of results to return (default: 10, max: 20). Use higher values (15-20) for enumeration questions.",
-                    "default": 10,
+                    "description": "(Optional) number of results to return (default: 40, max: 50)",
+                    "default": 40,
                 },
             },
             "required": ["query"],
@@ -407,8 +407,7 @@ DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_memory"],
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
-    TOOLS["get_peer_card"],
-    TOOLS["create_observations_deductive"],
+    # TOOLS["create_observations_deductive"],
     TOOLS["grep_messages"],  # For exact text search (names, dates, keywords)
     TOOLS["get_messages_by_date_range"],  # For temporal/date-based queries
     TOOLS["search_messages_temporal"],  # Semantic search + date filtering
@@ -1228,7 +1227,7 @@ async def _handle_get_recent_history(
 
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
-    top_k = min(tool_input.get("top_k", 10), 20)  # Cap at 20
+    top_k = min(tool_input.get("top_k", 40), 50)
     mem: Representation = await search_memory(
         ctx.db,
         workspace_name=ctx.workspace_name,
