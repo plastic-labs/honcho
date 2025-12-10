@@ -31,7 +31,7 @@ jest.mock('@honcho-ai/core', () => {
         search: jest.fn(),
       },
       peers: {
-        getRepresentationresentation: jest.fn(),
+        workingRepresentation: jest.fn(),
       },
       deriverStatus: jest.fn(),
       getOrCreate: jest.fn(),
@@ -916,7 +916,7 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.getRepresentationresentation.mockResolvedValue({
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
         representation: mockRepresentationData,
       })
 
@@ -927,7 +927,7 @@ describe('Session', () => {
       expect(result.explicit[0].content).toBe('Some knowledge about the peer')
       expect(result.deductive).toHaveLength(0)
       expect(
-        mockClient.workspaces.peers.getRepresentationresentation
+        mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: undefined,
@@ -947,7 +947,7 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.getRepresentationresentation.mockResolvedValue({
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
         representation: mockRepresentationData,
       })
 
@@ -958,7 +958,7 @@ describe('Session', () => {
       expect(result.explicit[0].content).toBe('Some knowledge')
       expect(result.deductive).toHaveLength(0)
       expect(
-        mockClient.workspaces.peers.getRepresentationresentation
+        mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: undefined,
@@ -977,7 +977,7 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.getRepresentationresentation.mockResolvedValue({
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
         representation: mockRepresentationData,
       })
 
@@ -988,7 +988,7 @@ describe('Session', () => {
       expect(result.explicit[0].content).toBe('What peer1 knows about target')
       expect(result.deductive).toHaveLength(0)
       expect(
-        mockClient.workspaces.peers.getRepresentationresentation
+        mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: 'target-peer',
@@ -1009,7 +1009,7 @@ describe('Session', () => {
         ],
         deductive: [],
       }
-      mockClient.workspaces.peers.getRepresentationresentation.mockResolvedValue({
+      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
         representation: mockRepresentationData,
       })
 
@@ -1020,7 +1020,7 @@ describe('Session', () => {
       expect(result.explicit[0].content).toBe('What peer1 knows about target')
       expect(result.deductive).toHaveLength(0)
       expect(
-        mockClient.workspaces.peers.getRepresentationresentation
+        mockClient.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: 'target-peer',
@@ -1028,7 +1028,7 @@ describe('Session', () => {
     })
 
     it('should handle API errors', async () => {
-      mockClient.workspaces.peers.getRepresentationresentation.mockRejectedValue(
+      mockClient.workspaces.peers.workingRepresentation.mockRejectedValue(
         new Error('Failed to get working representation')
       )
 

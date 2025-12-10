@@ -26,7 +26,7 @@ describe('Honcho SDK Integration Tests', () => {
           getOrCreate: jest.fn(),
           update: jest.fn(),
           search: jest.fn(),
-          getRepresentationresentation: jest.fn(),
+          workingRepresentation: jest.fn(),
         },
         sessions: {
           list: jest.fn(),
@@ -396,7 +396,7 @@ describe('Honcho SDK Integration Tests', () => {
         ],
       }
 
-      mockWorkspacesApi.workspaces.peers.getRepresentationresentation.mockResolvedValue({
+      mockWorkspacesApi.workspaces.peers.workingRepresentation.mockResolvedValue({
         representation: mockWorkingRepData,
       })
 
@@ -413,7 +413,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(globalRep.deductive).toHaveLength(1)
       expect(globalRep.deductive[0].conclusion).toBe('Alice is a coffee-drinking developer')
       expect(
-        mockWorkspacesApi.workspaces.peers.getRepresentationresentation
+        mockWorkspacesApi.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('integration-test-workspace', 'alice', {
         session_id: 'working-rep-session',
         target: undefined,
@@ -423,7 +423,7 @@ describe('Honcho SDK Integration Tests', () => {
       const targetRep = await session.getRepresentation(alice, bob)
       expect(targetRep).toBeInstanceOf(Representation)
       expect(
-        mockWorkspacesApi.workspaces.peers.getRepresentationresentation
+        mockWorkspacesApi.workspaces.peers.workingRepresentation
       ).toHaveBeenCalledWith('integration-test-workspace', 'alice', {
         session_id: 'working-rep-session',
         target: 'bob',
