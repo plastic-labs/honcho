@@ -42,26 +42,26 @@ These are stored as separate (observer, observed) pairs in Honcho's internal col
 | Observer | Observed | What This Represents |
 |----------|----------|---------------------|
 | alice | alice | Honcho's representation of Alice (across all sessions) |
-| bob | alice | Bob's representation of Alice (from sessions Bob participated in) |
-| carol | alice | Carol's representation of Alice (from sessions Carol participated in) |
+| alice | bob | Alice's representation of Bob (from sessions Alice participated in) |
+| alice | charlie | Alice's representation of Charlie (from sessions Alice participated in) |
 
 ### Information Segmentation
 
 This enables sophisticated scenarios where different agents have different knowledge based on what they've actually witnessed.
 
-**Example**: Alice tells different things to Bob and Carol.
+**Example**: Bob and Charlie tell different things to Alice in separate sessions.
 
 ```
 Session 1 (Alice + Bob):
-Alice → "I had pancakes for breakfast."
+Bob → "I had pancakes for breakfast."
 
-Session 2 (Alice + Carol):
-Alice → "I didn't eat breakfast. I lied to Bob."
+Session 2 (Alice + Charlie):
+Charlie → "I had pancakes for breakfast. Bob is lying about his breakfast."
 ```
 
-With `observe_others=true` enabled:
-- **Bob's representation of Alice** only includes Session 1 (he believes she had pancakes)
-- **Carol's representation of Alice** only includes Session 2 (she knows Alice lied)
+With `observe_others=true` enabled on Alice:
+- **Alice's representation of Bob** only includes Session 1 (she heard Bob say he had pancakes)
+- **Alice's representation of Charlie** only includes Session 2 (she heard Charlie's claim about Bob lying)
 - **Honcho's representation of Alice** reasons over both sessions
 
 ![](/images/observe_config.png)
@@ -73,8 +73,8 @@ The `target` parameter controls which representation you retrieve:
 | Query | Returns |
 |-------|---------|
 | `working_rep("alice")` | Conclusions from Honcho's representation of Alice (across all sessions) |
-| `working_rep("bob", target="alice")` | Conclusions from Bob's representation of Alice (from sessions Bob participated in) |
-| `working_rep("carol", target="alice")` | Conclusions from Carol's representation of Alice (from sessions Carol participated in) |
+| `working_rep("alice", target="bob")` | Conclusions from Alice's representation of Bob (from sessions Alice participated in) |
+| `working_rep("alice", target="charlie")` | Conclusions from Alice's representation of Charlie (from sessions Alice participated in) |
 
 ### Code Examples
 
@@ -87,33 +87,33 @@ session = honcho.session("game-session")
 
 alice = honcho.peer("alice")
 bob = honcho.peer("bob")
-carol = honcho.peer("carol")
+charlie = honcho.peer("charlie")
 
 # Add peers to session
-session.add_peers([alice, bob, carol])
+session.add_peers([alice, bob, charlie])
 
-# Enable Bob and Carol to form representations of others
-session.set_peer_config(bob, SessionPeerConfig(observe_others=True))
-session.set_peer_config(carol, SessionPeerConfig(observe_others=True))
+# Enable Alice to form representations of others
+session.set_peer_config(alice, SessionPeerConfig(observe_others=True))
 
 # Add messages
 session.add_messages([
-    alice.message("I had pancakes for breakfast.")
+    bob.message("I had pancakes for breakfast."),
+    charlie.message("I prefer waffles.")
 ])
 
 # Different sessions with different participants
 session2 = honcho.session("game-session-2")
-session2.add_peers([alice, carol])
-session2.set_peer_config(carol, SessionPeerConfig(observe_others=True))
+session2.add_peers([alice, charlie])
+session2.set_peer_config(alice, SessionPeerConfig(observe_others=True))
 
 session2.add_messages([
-    alice.message("I didn't eat breakfast. I lied to Bob.")
+    charlie.message("I didn't have breakfast. I lied to Bob.")
 ])
 
 # Retrieve conclusions from different perspectives
 honcho_view = session.working_rep("alice")  # Across all sessions
-bob_view = session.working_rep("bob", target="alice")  # From Bob's sessions
-carol_view = session2.working_rep("carol", target="alice")  # From Carol's sessions
+bob_view = session.working_rep("alice", target="bob")  # Alice's view of Bob
+charlie_view = session2.working_rep("alice", target="charlie")  # Alice's view of Charlie
 ```
 
 ```typescript TypeScript
@@ -124,29 +124,29 @@ const session = await honcho.session("game-session");
 
 const alice = await honcho.peer("alice");
 const bob = await honcho.peer("bob");
-const carol = await honcho.peer("carol");
+const charlie = await honcho.peer("charlie");
 
-await session.addPeers([alice, bob, carol]);
+await session.addPeers([alice, bob, charlie]);
 
-await session.setPeerConfig(bob, { observe_others: true });
-await session.setPeerConfig(carol, { observe_others: true });
+await session.setPeerConfig(alice, { observe_others: true });
 
 await session.addMessages([
-    alice.message("I had pancakes for breakfast.")
+    bob.message("I had pancakes for breakfast."),
+    charlie.message("I prefer waffles.")
 ]);
 
 const session2 = await honcho.session("game-session-2");
-await session2.addPeers([alice, carol]);
-await session2.setPeerConfig(carol, { observe_others: true });
+await session2.addPeers([alice, charlie]);
+await session2.setPeerConfig(alice, { observe_others: true });
 
 await session2.addMessages([
-    alice.message("I didn't eat breakfast. I lied to Bob.")
+    charlie.message("I didn't have breakfast. I lied to Bob.")
 ]);
 
 // Retrieve conclusions from different perspectives
 const honchoView = await session.workingRep("alice");  // Across all sessions
-const bobView = await session.workingRep("bob", { target: "alice" });  // From Bob's sessions
-const carolView = await session2.workingRep("carol", { target: "alice" });  // From Carol's sessions
+const bobView = await session.workingRep("alice", { target: "bob" });  // Alice's view of Bob
+const charlieView = await session2.workingRep("alice", { target: "charlie" });  // Alice's view of Charlie
 ```
 </CodeGroup>
 
@@ -158,29 +158,29 @@ The `target` parameter also works with the chat endpoint:
 ```python Python
 # Query using conclusions from Honcho's representation (across all sessions)
 honcho_answer = alice.chat(
-    "What did Alice say about breakfast?",
+    "What did Bob say about breakfast?",
     session_id=session.id
 )
 
-# Query using conclusions from Bob's representation of Alice (from Bob's sessions only)
-bob_answer = bob.chat(
-    "What did Alice say about breakfast?",
+# Query using conclusions from Alice's representation of Bob (from Alice's sessions only)
+alice_answer = alice.chat(
+    "What did Bob say about breakfast?",
     session_id=session.id,
-    target="alice"
+    target="bob"
 )
 ```
 
 ```typescript TypeScript
 // Query using conclusions from Honcho's representation (across all sessions)
 const honchoAnswer = await alice.chat(
-    "What did Alice say about breakfast?",
+    "What did Bob say about breakfast?",
     { sessionId: session.id }
 );
 
-// Query using conclusions from Bob's representation of Alice (from Bob's sessions only)
-const bobAnswer = await bob.chat(
-    "What did Alice say about breakfast?",
-    { sessionId: session.id, target: "alice" }
+// Query using conclusions from Alice's representation of Bob (from Alice's sessions only)
+const aliceAnswer = await alice.chat(
+    "What did Bob say about breakfast?",
+    { sessionId: session.id, target: "bob" }
 );
 ```
 </CodeGroup>
@@ -236,10 +236,10 @@ Both `working_rep()` and `chat()` support semantic filtering to retrieve a subse
 
 <CodeGroup>
 ```python Python
-# Retrieve conclusions about billing from Bob's representation of Alice
-bob_view_billing = session.working_rep(
-    "bob",
-    target="alice",
+# Retrieve conclusions about billing from Alice's representation of Bob
+alice_view_billing = session.working_rep(
+    "alice",
+    target="bob",
     search_query="billing issues",
     search_top_k=10,
     include_most_derived=True
@@ -247,8 +247,8 @@ bob_view_billing = session.working_rep(
 ```
 
 ```typescript TypeScript
-const bobViewBilling = await session.workingRep("bob", {
-    target: "alice",
+const aliceViewBilling = await session.workingRep("alice", {
+    target: "bob",
     searchQuery: "billing issues",
     searchTopK: 10,
     includeMostDerived: true

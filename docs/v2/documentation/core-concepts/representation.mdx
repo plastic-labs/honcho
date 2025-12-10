@@ -18,6 +18,8 @@ A peer representation is made up of several types of artifacts that Honcho gener
 
 **Peer cards** contain key biographical information. They essentially cache the most basic information about a peer (name, occupation, interests) to ensure the model never loses its grounding.
 
+These enable continuous improvement. Each new message refines conclusions, updates summaries, and keeps peer cards current—building a more accurate representation over time.
+
 
 ## Observation & Perspective-Taking
 
@@ -27,7 +29,7 @@ There are two observation modes controlled by [configuration](/v2/documentation/
 
 **Honcho observing peers** (`observe_me`): When enabled (default), Honcho forms a representation of the peer based on all messages they've sent across all sessions. This is Honcho's understanding of that peer, built from everything they've said and done in your system. Set `observe_me: false` if you don't want Honcho to reason about that peer at all.
 
-**Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. If Alice and Bob are in a session together and Bob has `observe_others: true`, Bob will form a representation of Alice based solely on what Alice said in sessions Bob participated in. Bob's representation of Alice will be completely different from Carol's representation of Alice if they've observed different interactions.
+**Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. If Alice and Bob are in a session together and Alice has `observe_others: true`, Alice will form a representation of Bob based solely on what Bob said in sessions Alice participated in. Alice's representation of Bob will be completely different from Charlie's representation of Bob if they've observed different interactions.
 
 In the diagram below, assume `observe_me` isn't turned off (again, default behavior) and `observe_others` is turned on for both peers in a session that contains the peers Alice and Bob.
 
@@ -35,7 +37,7 @@ In the diagram below, assume `observe_me` isn't turned off (again, default behav
 
 The shared session that Alice and Bob have informs their respective representations of each other. Alice has a small set of conclusions that pertain to Bob, and Bob has a small set of conclusions that pertain to Alice. Honcho can observe the totality of each peer's interactions, forming representations of the peers themselves, and enable peers to store conclusions about peers they interact with based only on what they witness in shared sessions.
 
-Why would you want peers observing others? So you can simulate stateful *perspectives*. If Bob participates in sessions 1 and 2 with Alice, while Carol only participates in session 3, Bob's representation of Alice will be built from sessions 1 and 2, while Carol's representation will only include what happened in session 3. This information segmentation based on what each agent observed is critical for accurately segmenting statefulness in multi-agent scenarios.
+Why would you want peers observing others? So you can simulate stateful *perspectives*. If Bob participates with Alice in sessions 1 and 2, while Charlie participates with Alice in session 3, Bob's representation of Alice will be built from sessions 1 and 2, while Charlie's representation will only include what happened in session 3. Bob can reference shared history, inside jokes, or past conflicts that Charlie knows nothing about. Without perspective-based segmentation, all agents are omniscient--the simulation breaks down, trust falls apart, and users churn.
 
 
 ## Why Representations Work
