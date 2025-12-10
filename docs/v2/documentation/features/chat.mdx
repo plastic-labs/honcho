@@ -167,12 +167,10 @@ const goals = await peer.chat("What are the user's main goals or objectives?");
 
 When you call `peer.chat(query)`:
 
-TODO: update with agentic approach?
-
-1. Honcho searches through the peer's representation--conclusions drawn from reasoning over their messages
+1. Honcho searches through the peer's peer card and representation--conclusions drawn from reasoning over their messages
 2. Retrieves conclusions semantically relevant to your query
-3. Synthesizes them into a coherent natural language answer
-4. Returns the answer to your application
+3. Combines them with segments of source messages, if needed, to gather more context
+4. Synthesizes them into a coherent natural language response to your query
 
 Honcho [reasoning](/v2/documentation/core-concepts/reasoning) runs continuously in the background, processing new messages and updating representations. The chat endpoint always has access to Honcho's latest conclusions about the peer.
 
@@ -182,7 +180,7 @@ Honcho [reasoning](/v2/documentation/core-concepts/reasoning) runs continuously 
 Instead of "Tell me about the user", ask "What communication style does the user prefer?" You'll get more actionable answers.
 
 ### Let your LLM formulate queries
-The chat endpoint shines when your LLM decides what it needs to know. This creates dynamic, context-aware personalization.
+The chat endpoint shines when your LLM decides what it needs to know. This creates dynamic, context-aware personalization. An excellent way to achieve this, if building an agent, is to give access to the Honcho chat endpoint as just another tool.
 
 ### Use for runtime decisions
 Don't just use chat for LLM prompts - use it to drive application logic, routing, and feature flags based on user behavior.
@@ -190,4 +188,4 @@ Don't just use chat for LLM prompts - use it to drive application logic, routing
 ### Combine with get_context()
 Use `get_context()` for conversation context and `peer.chat()` for specific insights. They complement each other.
 
-For more ideas on using the chat endpoint, see our blog post on [flexible agent communication](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-chat-API#how-it-works).
+For more ideas on using the chat endpoint, see our [guides](/v2/guides/overview).

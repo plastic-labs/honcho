@@ -44,8 +44,6 @@ pnpm add @honcho-ai/sdk
 
 The Honcho client is the main entry point for interacting with Honcho's API. It uses a workspace called `default` unless specified, so let's create a `first-honcho-test` workspace for this quickstart.
 
-TODO: change default environment to production, require an API key.
-
 <CodeGroup>
 ```python Python
 from honcho import Honcho
@@ -60,7 +58,6 @@ import { Honcho } from '@honcho-ai/sdk';
 
 // Initialize client
 const honcho = new Honcho({ workspace = "first-honcho-test", apiKey = HONCHO_API_KEY });
-
 ```
 </CodeGroup>
 
@@ -233,7 +230,7 @@ user.chat("What should I know about this user? 3 sentences max").then((response)
 </CodeGroup>
 
 <Tip>
-Honcho needs a short amount of time to process messages you write to it. There are several utilities to [check the status](/v2/documentation/features/advanced/queue-status) of the queue. Honcho also offers numerous ways to query reasoning to fit latency needs, see the [Get Context](/v2/documentation/features/get-context) page.
+Honcho needs a short amount of time to process messages you write to it. There are several utilities to [check the status](/v2/documentation/features/advanced/queue-status) of the queue. Honcho also offers numerous ways to query reasoning to fit latency needs: see the [Get Context](/v2/documentation/features/get-context) page.
 </Tip>
 
 The response will look something like this:

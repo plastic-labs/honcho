@@ -12,12 +12,12 @@ Configuration follows a hierarchy: **message > session > workspace > global defa
 
 Honcho uses a hierarchical configuration system where more specific settings override more general ones:
 
-TODO: should peer be included here?
-
 1. **Global Defaults**: Built-in system defaults
 2. **Workspace Configuration**: Settings that apply to all sessions in a workspace
 3. **Session Configuration**: Settings that apply to all messages in a session
 4. **Message Configuration**: Settings that apply to a specific message
+
+Separately, you can configure the reasoning status of a peer. This overrides defaults and workspace configuration, but not session or message configuration.
 
 <Info>
 All configuration fields are optional. If not specified, the value is inherited from the next level up in the hierarchy.
@@ -60,14 +60,12 @@ const session = await honcho.session("private-session", {
 
 ### Peer Card Configuration
 
-TODO: is create a catch-all for update?
-
 Controls how peer cards (containing key biographical information) are generated and used.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `use` | `bool` | Whether to use peer cards during the reasoning process. |
-| `create` | `bool` | Whether to generate peer cards based on message content. |
+| `create` | `bool` | Whether to generate and update peer cards based on message content. |
 
 <CodeGroup>
 ```python Python
@@ -123,8 +121,6 @@ const session = await honcho.session("verbose-session", {
 
 ### Dream Configuration
 
-TODO: fill out code blocks? or get rid of them? having them there for comments seems silly
-
 Controls the "dreaming" process that consolidates and refines representations. Available at workspace and session levels only.
 
 | Field | Type | Description |
@@ -134,11 +130,19 @@ Controls the "dreaming" process that consolidates and refines representations. A
 <CodeGroup>
 ```python Python
 # Disable dreams for a workspace
-# (done via API when creating/updating workspace)
+honcho.set_config({
+    "dream": {
+        "enabled": False
+    }
+})
 ```
 ```typescript TypeScript
 // Disable dreams for a workspace
-// (done via API when creating/updating workspace)
+await honcho.setConfig({
+    dream: {
+        enabled: false
+    }
+});
 ```
 </CodeGroup>
 
