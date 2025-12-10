@@ -273,14 +273,14 @@ Search for messages in a specific session.
 - `session_id`: The ID of the session to search messages in
 - `query`: The search query to use
 
-### get_working_representation
+### get_representation
 
-Get the current working representation of a peer in a session.
+Get the current representation of a peer in a session.
 
 **Parameters:**
 
 - `session_id`: The ID of the session
-- `peer_id`: The ID of the peer to get the working representation of
+- `peer_id`: The ID of the peer to get the representation of
 - `target_peer_id`: Optional target peer ID to get the representation of what peer_id knows about target_peer_id
 
 ### list_sessions
