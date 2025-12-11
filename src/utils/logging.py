@@ -272,7 +272,7 @@ def log_performance_metrics(
     if blob_metrics:
         content_items.append(Text(""))  # Empty line separator
         for metric, value, _unit in blob_metrics:
-            content_items.append(Text(f"{metric}:", style="bold cyan"))
+            content_items.append(Text(f"\n\n{metric}:", style="bold cyan"))
             content_items.append(Text(str(value)))
 
     panel = Panel(

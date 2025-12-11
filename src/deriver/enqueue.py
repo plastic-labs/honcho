@@ -14,6 +14,7 @@ from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
 from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import (
+    ReasoningFocus,
     create_deletion_payload,
     create_dream_payload,
     create_payload,
@@ -394,6 +395,7 @@ def create_dream_record(
     observed: str,
     dream_type: schemas.DreamType,
     session_name: str,
+    reasoning_focus: ReasoningFocus | None = None,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -404,6 +406,7 @@ def create_dream_record(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to
+        reasoning_focus: Optional focus mode for the dream ('deduction', 'induction', 'consolidation')
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -413,6 +416,7 @@ def create_dream_record(
         observer=observer,
         observed=observed,
         session_name=session_name,
+        reasoning_focus=reasoning_focus,
     )
 
     return {
@@ -432,6 +436,7 @@ async def enqueue_dream(
     dream_type: schemas.DreamType,
     document_count: int,
     session_name: str,
+    reasoning_focus: ReasoningFocus | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -443,6 +448,7 @@ async def enqueue_dream(
         dream_type: Type of dream to execute
         document_count: Current document count for metadata update
         session_name: Name of the session to scope the dream to
+        reasoning_focus: Optional focus mode for the dream ('deduction', 'induction', 'consolidation')
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:
@@ -453,6 +459,7 @@ async def enqueue_dream(
                 observed=observed,
                 dream_type=dream_type,
                 session_name=session_name,
+                reasoning_focus=reasoning_focus,
             )
 
             # Insert into queue
@@ -482,12 +489,14 @@ async def enqueue_dream(
             await db_session.execute(update_stmt)
             await db_session.commit()
 
+            focus_str = f", focus: {reasoning_focus.value}" if reasoning_focus else ""
             logger.info(
-                "Enqueued dream task for %s/%s/%s (type: %s)",
+                "Enqueued dream task for %s/%s/%s (type: %s%s)",
                 workspace_name,
                 observer,
                 observed,
                 dream_type.value,
+                focus_str,
             )
 
         except Exception as e:

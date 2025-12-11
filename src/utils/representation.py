@@ -20,11 +20,37 @@ class ExplicitObservationBase(BaseModel):
 
 
 class DeductiveObservationBase(BaseModel):
+    premise_ids: list[str] = Field(
+        description="Document IDs of premise observations for tree traversal",
+        default_factory=list,
+    )
     premises: list[str] = Field(
-        description="Supporting premises or evidence for this conclusion",
+        description="Human-readable premise text for display",
         default_factory=list,
     )
     conclusion: str = Field(description="The deductive conclusion")
+
+
+class InductiveObservationBase(BaseModel):
+    """Base model for inductive observations - patterns, generalizations, and personality insights."""
+
+    source_ids: list[str] = Field(
+        description="Document IDs of source observations for tree traversal",
+        default_factory=list,
+    )
+    sources: list[str] = Field(
+        description="Human-readable source text for display",
+        default_factory=list,
+    )
+    pattern_type: str = Field(
+        description="Type of pattern: 'preference', 'behavior', 'personality', 'tendency', 'correlation'",
+        default="pattern",
+    )
+    conclusion: str = Field(description="The inductive generalization or pattern")
+    confidence: str = Field(
+        description="Confidence level: 'high', 'medium', 'low'",
+        default="medium",
+    )
 
 
 class PromptRepresentation(BaseModel):
@@ -118,6 +144,53 @@ class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
         )
 
 
+class InductiveObservation(InductiveObservationBase, ObservationMetadata):
+    """Inductive observation with sources, pattern type, and confidence, plus metadata."""
+
+    def __str__(self) -> str:
+        sources_text = ""
+        if self.sources:
+            source_lines = [f"    - {source}" for source in self.sources[:3]]
+            if len(self.sources) > 3:
+                source_lines.append(f"    - ... and {len(self.sources) - 3} more")
+            sources_text = "\n" + "\n".join(source_lines)
+        return f"[{self.created_at.replace(microsecond=0)}] [{self.confidence}] {self.conclusion}{sources_text}"
+
+    def str_with_id(self) -> str:
+        """Format with ID prefix for use by agents that need to reference observations."""
+        id_prefix = f"[id:{self.id}] " if self.id else ""
+        sources_text = ""
+        if self.sources:
+            source_lines = [f"    - {source}" for source in self.sources[:3]]
+            if len(self.sources) > 3:
+                source_lines.append(f"    - ... and {len(self.sources) - 3} more")
+            sources_text = "\n" + "\n".join(source_lines)
+        return f"{id_prefix}[{self.created_at.replace(microsecond=0)}] [{self.confidence}] {self.conclusion}{sources_text}"
+
+    def str_no_timestamps(self) -> str:
+        sources_text = ""
+        if self.sources:
+            source_lines = [f"    - {source}" for source in self.sources[:3]]
+            if len(self.sources) > 3:
+                source_lines.append(f"    - ... and {len(self.sources) - 3} more")
+            sources_text = "\n" + "\n".join(source_lines)
+        return f"[{self.confidence}] {self.conclusion}{sources_text}"
+
+    def __hash__(self) -> int:
+        """Make InductiveObservation hashable for use in sets."""
+        return hash((self.conclusion, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """Define equality for InductiveObservation objects."""
+        if not isinstance(other, InductiveObservation):
+            return False
+        return (
+            self.conclusion == other.conclusion
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
+
+
 class Representation(BaseModel):
     """
     A Representation is a traversable and diffable map of observations.
@@ -145,18 +218,22 @@ class Representation(BaseModel):
         description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
         default_factory=list,
     )
+    inductive: list[InductiveObservation] = Field(
+        description="Patterns, generalizations, and personality insights inferred from multiple observations. Higher-level reasoning created by the Dreamer agent.",
+        default_factory=list,
+    )
 
     def is_empty(self) -> bool:
         """
         Check if the representation is empty.
         """
-        return len(self.explicit) == 0 and len(self.deductive) == 0
+        return len(self.explicit) == 0 and len(self.deductive) == 0 and len(self.inductive) == 0
 
     def len(self) -> int:
         """
         Return the total number of observations in the representation.
         """
-        return len(self.explicit) + len(self.deductive)
+        return len(self.explicit) + len(self.deductive) + len(self.inductive)
 
     def diff_representation(self, other: "Representation") -> "Representation":
         """
@@ -166,6 +243,7 @@ class Representation(BaseModel):
         diff = Representation()
         diff.explicit = [o for o in other.explicit if o not in self.explicit]
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
+        diff.inductive = [o for o in other.inductive if o not in self.inductive]
         return diff
 
     def merge_representation(
@@ -173,7 +251,7 @@ class Representation(BaseModel):
     ):
         """
         Merge another representation object into this one.
-        This will automatically deduplicate explicit and deductive observations.
+        This will automatically deduplicate explicit, deductive, and inductive observations.
         This *preserves order* of observations so that they retain FIFO order.
 
         NOTE: observations with the *same* timestamp will not have order preserved.
@@ -182,13 +260,16 @@ class Representation(BaseModel):
         # removing duplicates by going list->set->list
         self.explicit = list(set(self.explicit + other.explicit))
         self.deductive = list(set(self.deductive + other.deductive))
+        self.inductive = list(set(self.inductive + other.inductive))
         # sort by created_at
         self.explicit.sort(key=lambda x: x.created_at)
         self.deductive.sort(key=lambda x: x.created_at)
+        self.inductive.sort(key=lambda x: x.created_at)
 
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
+            self.inductive = self.inductive[-max_observations:]
 
     def __str__(self) -> str:
         """
@@ -221,6 +302,11 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation}")
         parts.append("")
 
+        parts.append("INDUCTIVE:\n")
+        for i, observation in enumerate(self.inductive, 1):
+            parts.append(f"{i}. {observation}")
+        parts.append("")
+
         return "\n".join(parts)
 
     def str_with_ids(self) -> str:
@@ -237,6 +323,10 @@ class Representation(BaseModel):
             1. [id:ghi789] [2025-01-01 12:01:00] Rover is 5 years old
                 - The user has a dog named Rover
                 - The user's dog is 5 years old
+            INDUCTIVE:
+            1. [id:jkl012] [2025-01-01 12:05:00] [high] User tends to be methodical
+                - id:abc123
+                - id:def456
         """
         parts: list[str] = []
 
@@ -247,6 +337,11 @@ class Representation(BaseModel):
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
+            parts.append(f"{i}. {observation.str_with_id()}")
+        parts.append("")
+
+        parts.append("INDUCTIVE:\n")
+        for i, observation in enumerate(self.inductive, 1):
             parts.append(f"{i}. {observation.str_with_id()}")
         parts.append("")
 
@@ -267,6 +362,10 @@ class Representation(BaseModel):
             1. Rover is 5 years old
                 - The user has a dog named Rover
                 - The user's dog is 5 years old
+            INDUCTIVE:
+            1. [high] User tends to be methodical
+                - id:abc123
+                - id:def456
 
         """
         parts: list[str] = []
@@ -278,6 +377,11 @@ class Representation(BaseModel):
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
+            parts.append(f"{i}. {observation.str_no_timestamps()}")
+        parts.append("")
+
+        parts.append("INDUCTIVE:\n")
+        for i, observation in enumerate(self.inductive, 1):
             parts.append(f"{i}. {observation.str_no_timestamps()}")
         parts.append("")
 
@@ -311,6 +415,21 @@ class Representation(BaseModel):
             parts.append("")
         parts.append("")
 
+        # Add inductive observations
+        parts.append("## Inductive Observations\n")
+        for i, obs in enumerate(self.inductive, 1):
+            parts.append(f"{i}. **Pattern** [{obs.confidence}]: {obs.conclusion}")
+            if obs.pattern_type:
+                parts.append(f"   **Type**: {obs.pattern_type}")
+            if obs.sources:
+                parts.append("   **Sources**:")
+                for source in obs.sources[:5]:
+                    parts.append(f"   - {source}")
+                if len(obs.sources) > 5:
+                    parts.append(f"   - ... and {len(obs.sources) - 5} more")
+            parts.append("")
+        parts.append("")
+
         return "\n".join(parts)
 
     @classmethod
@@ -338,10 +457,32 @@ class Representation(BaseModel):
                     conclusion=doc.content,
                     message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
+                    # Support both top-level and metadata locations for backward compatibility
+                    premise_ids=doc.premise_ids
+                    or doc.internal_metadata.get("premise_ids", []),
                     premises=doc.internal_metadata.get("premises", []),
                 )
                 for doc in documents
                 if doc.level == "deductive"
+            ],
+            inductive=[
+                InductiveObservation(
+                    id=doc.id,
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    conclusion=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", []),
+                    session_name=doc.session_name,
+                    # Support both top-level and metadata locations for backward compatibility
+                    source_ids=doc.source_ids
+                    or doc.internal_metadata.get("source_ids", []),
+                    sources=doc.internal_metadata.get("sources", []),
+                    pattern_type=doc.internal_metadata.get("pattern_type", "pattern"),
+                    confidence=doc.internal_metadata.get("confidence", "medium"),
+                )
+                for doc in documents
+                if doc.level == "inductive"
             ],
         )
 
@@ -353,6 +494,11 @@ class Representation(BaseModel):
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
+        """Convert PromptRepresentation to Representation.
+
+        Note: Inductive observations are NOT created via PromptRepresentation.
+        They are only created by the Dreamer agent during consolidation.
+        """
         return cls(
             explicit=[
                 ExplicitObservation(
@@ -364,14 +510,10 @@ class Representation(BaseModel):
                 for e in prompt_representation.explicit
             ],
             deductive=[
-                # DeductiveObservation(
-                #     conclusion=d.conclusion,
-                #     created_at=created_at,
-                #     message_ids=message_ids,
-                #     session_name=session_name,
-                #     premises=d.premises,
-                # )
-                # for d in prompt_representation.deductive
+                # Deductive observations are created by the Dreamer, not the Deriver
+            ],
+            inductive=[
+                # Inductive observations are created by the Dreamer, not the Deriver
             ],
         )
 

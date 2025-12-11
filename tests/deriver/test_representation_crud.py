@@ -2,7 +2,7 @@ import datetime
 
 from src.utils.representation import (
     DeductiveObservation,
-    # DeductiveObservationBase,
+    DeductiveObservationBase,
     ExplicitObservation,
     ExplicitObservationBase,
     PromptRepresentation,
@@ -77,10 +77,17 @@ def test_representation_formatting_methods():
 
 
 def test_prompt_representation_conversion():
-    """PromptRepresentation.to_representation maps strings to observation objects."""
+    """PromptRepresentation.to_representation maps strings to observation objects.
+
+    Note: In the current architecture, the Deriver only creates explicit observations.
+    Deductive and inductive observations are created by the Dreamer agent.
+    Therefore, from_prompt_representation only converts explicit observations.
+    """
     pr = PromptRepresentation(
         explicit=[ExplicitObservationBase(content="A")],
-        # deductive=[DeductiveObservationBase(conclusion="C", premises=["P1"])],
+        # Deductive observations in PromptRepresentation are ignored by from_prompt_representation
+        # because the Deriver only produces explicit observations
+        deductive=[DeductiveObservationBase(conclusion="C", premises=["P1"], premise_ids=["id1"])],
     )
     timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
     rep = Representation.from_prompt_representation(
@@ -91,7 +98,7 @@ def test_prompt_representation_conversion():
     )
     assert isinstance(rep, Representation)
     assert [e.content for e in rep.explicit] == ["A"]
-    assert rep.deductive[0].conclusion == "C"
-    assert rep.deductive[0].premises == ["P1"]
+    # Deductive observations from PromptRepresentation are not converted
+    # (they would be created directly by the Dreamer via the create_observations tool)
+    assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
-    assert rep.deductive[0].created_at == timestamp

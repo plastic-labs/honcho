@@ -429,6 +429,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
     thinking_content: str | None = None
+    # Full thinking blocks with signatures for multi-turn conversation replay (Anthropic only)
+    thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -603,7 +605,10 @@ async def _execute_tool_loop(
 
         # Add assistant message with tool calls to conversation
         assistant_message = _format_assistant_tool_message(
-            current_provider, response.content, response.tool_calls_made
+            current_provider,
+            response.content,
+            response.tool_calls_made,
+            response.thinking_blocks,
         )
         conversation_messages.append(assistant_message)
 
@@ -721,6 +726,7 @@ def _format_assistant_tool_message(
     provider: SupportedProviders,
     content: Any,
     tool_calls: list[dict[str, Any]],
+    thinking_blocks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Format an assistant message with tool calls for a specific provider.
@@ -729,6 +735,7 @@ def _format_assistant_tool_message(
         provider: The LLM provider
         content: The text content from the response
         tool_calls: List of tool call dicts with id, name, input keys
+        thinking_blocks: Full thinking blocks with signatures for multi-turn replay (Anthropic only)
 
     Returns:
         Provider-formatted assistant message dict
@@ -736,6 +743,11 @@ def _format_assistant_tool_message(
     if provider == "anthropic":
         # Anthropic requires content to be a list of blocks including tool use blocks
         content_blocks: list[dict[str, Any]] = []
+
+        # Add thinking blocks FIRST if present (required by Anthropic when extended thinking is enabled)
+        # These include signatures which are required for multi-turn conversation replay
+        if thinking_blocks:
+            content_blocks.extend(thinking_blocks)
 
         # Add text content if present
         if isinstance(content, str) and content:
@@ -1369,13 +1381,22 @@ async def honcho_llm_call_inner(
 
             # Extract text content, thinking blocks, and tool use blocks from content blocks
             text_blocks: list[str] = []
-            thinking_blocks: list[str] = []
+            thinking_text_blocks: list[str] = []
+            thinking_full_blocks: list[dict[str, Any]] = []
             tool_calls: list[dict[str, Any]] = []
             for block in anthropic_response.content:
                 if isinstance(block, TextBlock):
                     text_blocks.append(block.text)
                 elif isinstance(block, ThinkingBlock):
-                    thinking_blocks.append(block.thinking)
+                    thinking_text_blocks.append(block.thinking)
+                    # Store full block with signature for multi-turn replay
+                    thinking_full_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": block.thinking,
+                            "signature": block.signature,
+                        }
+                    )
                 elif isinstance(block, ToolUseBlock):
                     tool_calls.append(
                         {
@@ -1390,7 +1411,9 @@ async def honcho_llm_call_inner(
             stop_reason = anthropic_response.stop_reason
 
             text_content = "\n".join(text_blocks)
-            thinking_content = "\n".join(thinking_blocks) if thinking_blocks else None
+            thinking_content = (
+                "\n".join(thinking_text_blocks) if thinking_text_blocks else None
+            )
 
             # Extract cache token counts from Anthropic usage
             # Anthropic's input_tokens = uncached tokens only
@@ -1424,6 +1447,7 @@ async def honcho_llm_call_inner(
                         finish_reasons=[stop_reason] if stop_reason else [],
                         tool_calls_made=tool_calls,
                         thinking_content=thinking_content,
+                        thinking_blocks=thinking_full_blocks,
                     )
                 except (json.JSONDecodeError, ValidationError, ValueError) as e:
                     raise ValueError(
@@ -1439,6 +1463,7 @@ async def honcho_llm_call_inner(
                 finish_reasons=[stop_reason] if stop_reason else [],
                 tool_calls_made=tool_calls,
                 thinking_content=thinking_content,
+                thinking_blocks=thinking_full_blocks,
             )
 
         case AsyncOpenAI():

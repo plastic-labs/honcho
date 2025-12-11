@@ -293,7 +293,7 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-haiku-4-5"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=4096, gt=0, le=10_000)] = 4096
@@ -309,6 +309,15 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     SESSION_HISTORY_MAX_TOKENS: Annotated[
         int, Field(default=16_384, ge=0, le=100_000)
     ] = 16_384
+
+    @model_validator(mode="after")
+    def _validate_token_budgets(self) -> "DialecticSettings":
+        """Ensure the output token limit exceeds the thinking budget."""
+        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
+            raise ValueError(
+                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
+            )
+        return self
 
 
 class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
@@ -365,17 +374,34 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["consolidate"]
 
-    # LLM settings for dream processing
+    # LLM settings for dream processing - upgraded for extended reasoning
     PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-haiku-4-5"
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=0, le=10_000)] = 4000
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=2048, gt=0, le=8192)] = 2048
+    MODEL: str = "claude-sonnet-4-20250514"  # Upgraded from haiku for reasoning
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
 
-    # Agent iteration limit - controls how many tool calling rounds the agent gets
-    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=8, gt=0, le=30)] = 8
+    # Agent iteration limit - increased for extended reasoning workflow
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
     # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
+        16_384
+    )
+
+    # Observation limits for orchestrated dreaming prescan
+    # Higher = more context for reasoning but slower prescan
+    PRESCAN_OBSERVATIONS_PER_LEVEL: Annotated[
+        int, Field(default=200, gt=0, le=1000)
+    ] = 200
+
+    @model_validator(mode="after")
+    def _validate_token_budgets(self) -> "DreamSettings":
+        """Ensure the output token limit exceeds the thinking budget."""
+        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
+            raise ValueError(
+                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
+            )
+        return self
 
 
 class AppSettings(HonchoSettings):

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud
 from src.config import settings
 from src.dialectic import prompts
-from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor
+from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import (
@@ -124,6 +124,52 @@ class DialecticAgent:
         # Append session history to the system prompt
         self.messages[0]["content"] += session_history_section
 
+    async def _prefetch_relevant_observations(self, query: str) -> str | None:
+        """
+        Prefetch semantically relevant observations for the query.
+
+        This provides immediate context to the agent without requiring
+        tool calls, improving response quality and speed.
+
+        Args:
+            query: The user's query
+
+        Returns:
+            Formatted observations string or None if no observations found
+        """
+        try:
+            representation = await search_memory(
+                db=self.db,
+                workspace_name=self.workspace_name,
+                observer=self.observer,
+                observed=self.observed,
+                query=query,
+                limit=50,  # Top 50 most relevant observations
+            )
+
+            if not representation.explicit and not representation.deductive and not representation.inductive:
+                return None
+
+            sections: list[str] = []
+
+            if representation.explicit:
+                explicit_items = [f"- {obs.content}" for obs in representation.explicit]
+                sections.append(f"**Explicit facts:**\n" + "\n".join(explicit_items))
+
+            if representation.deductive:
+                deductive_items = [f"- {obs.conclusion} (from: {', '.join(obs.premises)})" for obs in representation.deductive]
+                sections.append(f"**Deductions:**\n" + "\n".join(deductive_items))
+
+            if representation.inductive:
+                inductive_items = [f"- {obs.conclusion} [{obs.confidence}]" for obs in representation.inductive]
+                sections.append(f"**Patterns:**\n" + "\n".join(inductive_items))
+
+            return "\n\n".join(sections)
+
+        except Exception as e:
+            logger.warning(f"Failed to prefetch observations: {e}")
+            return None
+
     async def answer(self, query: str) -> str:
         """
         Answer a query about the peer using agentic tool calling.
@@ -165,11 +211,27 @@ class DialecticAgent:
         )
         accumulate_metric(task_name, "query", query, "blob")
 
+        # Prefetch relevant observations for the query
+        prefetched_observations = await self._prefetch_relevant_observations(query)
+
+        # Build the user message with prefetched context
+        if prefetched_observations:
+            user_content = (
+                f"Query: {query}\n\n"
+                f"## Relevant Observations (prefetched)\n"
+                f"The following observations were found to be semantically relevant to your query. "
+                f"Use these as primary context. You may still use tools to find additional information if needed.\n\n"
+                f"{prefetched_observations}"
+            )
+            accumulate_metric(task_name, "prefetched_observations", prefetched_observations, "blob")
+        else:
+            user_content = f"Query: {query}"
+
         # Add the query to conversation history
         self.messages.append(
             {
                 "role": "user",
-                "content": f"Query: {query}",
+                "content": user_content,
             }
         )
 
