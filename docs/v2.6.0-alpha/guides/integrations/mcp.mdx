@@ -1,0 +1,73 @@
+---
+title: "Model Context Protocol (MCP)"
+icon: 'star-of-life'
+description: "Use Honcho in Claude Desktop"
+sidebarTitle: 'MCP'
+---
+
+You can let Claude use Honcho to manage its own memory in the native desktop app by using the Honcho MCP integration! Follow these steps:
+
+1. Go to https://app.honcho.dev and get an API key. Then go to Claude Desktop and navigate to custom MCP servers.
+
+<Note>
+If you don't have node installed you will need to do that. Claude Desktop or Claude Code can help!
+</Note>
+
+2. Add Honcho to your Claude desktop config. You must provide a username for Honcho to refer to you as -- preferably what you want Claude to actually call you.
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>"
+      }
+    }
+  }
+}
+```
+
+You may customize your assistant name and/or workspace ID. Both are optional.
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}",
+        "--header",
+        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
+        "--header",
+        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>",
+        "ASSISTANT_NAME": "<your-assistant-name>",
+        "WORKSPACE_ID": "<your-custom-workspace-id>"
+      }
+    }
+  }
+}
+```
+
+3. Restart the Claude Desktop app. Upon relaunch, it should start Honcho and the tools should be available!
+
+4. Finally, Claude needs instructions on how to use Honcho. The Desktop app doesn't allow you to add system prompts directly, but you can create a project and paste these [instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into the "Project Instructions" field.
+
+Claude should then query for insights before responding and write your messages to storage! If you come up with more creative ways to get Claude to manage its own memory with Honcho, feel free to [let us know](https://discord.gg/plasticlabs) or make a PR on this [repo](https://github.com/plastic-labs/honcho/tree/main/mcp)!

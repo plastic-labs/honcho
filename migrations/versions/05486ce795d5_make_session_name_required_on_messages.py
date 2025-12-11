@@ -197,8 +197,12 @@ def upgrade() -> None:
     # Step 9: Update the collections table name_length check constraint from 512 to 1025
     print("Updating collections table name_length check constraint from 512 to 1025")
 
+    # Check for both old name and naming-convention-generated name
     if constraint_exists("collections", "name_length", "check"):
         op.drop_constraint("name_length", "collections", schema=schema)
+    elif constraint_exists("collections", "ck_collections_name_length", "check"):
+        op.drop_constraint("ck_collections_name_length", "collections", schema=schema)
+
     op.create_check_constraint(
         "name_length", "collections", "length(name) <= 1025", schema=schema
     )
@@ -215,8 +219,12 @@ def downgrade() -> None:
         "Reverting collections table name_length check constraint from 1025 back to 512"
     )
 
+    # Check for both old name and naming-convention-generated name
     if constraint_exists("collections", "name_length", "check"):
         op.drop_constraint("name_length", "collections", schema=schema)
+    elif constraint_exists("collections", "ck_collections_name_length", "check"):
+        op.drop_constraint("ck_collections_name_length", "collections", schema=schema)
+
     op.create_check_constraint(
         "name_length", "collections", "length(name) <= 512", schema=schema
     )

@@ -1,0 +1,146 @@
+{
+  "description": "Test full mesh observation - all three peers observe each other",
+  "workspace_config": {
+    "deriver": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_full_mesh",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "charlie": {
+          "observe_me": null,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_full_mesh",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "I'm a veterinarian who treats exotic animals."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I'm a pilot flying commercial jets."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm a marine biologist studying coral reefs."
+        },
+        {
+          "peer_id": "alice",
+          "content": "I recently treated a sick parrot."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I fly international routes to Asia."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm researching coral bleaching in Australia."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_full_mesh",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Bob contains information about Bob being a pilot flying commercial jets to Asia.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "charlie",
+      "session_id": "session_full_mesh",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Alice's local representation of Charlie contains information about Charlie being a marine biologist studying coral reefs.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_full_mesh",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob's local representation of Alice contains information about Alice being a veterinarian treating exotic animals.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "charlie",
+      "session_id": "session_full_mesh",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Bob's local representation of Charlie contains information about Charlie being a marine biologist.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "alice",
+      "session_id": "session_full_mesh",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Charlie's local representation of Alice contains information about Alice being a veterinarian.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "observed_peer_id": "bob",
+      "session_id": "session_full_mesh",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Check if Charlie's local representation of Bob contains information about Bob being a pilot.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

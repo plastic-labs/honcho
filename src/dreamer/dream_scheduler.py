@@ -5,13 +5,13 @@ from logging import getLogger
 from typing import Any
 
 import sentry_sdk
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.utils.queue_payload import create_dream_payload
+from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 logger = getLogger(__name__)
@@ -47,17 +47,21 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
     if not workspace_name or not peer_name:
         return []
 
-    # Generate dream work unit key for this peer's collection
-    dream_key = construct_work_unit_key(
-        workspace_name,
-        {
-            "task_type": "dream",
-            "observer": peer_name,
-            "observed": peer_name,
-        },
-    )
+    # Generate dream work unit keys for each enabled dream type
+    dream_keys: list[str] = []
+    for dream_type in settings.DREAM.ENABLED_TYPES:
+        dream_key = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": peer_name,
+                "observed": peer_name,
+                "dream_type": dream_type,
+            },
+        )
+        dream_keys.append(dream_key)
 
-    return [dream_key]
+    return dream_keys
 
 
 class DreamScheduler:
@@ -87,6 +91,7 @@ class DreamScheduler:
         workspace_name: str,
         document_count: int,
         delay_minutes: int,
+        dream_type: DreamType,
         *,
         observer: str,
         observed: str,
@@ -104,6 +109,7 @@ class DreamScheduler:
                 workspace_name,
                 document_count,
                 delay_minutes,
+                dream_type,
                 observer=observer,
                 observed=observed,
             )
@@ -128,6 +134,7 @@ class DreamScheduler:
         workspace_name: str,
         document_count: int,
         delay_minutes: int,
+        dream_type: DreamType,
         *,
         observer: str,
         observed: str,
@@ -139,10 +146,10 @@ class DreamScheduler:
             if await self._should_execute_dream(
                 workspace_name, observer=observer, observed=observed
             ):
-                await self._execute_dream(
-                    work_unit_key,
+                await self.execute_dream(
                     workspace_name,
                     document_count,
+                    dream_type,
                     observer=observer,
                     observed=observed,
                 )
@@ -182,63 +189,25 @@ class DreamScheduler:
 
         return True
 
-    async def _execute_dream(
+    async def execute_dream(
         self,
-        work_unit_key: str,
         workspace_name: str,
         document_count: int,
+        dream_type: DreamType,
         *,
         observer: str,
         observed: str,
     ) -> None:
         """Execute the dream by enqueueing it and updating collection metadata."""
-        dream_payload = create_dream_payload(
-            dream_type="consolidate",
+        # Import here to avoid circular dependency
+        from src.deriver.enqueue import enqueue_dream
+
+        await enqueue_dream(
+            workspace_name,
             observer=observer,
             observed=observed,
-        )
-
-        async with tracked_db("dream_execute") as db:
-            dream_record = {
-                "work_unit_key": work_unit_key,
-                "payload": dream_payload,
-                "session_id": None,
-                "task_type": "dream",
-                "workspace_name": workspace_name,
-                "message_id": None,  # Dreams don't have a message_id
-            }
-
-            await db.execute(insert(models.QueueItem), [dream_record])
-
-            now_iso = datetime.now(timezone.utc).isoformat()
-            stmt = (
-                update(models.Collection)
-                .where(
-                    models.Collection.workspace_name == workspace_name,
-                    models.Collection.observer == observer,
-                    models.Collection.observed == observed,
-                )
-                .values(
-                    internal_metadata=models.Collection.internal_metadata.op("||")(
-                        {
-                            "dream": {
-                                "last_dream_document_count": document_count,
-                                "last_dream_at": now_iso,
-                            }
-                        }
-                    )
-                )
-            )
-            await db.execute(stmt)
-            await db.commit()
-
-        logger.info(
-            "Enqueued dream task",
-            extra={
-                "workspace_name": workspace_name,
-                "observer": observer,
-                "observed": observed,
-            },
+            dream_type=dream_type,
+            document_count=document_count,
         )
 
     async def shutdown(self) -> None:
@@ -326,33 +295,38 @@ async def check_and_schedule_dream(
 
         dream_scheduler = get_dream_scheduler()
         if dream_scheduler:
-            collection_work_unit_key = construct_work_unit_key(
-                collection.workspace_name,
-                {
-                    "task_type": "dream",
-                    "observer": collection.observer,
-                    "observed": collection.observed,
-                },
-            )
-
-            await dream_scheduler.schedule_dream(
-                collection_work_unit_key,
-                collection.workspace_name,
-                current_document_count,
-                settings.DREAM.IDLE_TIMEOUT_MINUTES,
-                observer=collection.observer,
-                observed=collection.observed,
-            )
-            logger.info(
-                "Scheduled dream",
-                extra={
-                    "workspace_name": collection.workspace_name,
-                    "observer": collection.observer,
-                    "observed": collection.observed,
-                    "documents_since_last_dream": documents_since_last_dream,
-                    "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
-                },
-            )
+            enabled_dream_types = settings.DREAM.ENABLED_TYPES
+            for dream_type in enabled_dream_types:
+                # Include dream_type in key so each dream type can be tracked independently
+                dream_work_unit_key = construct_work_unit_key(
+                    collection.workspace_name,
+                    {
+                        "task_type": "dream",
+                        "observer": collection.observer,
+                        "observed": collection.observed,
+                        "dream_type": dream_type,
+                    },
+                )
+                await dream_scheduler.schedule_dream(
+                    dream_work_unit_key,
+                    collection.workspace_name,
+                    current_document_count,
+                    settings.DREAM.IDLE_TIMEOUT_MINUTES,
+                    dream_type=DreamType(dream_type),
+                    observer=collection.observer,
+                    observed=collection.observed,
+                )
+                logger.info(
+                    "Scheduled dream",
+                    extra={
+                        "workspace_name": collection.workspace_name,
+                        "observer": collection.observer,
+                        "observed": collection.observed,
+                        "documents_since_last_dream": documents_since_last_dream,
+                        "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
+                        "dream_type": dream_type,
+                    },
+                )
             return True
 
     return False

@@ -5,6 +5,7 @@ import type { Page as CorePage } from '@honcho-ai/core/pagination'
  * Provides async iteration and transformation capabilities while preserving
  * pagination functionality from the underlying core Page.
  */
+// biome-ignore lint/suspicious/noExplicitAny: Generic type parameter with reasonable default for internal transform
 export class Page<T, TOriginal = any> implements AsyncIterable<T> {
   private _originalPage: CorePage<TOriginal>
   private _transformFunc?: (item: TOriginal) => T

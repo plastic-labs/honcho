@@ -1,0 +1,191 @@
+---
+title: "Chat Endpoint"
+description: "An endpoint for reasoning about your users"
+sidebarTitle: "Chat Endpoint"
+icon: "message-question"
+---
+
+The Chat endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
+
+## Basic Usage
+
+The simplest way to use the chat endpoint is to ask a question and get a text response:
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+peer = honcho.peer("user-123")
+
+# Ask Honcho about the peer
+query = "What is the user's favorite way of completing the task?"
+answer = peer.chat(query)
+
+print(answer)
+# "Based on observations, the user prefers using keyboard shortcuts..."
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({});
+const peer = await honcho.peer("user-123");
+
+// Ask Honcho about the peer
+const query = "What is the user's favorite way of completing the task?";
+const answer = await peer.chat(query);
+
+console.log(answer);
+// "Based on observations, the user prefers using keyboard shortcuts..."
+```
+</CodeGroup>
+
+The chat endpoint searches through the peer's representation--all the conclusions Honcho has reasoned about them--and synthesizes a natural language answer.
+
+## Streaming Responses
+
+For longer answers, use streaming to get incremental responses:
+
+<CodeGroup>
+```python Python
+query = "What do we know about the user?"
+response_stream = peer.chat(query, stream=True)
+
+for chunk in response_stream.iter_text():
+    print(chunk, end="", flush=True)
+```
+
+```typescript TypeScript
+const query = "What do we know about the user?";
+const responseStream = await peer.chat(query, { stream: true });
+
+for await (const chunk of responseStream.iter_text()) {
+    process.stdout.write(chunk);
+}
+```
+</CodeGroup>
+
+Streaming is useful for displaying real-time responses in chat interfaces or when asking complex questions that require longer answers.
+
+## Integration Patterns
+
+### Dynamic Prompt Enhancement
+
+Let your LLM decide what it needs to know, then inject that context into the next generation:
+
+<CodeGroup>
+```python Python
+# Your LLM generates a query based on the conversation
+llm_query = "Does the user prefer formal or casual communication?"
+
+# Get answer from Honcho
+context = peer.chat(llm_query)
+
+# Add to your next LLM prompt
+enhanced_prompt = f"""
+Context about the user: {context}
+
+User message: {user_input}
+
+Respond appropriately based on the context.
+"""
+```
+
+```typescript TypeScript
+// Your LLM generates a query based on the conversation
+const llmQuery = "Does the user prefer formal or casual communication?";
+
+// Get answer from Honcho
+const context = await peer.chat(llmQuery);
+
+// Add to your next LLM prompt
+const enhancedPrompt = `
+Context about the user: ${context}
+
+User message: ${userInput}
+
+Respond appropriately based on the context.
+`;
+```
+</CodeGroup>
+
+### Conditional Logic
+
+Use chat endpoint responses to drive application logic:
+
+<CodeGroup>
+```python Python
+# Check if user has completed onboarding
+onboarding_status = peer.chat("Has the user completed the onboarding flow?")
+
+if "yes" in onboarding_status.lower():
+    # Show main interface
+    pass
+else:
+    # Show onboarding
+    pass
+```
+
+```typescript TypeScript
+// Check if user has completed onboarding
+const onboardingStatus = await peer.chat("Has the user completed the onboarding flow?");
+
+if (onboardingStatus.toLowerCase().includes("yes")) {
+    // Show main interface
+} else {
+    // Show onboarding
+}
+```
+</CodeGroup>
+
+### Preference Extraction
+
+Extract specific preferences for personalization:
+
+<CodeGroup>
+```python Python
+# Get multiple insights
+tone = peer.chat("What tone does the user prefer in responses?")
+expertise = peer.chat("What is the user's level of technical expertise?")
+goals = peer.chat("What are the user's main goals or objectives?")
+
+# Use these to configure your agent's behavior
+```
+
+```typescript TypeScript
+// Get multiple insights
+const tone = await peer.chat("What tone does the user prefer in responses?");
+const expertise = await peer.chat("What is the user's level of technical expertise?");
+const goals = await peer.chat("What are the user's main goals or objectives?");
+
+// Use these to configure your agent's behavior
+```
+</CodeGroup>
+
+## How Honcho Answers
+
+When you call `peer.chat(query)`:
+
+1. Honcho searches through the peer's peer card and representation--conclusions drawn from reasoning over their messages
+2. Retrieves conclusions semantically relevant to your query
+3. Combines them with segments of source messages, if needed, to gather more context
+4. Synthesizes them into a coherent natural language response to your query
+
+Honcho [reasoning](/v2.6.0-alpha/documentation/core-concepts/reasoning) runs continuously in the background, processing new messages and updating representations. The chat endpoint always has access to Honcho's latest conclusions about the peer.
+
+## Best Practices
+
+### Ask specific questions
+Instead of "Tell me about the user", ask "What communication style does the user prefer?" You'll get more actionable answers.
+
+### Let your LLM formulate queries
+The chat endpoint shines when your LLM decides what it needs to know. This creates dynamic, context-aware personalization. An excellent way to achieve this, if building an agent, is to give access to the Honcho chat endpoint as just another tool.
+
+### Use for runtime decisions
+Don't just use chat for LLM prompts - use it to drive application logic, routing, and feature flags based on user behavior.
+
+### Combine with get_context()
+Use `get_context()` for conversation context and `peer.chat()` for specific insights. They complement each other.
+
+For more ideas on using the chat endpoint, see our [guides](/v2.6.0-alpha/guides/overview).

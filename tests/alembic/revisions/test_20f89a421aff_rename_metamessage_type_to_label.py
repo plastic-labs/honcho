@@ -24,9 +24,12 @@ def prepare_metamessage_label(verifier: MigrationVerifier) -> None:
         ("metamessages", "idx_metamessages_message_lookup"),
     )
     verifier.assert_indexes_exist(OLD_INDEXES)
-    verifier.assert_constraint_exists(
-        "metamessages", "metamessage_type_length", "check"
-    )
+    # Check for either naming convention or plain name (backward compatibility)
+    constraints = verifier.fetch_constraints("metamessages", "check")
+    assert (
+        "ck_metamessages_metamessage_type_length" in constraints
+        or "metamessage_type_length" in constraints
+    ), f"Expected constraint not found. Available: {constraints}"
 
     schema = verifier.schema
     connection = verifier.conn

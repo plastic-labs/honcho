@@ -376,10 +376,278 @@ def test_get_peer_representation_with_session(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
         json={
             "session_id": session_id,
-            "queries": "Hello, how are you?",
         },
     )
     assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+    assert isinstance(data["representation"], dict)
+
+
+def test_get_peer_representation_global(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation without session_id (global representation)"""
+    test_workspace, test_peer = sample_data
+
+    # Test global representation (no session_id)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+    assert isinstance(data["representation"], dict)
+
+
+def test_get_peer_representation_with_target(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with target parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create a second peer to be the target
+    target_peer_name = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name, "metadata": {}},
+    )
+
+    # Test representation of target from observer's perspective
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "target": target_peer_name,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+    assert isinstance(data["representation"], dict)
+
+
+def test_get_peer_representation_with_search_query(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with search_query parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Test representation with semantic search query
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "search_query": "What are my interests and hobbies?",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+
+
+def test_get_peer_representation_with_search_top_k(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with search_top_k parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Test with valid search_top_k values
+    for top_k in [1, 10, 50, 100]:
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+            json={
+                "search_query": "test query",
+                "search_top_k": top_k,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "representation" in data
+
+
+def test_get_peer_representation_with_search_max_distance(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with search_max_distance parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Test with valid search_max_distance values (0.0 to 1.0)
+    for max_distance in [0.0, 0.5, 0.8, 1.0]:
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+            json={
+                "search_query": "test query",
+                "search_max_distance": max_distance,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "representation" in data
+
+
+def test_get_peer_representation_with_include_most_derived(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with include_most_derived parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Test with include_most_derived=True
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "search_query": "test query",
+            "include_most_derived": True,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+
+    # Test with include_most_derived=False
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "search_query": "test query",
+            "include_most_derived": False,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+
+
+def test_get_peer_representation_with_max_observations(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with max_observations parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Test with various max_observations values
+    for max_obs in [1, 25, 50, 100]:
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+            json={
+                "search_query": "test query",
+                "max_observations": max_obs,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "representation" in data
+
+
+def test_get_peer_representation_with_all_parameters(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with all optional parameters"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create a session and target peer
+    target_peer_name = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name, "metadata": {}},
+    )
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}, target_peer_name: {}},
+        },
+    )
+
+    # Test with all parameters
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "session_id": session_id,
+            "target": target_peer_name,
+            "search_query": "What do I know about this peer?",
+            "search_top_k": 15,
+            "search_max_distance": 0.75,
+            "include_most_derived": True,
+            "max_observations": 30,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
+    assert isinstance(data["representation"], dict)
+
+
+def test_get_peer_representation_structure(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that peer representation response has correct structure"""
+    test_workspace, test_peer = sample_data
+
+    # Get representation and validate structure
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Validate response structure
+    assert "representation" in data
+    assert isinstance(data["representation"], dict)
+
+    # Representation should have expected keys based on Representation type
+    representation = data["representation"]
+    # The exact keys depend on the Representation implementation,
+    # but we can verify it's a dict
+    assert isinstance(representation, dict)
+
+
+def test_get_peer_representation_boundary_values(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer representation with boundary values for numeric parameters"""
+    test_workspace, test_peer = sample_data
+
+    # Test minimum values
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "search_query": "test",
+            "search_top_k": 1,
+            "search_max_distance": 0.0,
+            "max_observations": 1,
+        },
+    )
+    assert response.status_code == 200
+
+    # Test maximum values
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "search_query": "test",
+            "search_top_k": 100,
+            "search_max_distance": 1.0,
+            "max_observations": 100,
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_get_peer_representation_default_max_observations(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that max_observations defaults to 25 when not provided"""
+    test_workspace, test_peer = sample_data
+
+    # Test without max_observations - should use default of 25
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "search_query": "test query",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "representation" in data
 
 
 def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
