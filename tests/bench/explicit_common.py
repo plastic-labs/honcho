@@ -33,7 +33,8 @@ class PropositionJudgment(TypedDict):
 
     text: str
     is_valid: bool
-    quality_score: float
+    quality_rating: str  # "excellent", "good", "fair", "poor", "invalid"
+    quality_justification: str  # Explanation for the rating
     error_type: str | None
     error_reason: str | None
     stage_results: dict[str, Any]
