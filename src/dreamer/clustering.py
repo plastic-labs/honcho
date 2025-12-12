@@ -20,6 +20,8 @@ import numpy as np
 if TYPE_CHECKING:
     from src import models
 
+from sklearn.cluster import DBSCAN
+
 from src.dreamer.prescan import PatternCluster
 
 logger = logging.getLogger(__name__)
@@ -71,8 +73,8 @@ def extract_cluster_theme(observations: list[models.Document]) -> str:
 def cluster_observations(
     observations: list[models.Document],
     *,
-    eps: float = 0.3,
-    min_samples: int = 3,
+    eps: float = 0.4,
+    min_samples: int = 10,
 ) -> list[PatternCluster]:
     """
     Cluster observations by semantic similarity for inductive reasoning.
@@ -112,8 +114,6 @@ def cluster_observations(
 
     # Use sklearn DBSCAN if available, otherwise fall back to simple implementation
     try:
-        from sklearn.cluster import DBSCAN
-
         # DBSCAN with precomputed distance matrix for cosine
         # Convert to cosine distance: 1 - similarity
         # For normalized vectors: distance = 1 - dot product
@@ -123,7 +123,7 @@ def cluster_observations(
         distance_matrix = np.maximum(distance_matrix, 0)
 
         clustering = DBSCAN(eps=eps, min_samples=min_samples, metric="precomputed")
-        labels = clustering.fit_predict(distance_matrix)
+        labels = clustering.fit_predict(distance_matrix)  # pyright: ignore
 
     except ImportError:
         logger.warning("sklearn not available, using simple clustering fallback")
@@ -131,7 +131,7 @@ def cluster_observations(
 
     # Group observations by cluster label
     clusters: dict[int, list[models.Document]] = {}
-    for obs, label_val in zip(observations, labels):
+    for obs, label_val in zip(observations, labels, strict=True):
         label = int(label_val)
         if label == -1:  # Noise point
             continue
@@ -141,7 +141,7 @@ def cluster_observations(
 
     # Convert to PatternCluster objects
     pattern_clusters: list[PatternCluster] = []
-    for label, cluster_obs in clusters.items():
+    for _label, cluster_obs in clusters.items():
         if len(cluster_obs) >= min_samples:
             theme = extract_cluster_theme(cluster_obs)
             pattern_clusters.append(
@@ -164,7 +164,7 @@ def cluster_observations(
 def _simple_cluster(
     normalized: np.ndarray,
     eps: float = 0.3,
-    min_samples: int = 3,
+    min_samples: int = 10,
 ) -> np.ndarray:
     """
     Simple fallback clustering when sklearn is not available.

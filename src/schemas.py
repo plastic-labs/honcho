@@ -749,13 +749,14 @@ class TriggerDreamRequest(BaseModel):
     )
     dream_type: DreamType = Field(..., description="Type of dream to trigger")
     session_id: str = Field(..., description="Session ID to scope the dream to")
-    reasoning_focus: Literal["deduction", "induction", "consolidation", "knowledge_update"] | None = Field(
-        None,
-        description="Optional focus mode to bias the dream toward specific reasoning: "
-        "'deduction' prioritizes logical inferences from explicit facts, "
-        "'induction' prioritizes pattern recognition across observations, "
-        "'consolidation' focuses on cleanup and peer card updates, "
-        "'knowledge_update' detects when facts have changed over time",
+    reasoning_focus: Literal["deduction", "induction", "knowledge_update"] | None = (
+        Field(
+            None,
+            description="Optional focus mode to bias the dream toward specific reasoning: "
+            + "'deduction' prioritizes logical inferences from explicit facts, "
+            + "'induction' prioritizes pattern recognition across observations, "
+            + "'knowledge_update' detects when facts have changed over time",
+        )
     )
 
 

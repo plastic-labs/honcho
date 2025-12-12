@@ -249,6 +249,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
+    TEMPERATURE: float | None = None
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
@@ -396,8 +397,6 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DEDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
     # InductionSpecialist: identifies patterns across observations
     INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
-    # ConsolidationSpecialist: cleans duplicates + updates peer card
-    CONSOLIDATION_MODEL: str = "anthropic/claude-haiku-4.5"
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DreamSettings":

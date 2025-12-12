@@ -142,7 +142,6 @@ class LongMemEvalRunner:
         merge_sessions: bool = False,
         cleanup_workspace: bool = False,
         use_get_context: bool = False,
-        use_orchestrated_dream: bool = True,
     ):
         """
         Initialize the test runner.
@@ -155,7 +154,6 @@ class LongMemEvalRunner:
             merge_sessions: If True, merge all sessions within a question into one session
             cleanup_workspace: If True, delete workspace after executing question (default: False)
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
-            use_orchestrated_dream: If True, use new orchestrated specialist architecture
         """
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
@@ -166,7 +164,6 @@ class LongMemEvalRunner:
         self.merge_sessions: bool = merge_sessions
         self.cleanup_workspace: bool = cleanup_workspace
         self.use_get_context: bool = use_get_context
-        self.use_orchestrated_dream: bool = use_orchestrated_dream
 
         # Initialize metrics collector
         self.metrics_collector: MetricsCollector = MetricsCollector()
@@ -297,7 +294,6 @@ class LongMemEvalRunner:
         observer: str,
         observed: str | None = None,
         session_id: str | None = None,
-        reasoning_focus: str | None = None,
     ) -> bool:
         """
         Trigger a dream task and wait for it to complete.
@@ -308,8 +304,6 @@ class LongMemEvalRunner:
             observer: Observer peer name
             observed: Observed peer name (defaults to observer)
             session_id: Session ID to scope the dream to
-            reasoning_focus: Optional focus mode ('deduction', 'induction', 'consolidation')
-                           Ignored if use_orchestrated_dream is True
 
         Returns:
             True if dream completed successfully, False on timeout
@@ -324,20 +318,6 @@ class LongMemEvalRunner:
             "dream_type": "consolidate",
             "session_id": session_id or f"{workspace_id}_session",
         }
-
-        # For orchestrated dreams, don't use reasoning_focus (it handles all aspects)
-        # For legacy dreams, pass the focus
-        if not self.use_orchestrated_dream and reasoning_focus:
-            payload["reasoning_focus"] = reasoning_focus
-
-        mode_str = (
-            "orchestrated"
-            if self.use_orchestrated_dream
-            else f"focus: {reasoning_focus}"
-            if reasoning_focus
-            else "default"
-        )
-        print(f"[{workspace_id}] Triggering dream ({mode_str}) at {url}")
 
         # Trigger the dream via API
         try:
@@ -358,7 +338,7 @@ class LongMemEvalRunner:
             return False
 
         print(
-            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed} ({mode_str})"
+            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
         )
 
         # Wait for dream queue to empty
@@ -681,39 +661,16 @@ class LongMemEvalRunner:
             # Determine observer based on question type
             observer_peer = "assistant" if is_assistant_type else "user"
 
-            if self.use_orchestrated_dream:
-                # Single orchestrated dream handles all reasoning types
-                dream_success = await self.trigger_dream_and_wait(
-                    honcho_client,
-                    workspace_id,
-                    observer=observer_peer,
-                    session_id=dream_session_id,
-                )
-                if not dream_success:
-                    print(
-                        f"[{workspace_id}] Warning: Orchestrated dream did not complete"
-                    )
-                print(
-                    f"[{workspace_id}] Orchestrated dream completed. Executing question..."
-                )
-            else:
-                # Legacy: multiple focused dream passes
-                dream_focuses: list[str | None] = ["deduction", "induction"]
-                for focus in dream_focuses:
-                    dream_success = await self.trigger_dream_and_wait(
-                        honcho_client,
-                        workspace_id,
-                        observer=observer_peer,
-                        session_id=dream_session_id,
-                        reasoning_focus=focus,
-                    )
-                    if not dream_success:
-                        print(
-                            f"[{workspace_id}] Warning: Dream ({focus}) did not complete"
-                        )
-                print(
-                    f"[{workspace_id}] All dream passes completed. Executing question..."
-                )
+            # Single orchestrated dream handles all reasoning types
+            dream_success = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer=observer_peer,
+                session_id=dream_session_id,
+            )
+            if not dream_success:
+                print(f"[{workspace_id}] Warning: Dream did not complete")
+            print(f"[{workspace_id}] Dream completed. Executing question...")
 
             # Execute the question
             output_lines.append(f"\nAsking question: {question_with_date}")
@@ -1058,7 +1015,6 @@ class LongMemEvalRunner:
                 "base_api_port": self.base_api_port,
                 "pool_size": self.pool_size,
                 "timeout_seconds": self.timeout_seconds,
-                "use_orchestrated_dream": self.use_orchestrated_dream,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
                 "dream_settings": settings.DREAM.model_dump(),
@@ -1223,7 +1179,6 @@ Examples:
         merge_sessions=args.merge_sessions,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
-        use_orchestrated_dream=not args.legacy_dream,
     )
 
     try:

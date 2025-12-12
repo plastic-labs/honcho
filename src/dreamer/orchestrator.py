@@ -13,32 +13,25 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.dreamer.coordinator import coordinate_dream
 from src.dreamer.prescan import prescan_for_dream
 from src.dreamer.specialists import SPECIALISTS
 from src.utils.agent_tools import create_tool_executor
+from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.logging import (
     accumulate_metric,
     log_performance_metrics,
 )
 
+if TYPE_CHECKING:
+    from src.dreamer.prescan import DreamContext
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DreamResult:
-    """Result of a dream cycle."""
-
-    specialists_run: list[str] = field(default_factory=list)
-    results: dict[str, str] = field(default_factory=dict)
-    total_tokens: int = 0
-    duration_ms: float = 0.0
-    context_summary: str = ""
 
 
 async def run_dream(
@@ -47,9 +40,9 @@ async def run_dream(
     observer: str,
     observed: str,
     session_name: str,
-) -> DreamResult:
+) -> None:
     """
-    Run a full dream cycle with pre-scan + coordinator + specialists.
+    Run a full dream cycle with pre-scan + orchestrator + specialists.
 
     This is the new efficient dream implementation that:
     1. Pre-computes all context (no LLM calls)
@@ -62,15 +55,10 @@ async def run_dream(
         observer: Observer peer name
         observed: Observed peer name
         session_name: Session identifier
-
-    Returns:
-        DreamResult with summary of what was done
     """
     run_id = str(uuid.uuid4())[:8]
     task_name = f"dream_orchestrator_{run_id}"
     start_time = time.perf_counter()
-
-    result = DreamResult()
 
     # Phase 1: Pre-scan (no LLM)
     logger.info(f"[{run_id}] Phase 1: Pre-scan")
@@ -84,7 +72,6 @@ async def run_dream(
     )
 
     prescan_ms = (time.perf_counter() - prescan_start) * 1000
-    result.context_summary = context.summary()
     accumulate_metric(task_name, "prescan_duration", prescan_ms, "ms")
     accumulate_metric(task_name, "context", context.summary(), "blob")
 
@@ -92,20 +79,21 @@ async def run_dream(
     logger.info(f"[{run_id}] Phase 2: Coordinate")
     coord_start = time.perf_counter()
 
-    specialists_to_run = await coordinate_dream(context)
-    result.specialists_run = specialists_to_run
+    orchestrator_response: OrchestratorResponse = await coordinate_dream(context)
 
     coord_ms = (time.perf_counter() - coord_start) * 1000
-    accumulate_metric(task_name, "coordinator_duration", coord_ms, "ms")
-    accumulate_metric(task_name, "specialists_selected", str(specialists_to_run), "blob")
-
-    if not specialists_to_run:
-        logger.info(f"[{run_id}] No specialists needed, dream complete")
-        result.duration_ms = (time.perf_counter() - start_time) * 1000
-        return result
+    accumulate_metric(task_name, "orchestrator_duration", coord_ms, "ms")
+    accumulate_metric(
+        task_name,
+        "specialists_selected",
+        str(orchestrator_response.specialists),
+        "blob",
+    )
 
     # Phase 3: Run specialists
-    logger.info(f"[{run_id}] Phase 3: Running specialists: {specialists_to_run}")
+    logger.info(
+        f"[{run_id}] Phase 3: Running specialists: {orchestrator_response.specialists}"
+    )
 
     # Create tool executor (shared by all specialists)
     tool_executor = create_tool_executor(
@@ -124,7 +112,7 @@ async def run_dream(
     parallel_phase_1: list[str] = []
     parallel_phase_2: list[str] = []
 
-    for name in specialists_to_run:
+    for name in orchestrator_response.specialists:
         if name in ("knowledge_update", "deduction"):
             parallel_phase_1.append(name)
         elif name == "induction":
@@ -139,12 +127,9 @@ async def run_dream(
         ]
         phase_1_results = await asyncio.gather(*phase_1_tasks, return_exceptions=True)
 
-        for name, res in zip(parallel_phase_1, phase_1_results):
+        for name, res in zip(parallel_phase_1, phase_1_results, strict=True):
             if isinstance(res, BaseException):
                 logger.error(f"[{run_id}] Specialist {name} failed: {res}")
-                result.results[name] = f"ERROR: {res}"
-            else:
-                result.results[name] = str(res)
 
     # Execute Phase 2 specialists in parallel (after phase 1)
     if parallel_phase_2:
@@ -155,69 +140,104 @@ async def run_dream(
         ]
         phase_2_results = await asyncio.gather(*phase_2_tasks, return_exceptions=True)
 
-        for name, res in zip(parallel_phase_2, phase_2_results):
+        for name, res in zip(parallel_phase_2, phase_2_results, strict=True):
             if isinstance(res, BaseException):
                 logger.error(f"[{run_id}] Specialist {name} failed: {res}")
-                result.results[name] = f"ERROR: {res}"
-            else:
-                result.results[name] = str(res)
 
     # Log final metrics
-    result.duration_ms = (time.perf_counter() - start_time) * 1000
-    accumulate_metric(task_name, "total_duration", result.duration_ms, "ms")
-    accumulate_metric(task_name, "specialists_run", len(specialists_to_run), "count")
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    accumulate_metric(task_name, "total_duration", duration_ms, "ms")
+    accumulate_metric(
+        task_name, "specialists_run", len(orchestrator_response.specialists), "count"
+    )
 
     log_performance_metrics("dream_orchestrator", run_id)
 
-    logger.info(
-        f"[{run_id}] Dream complete: ran {len(specialists_to_run)} specialists in {result.duration_ms:.0f}ms"
-    )
 
-    return result
+ORCHESTRATOR_PROMPT = """You are a dream orchestrator. Based on the pre-scanned context, decide which specialist agents to invoke.
+
+## Context Summary
+- Explicit observations: {explicit_count}
+- Existing deductive observations: {deductive_count}
+- Existing inductive observations: {inductive_count}
+- Pattern clusters: {cluster_count}
+
+## Available Specialists
+1. **deduction** - Creates logical inferences AND detects temporal knowledge updates from explicit facts
+2. **induction** - Creates pattern generalizations from observation clusters (top 10)
+
+## Decision Guidelines
+- ALWAYS run **deduction** if explicit_count > 0 (extract implicit knowledge + detect updates)
+- Run **induction** if cluster_count >= 2 (enough patterns to generalize)
+- If nothing needs to be done, return empty list
+
+Return ONLY a JSON array of specialist names in priority order.
+Example: ["deduction", "induction"]
+No explanation, just the JSON array."""
 
 
-async def process_orchestrated_dream(
-    db: AsyncSession,
-    workspace_name: str,
-    observer: str,
-    observed: str,
-    session_name: str,
-) -> str:
+class OrchestratorResponse(BaseModel):
+    specialists: list[str]
+
+
+async def coordinate_dream(context: DreamContext) -> OrchestratorResponse:
     """
-    Process a dream using the orchestrated specialist architecture.
-
-    This is the entry point for the new efficient dream system.
+    Use a cheap Haiku call to decide which specialists to invoke.
 
     Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        observer: Observer peer name
-        observed: Observed peer name
-        session_name: Session identifier
+        context: Pre-computed dream context
 
     Returns:
-        Summary string of what was done
+        List of specialist names to run, in priority order
     """
-    result = await run_dream(
-        db=db,
-        workspace_name=workspace_name,
-        observer=observer,
-        observed=observed,
-        session_name=session_name,
+    # First, apply heuristics to see if we even need to call LLM
+    heuristic_response = _apply_heuristics(context)
+
+    # If heuristics are confident, skip LLM call
+    if heuristic_response is not None:
+        logger.info(f"orchestrator (heuristics): {heuristic_response.specialists}")
+        return heuristic_response
+
+    # Otherwise, use LLM to decide
+    prompt = ORCHESTRATOR_PROMPT.format(
+        explicit_count=context.explicit_count,
+        deductive_count=context.deductive_count,
+        inductive_count=context.inductive_count,
+        cluster_count=context.cluster_count,
     )
 
-    # Build summary
-    if not result.specialists_run:
-        return "No consolidation needed - memory is up to date."
-
-    summaries = [
-        f"- {name}: {res[:200]}..." if len(res) > 200 else f"- {name}: {res}"
-        for name, res in result.results.items()
-    ]
-
-    return (
-        f"Dream completed in {result.duration_ms:.0f}ms.\n"
-        f"Context: {result.context_summary}\n"
-        f"Specialists run: {', '.join(result.specialists_run)}\n"
-        f"Results:\n" + "\n".join(summaries)
+    response: HonchoLLMCallResponse[OrchestratorResponse] = await honcho_llm_call(
+        llm_settings=settings.DREAM,
+        prompt=prompt,
+        max_tokens=200,
+        track_name="Dream Orchestrator",
+        response_model=OrchestratorResponse,
     )
+    orchestrator_response = response.content
+
+    logger.info(f"orchestrator (LLM): {orchestrator_response.specialists}")
+    return orchestrator_response
+
+
+def _apply_heuristics(context: DreamContext) -> OrchestratorResponse | None:
+    """
+    Apply simple heuristics to determine specialists without LLM.
+
+    Returns None if uncertain and LLM should decide.
+    Returns list of specialists if confident.
+    """
+    specialists: list[str] = []
+
+    # Run deduction if we have explicit observations (handles both inference + temporal updates)
+    if context.explicit_count > 0:
+        specialists.append("deduction")
+
+    # Run induction if we have pattern clusters
+    if context.cluster_count >= 2:
+        specialists.append("induction")
+
+    # If we found clear signals, return them
+    if len(specialists) >= 1:
+        return OrchestratorResponse(specialists=specialists)
+
+    return None

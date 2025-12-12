@@ -114,7 +114,6 @@ class BEAMRunner:
         timeout_seconds: int | None = None,
         cleanup_workspace: bool = True,
         use_get_context: bool = False,
-        use_orchestrated_dream: bool = True,
     ):
         """
         Initialize the BEAM test runner.
@@ -126,7 +125,6 @@ class BEAMRunner:
             timeout_seconds: Timeout for deriver queue in seconds
             cleanup_workspace: If True, delete workspace after executing conversation
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
-            use_orchestrated_dream: If True, use new orchestrated specialist architecture
         """
         self.data_dir: Path = data_dir
         self.base_api_port: int = base_api_port
@@ -136,7 +134,6 @@ class BEAMRunner:
         )
         self.cleanup_workspace: bool = cleanup_workspace
         self.use_get_context: bool = use_get_context
-        self.use_orchestrated_dream: bool = use_orchestrated_dream
 
         # Initialize metrics collector
         self.metrics_collector: MetricsCollector = MetricsCollector()
@@ -238,7 +235,6 @@ class BEAMRunner:
         observer: str,
         observed: str | None = None,
         session_id: str | None = None,
-        reasoning_focus: str | None = None,
     ) -> bool:
         """
         Trigger a dream task and wait for it to complete.
@@ -249,8 +245,6 @@ class BEAMRunner:
             observer: Observer peer name
             observed: Observed peer name (defaults to observer)
             session_id: Session ID to scope the dream to
-            reasoning_focus: Optional focus mode ('deduction', 'induction', 'consolidation')
-                           Ignored if use_orchestrated_dream is True
 
         Returns:
             True if dream completed successfully, False on timeout
@@ -267,14 +261,6 @@ class BEAMRunner:
             "dream_type": "consolidate",
             "session_id": session_id or f"{workspace_id}_session",
         }
-
-        # For orchestrated dreams, don't use reasoning_focus (it handles all aspects)
-        # For legacy dreams, pass the focus
-        if not self.use_orchestrated_dream and reasoning_focus:
-            payload["reasoning_focus"] = reasoning_focus
-
-        mode_str = "orchestrated" if self.use_orchestrated_dream else f"focus: {reasoning_focus}" if reasoning_focus else "default"
-        print(f"[{workspace_id}] Triggering dream ({mode_str}) at {url}")
 
         # Trigger the dream via API
         try:
@@ -294,9 +280,7 @@ class BEAMRunner:
             print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
             return False
 
-        print(
-            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed} ({mode_str})"
-        )
+        print(f"[{workspace_id}] Dream triggered for {observer}/{observed}")
 
         # Wait for dream queue to empty
         print(f"[{workspace_id}] Waiting for dream to complete...")
@@ -590,35 +574,18 @@ Review the context carefully for any such instructions before responding."""
                 )
                 return result
 
-            print(
-                f"[{workspace_id}] Deriver queue empty. Triggering dream..."
-            )
+            print(f"[{workspace_id}] Deriver queue empty. Triggering dream...")
 
-            if self.use_orchestrated_dream:
-                # Single orchestrated dream handles all reasoning types
-                dream_success = await self.trigger_dream_and_wait(
-                    honcho_client,
-                    workspace_id,
-                    observer="user",
-                    session_id=session_id,
-                )
-                if not dream_success:
-                    print(f"[{workspace_id}] Warning: Orchestrated dream did not complete")
-                print(f"[{workspace_id}] Orchestrated dream completed. Executing questions...")
-            else:
-                # Legacy: multiple focused dream passes
-                dream_focuses: list[str | None] = ["deduction", "induction"]
-                for focus in dream_focuses:
-                    dream_success = await self.trigger_dream_and_wait(
-                        honcho_client,
-                        workspace_id,
-                        observer="user",
-                        session_id=session_id,
-                        reasoning_focus=focus,
-                    )
-                    if not dream_success:
-                        print(f"[{workspace_id}] Warning: Dream ({focus}) did not complete")
-                print(f"[{workspace_id}] All dream passes completed. Executing questions...")
+            # Single orchestrated dream handles all reasoning types
+            dream_success = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer="user",
+                session_id=session_id,
+            )
+            if not dream_success:
+                print(f"[{workspace_id}] Warning: Dream did not complete")
+            print(f"[{workspace_id}] Dream completed. Executing questions...")
 
             # Execute questions for each memory ability
             question_tasks: list[Any] = []
@@ -828,7 +795,6 @@ async def main() -> int:
         timeout_seconds=args.timeout,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
-        use_orchestrated_dream=not args.legacy_dream,
     )
 
     try:
@@ -862,7 +828,6 @@ async def main() -> int:
                 "base_api_port": runner.base_api_port,
                 "pool_size": runner.pool_size,
                 "timeout_seconds": runner.timeout_seconds,
-                "use_orchestrated_dream": runner.use_orchestrated_dream,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
                 "dream_settings": settings.DREAM.model_dump(),

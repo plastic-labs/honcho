@@ -406,7 +406,7 @@ def create_dream_record(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to
-        reasoning_focus: Optional focus mode for the dream ('deduction', 'induction', 'consolidation')
+        reasoning_focus: Optional focus mode for the dream ('deduction', 'induction')
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -452,7 +452,7 @@ async def enqueue_dream(
         dream_type: Type of dream to execute
         document_count: Current document count for metadata update
         session_name: Name of the session to scope the dream to
-        reasoning_focus: Optional focus mode for the dream ('deduction', 'induction', 'consolidation')
+        reasoning_focus: Optional focus mode for the dream ('deduction', 'induction')
     """
     from sqlalchemy import exists, select
 

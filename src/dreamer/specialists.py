@@ -35,7 +35,6 @@ def _get_settings_with_model(model: str):
 # Tool sets for each specialist - minimal, focused
 DEDUCTION_TOOLS = [TOOLS["create_observations"]]
 INDUCTION_TOOLS = [TOOLS["create_observations"]]
-CONSOLIDATION_TOOLS = [TOOLS["delete_observations"], TOOLS["update_peer_card"]]
 
 # Approximate tokens per observation (content + ID + formatting)
 TOKENS_PER_OBSERVATION = 50
@@ -456,141 +455,8 @@ For each inductive observation, include (ALL REQUIRED):
 Create one inductive observation per valid pattern found."""
 
 
-class ConsolidationSpecialist(BaseSpecialist):
-    """Processes ALL duplicate candidates and updates peer card."""
-
-    name: str = "consolidation"
-
-    def get_tools(self) -> list[dict[str, Any]]:
-        return CONSOLIDATION_TOOLS
-
-    def get_model(self) -> str:
-        return settings.DREAM.CONSOLIDATION_MODEL
-
-    def get_max_iterations(self) -> int:
-        return 15
-
-    def get_batches(self, context: DreamContext) -> list[Any]:
-        """
-        First batch: All duplicates to delete
-        Last batch: Peer card update with all key facts
-        """
-        batches = []
-
-        # Batch duplicates
-        duplicates = context.duplicate_candidates
-        if duplicates:
-            batch_size = 50
-            for i in range(0, len(duplicates), batch_size):
-                batches.append(
-                    {
-                        "type": "duplicates",
-                        "duplicates": duplicates[i : i + batch_size],
-                    }
-                )
-
-        # Always add peer card update as final batch
-        batches.append(
-            {
-                "type": "peer_card",
-                "context": context,
-            }
-        )
-
-        return batches
-
-    def build_batch_prompt(
-        self,
-        context: DreamContext,
-        observed: str,
-        batch_num: int,
-        total_batches: int,
-        batch_data: Any,
-    ) -> str:
-        batch_info = (
-            f"[Batch {batch_num}/{total_batches}] " if total_batches > 1 else ""
-        )
-
-        if batch_data["type"] == "duplicates":
-            duplicates = batch_data["duplicates"]
-            duplicates_text = "\n".join(
-                f'- [id:{d.doc_a.id}] "{d.doc_a.content}"\n'
-                f'  vs [id:{d.doc_b.id}] "{d.doc_b.content}"\n'
-                f"  (similarity: {d.similarity:.3f})"
-                for d in duplicates
-            )
-
-            return f"""{batch_info}You clean up duplicate observations about {observed}.
-
-## Duplicate Candidates ({len(duplicates)} in this batch, {len(context.duplicate_candidates)} total)
-{duplicates_text}
-
-## Task
-Delete EXACT duplicates - observations that express the SAME meaning.
-
-Rules:
-- Only delete if both observations say essentially the same thing
-- When deleting, keep the MORE SPECIFIC or MORE RECENT observation
-- NEVER delete contradictory observations - they represent real changes over time
-- Use delete_observations with the ID(s) to delete
-
-Process ALL {len(duplicates)} candidates. Delete every true duplicate."""
-
-        else:  # peer_card
-            peer_card_text = (
-                "\n".join(f"- {fact}" for fact in context.peer_card)
-                if context.peer_card
-                else "(empty)"
-            )
-            key_facts = self._extract_key_facts(context)
-
-            return f"""{batch_info}You update the peer card for {observed}.
-
-The peer card is a summary of the most important facts about this person.
-
-## Current Peer Card
-{peer_card_text}
-
-## Key Facts from Observations
-{key_facts}
-
-## Task
-Update the peer card with:
-1. Key biographical facts (name, job, location, family, etc.)
-2. Standing instructions the user has given (format: "INSTRUCTION: ...")
-3. Important preferences (format: "PREFERENCE: ...")
-4. Notable personality traits (format: "TRAIT: ...")
-
-Keep it concise but comprehensive. Include everything important about {observed}."""
-
-    def _extract_key_facts(self, context: DreamContext) -> str:
-        """
-        Extract key facts from ALL observations for peer card updates.
-
-        Instead of keyword filtering, we include all observations and let the LLM
-        decide what's relevant for the peer card. This is language-agnostic.
-        """
-        key_facts: list[str] = []
-
-        # Include all explicit observations (the LLM will filter for relevance)
-        for doc in context.explicit_observations:
-            key_facts.append(f"- {doc.content}")
-
-        # Include deductive observations (higher-level inferences)
-        for doc in context.deductive_observations:
-            key_facts.append(f"- [deduced] {doc.content}")
-
-        # Include inductive observations (patterns)
-        for doc in context.inductive_observations:
-            key_facts.append(f"- [pattern] {doc.content}")
-
-        # Limit to prevent prompt overflow
-        return "\n".join(key_facts[:150]) if key_facts else "(no observations found)"
-
-
 # Singleton instances
 SPECIALISTS: dict[str, BaseSpecialist] = {
     "deduction": DeductionSpecialist(),
     "induction": InductionSpecialist(),
-    "consolidation": ConsolidationSpecialist(),
 }

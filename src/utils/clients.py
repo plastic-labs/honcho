@@ -466,6 +466,7 @@ async def _execute_tool_loop(
     max_tool_iterations: int,
     response_model: type[BaseModel] | None,
     json_mode: bool,
+    temperature: float | None,
     stop_seqs: list[str] | None,
     reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
@@ -499,6 +500,7 @@ async def _execute_tool_loop(
         max_tool_iterations: Maximum iterations before forcing completion
         response_model: Optional Pydantic model for structured output
         json_mode: Whether to use JSON mode
+        temperature: Temperature for the LLM (default **none**, only some models support this)
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
@@ -560,6 +562,7 @@ async def _execute_tool_loop(
                 max_tokens,
                 response_model,
                 json_mode,
+                temperature,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -689,6 +692,7 @@ async def _execute_tool_loop(
             max_tokens,
             response_model,
             json_mode,
+            temperature,
             stop_seqs,
             reasoning_effort,
             verbosity,
@@ -886,6 +890,7 @@ async def honcho_llm_call(
     *,
     response_model: type[M],
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -911,6 +916,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -936,6 +942,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -961,6 +968,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -988,6 +996,7 @@ async def honcho_llm_call(
         track_name: Optional name for AI tracking
         response_model: Optional Pydantic model for structured output
         json_mode: Whether to use JSON mode
+        temperature: Temperature for the LLM (default **none**, only some models support this)
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
@@ -1016,9 +1025,9 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> (
-        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
-    ):
+    def _get_provider_and_model() -> tuple[
+        SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType
+    ]:
         """
         Get the provider and model to use based on current attempt.
 
@@ -1101,6 +1110,7 @@ async def honcho_llm_call(
                 max_tokens,
                 response_model,
                 json_mode,
+                temperature,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1117,6 +1127,7 @@ async def honcho_llm_call(
                 max_tokens,
                 response_model,
                 json_mode,
+                temperature,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1183,6 +1194,7 @@ async def honcho_llm_call(
         max_tool_iterations=clamped_iterations,
         response_model=response_model,
         json_mode=json_mode,
+        temperature=temperature,
         stop_seqs=stop_seqs,
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
@@ -1203,6 +1215,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[M],
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1223,6 +1236,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1243,6 +1257,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1262,6 +1277,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1285,6 +1301,9 @@ async def honcho_llm_call_inner(
         "messages": messages,
         "stream": stream,
     }
+
+    if temperature is not None:
+        params["temperature"] = temperature
 
     if stream:
         # Return async generator for streaming responses
@@ -1319,6 +1338,9 @@ async def honcho_llm_call_inner(
                 "max_tokens": params["max_tokens"],
                 "messages": non_system_messages,
             }
+
+            if temperature is not None:
+                anthropic_params["temperature"] = temperature
 
             # Add system parameter if there are system messages
             # Use cache_control for prompt caching
@@ -1496,6 +1518,10 @@ async def honcho_llm_call_inner(
                 "model": params["model"],
                 "messages": processed_messages,
             }
+
+            if temperature is not None and "gpt-5" not in model:
+                openai_params["temperature"] = temperature
+
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
                 if reasoning_effort:
@@ -1688,6 +1714,9 @@ async def honcho_llm_call_inner(
             # Build config for Gemini
             gemini_config: dict[str, Any] = {}
 
+            if temperature is not None:
+                gemini_config["temperature"] = temperature
+
             # Add tools if provided
             if tools:
                 gemini_config["tools"] = tools
@@ -1877,6 +1906,9 @@ async def honcho_llm_call_inner(
                 "max_tokens": params["max_tokens"],
                 "messages": params["messages"],
             }
+
+            if temperature is not None:
+                groq_params["temperature"] = temperature
 
             if response_model:
                 groq_params["response_format"] = response_model

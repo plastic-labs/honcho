@@ -153,9 +153,7 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
     def __str__(self) -> str:
         sources_text = ""
         if self.sources:
-            source_lines = [f"    - {source}" for source in self.sources[:3]]
-            if len(self.sources) > 3:
-                source_lines.append(f"    - ... and {len(self.sources) - 3} more")
+            source_lines = [f"    - {source}" for source in self.sources]
             sources_text = "\n" + "\n".join(source_lines)
         return f"[{_strip_microseconds_and_timezone(self.created_at)}] [{self.confidence}] {self.conclusion}{sources_text}"
 
@@ -164,18 +162,14 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
         id_prefix = f"[id:{self.id}] " if self.id else ""
         sources_text = ""
         if self.sources:
-            source_lines = [f"    - {source}" for source in self.sources[:3]]
-            if len(self.sources) > 3:
-                source_lines.append(f"    - ... and {len(self.sources) - 3} more")
+            source_lines = [f"    - {source}" for source in self.sources]
             sources_text = "\n" + "\n".join(source_lines)
         return f"{id_prefix}[{_strip_microseconds_and_timezone(self.created_at)}] [{self.confidence}] {self.conclusion}{sources_text}"
 
     def str_no_timestamps(self) -> str:
         sources_text = ""
         if self.sources:
-            source_lines = [f"    - {source}" for source in self.sources[:3]]
-            if len(self.sources) > 3:
-                source_lines.append(f"    - ... and {len(self.sources) - 3} more")
+            source_lines = [f"    - {source}" for source in self.sources]
             sources_text = "\n" + "\n".join(source_lines)
         return f"[{self.confidence}] {self.conclusion}{sources_text}"
 
@@ -409,14 +403,14 @@ class Representation(BaseModel):
         if self.explicit:
             parts.append("## Explicit Observations\n")
             for obs in self.explicit:
-                parts.append(obs.content)
+                parts.append(f"{obs}")
             parts.append("")
 
         # Add deductive observations
         if self.deductive:
             parts.append("## Deductive Observations\n")
             for obs in self.deductive:
-                parts.append(obs.conclusion)
+                parts.append(f"- {obs.conclusion}")
                 if obs.premises:
                     parts.append("   Premises:")
                     for premise in obs.premises:

@@ -118,6 +118,7 @@ async def process_representation_tasks_batch(
         track_name="Minimal Deriver",
         response_model=PromptRepresentation,
         json_mode=True,
+        temperature=settings.DERIVER.TEMPERATURE,
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         reasoning_effort="minimal",
