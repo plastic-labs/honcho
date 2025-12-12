@@ -1,9 +1,6 @@
 {
   "description": "Test that when both peers have observe_me=false, no local representations are created even with observe_others=true",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

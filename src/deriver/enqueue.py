@@ -333,10 +333,13 @@ async def generate_queue_records(
             )
         )
 
+    # Check if the sender should be observed based on peer configuration
+    should_observe = get_effective_observe_me(observed, peers_with_configuration)
+
     if not conf.deriver.enabled:
         return records
 
-    if get_effective_observe_me(observed, peers_with_configuration):
+    if should_observe:
         # global representation task
         records.append(
             create_representation_record(
@@ -373,11 +376,6 @@ async def generate_queue_records(
                     session_id=session_id,
                 )
             )
-            logger.debug(
-                "enqueued representation task for %s's representation of %s",
-                peer_name,
-                observed,
-            )
 
     logger.debug(
         "message %s from %s created %s queue items",
@@ -395,6 +393,7 @@ def create_dream_record(
     observer: str,
     observed: str,
     dream_type: schemas.DreamType,
+    session_name: str,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -404,6 +403,7 @@ def create_dream_record(
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
+        session_name: Name of the session to scope the dream to
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -412,6 +412,7 @@ def create_dream_record(
         dream_type,
         observer=observer,
         observed=observed,
+        session_name=session_name,
     )
 
     return {
@@ -430,6 +431,7 @@ async def enqueue_dream(
     observed: str,
     dream_type: schemas.DreamType,
     document_count: int,
+    session_name: str,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -440,6 +442,7 @@ async def enqueue_dream(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         document_count: Current document count for metadata update
+        session_name: Name of the session to scope the dream to
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:
@@ -449,6 +452,7 @@ async def enqueue_dream(
                 observer=observer,
                 observed=observed,
                 dream_type=dream_type,
+                session_name=session_name,
             )
 
             # Insert into queue

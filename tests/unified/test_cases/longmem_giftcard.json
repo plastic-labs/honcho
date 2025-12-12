@@ -1,9 +1,6 @@
 {
   "description": "LongMemEval test: single-session-user question",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

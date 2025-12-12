@@ -93,10 +93,9 @@ async def peer_card_call(
     )
 
     response = await honcho_llm_call(
-        llm_settings=settings.PEER_CARD,
+        llm_settings=settings.DERIVER,
         prompt=prompt,
-        max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS
-        or settings.LLM.DEFAULT_MAX_TOKENS,
+        max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
         track_name="Peer Card Call",
         response_model=PeerCardQuery,
         json_mode=True,

@@ -1,9 +1,6 @@
 {
   "description": "Test full mesh observation - all three peers observe each other",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

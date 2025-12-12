@@ -852,6 +852,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6b/4d/74611a5055116ae683b5b256349f23913b2e35cc2ea2d96c28a5ddf23e76/honcho_core-1.7.0-py3-none-any.whl", hash = "sha256:2d9b31b0439513518e3156a798f5096fd92ab71fe46bc40b4b5507e23dd1116f", size = 148271, upload-time = "2025-12-10T16:05:07.964Z" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'aiohttp'" },
+    { name = "anyio", specifier = ">=3.5.0,<5" },
+    { name = "distro", specifier = ">=1.7.0,<2" },
+    { name = "httpx", specifier = ">=0.23.0,<1" },
+    { name = "httpx-aiohttp", marker = "extra == 'aiohttp'", specifier = ">=0.1.9" },
+    { name = "pydantic", specifier = ">=1.9.0,<3" },
+    { name = "sniffio" },
+    { name = "typing-extensions", specifier = ">=4.10,<5" },
+]
+provides-extras = ["aiohttp"]
+
 [[package]]
 name = "httpcore"
 version = "1.0.9"

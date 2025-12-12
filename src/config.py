@@ -136,8 +136,8 @@ class BackupLLMSettingsMixin:
     both fields are set together or both are None.
     """
 
-    BACKUP_PROVIDER: SupportedProviders | None = "custom"
-    BACKUP_MODEL: str | None = "x-ai/grok-4-fast"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self):
@@ -206,14 +206,35 @@ class LLMSettings(HonchoSettings):
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini"] = "openai"
+    # Separate vLLM endpoint (for local models)
+    VLLM_API_KEY: str | None = None
+    VLLM_BASE_URL: str | None = None
+
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
+    # Maximum characters for tool output to prevent token explosion.
+    # Set to 30,000 chars (~7,500 tokens at 4 chars/token) to stay well under
+    # typical context limits while providing substantial tool output.
+    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=30000, gt=0, le=100_000)] = (
+        30000
+    )
+
+    # Maximum characters for individual message content in tool results.
+    # Keeps each message preview concise while preserving key context.
+    MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
+        2000
+    )
+
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
+    AGENTIC: bool = False
+    USE_LEGACY: bool = False  # Set to True to use legacy deriver with peer card updates
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -232,15 +253,24 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
-    # Thinking budget tokens are only applied when using Anthropic as provider
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 4096
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+
+    LOG_OBSERVATIONS: bool = False
+
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+
+    # Agent iteration limit - controls how many tool calling rounds the agent gets
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=3, gt=0, le=20)] = 3
+
+    # Token limit for recent history retrieval
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
-        int, Field(default=50, gt=0, le=500)
-    ] = 50
+        int, Field(default=100, gt=0, le=1000)
+    ] = 100
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
@@ -250,50 +280,35 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         ),
     ] = 4096
 
-    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
-    @model_validator(mode="after")
-    def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
-            raise ValueError(
-                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
-            )
-        return self
-
-
-class PeerCardSettings(BackupLLMSettingsMixin, HonchoSettings):
+class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
-
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-5-nano-2025-08-07"
-    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=1000, le=10_000)] = 4000
 
 
 class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
 
     PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-sonnet-4-20250514"
-
-    PERFORM_QUERY_GENERATION: bool = False
-    QUERY_GENERATION_PROVIDER: SupportedProviders = "groq"
-    QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
+    MODEL: str = "claude-haiku-4-5"
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
-    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
-    SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
-        float, Field(default=0.85, ge=0.0, le=1.0)
-    ] = 0.85  # Max distance for semantic search relevance
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=4096, gt=0, le=10_000)] = 4096
 
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+    # Agent iteration limit - controls how many tool calling rounds the agent gets
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
-    CONTEXT_WINDOW_SIZE: Annotated[
-        int, Field(default=100_000, gt=10_000, le=200_000)
-    ] = 100_000
+    # Token limit for get_recent_history tool within the agent
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
+
+    # Session history injection: max tokens of recent messages to include when session_id is specified.
+    # Set to 0 to disable automatic session history injection.
+    SESSION_HISTORY_MAX_TOKENS: Annotated[
+        int, Field(default=16_384, ge=0, le=100_000)
+    ] = 16_384
 
 
 class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
@@ -304,8 +319,8 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-4o-mini-2024-07-18"
+    PROVIDER: SupportedProviders = "google"
+    MODEL: str = "gemini-2.5-flash"
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
@@ -351,9 +366,16 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     ENABLED_TYPES: list[str] = ["consolidate"]
 
     # LLM settings for dream processing
-    PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash"
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+    PROVIDER: SupportedProviders = "anthropic"
+    MODEL: str = "claude-haiku-4-5"
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=0, le=10_000)] = 4000
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=2048, gt=0, le=8192)] = 2048
+
+    # Agent iteration limit - controls how many tool calling rounds the agent gets
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=8, gt=0, le=30)] = 8
+
+    # Token limit for get_recent_history tool within the agent
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
 
 class AppSettings(HonchoSettings):
@@ -381,6 +403,9 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
+    FINETUNING_TRACES_FILE: str | None = (
+        None  # Path to JSONL file for fine-tuning traces
+    )
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 

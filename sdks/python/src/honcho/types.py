@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
-from typing_extensions import Required, TypedDict
 
 from pydantic import BaseModel, Field
+from typing_extensions import Required, TypedDict
 
 # Re-export observation types from dedicated module
 from .observations import AsyncObservationScope, Observation, ObservationScope
