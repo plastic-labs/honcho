@@ -26,38 +26,32 @@ prompting you to create a new one.
 </div>
 
 
-Once you've created an organization, you'll be taken to the dashboard and see
-the Welcome page with integration guidance and links to documentation.
+Once you've created an organization, you'll be taken to the welcome dashboard.
 
 <Frame>
   <img src="/images/app-screenshots/get-started-copy.png" alt="Honcho Dashboard Getting Started" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
 
-Each organization has dedicated infrastructure running to isolate your
-workloads. Once you add a valid payment method under the
+Each organization has dedicated infrastructure running to isolate your workloads.
+Once you add a valid payment method under the
 [Billing](https://app.honcho.dev/billing) page, your instance will turn on.
 
 ## 2. Activate your Honcho instance
 
-Navigate to the [Billing](https://app.honcho.dev/billing) page to add a payment method. Your Honcho instance provisions automatically, and you can monitor the deployment on the [Instance Status](https://app.honcho.dev/status) page until all systems show a green check mark.
+With credits and a payment method on file (managed via the [Billing](https://app.honcho.dev/billing) page), your Honcho instance will be provisioned and ready to use. Monitor your machine status, and check for version upgrades on the [Instance Status](https://app.honcho.dev/status) page. 
 
 <Frame>
   <img src="/images/app-screenshots/status-page.png" alt="Instance Status Page" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
 
-You can also upgrade Honcho when new versions are made available directly from the status page.
+If there is an upgrade available you will see an indicator like this:
 
 <div style={{ maxWidth: "700px", margin: "0 auto" }}>
   <Frame>
     <img src="/images/app-screenshots/upgrade-honcho.png" alt="Upgrade Honcho" loading="lazy" decoding="async" fetchpriority="low" style={{ width: "100%", height: "auto" }} />
   </Frame>
 </div>
-
-The **Performance** page provides comprehensive monitoring with usage metrics, health analytics, API response times, and endpoint usage across Honcho.
-
-<Frame>
-  <img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
-</Frame>
+Upgrading your machines may take a few minutes and you can monitor progress. If for any reason your machine goes offline, you will see a red status indicator. Navigate to the [Instance Status](https://app.honcho.dev/status) page and try to trigger a refresh of your machines.
 
 ## 3. Manage API Keys
 The [API Keys](https://app.honcho.dev/api-keys) page allows you to create and manage authentication tokens for different environments. You can create admin-level keys with full instance access or scope keys to specific `Workspaces`, `Peers`, or `Sessions`.
@@ -67,11 +61,47 @@ The [API Keys](https://app.honcho.dev/api-keys) page allows you to create and ma
 </Frame>
 
 ## 4. Test with API Playground
-The [API Playground](https://app.honcho.dev/playground) provides a Postman-like interface to test queries, explore endpoints, and validate your integration. Authenticate with an API key and send requests directly to your Honcho instance with real-time responses and full request/response logging.
+The [API Playground](https://app.honcho.dev/playground) provides a developer-friendly interface to quickly iterate and test queries, explore endpoints, and validate your integration directly from your browser—no code required.
 
 <Frame>
   <img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
+
+
+The playground automatically loads all available API endpoints to match your Honcho instance version. Endpoints can be filtered by category at the top of the list.
+
+If you prefer, you can set up your queries in the UI and copy to cURL for help with building scripts or general terminal use.
+
+### Step-by-Step:
+
+**1. Select an Endpoint**: Choose your desired endpoint from the available list.
+
+**2. Choose Path Parameters**: For fields like Workspace, Session, or Peer, select options from dropdown menus—no need to manually enter IDs.
+
+**3. Add Request Body Data**: Complete any required fields for POST/PUT requests.
+
+**4. Execute or Copy Request**: Run it directly or copy as cURL to use elsewhere (just add your API key).
+
+
+### Example Usage
+
+Build a complete conversation flow without ever leaving the playground:
+
+1. **Create a Workspace**: 
+   select `POST Get or Create Workspace` and type workspace name into the request body 
+   → Returns workspace ID
+
+2. **Create new Peer(s)**: 
+   select `POST Get or Create Peer,` choose your workspace from the dropdown, and type peer name into the request body. (repeat for each peer)
+   → Returns peer ID
+
+3. **POST Get or Create Session** 
+   `POST /sessions` selecting your workspace from the dropdown then type session name into the request body 
+   → Returns session ID and adds to dropdown
+
+4. **POST Create Messages for Session** 
+   `POST /messages` selecting your workspace & session from the dropdown then type peer id(s) and message content into the request body 
+   → Adds message(s) to the session
 
 ## 5. Workspaces
 The [Explore](https://app.honcho.dev/explore) page provides comprehensive `Workspace` management where you can create workspaces and begin exploring the platform. Each `Workspace` serves as a container for organizing your Honcho data.
@@ -137,14 +167,27 @@ Here you can:
   <img src="/images/app-screenshots/get-context.png" alt="Get Context" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
 
-## 8. Webhooks Integration
-The [Webhooks](https://app.honcho.dev/webhooks) page enables Webhook creation and management.
+## 8. Performance Monitoring & Analytics
+
+The **Performance** page offers comprehensive monitoring tools, including usage metrics, health analytics, API response times, and endpoint usage across Honcho.
+
+<Frame>
+  <img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 9. Webhooks Integration
+
+The [Webhooks](https://app.honcho.dev/webhooks) page allows managing and creation of webhooks for Honcho. React to events in real-time—such as message delivery, session updates, peer state changes, and more—by sending event payloads via HTTP POST requests to your provided endpoints.
 
 <Frame>
   <img src="/images/app-screenshots/webhooks-page.png" alt="Webhooks Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
+<Frame>
+  <img src="/images/app-screenshots/webhooks-create.png" alt="Create New Webhook" width="400" height="267" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
 
-## 9. Organization Member Access
+## 10. Organization Member Access
+
 The [Members](https://app.honcho.dev/members) page provides organization administration to manage your team's access to Honcho with the ability to grant admin permissions.
 
 <Frame>
