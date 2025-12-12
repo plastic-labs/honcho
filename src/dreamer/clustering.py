@@ -13,7 +13,6 @@ Uses DBSCAN for density-based clustering which:
 from __future__ import annotations
 
 import logging
-from collections import Counter
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -26,173 +25,47 @@ from src.dreamer.prescan import PatternCluster
 logger = logging.getLogger(__name__)
 
 
-def extract_theme_keywords(observations: list[models.Document], top_k: int = 3) -> str:
+def extract_cluster_theme(observations: list[models.Document]) -> str:
     """
-    Extract theme keywords from a cluster of observations.
+    Generate a theme description for a cluster of observations.
 
-    Uses simple term frequency to find the most common meaningful words.
+    Uses the observation closest to the cluster centroid as representative,
+    then creates a short summary. This is language-agnostic and doesn't
+    rely on keyword detection.
 
     Args:
         observations: List of observations in the cluster
-        top_k: Number of keywords to extract
 
     Returns:
-        Space-separated keywords representing the theme
+        A short theme description based on the most central observation
     """
-    # Common stop words to filter out
-    stop_words = {
-        "the",
-        "a",
-        "an",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "must",
-        "shall",
-        "can",
-        "need",
-        "dare",
-        "ought",
-        "used",
-        "to",
-        "of",
-        "in",
-        "for",
-        "on",
-        "with",
-        "at",
-        "by",
-        "from",
-        "up",
-        "about",
-        "into",
-        "through",
-        "during",
-        "before",
-        "after",
-        "above",
-        "below",
-        "between",
-        "under",
-        "again",
-        "further",
-        "then",
-        "once",
-        "and",
-        "but",
-        "or",
-        "nor",
-        "so",
-        "yet",
-        "both",
-        "either",
-        "neither",
-        "not",
-        "only",
-        "own",
-        "same",
-        "than",
-        "too",
-        "very",
-        "just",
-        "also",
-        "now",
-        "here",
-        "there",
-        "when",
-        "where",
-        "why",
-        "how",
-        "all",
-        "each",
-        "every",
-        "both",
-        "few",
-        "more",
-        "most",
-        "other",
-        "some",
-        "such",
-        "no",
-        "any",
-        "this",
-        "that",
-        "these",
-        "those",
-        "i",
-        "me",
-        "my",
-        "myself",
-        "we",
-        "our",
-        "ours",
-        "ourselves",
-        "you",
-        "your",
-        "yours",
-        "yourself",
-        "yourselves",
-        "he",
-        "him",
-        "his",
-        "himself",
-        "she",
-        "her",
-        "hers",
-        "herself",
-        "it",
-        "its",
-        "itself",
-        "they",
-        "them",
-        "their",
-        "theirs",
-        "themselves",
-        "what",
-        "which",
-        "who",
-        "whom",
-        "whose",
-        "as",
-        "because",
-        "while",
-        "although",
-        "if",
-        "unless",
-        "until",
-    }
+    if not observations:
+        return "general"
 
-    # Collect all words from observations
-    word_counter: Counter[str] = Counter()
-    for obs in observations:
-        # Simple tokenization: lowercase and split on non-alphanumeric
-        import re
+    if len(observations) == 1:
+        # Single observation - use truncated content as theme
+        content = observations[0].content
+        return content[:50] + "..." if len(content) > 50 else content
 
-        words = re.findall(r"\b[a-z]+\b", obs.content.lower())
-        # Filter stop words and short words
-        meaningful = [w for w in words if w not in stop_words and len(w) > 2]
-        word_counter.update(meaningful)
+    # Get embeddings and find centroid
+    try:
+        embeddings = np.array([obs.embedding for obs in observations])
+        centroid = np.mean(embeddings, axis=0)
 
-    # Get top keywords
-    top_words = [word for word, _ in word_counter.most_common(top_k)]
+        # Find observation closest to centroid (most representative)
+        distances = np.linalg.norm(embeddings - centroid, axis=1)
+        closest_idx = int(np.argmin(distances))
+        central_obs = observations[closest_idx]
 
-    return " ".join(top_words) if top_words else "general"
+        # Use truncated content of the most central observation as theme
+        content = central_obs.content
+        return content[:60] + "..." if len(content) > 60 else content
+
+    except (ValueError, AttributeError) as e:
+        logger.debug(f"Could not compute centroid for theme: {e}")
+        # Fall back to first observation's content
+        content = observations[0].content
+        return content[:50] + "..." if len(content) > 50 else content
 
 
 def cluster_observations(
@@ -270,7 +143,7 @@ def cluster_observations(
     pattern_clusters: list[PatternCluster] = []
     for label, cluster_obs in clusters.items():
         if len(cluster_obs) >= min_samples:
-            theme = extract_theme_keywords(cluster_obs)
+            theme = extract_cluster_theme(cluster_obs)
             pattern_clusters.append(
                 PatternCluster(
                     observations=cluster_obs,

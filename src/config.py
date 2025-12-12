@@ -394,6 +394,14 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         int, Field(default=200, gt=0, le=1000)
     ] = 200
 
+    # Specialist model settings (OpenRouter format: provider/model)
+    # DeductionSpecialist: handles logical inference + temporal reasoning
+    DEDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+    # InductionSpecialist: identifies patterns across observations
+    INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+    # ConsolidationSpecialist: cleans duplicates + updates peer card
+    CONSOLIDATION_MODEL: str = "anthropic/claude-haiku-4.5"
+
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DreamSettings":
         """Ensure the output token limit exceeds the thinking budget."""

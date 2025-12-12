@@ -14,6 +14,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
@@ -22,13 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class KnowledgeUpdateCandidate:
-    """A potential knowledge update detected by pre-scan."""
+class ObservationWithContext:
+    """An observation with its source message context for temporal reasoning."""
 
-    old_observation: models.Document
-    new_observation: models.Document
-    topic: str  # Extracted topic/entity that changed
-    similarity: float  # Semantic similarity between observations
+    observation: models.Document
+    source_message: models.Message | None  # The message this observation was extracted from
+    preceding_message: models.Message | None  # The message immediately before (for conversation context)
 
 
 @dataclass
@@ -63,13 +63,13 @@ class DreamContext:
     deductive_observations: list[models.Document] = field(default_factory=list)
     inductive_observations: list[models.Document] = field(default_factory=list)
 
+    # Explicit observations with their source message context (for temporal reasoning)
+    explicit_with_context: list[ObservationWithContext] = field(default_factory=list)
+
     # Peer card
     peer_card: list[str] = field(default_factory=list)
 
     # ALL pre-computed analysis - no limits
-    knowledge_update_candidates: list[KnowledgeUpdateCandidate] = field(
-        default_factory=list
-    )
     duplicate_candidates: list[DuplicateCandidate] = field(default_factory=list)
     pattern_clusters: list[PatternCluster] = field(default_factory=list)
 
@@ -90,10 +90,6 @@ class DreamContext:
         return self.explicit_count + self.deductive_count + self.inductive_count
 
     @property
-    def has_potential_updates(self) -> bool:
-        return len(self.knowledge_update_candidates) > 0
-
-    @property
     def has_duplicates(self) -> bool:
         return len(self.duplicate_candidates) > 0
 
@@ -105,11 +101,10 @@ class DreamContext:
         """Generate a summary string for logging/debugging."""
         return (
             f"DreamContext: "
-            f"{self.explicit_count} explicit, "
+            f"{self.explicit_count} explicit ({len(self.explicit_with_context)} with context), "
             f"{self.deductive_count} deductive, "
             f"{self.inductive_count} inductive "
             f"({self.total_observations} total), "
-            f"{len(self.knowledge_update_candidates)} update candidates, "
             f"{len(self.duplicate_candidates)} duplicate candidates, "
             f"{self.cluster_count} pattern clusters"
         )
@@ -168,6 +163,111 @@ async def fetch_all_observations(
     return explicit, deductive, inductive
 
 
+async def fetch_message_context_for_observations(
+    db: AsyncSession,
+    workspace_name: str,
+    observations: list[models.Document],
+) -> list[ObservationWithContext]:
+    """
+    Fetch source message context for a list of observations.
+
+    For each observation, retrieves:
+    - The source message (from observation's message_ids metadata)
+    - The immediately preceding message (for conversation context)
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        observations: List of observations to fetch context for
+
+    Returns:
+        List of ObservationWithContext with message context attached
+    """
+    if not observations:
+        return []
+
+    # Collect all message IDs we need to fetch
+    message_ids_needed: set[int] = set()
+    obs_to_message_ids: dict[str, list[int]] = {}
+
+    for obs in observations:
+        # Get message_ids from internal_metadata
+        metadata = obs.internal_metadata or {}
+        message_ids = metadata.get("message_ids", [])
+        if message_ids:
+            obs_to_message_ids[obs.id] = message_ids
+            message_ids_needed.update(message_ids)
+
+    if not message_ids_needed:
+        # No message context available, return observations without context
+        return [
+            ObservationWithContext(
+                observation=obs, source_message=None, preceding_message=None
+            )
+            for obs in observations
+        ]
+
+    # Fetch all needed messages in one query
+    stmt = select(models.Message).where(
+        models.Message.workspace_name == workspace_name,
+        models.Message.id.in_(message_ids_needed),
+    )
+    result = await db.execute(stmt)
+    messages_by_id: dict[int, models.Message] = {
+        msg.id: msg for msg in result.scalars().all()
+    }
+
+    # For each message, we also need the preceding message (seq_in_session - 1)
+    # Collect the session/seq pairs we need
+    preceding_keys: list[tuple[str, int]] = []
+    for msg in messages_by_id.values():
+        if msg.seq_in_session > 0:
+            preceding_keys.append((msg.session_name, msg.seq_in_session - 1))
+
+    # Fetch preceding messages
+    preceding_messages: dict[tuple[str, int], models.Message] = {}
+    if preceding_keys:
+        # Build a query for all preceding messages
+        # This is a bit tricky - we need to match (session_name, seq_in_session) pairs
+        for session_name, seq in preceding_keys:
+            stmt = select(models.Message).where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == session_name,
+                models.Message.seq_in_session == seq,
+            )
+            result = await db.execute(stmt)
+            msg = result.scalar_one_or_none()
+            if msg:
+                preceding_messages[(session_name, seq)] = msg
+
+    # Build ObservationWithContext objects
+    result_list: list[ObservationWithContext] = []
+    for obs in observations:
+        source_message: models.Message | None = None
+        preceding_message: models.Message | None = None
+
+        message_ids = obs_to_message_ids.get(obs.id, [])
+        if message_ids:
+            # Use the last message ID as the source (most recent)
+            source_id = message_ids[-1]
+            source_message = messages_by_id.get(source_id)
+
+            # Get the preceding message if we have a source
+            if source_message and source_message.seq_in_session > 0:
+                key = (source_message.session_name, source_message.seq_in_session - 1)
+                preceding_message = preceding_messages.get(key)
+
+        result_list.append(
+            ObservationWithContext(
+                observation=obs,
+                source_message=source_message,
+                preceding_message=preceding_message,
+            )
+        )
+
+    return result_list
+
+
 async def prescan_for_dream(
     db: AsyncSession,
     workspace_name: str,
@@ -194,9 +294,7 @@ async def prescan_for_dream(
     Returns:
         DreamContext with ALL pre-computed data
     """
-    # Import here to avoid circular imports
     from src.dreamer.clustering import cluster_observations
-    from src.dreamer.knowledge_updates import detect_knowledge_updates
 
     logger.info(
         f"Exhaustive pre-scan starting: {workspace_name}/{observer}/{observed}"
@@ -215,9 +313,9 @@ async def prescan_for_dream(
         db, workspace_name, observer=observer, observed=observed
     )
 
-    # 3. Detect ALL knowledge update candidates
-    knowledge_update_candidates = await detect_knowledge_updates(
-        all_obs, duplicate_threshold=duplicate_threshold
+    # 3. Fetch message context for explicit observations (for temporal reasoning)
+    explicit_with_context = await fetch_message_context_for_observations(
+        db, workspace_name, explicit
     )
 
     # 4. Detect ALL duplicate candidates
@@ -234,8 +332,8 @@ async def prescan_for_dream(
         explicit_observations=explicit,
         deductive_observations=deductive,
         inductive_observations=inductive,
+        explicit_with_context=explicit_with_context,
         peer_card=peer_card or [],
-        knowledge_update_candidates=knowledge_update_candidates,
         duplicate_candidates=duplicate_candidates,
         pattern_clusters=pattern_clusters,
     )

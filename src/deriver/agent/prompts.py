@@ -86,17 +86,10 @@ Frame these as observations:
 
 Preserve precision when extracting facts:
 - Dates: "User's meeting is on March 15, 2024"
-- Deadlines: "User's deadline for Z is April 20"
+- Deadlines: "User's deadline for the project is April 20"
 - Numbers: "User's budget is $4,000" not "User has a budget"
 - Counts: "User manages 7 agents" not "User manages several agents"
 - Durations: "User is on vacation for 2 weeks" not "User is on vacation for a while"
-
-## KNOWLEDGE UPDATES
-
-When {observed} mentions updated information:
-- Look for: "changed to", "rescheduled to", "now", "updated", "moved to"
-- Create an observation with the NEW value: "User's deadline is April 22 (updated)"
-- The Dreamer will later handle consolidation
 
 ## WORKFLOW
 

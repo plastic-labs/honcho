@@ -27,22 +27,19 @@ COORDINATOR_PROMPT = """You are a dream coordinator. Based on the pre-scanned co
 - Explicit observations: {explicit_count}
 - Existing deductive observations: {deductive_count}
 - Existing inductive observations: {inductive_count}
-- Knowledge update candidates: {update_count}
 - Pattern clusters: {cluster_count}
 
 ## Available Specialists
-1. **knowledge_update** - Verifies and creates observations for changed facts (dates, numbers, etc.)
-2. **deduction** - Creates logical inferences from explicit facts
-3. **induction** - Creates pattern generalizations from observation clusters (top 10)
+1. **deduction** - Creates logical inferences AND detects temporal knowledge updates from explicit facts
+2. **induction** - Creates pattern generalizations from observation clusters (top 10)
 
 ## Decision Guidelines
-- ALWAYS run **knowledge_update** if update_count > 0 (critical for accuracy)
-- ALWAYS run **deduction** if explicit_count > 0 (extract all implicit knowledge)
+- ALWAYS run **deduction** if explicit_count > 0 (extract implicit knowledge + detect updates)
 - Run **induction** if cluster_count >= 2 (enough patterns to generalize)
 - If nothing needs to be done, return empty list
 
 Return ONLY a JSON array of specialist names in priority order.
-Example: ["knowledge_update", "deduction", "induction"]
+Example: ["deduction", "induction"]
 No explanation, just the JSON array."""
 
 
@@ -69,7 +66,6 @@ async def coordinate_dream(context: DreamContext) -> list[str]:
         explicit_count=context.explicit_count,
         deductive_count=context.deductive_count,
         inductive_count=context.inductive_count,
-        update_count=len(context.knowledge_update_candidates),
         cluster_count=context.cluster_count,
     )
 
@@ -94,11 +90,7 @@ def _apply_heuristics(context: DreamContext) -> list[str] | None:
     """
     specialists: list[str] = []
 
-    # Always run knowledge_update if we have candidates
-    if len(context.knowledge_update_candidates) > 0:
-        specialists.append("knowledge_update")
-
-    # Run deduction if we have explicit observations
+    # Run deduction if we have explicit observations (handles both inference + temporal updates)
     if context.explicit_count > 0:
         specialists.append("deduction")
 
@@ -124,7 +116,7 @@ def _parse_specialist_list(response: str) -> list[str]:
     Returns:
         List of valid specialist names
     """
-    valid_specialists = {"knowledge_update", "deduction", "induction"}
+    valid_specialists = {"deduction", "induction"}
 
     # Try to parse as JSON first
     try:

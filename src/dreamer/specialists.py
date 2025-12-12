@@ -33,7 +33,6 @@ def _get_settings_with_model(model: str):
 
 
 # Tool sets for each specialist - minimal, focused
-KNOWLEDGE_UPDATE_TOOLS = [TOOLS["create_observations"]]
 DEDUCTION_TOOLS = [TOOLS["create_observations"]]
 INDUCTION_TOOLS = [TOOLS["create_observations"]]
 CONSOLIDATION_TOOLS = [TOOLS["delete_observations"], TOOLS["update_peer_card"]]
@@ -190,82 +189,19 @@ class BaseSpecialist(ABC):
         return summary
 
 
-class KnowledgeUpdateSpecialist(BaseSpecialist):
-    """Processes ALL knowledge update candidates."""
-
-    name: str = "knowledge_update"
-
-    def get_tools(self) -> list[dict[str, Any]]:
-        return KNOWLEDGE_UPDATE_TOOLS
-
-    def get_model(self) -> str:
-        return "anthropic/claude-haiku-4.5"  # Simple verification task
-
-    def get_max_iterations(self) -> int:
-        return 2  # Usually just 1 tool call needed
-
-    def get_batches(self, context: DreamContext) -> list[Any]:
-        """Each batch is a list of knowledge update candidates."""
-        candidates = context.knowledge_update_candidates
-        if not candidates:
-            return []
-
-        # Batch by number of candidates (each takes ~200 tokens)
-        batch_size = 50
-        return [
-            candidates[i : i + batch_size]
-            for i in range(0, len(candidates), batch_size)
-        ]
-
-    def build_batch_prompt(
-        self,
-        context: DreamContext,
-        observed: str,
-        batch_num: int,
-        total_batches: int,
-        batch_data: Any,
-    ) -> str:
-        candidates = batch_data
-
-        candidates_text = "\n\n".join(
-            f"**Candidate {i + 1}:**\n"
-            f"- OLD [id:{c.old_observation.id}]: {c.old_observation.content}\n"
-            f"  (Created: {c.old_observation.created_at})\n"
-            f"- NEW [id:{c.new_observation.id}]: {c.new_observation.content}\n"
-            f"  (Created: {c.new_observation.created_at})\n"
-            f"- Topic: {c.topic}\n"
-            f"- Similarity: {c.similarity:.2f}"
-            for i, c in enumerate(candidates)
-        )
-
-        batch_info = (
-            f"[Batch {batch_num}/{total_batches}] " if total_batches > 1 else ""
-        )
-
-        return f"""{batch_info}You verify knowledge updates about {observed}.
-
-Each candidate below shows an OLD observation and a NEW observation about the same topic.
-Your job is to identify TRUE knowledge updates where a fact has CHANGED.
-
-## Candidates ({len(candidates)} in this batch, {len(context.knowledge_update_candidates)} total)
-{candidates_text}
-
-## Task
-For each TRUE knowledge update (same fact, different value, later timestamp):
-1. Create a DEDUCTIVE observation noting the update
-2. Include premise_ids linking to BOTH old and new observations
-3. Content format: "[Topic] was updated from [old value] to [new value] ([new value] supersedes)"
-
-Only create observations for TRUE updates. Skip if:
-- Different facts (not actually the same topic)
-- Same value (no actual change)
-- Uncertain which is newer
-
-Process ALL {len(candidates)} candidates in this batch. Create observations for every valid update."""
-
-
 class DeductionSpecialist(BaseSpecialist):
-    """Processes ALL explicit observations to create deductions."""
+    """
+    Processes explicit observations to create deductions AND handle temporal reasoning.
+
+    This specialist performs two key functions:
+    1. LOGICAL INFERENCE: Derive new facts from combinations of explicit observations
+    2. TEMPORAL REASONING: Detect when facts have changed over time and create
+       knowledge update observations that note the supersession
+
+    Uses semantic clustering (from prescan) to group related observations,
+    then examines each cluster with full message context to enable the LLM
+    to understand temporal relationships naturally.
+    """
 
     name: str = "deduction"
 
@@ -273,32 +209,89 @@ class DeductionSpecialist(BaseSpecialist):
         return DEDUCTION_TOOLS
 
     def get_model(self) -> str:
-        return "anthropic/claude-haiku-4.5"
+        return settings.DREAM.DEDUCTION_MODEL
 
     def get_max_tokens(self) -> int:
-        return 4096  # Limit output to force conciseness
+        return 8192  # More output for detailed reasoning
 
     def get_max_iterations(self) -> int:
-        return 3  # Each batch is small, 1-2 tool calls expected
+        return 5  # May need multiple tool calls for complex clusters
 
     def get_batches(self, context: DreamContext) -> list[Any]:
-        """Each batch is a subset of explicit observations."""
-        explicit = context.explicit_observations
-        if not explicit:
-            return []
+        """
+        Create batches from semantic clusters of observations with context.
 
-        # Batch explicit observations - 50 per batch for faster processing
-        # Each observation ~50-100 tokens, so 50 obs = ~2.5-5K tokens input
-        batch_size = 50
-        batches = []
-        for i in range(0, len(explicit), batch_size):
-            batches.append(
+        Each batch contains a cluster of semantically related observations
+        along with their source message context for temporal reasoning.
+        """
+        # Use pattern clusters as our semantic groupings
+        clusters = context.pattern_clusters
+        if not clusters:
+            # Fall back to processing all explicit observations as one batch
+            if not context.explicit_with_context:
+                return []
+            return [
                 {
-                    "explicit": explicit[i : i + batch_size],
+                    "observations_with_context": context.explicit_with_context,
+                    "cluster_theme": "all observations",
                     "existing_deductive": context.deductive_observations,
                 }
-            )
+            ]
+
+        # Build a lookup from observation ID to ObservationWithContext
+        obs_context_lookup: dict[str, Any] = {
+            owc.observation.id: owc for owc in context.explicit_with_context
+        }
+
+        batches = []
+        for cluster in clusters:
+            # Get ObservationWithContext for each observation in the cluster
+            cluster_with_context = [
+                obs_context_lookup.get(obs.id)
+                for obs in cluster.observations
+                if obs.id in obs_context_lookup
+            ]
+            # Filter out None values
+            cluster_with_context = [
+                owc for owc in cluster_with_context if owc is not None
+            ]
+
+            if cluster_with_context:
+                batches.append(
+                    {
+                        "observations_with_context": cluster_with_context,
+                        "cluster_theme": cluster.theme,
+                        "existing_deductive": context.deductive_observations,
+                    }
+                )
+
         return batches
+
+    def _format_observation_with_context(self, owc: Any) -> str:
+        """Format a single observation with its message context."""
+        from src.dreamer.prescan import ObservationWithContext
+
+        if not isinstance(owc, ObservationWithContext):
+            return f"- [id:{owc.id}] {owc.content}"
+
+        obs = owc.observation
+        lines = [f"**Observation [id:{obs.id}]:**"]
+        lines.append(f"  Content: {obs.content}")
+        lines.append(f"  Timestamp: {obs.created_at}")
+
+        if owc.source_message:
+            msg = owc.source_message
+            lines.append(
+                f'  Source message [{msg.peer_name}]: "{msg.content[:500]}{"..." if len(msg.content) > 500 else ""}"'
+            )
+
+        if owc.preceding_message:
+            msg = owc.preceding_message
+            lines.append(
+                f'  Preceding message [{msg.peer_name}]: "{msg.content[:300]}{"..." if len(msg.content) > 300 else ""}"'
+            )
+
+        return "\n".join(lines)
 
     def build_batch_prompt(
         self,
@@ -308,13 +301,20 @@ class DeductionSpecialist(BaseSpecialist):
         total_batches: int,
         batch_data: Any,
     ) -> str:
-        explicit = batch_data["explicit"]
+        observations_with_context = batch_data["observations_with_context"]
+        cluster_theme = batch_data["cluster_theme"]
         existing = batch_data["existing_deductive"]
 
-        explicit_text = "\n".join(f"- [id:{doc.id}] {doc.content}" for doc in explicit)
+        # Format observations with full context
+        observations_text = "\n\n".join(
+            self._format_observation_with_context(owc)
+            for owc in observations_with_context
+        )
 
         existing_text = (
-            "\n".join(f"- {doc.content}" for doc in existing)
+            "\n".join(
+                f"- {doc.content}" for doc in existing[:20]
+            )  # Limit existing to avoid overflow
             if existing
             else "(none yet)"
         )
@@ -325,18 +325,43 @@ class DeductionSpecialist(BaseSpecialist):
 
         return f"""{batch_info}Create DEDUCTIVE observations about {observed}.
 
-## Explicit Observations
-{explicit_text}
+You are analyzing a cluster of semantically related observations about "{cluster_theme}".
+Each observation includes its source message context and timestamp for temporal reasoning.
 
-## Existing Deductive (DO NOT duplicate)
+## Observations in this Cluster ({len(observations_with_context)} observations)
+
+{observations_text}
+
+## Existing Deductive Observations (DO NOT duplicate)
 {existing_text}
 
-## Task
-Create deductive observations - logical inferences from the explicit facts.
-- Include premise_ids linking to source observations
-- Include premises as human-readable text
-- Focus on HIGH-VALUE inferences only (skills, background, relationships, preferences)
-- Skip trivial or speculative deductions
+## Your Tasks
+
+### 1. TEMPORAL REASONING (Knowledge Updates)
+Look for observations in this cluster that describe the SAME attribute/fact with DIFFERENT values at DIFFERENT times.
+
+When you find a temporal update:
+- The LATER observation SUPERSEDES the earlier one
+- Create a deductive observation noting the update
+- Format: "[Topic] changed: [old value] → [new value] (as of [newer timestamp])"
+- Include `premise_ids` linking BOTH the old and new observations
+
+### 2. LOGICAL INFERENCE
+Create deductions from combinations of facts - things that logically follow but weren't stated directly.
+
+Focus on HIGH-VALUE inferences:
+- Skills and expertise (e.g., "works as SWE at Google" → "has software engineering skills")
+- Background implications (e.g., "walked her dog" → "has a pet dog")
+- Relationship dynamics
+- Preference patterns
+
+### Output Requirements
+
+For EACH deductive observation, include:
+- `content`: The deductive statement
+- `level`: "deductive"
+- `premise_ids`: Array of observation IDs this is derived from (REQUIRED)
+- `premises`: Human-readable source text
 
 Call create_observations once with all deductions."""
 
@@ -353,7 +378,7 @@ class InductionSpecialist(BaseSpecialist):
         return INDUCTION_TOOLS
 
     def get_model(self) -> str:
-        return "anthropic/claude-haiku-4.5"  # Pattern matching task
+        return settings.DREAM.INDUCTION_MODEL
 
     def get_max_iterations(self) -> int:
         return 2  # Usually just 1 tool call needed
@@ -440,7 +465,7 @@ class ConsolidationSpecialist(BaseSpecialist):
         return CONSOLIDATION_TOOLS
 
     def get_model(self) -> str:
-        return "anthropic/claude-haiku-4.5"
+        return settings.DREAM.CONSOLIDATION_MODEL
 
     def get_max_iterations(self) -> int:
         return 15
@@ -539,76 +564,32 @@ Update the peer card with:
 Keep it concise but comprehensive. Include everything important about {observed}."""
 
     def _extract_key_facts(self, context: DreamContext) -> str:
-        """Extract key biographical facts from ALL observations."""
+        """
+        Extract key facts from ALL observations for peer card updates.
+
+        Instead of keyword filtering, we include all observations and let the LLM
+        decide what's relevant for the peer card. This is language-agnostic.
+        """
         key_facts: list[str] = []
 
-        bio_keywords = [
-            "name",
-            "age",
-            "born",
-            "birthday",
-            "lives",
-            "location",
-            "city",
-            "country",
-            "works",
-            "job",
-            "occupation",
-            "career",
-            "company",
-            "role",
-            "position",
-            "married",
-            "wife",
-            "husband",
-            "partner",
-            "spouse",
-            "children",
-            "daughter",
-            "son",
-            "family",
-            "parents",
-            "mother",
-            "father",
-            "sibling",
-            "brother",
-            "sister",
-            "education",
-            "degree",
-            "university",
-            "college",
-            "school",
-            "studied",
-            "hobby",
-            "hobbies",
-            "interests",
-            "enjoys",
-            "loves",
-            "hates",
-            "prefers",
-            "always",
-            "never",
-            "usually",
-            "typically",
-        ]
-
-        # Check explicit observations
+        # Include all explicit observations (the LLM will filter for relevance)
         for doc in context.explicit_observations:
-            content_lower = doc.content.lower()
-            if any(kw in content_lower for kw in bio_keywords):
-                key_facts.append(f"- {doc.content}")
+            key_facts.append(f"- {doc.content}")
 
-        # Check inductive observations (patterns)
+        # Include deductive observations (higher-level inferences)
+        for doc in context.deductive_observations:
+            key_facts.append(f"- [deduced] {doc.content}")
+
+        # Include inductive observations (patterns)
         for doc in context.inductive_observations:
             key_facts.append(f"- [pattern] {doc.content}")
 
-        # Limit to prevent prompt overflow, but include a lot
-        return "\n".join(key_facts[:100]) if key_facts else "(no key facts found)"
+        # Limit to prevent prompt overflow
+        return "\n".join(key_facts[:150]) if key_facts else "(no observations found)"
 
 
 # Singleton instances
 SPECIALISTS: dict[str, BaseSpecialist] = {
-    "knowledge_update": KnowledgeUpdateSpecialist(),
     "deduction": DeductionSpecialist(),
     "induction": InductionSpecialist(),
     "consolidation": ConsolidationSpecialist(),

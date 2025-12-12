@@ -1095,11 +1095,8 @@ async def extract_preferences(
     """
     Extract user preferences and standing instructions from conversation history.
 
-    Performs both semantic and text searches to find:
-    - Standing instructions ("always do X", "never mention Y")
-    - Communication preferences ("I prefer brief responses")
-    - Content preferences ("include examples", "use bullet points")
-    - Decision-making preferences ("I prefer logical approaches")
+    Uses semantic search to find messages that might contain preferences or instructions.
+    This is language-agnostic and doesn't rely on keyword matching.
 
     Args:
         db: Database session
@@ -1108,85 +1105,20 @@ async def extract_preferences(
         observed: The peer whose preferences to extract
 
     Returns:
-        Dict with 'instructions' and 'preferences' lists
+        Dict with 'messages' list containing potentially relevant messages
     """
-    instructions: list[str] = []
-    preferences: list[str] = []
+    messages: list[str] = []
     seen_content: set[str] = set()  # Dedupe by content hash
 
-    # Text patterns to search for standing instructions
-    instruction_patterns = [
-        "always",
-        "never",
-        "don't ever",
-        "make sure to",
-        "remember to",
-        "when I ask",
-        "whenever I",
-    ]
-
-    # Text patterns for preferences
-    preference_patterns = [
-        "I prefer",
-        "I like",
-        "I want",
-        "I'd rather",
-        "I would rather",
-        "I enjoy",
-    ]
-
-    # Semantic queries for broader coverage
+    # Semantic queries to find preference-like content
     semantic_queries = [
         "user preferences and communication style",
         "standing instructions and rules to follow",
         "how user wants responses formatted",
-        "things user always or never wants",
+        "user requirements and constraints",
+        "things user wants or does not want",
     ]
 
-    # 1. Text search for instruction patterns
-    for pattern in instruction_patterns:
-        try:
-            snippets = await crud.grep_messages(
-                db,
-                workspace_name=workspace_name,
-                session_name=session_name,
-                text=pattern,
-                limit=10,
-                context_window=0,  # Just the matching message
-            )
-            for matches, _ in snippets:
-                for msg in matches:
-                    if msg.peer_name == observed:
-                        content_key = msg.content[:100].lower()
-                        if content_key not in seen_content:
-                            seen_content.add(content_key)
-                            # Extract the instruction
-                            instructions.append(f"'{msg.content.strip()}'")
-        except Exception as e:
-            logger.warning(f"Error searching for pattern '{pattern}': {e}")
-
-    # 2. Text search for preference patterns
-    for pattern in preference_patterns:
-        try:
-            snippets = await crud.grep_messages(
-                db,
-                workspace_name=workspace_name,
-                session_name=session_name,
-                text=pattern,
-                limit=10,
-                context_window=0,
-            )
-            for matches, _ in snippets:
-                for msg in matches:
-                    if msg.peer_name == observed:
-                        content_key = msg.content[:100].lower()
-                        if content_key not in seen_content:
-                            seen_content.add(content_key)
-                            preferences.append(f"'{msg.content.strip()}'")
-        except Exception as e:
-            logger.warning(f"Error searching for pattern '{pattern}': {e}")
-
-    # 3. Semantic search for broader coverage
     for query in semantic_queries:
         try:
             snippets = await crud.search_messages(
@@ -1194,33 +1126,23 @@ async def extract_preferences(
                 workspace_name=workspace_name,
                 session_name=session_name,
                 query=query,
-                limit=5,
+                limit=10,
                 context_window=0,
             )
             for matches, _ in snippets:
                 for msg in matches:
                     if msg.peer_name == observed:
-                        content_lower = msg.content.lower()
-                        # Check if this message contains preference-like content
-                        if any(
-                            p in content_lower
-                            for p in instruction_patterns + preference_patterns
-                        ):
-                            content_key = msg.content[:100].lower()
-                            if content_key not in seen_content:
-                                seen_content.add(content_key)
-                                if any(
-                                    p in content_lower for p in instruction_patterns
-                                ):
-                                    instructions.append(f"'{msg.content.strip()}'")
-                                else:
-                                    preferences.append(f"'{msg.content.strip()}'")
+                        content_key = msg.content[:100].lower()
+                        if content_key not in seen_content:
+                            seen_content.add(content_key)
+                            messages.append(f"'{msg.content.strip()}'")
         except Exception as e:
             logger.warning(f"Error in semantic search for '{query}': {e}")
 
     return {
-        "instructions": instructions[:20],  # Cap at 20 each
-        "preferences": preferences[:20],
+        "instructions": [],  # Deprecated - LLM will categorize
+        "preferences": [],  # Deprecated - LLM will categorize
+        "messages": messages[:30],  # Raw messages for LLM to process
     }
 
 
@@ -1697,30 +1619,17 @@ async def _handle_extract_preferences(
         observed=ctx.observed,
     )
 
-    instructions = results["instructions"]
-    preferences = results["preferences"]
+    messages = results.get("messages", [])
 
-    if not instructions and not preferences:
-        return "No preferences or standing instructions found in conversation history."
+    if not messages:
+        return "No potentially relevant preference or instruction messages found in conversation history."
 
-    output_parts: list[str] = []
-
-    if instructions:
-        output_parts.append(
-            f"**Standing Instructions Found ({len(instructions)}):**\n"
-            + "\n".join(f"- {inst}" for inst in instructions)
-        )
-
-    if preferences:
-        output_parts.append(
-            f"**Preferences Found ({len(preferences)}):**\n"
-            + "\n".join(f"- {pref}" for pref in preferences)
-        )
-
-    output_parts.append(
-        "\n**Action Required:** Review these and add relevant ones to the peer card using `update_peer_card`. "
-        + "Summarize standing instructions as clear rules (e.g., 'Always include cultural context when discussing social norms')."
-    )
+    output_parts: list[str] = [
+        f"**Potentially Relevant Messages ({len(messages)}):**",
+        "\n".join(f"- {msg}" for msg in messages),
+        "\n**Action Required:** Review these messages and extract any preferences or standing instructions to add to the peer card using `update_peer_card`. "
+        + "Summarize as clear rules (e.g., 'INSTRUCTION: Always include cultural context') or preferences (e.g., 'PREFERENCE: Brief responses').",
+    ]
 
     return "\n\n".join(output_parts)
 
