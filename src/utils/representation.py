@@ -62,10 +62,6 @@ class PromptRepresentation(BaseModel):
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
         default_factory=list,
     )
-    # deductive: list[DeductiveObservationBase] = Field(
-    #     description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
-    #     default_factory=list,
-    # )
 
     @field_validator("explicit", mode="before")
     @classmethod
@@ -227,7 +223,11 @@ class Representation(BaseModel):
         """
         Check if the representation is empty.
         """
-        return len(self.explicit) == 0 and len(self.deductive) == 0 and len(self.inductive) == 0
+        return (
+            len(self.explicit) == 0
+            and len(self.deductive) == 0
+            and len(self.inductive) == 0
+        )
 
     def len(self) -> int:
         """
@@ -494,11 +494,7 @@ class Representation(BaseModel):
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
-        """Convert PromptRepresentation to Representation.
-
-        Note: Inductive observations are NOT created via PromptRepresentation.
-        They are only created by the Dreamer agent during consolidation.
-        """
+        """Convert PromptRepresentation to Representation."""
         return cls(
             explicit=[
                 ExplicitObservation(
@@ -509,12 +505,8 @@ class Representation(BaseModel):
                 )
                 for e in prompt_representation.explicit
             ],
-            deductive=[
-                # Deductive observations are created by the Dreamer, not the Deriver
-            ],
-            inductive=[
-                # Inductive observations are created by the Dreamer, not the Deriver
-            ],
+            deductive=[],
+            inductive=[],
         )
 
 

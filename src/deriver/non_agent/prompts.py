@@ -5,7 +5,6 @@ This module contains simplified prompt templates focused only on observation ext
 NO peer card instructions, NO working representation - just extract observations.
 """
 
-import datetime
 from functools import cache
 from inspect import cleandoc as c
 
@@ -14,7 +13,6 @@ from src.utils.tokens import estimate_tokens
 
 def minimal_deriver_prompt(
     peer_id: str,
-    message_created_at: datetime.datetime,
     messages: str,
 ) -> str:
     """
@@ -22,7 +20,6 @@ def minimal_deriver_prompt(
 
     Args:
         peer_id: The ID of the user being analyzed.
-        message_created_at: Timestamp of the message.
         messages: All messages in the range (interleaving messages and new turns combined).
 
     Returns:
@@ -31,8 +28,6 @@ def minimal_deriver_prompt(
     return c(
         f"""
 Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
-
-Current timestamp: {message_created_at}
 
 [EXPLICIT] DEFINITION: Facts about {peer_id} that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
@@ -64,7 +59,6 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
     try:
         prompt = minimal_deriver_prompt(
             peer_id="",
-            message_created_at=datetime.datetime.now(datetime.timezone.utc),
             messages="",
         )
         return estimate_tokens(prompt)

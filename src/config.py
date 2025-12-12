@@ -274,10 +274,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
-        Field(
-            default=4096,
-            ge=1,
-        ),
+        Field(default=4096, ge=128, le=16_384),
     ] = 4096
 
 
