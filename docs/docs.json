@@ -260,7 +260,7 @@
                     "pages": [
                       "v2.6.0-alpha/documentation/features/advanced/overview",
                       "v2.6.0-alpha/documentation/features/advanced/queue-status",
-                      "v2.6.0-alpha/documentation/features/advanced/toggle-reasoning",
+                      "v2.6.0-alpha/documentation/features/advanced/reasoning-configuration",
                       "v2.6.0-alpha/documentation/features/advanced/representation-scopes",
                       "v2.6.0-alpha/documentation/features/advanced/summarizer",
                       "v2.6.0-alpha/documentation/features/advanced/search",
