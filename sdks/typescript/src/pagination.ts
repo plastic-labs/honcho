@@ -102,11 +102,10 @@ export class Page<T, TOriginal = any> implements AsyncIterable<T> {
    * Check if there's a next page.
    */
   get hasNextPage(): boolean {
-    const hasNext = this._originalPage.hasNextPage
-    if (typeof hasNext === 'function') {
-      return hasNext()
+    if (typeof this._originalPage.hasNextPage === 'function') {
+      return this._originalPage.hasNextPage()
     }
-    return hasNext || false
+    return false
   }
 
   /**
@@ -114,7 +113,7 @@ export class Page<T, TOriginal = any> implements AsyncIterable<T> {
    * Returns null if there are no more pages.
    */
   async getNextPage(): Promise<Page<T, TOriginal> | null> {
-    if (!this._originalPage.getNextPage) {
+    if (typeof this._originalPage.getNextPage !== 'function') {
       return null
     }
 
