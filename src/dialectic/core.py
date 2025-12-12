@@ -147,11 +147,7 @@ class DialecticAgent:
                 limit=25,
             )
 
-            if (
-                not representation.explicit
-                and not representation.deductive
-                and not representation.inductive
-            ):
+            if representation.is_empty():
                 return None
 
             return representation.format_as_markdown()

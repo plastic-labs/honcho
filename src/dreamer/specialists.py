@@ -13,7 +13,10 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.utils.agent_tools import TOOLS
@@ -21,6 +24,18 @@ from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 
 if TYPE_CHECKING:
     from src.dreamer.prescan import DreamContext
+
+
+@dataclass
+class ToolExecutorParams:
+    """Parameters for creating tool executors - used by consolidation specialist."""
+
+    db: AsyncSession
+    workspace_name: str
+    observer: str
+    observed: str
+    session_name: str
+    history_token_limit: int
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +50,7 @@ def _get_settings_with_model(model: str):
 # Tool sets for each specialist - minimal, focused
 DEDUCTION_TOOLS = [TOOLS["create_observations"]]
 INDUCTION_TOOLS = [TOOLS["create_observations"]]
-
-# Approximate tokens per observation (content + ID + formatting)
-TOKENS_PER_OBSERVATION = 50
-# Leave room for system prompt, response, etc.
-MAX_CONTEXT_TOKENS = 180_000
-OBSERVATIONS_PER_BATCH = MAX_CONTEXT_TOKENS // TOKENS_PER_OBSERVATION
+CONSOLIDATION_TOOLS = [TOOLS["create_vignette"]]
 
 
 class BaseSpecialist(ABC):
@@ -101,7 +111,7 @@ class BaseSpecialist(ABC):
         model = self.get_model()
         logger.info(
             f"{self.name}: Processing batch {batch_num}/{total_batches} "
-            f"(prompt: {prompt_len} chars, model: {model})"
+            + f"(prompt: {prompt_len} chars, model: {model})"
         )
 
         # Use specialist's model instead of default DREAM model
@@ -119,7 +129,7 @@ class BaseSpecialist(ABC):
 
         logger.info(
             f"{self.name} batch {batch_num}: {len(response.tool_calls_made)} tool calls, "
-            f"{response.input_tokens} in, {response.output_tokens} out"
+            + f"{response.input_tokens} in, {response.output_tokens} out"
         )
 
         return (
@@ -175,7 +185,7 @@ class BaseSpecialist(ABC):
                 logger.error(f"{self.name}: Batch failed with error: {result}")
                 all_results.append(f"ERROR: {result}")
             else:
-                batch_num, content, tool_calls, _ = result
+                _, content, tool_calls, _ = result
                 total_tool_calls += tool_calls
                 all_results.append(content)
 
@@ -242,7 +252,7 @@ class DeductionSpecialist(BaseSpecialist):
             owc.observation.id: owc for owc in context.explicit_with_context
         }
 
-        batches = []
+        batches: list[Any] = []
         for cluster in clusters:
             # Get ObservationWithContext for each observation in the cluster
             cluster_with_context = [
@@ -365,13 +375,187 @@ For EACH deductive observation, include:
 Call create_observations once with all deductions."""
 
 
+class ConsolidationSpecialist(BaseSpecialist):
+    """
+    Consolidates clusters of explicit observations into single vignettes.
+
+    This specialist runs FIRST in the dream cycle (hardcoded, not selected by orchestrator).
+    For each cluster of semantically related explicit observations, it creates a single
+    vignette that contains ALL the explicit information in a coherent narrative,
+    then deletes the source observations.
+
+    This reduces the number of observations while preserving all information.
+
+    NOTE: This specialist uses a custom run() method that accepts ToolExecutorParams
+    instead of a pre-built tool_executor, so it can create batch-specific executors
+    with the source_ids for each cluster.
+    """
+
+    name: str = "consolidation"
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return CONSOLIDATION_TOOLS
+
+    def get_model(self) -> str:
+        # Use the same model as deduction for consistency
+        return settings.DREAM.DEDUCTION_MODEL
+
+    def get_max_tokens(self) -> int:
+        return 4096  # Vignettes are concise narratives
+
+    def get_max_iterations(self) -> int:
+        return 1  # Single tool call per batch
+
+    def get_batches(self, context: DreamContext) -> list[Any]:
+        """
+        Create one batch per pattern cluster.
+
+        Each batch contains a cluster of semantically related explicit observations
+        to be consolidated into a single vignette.
+        """
+        clusters = context.pattern_clusters
+        if not clusters:
+            return []
+
+        batches: list[Any] = []
+        for cluster in clusters:
+            # Only consolidate clusters with explicit observations
+            explicit_obs = [
+                obs for obs in cluster.observations if obs.level == "explicit"
+            ]
+            if len(explicit_obs) >= 2:  # Only consolidate if 2+ observations
+                batches.append(
+                    {
+                        "observations": explicit_obs,
+                        "cluster_theme": cluster.theme,
+                        "source_ids": [obs.id for obs in explicit_obs],
+                    }
+                )
+
+        return batches
+
+    def build_batch_prompt(
+        self,
+        context: DreamContext,
+        observed: str,
+        batch_num: int,
+        total_batches: int,
+        batch_data: Any,
+    ) -> str:
+        observations = batch_data["observations"]
+        cluster_theme = batch_data["cluster_theme"]
+
+        # Format observations (no need to show IDs since they're handled automatically)
+        observations_text = "\n".join(f"- {obs.content}" for obs in observations)
+
+        batch_info = (
+            f"[Batch {batch_num}/{total_batches}] " if total_batches > 1 else ""
+        )
+
+        return f"""{batch_info}Consolidate these explicit observations about {observed} into a single vignette.
+
+## Cluster Theme: "{cluster_theme}"
+
+## Observations to Consolidate ({len(observations)} observations)
+{observations_text}
+
+## Task
+Create a single vignette that:
+1. Contains ALL the explicit facts from these observations
+2. Presents them as a coherent narrative or organized summary
+3. Does NOT add any inferences or interpretations - only explicit facts
+4. Preserves important details like dates, names, and specific information
+
+Call `create_vignette` with your consolidated content. The source observations will be automatically deleted.
+
+The vignette should be comprehensive but concise. Every fact from the source observations must be included."""
+
+    async def run_with_params(
+        self,
+        context: DreamContext,
+        observed: str,
+        executor_params: "ToolExecutorParams",
+    ) -> str:
+        """
+        Process ALL data exhaustively, creating batch-specific tool executors.
+
+        This override allows us to inject source_ids into each batch's tool executor.
+
+        Args:
+            context: Complete pre-scanned dream context
+            observed: The peer being observed
+            executor_params: Parameters to create tool executors for each batch
+
+        Returns:
+            Summary of all work done across all batches
+        """
+        from src.utils.agent_tools import create_tool_executor
+
+        batches = self.get_batches(context)
+
+        if not batches:
+            logger.info(f"{self.name}: No data to process")
+            return f"{self.name}: No data to process"
+
+        total_batches = len(batches)
+        logger.info(f"{self.name}: Processing {total_batches} batch(es) in parallel")
+
+        # Create tasks for all batches, each with its own tool executor
+        async def process_batch_with_source_ids(
+            batch_num: int, batch_data: Any
+        ) -> tuple[int, str, int, int]:
+            # Create a batch-specific tool executor with source_ids
+            tool_executor = create_tool_executor(
+                db=executor_params.db,
+                workspace_name=executor_params.workspace_name,
+                observer=executor_params.observer,
+                observed=executor_params.observed,
+                session_name=executor_params.session_name,
+                include_observation_ids=True,
+                history_token_limit=executor_params.history_token_limit,
+                vignette_source_ids=batch_data["source_ids"],
+            )
+            return await self._process_batch(
+                context, observed, batch_num, total_batches, batch_data, tool_executor
+            )
+
+        tasks = [
+            process_batch_with_source_ids(batch_num, batch_data)
+            for batch_num, batch_data in enumerate(batches, start=1)
+        ]
+
+        # Run all batches in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Aggregate results
+        total_tool_calls = 0
+        all_results: list[str] = []
+
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.error(f"{self.name}: Batch failed with error: {result}")
+                all_results.append(f"ERROR: {result}")
+            else:
+                _, content, tool_calls, _ = result
+                total_tool_calls += tool_calls
+                all_results.append(content)
+
+        summary = (
+            f"{self.name}: Processed {total_batches} batch(es) in parallel, "
+            f"{total_tool_calls} total tool calls"
+        )
+        logger.info(summary)
+
+        return summary
+
+
 class InductionSpecialist(BaseSpecialist):
     """Processes top pattern clusters to create inductive observations."""
 
     name: str = "induction"
 
     # Limit to top N clusters (sorted by size in prescan)
-    MAX_CLUSTERS = 10
+    MAX_CLUSTERS: int = 10
 
     def get_tools(self) -> list[dict[str, Any]]:
         return INDUCTION_TOOLS
@@ -441,7 +625,6 @@ Your job is to identify meaningful patterns in the top clusters.
 For each cluster, identify if there's a generalizable pattern:
 - **Preferences**: "prefers X", "likes Y", "favors Z"
 - **Behaviors**: "tends to Z", "usually does W", "often X"
-- **Personality**: "is methodical", "values structure", "approaches problems analytically"
 - **Tendencies**: "frequently mentions", "regularly discusses", "commonly references"
 
 For each inductive observation, include (ALL REQUIRED):
@@ -457,6 +640,7 @@ Create one inductive observation per valid pattern found."""
 
 # Singleton instances
 SPECIALISTS: dict[str, BaseSpecialist] = {
+    "consolidation": ConsolidationSpecialist(),
     "deduction": DeductionSpecialist(),
     "induction": InductionSpecialist(),
 }

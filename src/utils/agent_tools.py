@@ -477,6 +477,20 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["observation_id"],
         },
     },
+    "create_vignette": {
+        "name": "create_vignette",
+        "description": "Create a vignette that consolidates multiple explicit observations into a single coherent narrative. The vignette should contain ALL the explicit facts from the source observations.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The vignette content - a coherent narrative containing ALL explicit facts from the source observations",
+                },
+            },
+            "required": ["content"],
+        },
+    },
 }
 
 # Tools for the deriver agent (ingestion) - explicit-only, simplified schema
@@ -1167,6 +1181,8 @@ class ToolContext:
     include_observation_ids: bool
     history_token_limit: int
     db_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # For consolidation specialist - source IDs to delete after creating vignette
+    vignette_source_ids: list[str] | None = None
 
 
 async def _handle_create_observations(
@@ -1677,6 +1693,80 @@ def _format_message_snippets(
     return _truncate_tool_output(output)
 
 
+async def _handle_create_vignette(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle create_vignette tool - create vignette and delete source observations from context."""
+    content = tool_input.get("content")
+
+    if not content:
+        return "ERROR: 'content' is required"
+
+    # Get source_ids from context (set by consolidation specialist)
+    source_ids = ctx.vignette_source_ids
+    if not source_ids:
+        return "ERROR: No source_ids in context - this tool must be used via consolidation specialist"
+
+    if not ctx.session_name:
+        return "ERROR: Cannot create vignette without a session context"
+
+    async with ctx.db_lock:
+        # Create the vignette observation
+        embedding = await embedding_client.embed(content)
+
+        # Build metadata
+        metadata = schemas.DocumentMetadata(
+            message_ids=[],
+            message_created_at=utc_now_iso(),
+            source_ids=source_ids,
+            sources=[f"Consolidated from {len(source_ids)} observations"],
+        )
+
+        doc = schemas.DocumentCreate(
+            content=content,
+            session_name=ctx.session_name,
+            level="vignette",
+            metadata=metadata,
+            embedding=embedding,
+            source_ids=source_ids,
+        )
+
+        # Get or create collection
+        await crud.get_or_create_collection(
+            ctx.db,
+            ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+        )
+
+        # Create the vignette document
+        await crud.create_documents(
+            ctx.db,
+            documents=[doc],
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            deduplicate=False,  # Don't dedupe vignettes
+        )
+
+        # Delete the source observations
+        deleted_count = 0
+        for obs_id in source_ids:
+            try:
+                await crud.delete_document(
+                    ctx.db,
+                    workspace_name=ctx.workspace_name,
+                    document_id=obs_id,
+                    observer=ctx.observer,
+                    observed=ctx.observed,
+                )
+                deleted_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete source observation {obs_id}: {e}")
+
+    return f"Created vignette consolidating {len(source_ids)} observations, deleted {deleted_count} source observations"
+
+
 async def _handle_get_reasoning_chain(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
@@ -1784,6 +1874,7 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "finish_consolidation": _handle_finish_consolidation,
     "extract_preferences": _handle_extract_preferences,
     "get_reasoning_chain": _handle_get_reasoning_chain,
+    "create_vignette": _handle_create_vignette,
 }
 
 
@@ -1796,6 +1887,7 @@ def create_tool_executor(
     current_messages: list[models.Message] | None = None,
     include_observation_ids: bool = False,
     history_token_limit: int = 8192,
+    vignette_source_ids: list[str] | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1812,6 +1904,7 @@ def create_tool_executor(
         current_messages: List of current messages being processed (optional, for deriver)
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
         history_token_limit: Maximum tokens for get_recent_history (default: 8192)
+        vignette_source_ids: For consolidation specialist - IDs of observations to delete after vignette creation
 
     Returns:
         An async callable that executes tools with the captured context
@@ -1825,6 +1918,7 @@ def create_tool_executor(
         current_messages=current_messages,
         include_observation_ids=include_observation_ids,
         history_token_limit=history_token_limit,
+        vignette_source_ids=vignette_source_ids,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

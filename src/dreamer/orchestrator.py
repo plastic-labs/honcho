@@ -13,14 +13,18 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.dreamer.prescan import prescan_for_dream
-from src.dreamer.specialists import SPECIALISTS
+from src.dreamer.specialists import (
+    SPECIALISTS,
+    ConsolidationSpecialist,
+    ToolExecutorParams,
+)
 from src.utils.agent_tools import create_tool_executor
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.logging import (
@@ -42,12 +46,13 @@ async def run_dream(
     session_name: str,
 ) -> None:
     """
-    Run a full dream cycle with pre-scan + orchestrator + specialists.
+    Run a full dream cycle with pre-scan + consolidation + orchestrator + specialists.
 
     This is the new efficient dream implementation that:
     1. Pre-computes all context (no LLM calls)
-    2. Coordinates which specialists to run (cheap Haiku call or heuristics)
-    3. Runs specialists in parallel where possible (focused LLM calls)
+    2. Runs consolidation specialist FIRST (hardcoded, always runs if clusters exist)
+    3. Coordinates which other specialists to run (cheap Haiku call or heuristics)
+    4. Runs remaining specialists in parallel where possible (focused LLM calls)
 
     Args:
         db: Database session
@@ -56,6 +61,7 @@ async def run_dream(
         observed: Observed peer name
         session_name: Session identifier
     """
+
     run_id = str(uuid.uuid4())[:8]
     task_name = f"dream_orchestrator_{run_id}"
     start_time = time.perf_counter()
@@ -74,6 +80,40 @@ async def run_dream(
     prescan_ms = (time.perf_counter() - prescan_start) * 1000
     accumulate_metric(task_name, "prescan_duration", prescan_ms, "ms")
     accumulate_metric(task_name, "context", context.summary(), "blob")
+
+    # Phase 1.5: Run consolidation specialist FIRST (hardcoded, always runs)
+    # This consolidates explicit observations into vignettes before other processing
+
+    # consolidation_specialist = cast(
+    #     ConsolidationSpecialist, SPECIALISTS["consolidation"]
+    # )
+    # consolidation_batches = consolidation_specialist.get_batches(context)
+    # if consolidation_batches:
+    #     logger.info(
+    #         f"[{run_id}] Phase 1.5: Running consolidation on {len(consolidation_batches)} clusters"
+    #     )
+    #     consolidation_start = time.perf_counter()
+
+    #     # Consolidation needs special handling - it creates its own tool executors per batch
+    #     executor_params = ToolExecutorParams(
+    #         db=db,
+    #         workspace_name=workspace_name,
+    #         observer=observer,
+    #         observed=observed,
+    #         session_name=session_name,
+    #         history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
+    #     )
+
+    #     try:
+    #         consolidation_result = await consolidation_specialist.run_with_params(
+    #             context, observed, executor_params
+    #         )
+    #         logger.info(f"[{run_id}] Consolidation result: {consolidation_result}")
+    #     except Exception as e:
+    #         logger.error(f"[{run_id}] Consolidation failed: {e}")
+
+    #     consolidation_ms = (time.perf_counter() - consolidation_start) * 1000
+    #     accumulate_metric(task_name, "consolidation_duration", consolidation_ms, "ms")
 
     # Phase 2: Coordinate
     logger.info(f"[{run_id}] Phase 2: Coordinate")
@@ -95,7 +135,7 @@ async def run_dream(
         f"[{run_id}] Phase 3: Running specialists: {orchestrator_response.specialists}"
     )
 
-    # Create tool executor (shared by all specialists)
+    # Create tool executor (shared by all specialists except consolidation)
     tool_executor = create_tool_executor(
         db=db,
         workspace_name=workspace_name,
@@ -119,30 +159,30 @@ async def run_dream(
             parallel_phase_2.append(name)
 
     # Execute Phase 1 specialists in parallel
-    if parallel_phase_1:
-        logger.info(f"[{run_id}] Running parallel phase 1: {parallel_phase_1}")
-        phase_1_tasks = [
-            SPECIALISTS[name].run(context, observed, tool_executor)
-            for name in parallel_phase_1
-        ]
-        phase_1_results = await asyncio.gather(*phase_1_tasks, return_exceptions=True)
+    # if parallel_phase_1:
+    #     logger.info(f"[{run_id}] Running parallel phase 1: {parallel_phase_1}")
+    #     phase_1_tasks = [
+    #         SPECIALISTS[name].run(context, observed, tool_executor)
+    #         for name in parallel_phase_1
+    #     ]
+    #     phase_1_results = await asyncio.gather(*phase_1_tasks, return_exceptions=True)
 
-        for name, res in zip(parallel_phase_1, phase_1_results, strict=True):
-            if isinstance(res, BaseException):
-                logger.error(f"[{run_id}] Specialist {name} failed: {res}")
+    #     for name, res in zip(parallel_phase_1, phase_1_results, strict=True):
+    #         if isinstance(res, BaseException):
+    #             logger.error(f"[{run_id}] Specialist {name} failed: {res}")
 
-    # Execute Phase 2 specialists in parallel (after phase 1)
-    if parallel_phase_2:
-        logger.info(f"[{run_id}] Running parallel phase 2: {parallel_phase_2}")
-        phase_2_tasks = [
-            SPECIALISTS[name].run(context, observed, tool_executor)
-            for name in parallel_phase_2
-        ]
-        phase_2_results = await asyncio.gather(*phase_2_tasks, return_exceptions=True)
+    # # Execute Phase 2 specialists in parallel (after phase 1)
+    # if parallel_phase_2:
+    #     logger.info(f"[{run_id}] Running parallel phase 2: {parallel_phase_2}")
+    #     phase_2_tasks = [
+    #         SPECIALISTS[name].run(context, observed, tool_executor)
+    #         for name in parallel_phase_2
+    #     ]
+    #     phase_2_results = await asyncio.gather(*phase_2_tasks, return_exceptions=True)
 
-        for name, res in zip(parallel_phase_2, phase_2_results, strict=True):
-            if isinstance(res, BaseException):
-                logger.error(f"[{run_id}] Specialist {name} failed: {res}")
+    #     for name, res in zip(parallel_phase_2, phase_2_results, strict=True):
+    #         if isinstance(res, BaseException):
+    #             logger.error(f"[{run_id}] Specialist {name} failed: {res}")
 
     # Log final metrics
     duration_ms = (time.perf_counter() - start_time) * 1000
