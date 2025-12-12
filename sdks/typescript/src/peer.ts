@@ -481,9 +481,9 @@ export class Peer {
   }
 
   /**
-   * Get a working representation for this peer.
+   * Get a representation for this peer.
    *
-   * Makes an API call to retrieve the working representation for this peer.
+   * Makes an API call to retrieve the representation for this peer.
    *
    * @param session - Optional session to scope the representation to.
    * @param target - Optional target peer to get the representation of. If provided,
@@ -494,21 +494,21 @@ export class Peer {
    * @example
    * ```typescript
    * // Get global representation
-   * const globalRep = await peer.workingRep()
+   * const globalRep = await peer.getRepresentation()
    * console.log(globalRep.toString())
    *
    * // Get representation scoped to a session
-   * const sessionRep = await peer.workingRep('session-123')
+   * const sessionRep = await peer.getRepresentation('session-123')
    *
    * // Get representation with semantic search
-   * const searchedRep = await peer.workingRep(undefined, undefined, {
+   * const searchedRep = await peer.getRepresentation(undefined, undefined, {
    *   searchQuery: 'preferences',
    *   searchTopK: 10,
    *   maxObservations: 50
    * })
    * ```
    */
-  async workingRep(
+  async getRepresentation(
     session?: string | Session,
     target?: string | Peer,
     options?: RepresentationOptions

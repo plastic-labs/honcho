@@ -479,18 +479,18 @@ class HonchoWorker {
     }
 
     /**
-     * Get the current working representation of a peer in a session.
+     * Get the current representation of a peer in a session.
      * @param sessionId - The ID of the session
-     * @param peerId - The ID of the peer to get the working representation of
+     * @param peerId - The ID of the peer to get the representation of
      * @param targetPeerId - Optional target peer ID to get the representation of what peer_id knows about target_peer_id
      * @returns A dictionary containing information about the peer
      */
-    async getWorkingRepresentation(sessionId: string, peerId: string, targetPeerId?: string): Promise<Record<string, any>> {
+    async getRepresentation(sessionId: string, peerId: string, targetPeerId?: string): Promise<Record<string, any>> {
         const session = this.honcho.session(sessionId);
         if (targetPeerId) {
-            return await session.workingRep(peerId, targetPeerId);
+            return await session.getRepresentation(peerId, targetPeerId);
         } else {
-            return await session.workingRep(peerId);
+            return await session.getRepresentation(peerId);
         }
     }
 
@@ -990,8 +990,8 @@ const tools: Tool[] = [
         },
     },
     {
-        name: 'get_working_representation',
-        description: 'Get the current working representation of a peer in a session.',
+        name: 'get_representation',
+        description: 'Get the current representation of a peer in a session.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -1001,7 +1001,7 @@ const tools: Tool[] = [
                 },
                 peer_id: {
                     type: 'string',
-                    description: 'The ID of the peer to get the working representation of.',
+                    description: 'The ID of the peer to get the representation of.',
                 },
                 target_peer_id: {
                     type: 'string',
@@ -1204,11 +1204,11 @@ async function executeToolCall(honcho: HonchoWorker, toolName: string, toolArgum
             break;
         }
 
-        case 'get_working_representation': {
+        case 'get_representation': {
             const validation = validateArguments(toolArguments, ['session_id', 'peer_id'], requestId);
             if (validation) return validation;
 
-            result = await honcho.getWorkingRepresentation(toolArguments.session_id, toolArguments.peer_id, toolArguments.target_peer_id);
+            result = await honcho.getRepresentation(toolArguments.session_id, toolArguments.peer_id, toolArguments.target_peer_id);
             break;
         }
 

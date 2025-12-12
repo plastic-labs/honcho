@@ -20,6 +20,7 @@ jest.mock('@honcho-ai/core', () => {
         getOrCreate: jest.fn(),
         update: jest.fn(),
         search: jest.fn(),
+        workingRepresentation: jest.fn(),
       },
       getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
       update: jest.fn(),
@@ -553,7 +554,7 @@ describe('Peer', () => {
     });
   });
 
-  describe('workingRep', () => {
+  describe('getRepresentation', () => {
     beforeEach(() => {
       mockClient.workspaces.peers.workingRepresentation = jest.fn();
     });
@@ -588,7 +589,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep();
+      const result = await peer.getRepresentation();
 
       expect(result).toBeInstanceOf(Representation);
       expect(result.explicit).toHaveLength(2);
@@ -625,7 +626,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep('session-123');
+      const result = await peer.getRepresentation('session-123');
 
       expect(result).toBeInstanceOf(Representation);
       expect(result.explicit).toHaveLength(1);
@@ -661,7 +662,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(session);
+      const result = await peer.getRepresentation(session);
 
       expect(result).toBeInstanceOf(Representation);
       expect(result.explicit).toHaveLength(1);
@@ -696,7 +697,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(undefined, 'target-peer');
+      const result = await peer.getRepresentation(undefined, 'target-peer');
 
       expect(result).toBeInstanceOf(Representation);
       expect(result.explicit).toHaveLength(1);
@@ -732,7 +733,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(undefined, targetPeer);
+      const result = await peer.getRepresentation(undefined, targetPeer);
 
       expect(result).toBeInstanceOf(Representation);
       expect(result.explicit).toHaveLength(1);
@@ -767,7 +768,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(
+      const result = await peer.getRepresentation(
         undefined,
         undefined,
         { searchQuery: 'programming' }
@@ -806,7 +807,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(undefined, undefined, { maxObservations: 10 });
+      const result = await peer.getRepresentation(undefined, undefined, { maxObservations: 10 });
 
       expect(result).toBeInstanceOf(Representation);
       expect(result.explicit).toHaveLength(1);
@@ -851,7 +852,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(
+      const result = await peer.getRepresentation(
         session,
         targetPeer,
         { searchQuery: 'Python programming', maxObservations: 25 }
@@ -891,7 +892,7 @@ describe('Peer', () => {
         representation: mockRepresentationData,
       });
 
-      const result = await peer.workingRep(
+      const result = await peer.getRepresentation(
         'session-456',
         'target-peer-123',
         { searchQuery: 'machine learning', maxObservations: 50 }
@@ -931,7 +932,7 @@ describe('Peer', () => {
       });
 
       // Test size = 1
-      const result1 = await peer.workingRep(undefined, undefined, { maxObservations: 1 });
+      const result1 = await peer.getRepresentation(undefined, undefined, { maxObservations: 1 });
       expect(result1).toBeInstanceOf(Representation);
       expect(
         mockClient.workspaces.peers.workingRepresentation
@@ -946,7 +947,7 @@ describe('Peer', () => {
       });
 
       // Test size = 100
-      const result2 = await peer.workingRep(undefined, undefined, { maxObservations: 100 });
+      const result2 = await peer.getRepresentation(undefined, undefined, { maxObservations: 100 });
       expect(result2).toBeInstanceOf(Representation);
       expect(
         mockClient.workspaces.peers.workingRepresentation
@@ -966,7 +967,7 @@ describe('Peer', () => {
         new Error('Working representation fetch failed')
       );
 
-      await expect(peer.workingRep()).rejects.toThrow(
+      await expect(peer.getRepresentation()).rejects.toThrow(
         'Working representation fetch failed'
       );
     });
