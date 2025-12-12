@@ -255,14 +255,12 @@ class BEAMRunner:
         honcho_url = self.get_honcho_url_for_index(0)
 
         url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
-        payload = {
+        payload: dict[str, Any] = {
             "observer": observer,
             "observed": observed,
             "dream_type": "consolidate",
             "session_id": session_id or f"{workspace_id}_session",
         }
-
-        print(f"[{workspace_id}] Triggering dream at {url}")
 
         # Trigger the dream via API
         try:
@@ -282,9 +280,7 @@ class BEAMRunner:
             print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
             return False
 
-        print(
-            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
-        )
+        print(f"[{workspace_id}] Dream triggered for {observer}/{observed}")
 
         # Wait for dream queue to empty
         print(f"[{workspace_id}] Waiting for dream to complete...")
@@ -578,24 +574,18 @@ Review the context carefully for any such instructions before responding."""
                 )
                 return result
 
-            print(
-                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation..."
-            )
+            print(f"[{workspace_id}] Deriver queue empty. Triggering dream...")
 
-            # Trigger dream for memory consolidation before questions
+            # Single orchestrated dream handles all reasoning types
             dream_success = await self.trigger_dream_and_wait(
                 honcho_client,
                 workspace_id,
-                observer="user",  # Main peer being observed
+                observer="user",
                 session_id=session_id,
             )
-
             if not dream_success:
-                print(
-                    f"[{workspace_id}] Warning: Dream did not complete, proceeding anyway"
-                )
-            else:
-                print(f"[{workspace_id}] Dream completed. Executing questions...")
+                print(f"[{workspace_id}] Warning: Dream did not complete")
+            print(f"[{workspace_id}] Dream completed. Executing questions...")
 
             # Execute questions for each memory ability
             question_tasks: list[Any] = []
@@ -783,6 +773,12 @@ async def main() -> int:
         help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
     )
 
+    parser.add_argument(
+        "--legacy-dream",
+        action="store_true",
+        help="Use legacy multi-pass dream system instead of orchestrated specialists (default: False)",
+    )
+
     args = parser.parse_args()
 
     # Setup data directory
@@ -834,6 +830,7 @@ async def main() -> int:
                 "timeout_seconds": runner.timeout_seconds,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
+                "dream_settings": settings.DREAM.model_dump(),
             },
         )
 

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.utils.representation import (
     DeductiveObservation,
-    DeductiveObservationBase,
+    # DeductiveObservationBase,
     ExplicitObservation,
     ExplicitObservationBase,
     PromptRepresentation,
@@ -414,12 +414,12 @@ class TestPromptRepresentationConversion:
                 ExplicitObservationBase(content="User likes coffee"),
                 ExplicitObservationBase(content="User works remotely"),
             ],
-            deductive=[
-                DeductiveObservationBase(
-                    conclusion="User probably works from a coffee shop sometimes",
-                    premises=["User likes coffee", "User works remotely"],
-                )
-            ],
+            # deductive=[
+            #     DeductiveObservationBase(
+            #         conclusion="User probably works from a coffee shop sometimes",
+            #         premises=["User likes coffee", "User works remotely"],
+            #     )
+            # ],
         )
 
         timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)

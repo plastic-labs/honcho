@@ -55,7 +55,7 @@ class RepresentationManager:
 
         Args:
             representation: Representation object
-            message_id_range: Message ID range to link with observations
+            message_ids: Message ID range to link with observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
 

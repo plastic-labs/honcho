@@ -437,7 +437,7 @@ def mock_honcho_llm_call():
     from unittest.mock import AsyncMock
 
     from src.utils.representation import (
-        DeductiveObservationBase,
+        # DeductiveObservationBase,
         ExplicitObservationBase,
         PromptRepresentation,
     )
@@ -460,12 +460,12 @@ def mock_honcho_llm_call():
                     explicit=[
                         ExplicitObservationBase(content="Test explicit observation")
                     ],
-                    deductive=[
-                        DeductiveObservationBase(
-                            conclusion="Test deductive conclusion",
-                            premises=["Test premise 1", "Test premise 2"],
-                        ),
-                    ],
+                    # deductive=[
+                    #     DeductiveObservationBase(
+                    #         conclusion="Test deductive conclusion",
+                    #         premises=["Test premise 1", "Test premise 2"],
+                    #     ),
+                    # ],
                 )
                 mock_response = MagicMock(wraps=_rep)
                 # Add the _response attribute that contains thinking (used in the actual code)

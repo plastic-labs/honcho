@@ -615,10 +615,11 @@ class QueueManager:
 
             # Step 2: Build a single SQL query that:
             # 1. Finds the earliest unprocessed message for this work_unit_key
-            # 2. Gets ALL messages from that point forward (for conversational context)
-            # 3. Tracks cumulative tokens and focused sender position
-            # 4. Returns empty if focused sender is beyond token limit
-            # 5. Otherwise returns messages up to token limit + first focused sender message
+            # 2. Optionally includes the preceding message if from a different peer (for context)
+            # 3. Gets ALL messages from that point forward (for conversational context)
+            # 4. Tracks cumulative tokens and focused sender position
+            # 5. Returns empty if focused sender is beyond token limit
+            # 6. Otherwise returns messages up to token limit + first focused sender message
 
             # Find the minimum message_id with an unprocessed queue item across the session
             min_unprocessed_message_id_subq = (
@@ -635,8 +636,32 @@ class QueueManager:
                 .scalar_subquery()
             )
 
-            # Build CTE with ALL messages starting from the earliest unprocessed message
-            # This includes interleaving messages for conversational context
+            # Find the immediately preceding message ID (the one right before min_unprocessed)
+            immediately_preceding_id_subq = (
+                select(func.max(models.Message.id))
+                .where(models.Message.session_name == parsed_key.session_name)
+                .where(models.Message.workspace_name == parsed_key.workspace_name)
+                .where(models.Message.id < min_unprocessed_message_id_subq)
+                .scalar_subquery()
+            )
+
+            # Only include the preceding message if it's from a different peer than observed
+            # This provides conversational context (e.g., the question that prompted the response)
+            preceding_message_id_subq = (
+                select(models.Message.id)
+                .where(models.Message.id == immediately_preceding_id_subq)
+                .where(models.Message.peer_name != parsed_key.observed)
+                .scalar_subquery()
+            )
+
+            # Determine the effective start: preceding message if it qualifies, else min_unprocessed
+            # We use COALESCE to fall back to min_unprocessed if no preceding message qualifies
+            effective_start_id = func.coalesce(
+                preceding_message_id_subq, min_unprocessed_message_id_subq
+            )
+
+            # Build CTE with ALL messages starting from effective_start_id
+            # This includes the preceding context message (if any) and interleaving messages
             cte = (
                 select(
                     models.Message.id.label("message_id"),
@@ -648,7 +673,7 @@ class QueueManager:
                 )
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
-                .where(models.Message.id >= min_unprocessed_message_id_subq)
+                .where(models.Message.id >= effective_start_id)
                 .order_by(models.Message.id)
                 .cte()
             )
