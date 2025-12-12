@@ -134,7 +134,7 @@ Clean up duplicates and update the peer card.
 **Priority:** Create 3-5 inductive observations, delete obvious duplicates, update peer card once. Be efficient.
 """
     elif reasoning_focus == "consolidation":
-        focus_section = f"""
+        focus_section = """
 ## FOCUS: CONSOLIDATION
 
 This dream session is focused on **CONSOLIDATION**. Your primary goal is cleanup and organization, not creating new observations.
@@ -341,7 +341,7 @@ async def process_consolidate_dream(
     """
     logger.info(
         f"Processing consolidation dream for {workspace_name}/{payload.observer}/{payload.observed} "
-        f"(session: {payload.session_name}, orchestrated: {use_orchestrated})"
+        + f"(session: {payload.session_name}, orchestrated: {use_orchestrated})"
     )
 
     if use_orchestrated:

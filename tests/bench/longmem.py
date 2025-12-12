@@ -214,8 +214,8 @@ class LongMemEvalRunner:
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
 
-    def _get_latest_tokens_used(self) -> int | None:
-        """Get the tokens_used_estimate from the most recent dialectic_chat metric.
+    def _get_latest_input_tokens_used(self) -> int | None:
+        """Get the uncached input tokens from the most recent dialectic_chat metric.
 
         Returns:
             Number of tokens used, or None if not found
@@ -239,7 +239,7 @@ class LongMemEvalRunner:
                     if task_name.startswith("dialectic_chat_"):
                         for metric in data.get("metrics", []):
                             metric_name = metric.get("name", "")
-                            if metric_name.endswith("tokens_used_estimate"):
+                            if metric_name.endswith("uncached_input_tokens"):
                                 return int(metric.get("value", 0))
                 except (json.JSONDecodeError, KeyError, ValueError):
                     continue
@@ -330,7 +330,13 @@ class LongMemEvalRunner:
         if not self.use_orchestrated_dream and reasoning_focus:
             payload["reasoning_focus"] = reasoning_focus
 
-        mode_str = "orchestrated" if self.use_orchestrated_dream else f"focus: {reasoning_focus}" if reasoning_focus else "default"
+        mode_str = (
+            "orchestrated"
+            if self.use_orchestrated_dream
+            else f"focus: {reasoning_focus}"
+            if reasoning_focus
+            else "default"
+        )
         print(f"[{workspace_id}] Triggering dream ({mode_str}) at {url}")
 
         # Trigger the dream via API
@@ -684,8 +690,12 @@ class LongMemEvalRunner:
                     session_id=dream_session_id,
                 )
                 if not dream_success:
-                    print(f"[{workspace_id}] Warning: Orchestrated dream did not complete")
-                print(f"[{workspace_id}] Orchestrated dream completed. Executing question...")
+                    print(
+                        f"[{workspace_id}] Warning: Orchestrated dream did not complete"
+                    )
+                print(
+                    f"[{workspace_id}] Orchestrated dream completed. Executing question..."
+                )
             else:
                 # Legacy: multiple focused dream passes
                 dream_focuses: list[str | None] = ["deduction", "induction"]
@@ -698,8 +708,12 @@ class LongMemEvalRunner:
                         reasoning_focus=focus,
                     )
                     if not dream_success:
-                        print(f"[{workspace_id}] Warning: Dream ({focus}) did not complete")
-                print(f"[{workspace_id}] All dream passes completed. Executing question...")
+                        print(
+                            f"[{workspace_id}] Warning: Dream ({focus}) did not complete"
+                        )
+                print(
+                    f"[{workspace_id}] All dream passes completed. Executing question..."
+                )
 
             # Execute the question
             output_lines.append(f"\nAsking question: {question_with_date}")
@@ -763,18 +777,18 @@ class LongMemEvalRunner:
                     actual_response if isinstance(actual_response, str) else ""
                 )
 
-                tokens_used = self._get_latest_tokens_used()
+                input_tokens_used = self._get_latest_input_tokens_used()
 
                 token_efficiency = None
-                if tokens_used is not None and total_available_tokens > 0:
-                    efficiency_ratio = tokens_used / total_available_tokens
+                if input_tokens_used is not None and total_available_tokens > 0:
+                    efficiency_ratio = input_tokens_used / total_available_tokens
                     token_efficiency = {
                         "total_available_tokens": total_available_tokens,
-                        "tokens_used": tokens_used,
+                        "tokens_used": input_tokens_used,
                         "efficiency_ratio": efficiency_ratio,
                     }
                     output_lines.append(
-                        f"  token efficiency: {efficiency_ratio:.4f} ({tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
+                        f"  token efficiency: {efficiency_ratio:.4f} ({input_tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
                     )
 
                 judgment = await judge_response(

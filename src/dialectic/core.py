@@ -144,27 +144,17 @@ class DialecticAgent:
                 observer=self.observer,
                 observed=self.observed,
                 query=query,
-                limit=50,  # Top 50 most relevant observations
+                limit=25,
             )
 
-            if not representation.explicit and not representation.deductive and not representation.inductive:
+            if (
+                not representation.explicit
+                and not representation.deductive
+                and not representation.inductive
+            ):
                 return None
 
-            sections: list[str] = []
-
-            if representation.explicit:
-                explicit_items = [f"- {obs.content}" for obs in representation.explicit]
-                sections.append(f"**Explicit facts:**\n" + "\n".join(explicit_items))
-
-            if representation.deductive:
-                deductive_items = [f"- {obs.conclusion} (from: {', '.join(obs.premises)})" for obs in representation.deductive]
-                sections.append(f"**Deductions:**\n" + "\n".join(deductive_items))
-
-            if representation.inductive:
-                inductive_items = [f"- {obs.conclusion} [{obs.confidence}]" for obs in representation.inductive]
-                sections.append(f"**Patterns:**\n" + "\n".join(inductive_items))
-
-            return "\n\n".join(sections)
+            return representation.format_as_markdown()
 
         except Exception as e:
             logger.warning(f"Failed to prefetch observations: {e}")
@@ -223,7 +213,9 @@ class DialecticAgent:
                 f"Use these as primary context. You may still use tools to find additional information if needed.\n\n"
                 f"{prefetched_observations}"
             )
-            accumulate_metric(task_name, "prefetched_observations", prefetched_observations, "blob")
+            accumulate_metric(
+                task_name, "prefetched_observations", prefetched_observations, "blob"
+            )
         else:
             user_content = f"Query: {query}"
 
@@ -264,16 +256,6 @@ class DialecticAgent:
         accumulate_metric(
             task_name, "tool_calls", len(response.tool_calls_made), "count"
         )
-        # for i, tc in enumerate(response.tool_calls_made, 1):
-        #     tool_name = tc.get("tool_name", "unknown")
-        #     tool_input = tc.get("tool_input", {})
-        #     tool_result = tc.get("tool_result", "")
-        #     accumulate_metric(
-        #         task_name,
-        #         f"tool_{i}_{tool_name}",
-        #         f"INPUT: {tool_input}\nOUTPUT: {tool_result}",
-        #         "blob",
-        #     )
 
         # Log thinking trace if present
         if response.thinking_content:

@@ -171,7 +171,7 @@ def log_token_usage_metrics(
     output_tokens: int,
     cache_read_input_tokens: int,
     cache_creation_input_tokens: int,
-) -> int:
+) -> None:
     """
     Log cache-aware token usage metrics.
 
@@ -183,10 +183,9 @@ def log_token_usage_metrics(
         cache_creation_input_tokens: Tokens written to cache (25% more expensive)
 
     Returns:
-        The tokens_used_estimate (uncached + output tokens)
+        None
     """
     accumulate_metric(task_name, "input_tokens", input_tokens, "tokens")
-    accumulate_metric(task_name, "output_tokens", output_tokens, "tokens")
     accumulate_metric(
         task_name,
         "cache_read_input_tokens",
@@ -207,11 +206,7 @@ def log_token_usage_metrics(
     accumulate_metric(
         task_name, "uncached_input_tokens", uncached_input_tokens, "tokens"
     )
-    # Tokens used estimate reflects uncached cost
-    tokens_used_estimate = uncached_input_tokens + output_tokens
-    accumulate_metric(task_name, "tokens_used_estimate", tokens_used_estimate, "tokens")
-
-    return tokens_used_estimate
+    accumulate_metric(task_name, "output_tokens", output_tokens, "tokens")
 
 
 def log_performance_metrics(
@@ -270,9 +265,10 @@ def log_performance_metrics(
     content_items: list[RenderableType] = [table]
 
     if blob_metrics:
-        content_items.append(Text(""))  # Empty line separator
         for metric, value, _unit in blob_metrics:
-            content_items.append(Text(f"\n\n{metric}:", style="bold cyan"))
+            content_items.append(
+                Text.assemble("    ", (f"\n{metric}:", "bold"), "     ")
+            )
             content_items.append(Text(str(value)))
 
     panel = Panel(

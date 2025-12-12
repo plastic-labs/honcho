@@ -1,6 +1,6 @@
+import asyncio
 import logging
 from collections.abc import Callable
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -158,7 +158,13 @@ TOOLS: dict[str, dict[str, Any]] = {
                             },
                             "pattern_type": {
                                 "type": "string",
-                                "enum": ["preference", "behavior", "personality", "tendency", "correlation"],
+                                "enum": [
+                                    "preference",
+                                    "behavior",
+                                    "personality",
+                                    "tendency",
+                                    "correlation",
+                                ],
                                 "description": "(For inductive only) Type of pattern being identified",
                             },
                             "confidence": {
@@ -584,7 +590,9 @@ async def create_observations(
             source_ids=obs.get("source_ids") if level == "inductive" else None,
             sources=obs.get("sources") if level == "inductive" else None,
             pattern_type=obs.get("pattern_type") if level == "inductive" else None,
-            confidence=obs.get("confidence", "medium") if level == "inductive" else None,
+            confidence=obs.get("confidence", "medium")
+            if level == "inductive"
+            else None,
         )
 
         # Create document with tree linkage at top level
@@ -702,7 +710,7 @@ async def search_memory(
     observer: str,
     observed: str,
     query: str,
-    limit: int = 5,
+    limit: int,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1171,7 +1179,13 @@ async def _handle_create_observations(
         return "ERROR: observations list is empty"
 
     valid_levels = ["explicit", "deductive", "inductive"]
-    valid_pattern_types = ["preference", "behavior", "personality", "tendency", "correlation"]
+    valid_pattern_types = [
+        "preference",
+        "behavior",
+        "personality",
+        "tendency",
+        "correlation",
+    ]
     valid_confidence = ["high", "medium", "low"]
 
     # Determine message context based on whether we have current_messages
@@ -1221,7 +1235,10 @@ async def _handle_create_observations(
                 for sid in obs.get("source_ids", []):
                     if not isinstance(sid, str):
                         return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-                if obs.get("pattern_type") and obs["pattern_type"] not in valid_pattern_types:
+                if (
+                    obs.get("pattern_type")
+                    and obs["pattern_type"] not in valid_pattern_types
+                ):
                     return f"ERROR: observation {i} has invalid pattern_type '{obs['pattern_type']}'"
                 if obs.get("confidence") and obs["confidence"] not in valid_confidence:
                     return f"ERROR: observation {i} has invalid confidence '{obs['confidence']}'"
@@ -1681,9 +1698,7 @@ async def _handle_get_reasoning_chain(
 
     # Format the main observation
     level = doc.level or "explicit"
-    output_parts.append(
-        f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}"
-    )
+    output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
 
     # Get premises/sources if requested
     if direction in ("premises", "both"):
@@ -1741,7 +1756,8 @@ async def _handle_get_reasoning_chain(
                 c_level = c.level or "explicit"
                 child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
             output_parts.append(
-                f"\n**Derived Conclusions ({len(children)}):**\n" + "\n".join(child_lines)
+                f"\n**Derived Conclusions ({len(children)}):**\n"
+                + "\n".join(child_lines)
             )
         else:
             output_parts.append("\n**Derived Conclusions:** None found")

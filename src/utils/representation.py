@@ -8,6 +8,13 @@ from src import models
 from src.utils.formatting import parse_datetime_iso
 
 
+def _strip_microseconds_and_timezone(timestamp: datetime) -> datetime:
+    """
+    Remove microseconds and timezone info from a datetime for stable string formatting.
+    """
+    return timestamp.replace(microsecond=0, tzinfo=None)
+
+
 class ObservationMetadata(BaseModel):
     id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
@@ -76,12 +83,12 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
     """Explicit observation with content and metadata."""
 
     def __str__(self) -> str:
-        return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
+        return f"[{_strip_microseconds_and_timezone(self.created_at)}] {self.content}"
 
     def str_with_id(self) -> str:
         """Format with ID prefix for use by agents that need to reference observations."""
         id_prefix = f"[id:{self.id}] " if self.id else ""
-        return f"{id_prefix}[{self.created_at.replace(microsecond=0)}] {self.content}"
+        return f"{id_prefix}[{_strip_microseconds_and_timezone(self.created_at)}] {self.content}"
 
     def __hash__(self) -> int:
         """
@@ -108,13 +115,13 @@ class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
 
     def __str__(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
-        return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
+        return f"[{_strip_microseconds_and_timezone(self.created_at)}] {self.conclusion}\n{premises_text}"
 
     def str_with_id(self) -> str:
         """Format with ID prefix for use by agents that need to reference observations."""
         id_prefix = f"[id:{self.id}] " if self.id else ""
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
-        return f"{id_prefix}[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
+        return f"{id_prefix}[{_strip_microseconds_and_timezone(self.created_at)}] {self.conclusion}\n{premises_text}"
 
     def str_no_timestamps(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
@@ -150,7 +157,7 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
             if len(self.sources) > 3:
                 source_lines.append(f"    - ... and {len(self.sources) - 3} more")
             sources_text = "\n" + "\n".join(source_lines)
-        return f"[{self.created_at.replace(microsecond=0)}] [{self.confidence}] {self.conclusion}{sources_text}"
+        return f"[{_strip_microseconds_and_timezone(self.created_at)}] [{self.confidence}] {self.conclusion}{sources_text}"
 
     def str_with_id(self) -> str:
         """Format with ID prefix for use by agents that need to reference observations."""
@@ -161,7 +168,7 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
             if len(self.sources) > 3:
                 source_lines.append(f"    - ... and {len(self.sources) - 3} more")
             sources_text = "\n" + "\n".join(source_lines)
-        return f"{id_prefix}[{self.created_at.replace(microsecond=0)}] [{self.confidence}] {self.conclusion}{sources_text}"
+        return f"{id_prefix}[{_strip_microseconds_and_timezone(self.created_at)}] [{self.confidence}] {self.conclusion}{sources_text}"
 
     def str_no_timestamps(self) -> str:
         sources_text = ""
@@ -399,36 +406,39 @@ class Representation(BaseModel):
         parts: list[str] = []
 
         # Add explicit observations
-        parts.append("## Explicit Observations\n")
-        for i, obs in enumerate(self.explicit, 1):
-            parts.append(f"{i}. {obs}")
-        parts.append("")
+        if self.explicit:
+            parts.append("## Explicit Observations\n")
+            for obs in self.explicit:
+                parts.append(obs.content)
+            parts.append("")
 
         # Add deductive observations
-        parts.append("## Deductive Observations\n")
-        for i, obs in enumerate(self.deductive, 1):
-            parts.append(f"{i}. **Conclusion**: {obs.conclusion}")
-            if obs.premises:
-                parts.append("   **Premises**:")
-                for premise in obs.premises:
-                    parts.append(f"   - {premise}")
+        if self.deductive:
+            parts.append("## Deductive Observations\n")
+            for obs in self.deductive:
+                parts.append(obs.conclusion)
+                if obs.premises:
+                    parts.append("   Premises:")
+                    for premise in obs.premises:
+                        parts.append(f"   - {premise}")
+                parts.append("")
             parts.append("")
-        parts.append("")
 
         # Add inductive observations
-        parts.append("## Inductive Observations\n")
-        for i, obs in enumerate(self.inductive, 1):
-            parts.append(f"{i}. **Pattern** [{obs.confidence}]: {obs.conclusion}")
-            if obs.pattern_type:
-                parts.append(f"   **Type**: {obs.pattern_type}")
-            if obs.sources:
-                parts.append("   **Sources**:")
-                for source in obs.sources[:5]:
-                    parts.append(f"   - {source}")
-                if len(obs.sources) > 5:
-                    parts.append(f"   - ... and {len(obs.sources) - 5} more")
+        if self.inductive:
+            parts.append("## Inductive Observations\n")
+            for obs in self.inductive:
+                parts.append(f"**Pattern** [{obs.confidence}]: {obs.conclusion}")
+                if obs.pattern_type:
+                    parts.append(f"   **Type**: {obs.pattern_type}")
+                if obs.sources:
+                    parts.append("   **Sources**:")
+                    for source in obs.sources[:5]:
+                        parts.append(f"   - {source}")
+                    if len(obs.sources) > 5:
+                        parts.append(f"   - ... and {len(obs.sources) - 5} more")
+                parts.append("")
             parts.append("")
-        parts.append("")
 
         return "\n".join(parts)
 
@@ -515,14 +525,16 @@ def _safe_datetime_from_metadata(
 ) -> datetime:
     message_created_at = internal_metadata.get("message_created_at")
     if message_created_at is None:
-        return fallback_datetime.replace(microsecond=0)
+        return _strip_microseconds_and_timezone(fallback_datetime)
 
     if isinstance(message_created_at, str):
         try:
-            return parse_datetime_iso(message_created_at)
+            return _strip_microseconds_and_timezone(
+                parse_datetime_iso(message_created_at)
+            )
         except ValueError:
-            return fallback_datetime.replace(microsecond=0)
+            return _strip_microseconds_and_timezone(fallback_datetime)
 
     if isinstance(message_created_at, datetime):
-        return message_created_at.replace(microsecond=0)
-    return fallback_datetime.replace(microsecond=0)
+        return _strip_microseconds_and_timezone(message_created_at)
+    return _strip_microseconds_and_timezone(fallback_datetime)
