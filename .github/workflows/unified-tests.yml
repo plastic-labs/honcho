@@ -1,0 +1,135 @@
+name: Unified Tests (Fly Runner)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  start-runner:
+    name: Start Fly Runner
+    uses: ./.github/workflows/start-fly-runner.yml
+    secrets: inherit
+
+  unified-tests:
+    name: Run Unified Tests
+    runs-on: ${{ fromJSON(format('[{0}]', needs.start-runner.outputs.runner-labels)) }}
+    needs: start-runner
+    if: needs.start-runner.outputs.runner-ready == 'true'
+    timeout-minutes: 90
+    environment: unified-tests
+    permissions:
+      id-token: write  # Required for OIDC authentication with AWS
+      contents: read
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      TEST_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsS3Role
+          aws-region: us-east-1
+
+      - name: Fetch secrets from AWS Secrets Manager
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            ,testing/unified/tests
+          parse-json-secrets: true
+
+      - name: Verify Docker is available
+        run: docker info
+
+      - name: Verify uv and Python
+        run: |
+          uv --version
+          python3.12 --version
+          which python3.12
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run unified tests
+        run: uv run python -m tests.unified.run
+
+  cleanup-machine:
+    name: Cleanup Fly Machine and Runner
+    runs-on: ubuntu-latest
+    needs: [start-runner, unified-tests]
+    if: always() && needs.start-runner.outputs.machine-id != ''
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ACTIONS }}
+      FLY_RUNNER_APP: ivysaur
+    steps:
+      - name: Setup Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Cleanup fly machine
+        run: |
+          set -euo pipefail
+          MACHINE_ID="${{ needs.start-runner.outputs.machine-id }}"
+          if [ -z "$MACHINE_ID" ]; then
+            echo "No machine ID provided, skipping Fly cleanup."
+            exit 0
+          fi
+
+          echo "🧹 Cleaning up machine: $MACHINE_ID"
+          flyctl machines stop "$MACHINE_ID" -a "$FLY_RUNNER_APP" || echo "Machine may already be stopped"
+          flyctl machines destroy "$MACHINE_ID" -a "$FLY_RUNNER_APP" --force || echo "Failed to destroy machine"
+
+      - name: Cleanup GitHub runner
+        run: |
+          set -euo pipefail
+          RUNNER_NAME="${{ needs.start-runner.outputs.runner-name }}"
+          FALLBACK_LABEL="${{ github.run_id }}"
+
+          echo "🗑️ Cleaning up GitHub runner (name: ${RUNNER_NAME:-unknown}, label: ${FALLBACK_LABEL})"
+
+          RUNNERS_RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners")
+
+          if echo "$RUNNERS_RESPONSE" | grep -q '"message"'; then
+            echo "⚠️ Failed to fetch runners: $(echo "$RUNNERS_RESPONSE" | jq -r '.message')"
+            exit 0
+          fi
+
+          RUNNER_ID="" 
+          if [ -n "$RUNNER_NAME" ]; then
+            RUNNER_ID=$(echo "$RUNNERS_RESPONSE" | jq -r --arg name "$RUNNER_NAME" '.runners[]? | select(.name == $name) | .id')
+          fi
+
+          if [ -z "$RUNNER_ID" ]; then
+            RUNNER_ID=$(echo "$RUNNERS_RESPONSE" | jq -r --arg label "$FALLBACK_LABEL" '.runners[]? | select([.labels[].name] | index($label)) | .id' | head -n 1)
+          fi
+
+          if [ -z "$RUNNER_ID" ] || [ "$RUNNER_ID" = "null" ]; then
+            echo "⚠️ Runner not found, nothing to delete."
+            exit 0
+          fi
+
+          DELETE_RESPONSE=$(curl -s -w "%{http_code}" \
+            -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners/$RUNNER_ID")
+
+          HTTP_CODE="${DELETE_RESPONSE: -3}"
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "✅ Successfully deleted runner."
+          else
+            echo "⚠️ Failed to delete runner. HTTP code: $HTTP_CODE"
+            echo "Response: ${DELETE_RESPONSE%???}"
+          fi
