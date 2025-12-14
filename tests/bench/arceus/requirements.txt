@@ -1,0 +1,15 @@
+# Core dependencies
+anthropic>=0.40.0
+httpx>=0.27.0
+numpy>=1.24.0
+
+# TUI
+rich>=13.7.0
+
+# Optional LLM providers
+openai>=1.0.0
+google-generativeai>=0.3.0
+
+# Honcho SDK (editable install from parent directory)
+# Install with: pip install -e ../../sdks/python
+# Or add to sys.path at runtime
