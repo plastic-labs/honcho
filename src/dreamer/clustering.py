@@ -124,8 +124,8 @@ def cluster_observations(
     off_diag = distance_matrix[~np.eye(distance_matrix.shape[0], dtype=bool)]
     logger.info(
         f"Distance matrix stats: min={off_diag.min():.4f}, max={off_diag.max():.4f}, "
-        f"mean={off_diag.mean():.4f}, median={np.median(off_diag):.4f}, "
-        f"pairs_within_eps={np.sum(off_diag < eps) // 2}"
+        + f"mean={off_diag.mean():.4f}, median={np.median(off_diag):.4f}, "
+        + f"pairs_within_eps={np.sum(off_diag < eps) // 2}"
     )
 
     clustering = DBSCAN(eps=eps, min_samples=min_samples, metric="precomputed")

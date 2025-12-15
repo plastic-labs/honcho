@@ -206,7 +206,10 @@ class TestCreateObservations:
                     {
                         "content": "Inferred preference for quiet spaces",
                         "premise_ids": ["premise1", "premise2"],
-                        "premises": ["User mentioned working in libraries", "User avoids noisy cafes"],
+                        "premises": [
+                            "User mentioned working in libraries",
+                            "User avoids noisy cafes",
+                        ],
                     },
                 ]
             },

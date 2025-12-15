@@ -1693,9 +1693,7 @@ def _format_message_snippets(
     return _truncate_tool_output(output)
 
 
-async def _handle_create_vignette(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+async def _handle_create_vignette(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle create_vignette tool - create vignette and delete source observations from context."""
     content = tool_input.get("content")
 
@@ -1797,7 +1795,7 @@ async def _handle_get_reasoning_chain(
                 ctx.db, ctx.workspace_name, doc.premise_ids
             )
             if premises:
-                premise_lines = []
+                premise_lines: list[Any] = []
                 for p in premises:
                     p_level = p.level or "explicit"
                     premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
@@ -1813,7 +1811,7 @@ async def _handle_get_reasoning_chain(
                 ctx.db, ctx.workspace_name, doc.source_ids
             )
             if sources:
-                source_lines = []
+                source_lines: list[Any] = []
                 for s in sources:
                     s_level = s.level or "explicit"
                     source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
@@ -1841,7 +1839,7 @@ async def _handle_get_reasoning_chain(
             observed=ctx.observed,
         )
         if children:
-            child_lines = []
+            child_lines: list[Any] = []
             for c in children:
                 c_level = c.level or "explicit"
                 child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")

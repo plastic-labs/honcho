@@ -275,7 +275,12 @@ class Representation(BaseModel):
         """
         Return the total number of observations in the representation.
         """
-        return len(self.explicit) + len(self.deductive) + len(self.inductive) + len(self.vignette)
+        return (
+            len(self.explicit)
+            + len(self.deductive)
+            + len(self.inductive)
+            + len(self.vignette)
+        )
 
     def diff_representation(self, other: "Representation") -> "Representation":
         """

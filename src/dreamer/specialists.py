@@ -37,6 +37,7 @@ class ToolExecutorParams:
     session_name: str
     history_token_limit: int
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -474,7 +475,7 @@ The vignette should be comprehensive but concise. Every fact from the source obs
         self,
         context: DreamContext,
         observed: str,
-        executor_params: "ToolExecutorParams",
+        executor_params: ToolExecutorParams,
     ) -> str:
         """
         Process ALL data exhaustively, creating batch-specific tool executors.

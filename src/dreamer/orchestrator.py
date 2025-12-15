@@ -9,22 +9,16 @@ This module coordinates the full dream cycle:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.dreamer.prescan import prescan_for_dream
-from src.dreamer.specialists import (
-    SPECIALISTS,
-    ConsolidationSpecialist,
-    ToolExecutorParams,
-)
 from src.utils.agent_tools import create_tool_executor
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.logging import (
@@ -136,7 +130,7 @@ async def run_dream(
     )
 
     # Create tool executor (shared by all specialists except consolidation)
-    tool_executor = create_tool_executor(
+    _tool_executor = create_tool_executor(
         db=db,
         workspace_name=workspace_name,
         observer=observer,

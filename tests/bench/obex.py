@@ -162,7 +162,6 @@ async def run_deriver(
     formatted = format_messages(messages)
     prompt = minimal_deriver_prompt(
         peer_id=target_peer,
-        message_created_at=datetime.now(),
         messages=formatted,
     )
 

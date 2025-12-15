@@ -2,7 +2,6 @@ import datetime
 
 from src.utils.representation import (
     DeductiveObservation,
-    DeductiveObservationBase,
     ExplicitObservation,
     ExplicitObservationBase,
     PromptRepresentation,
@@ -87,7 +86,11 @@ def test_prompt_representation_conversion():
         explicit=[ExplicitObservationBase(content="A")],
         # Deductive observations in PromptRepresentation are ignored by from_prompt_representation
         # because the Deriver only produces explicit observations
-        deductive=[DeductiveObservationBase(conclusion="C", premises=["P1"], premise_ids=["id1"])],
+        # deductive=[
+        #     DeductiveObservationBase(
+        #         conclusion="C", premises=["P1"], premise_ids=["id1"]
+        #     )
+        # ],
     )
     timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
     rep = Representation.from_prompt_representation(

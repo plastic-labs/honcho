@@ -201,6 +201,15 @@ M = TypeVar("M", bound=BaseModel)
 # Context variable to track retry attempts for provider switching
 _current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
+
+def _get_effective_temperature(temperature: float | None) -> float | None:
+    """Adjust temperature on retries - bump 0.0 to 0.2 to get different results."""
+    if temperature == 0.0 and _current_attempt.get() > 1:
+        logger.debug("Bumping temperature from 0.0 to 0.2 on retry")
+        return 0.2
+    return temperature
+
+
 CLIENTS: dict[
     SupportedProviders,
     AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
@@ -562,7 +571,7 @@ async def _execute_tool_loop(
                 max_tokens,
                 response_model,
                 json_mode,
-                temperature,
+                _get_effective_temperature(temperature),
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -692,7 +701,7 @@ async def _execute_tool_loop(
             max_tokens,
             response_model,
             json_mode,
-            temperature,
+            _get_effective_temperature(temperature),
             stop_seqs,
             reasoning_effort,
             verbosity,
@@ -1025,9 +1034,9 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> tuple[
-        SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType
-    ]:
+    def _get_provider_and_model() -> (
+        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
+    ):
         """
         Get the provider and model to use based on current attempt.
 
@@ -1110,7 +1119,7 @@ async def honcho_llm_call(
                 max_tokens,
                 response_model,
                 json_mode,
-                temperature,
+                _get_effective_temperature(temperature),
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1127,7 +1136,7 @@ async def honcho_llm_call(
                 max_tokens,
                 response_model,
                 json_mode,
-                temperature,
+                _get_effective_temperature(temperature),
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
