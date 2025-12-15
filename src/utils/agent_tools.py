@@ -115,7 +115,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     # Full tool for Dreamer - supports all levels with tree linkage
     "create_observations": {
         "name": "create_observations",
-        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), or inductive (patterns/generalizations). Use this to record facts, logical inferences, or higher-level insights about the peer.",
+        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). Use this to record facts, logical inferences, patterns, or note when the user has said contradictory things.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -131,8 +131,13 @@ TOOLS: dict[str, dict[str, Any]] = {
                             },
                             "level": {
                                 "type": "string",
-                                "enum": ["explicit", "deductive", "inductive"],
-                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns/generalizations",
+                                "enum": [
+                                    "explicit",
+                                    "deductive",
+                                    "inductive",
+                                    "contradiction",
+                                ],
+                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'contradiction' for conflicting statements",
                             },
                             # Tree linkage for deductive observations
                             "premise_ids": {
@@ -145,16 +150,16 @@ TOOLS: dict[str, dict[str, Any]] = {
                                 "items": {"type": "string"},
                                 "description": "(For deductive) Human-readable premise text for display",
                             },
-                            # Tree linkage for inductive observations
+                            # Tree linkage for inductive/contradiction observations
                             "source_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "(For inductive) Document IDs of source observations - REQUIRED for inductive",
+                                "description": "(For inductive/contradiction) Document IDs of source observations - REQUIRED",
                             },
                             "sources": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "(For inductive) Human-readable source text for display",
+                                "description": "(For inductive/contradiction) Human-readable source text for display",
                             },
                             "pattern_type": {
                                 "type": "string",
@@ -531,6 +536,25 @@ DREAMER_TOOLS: list[dict[str, Any]] = [
     TOOLS["finish_consolidation"],
 ]
 
+# Tools for the deduction specialist (dreamer phase 1)
+# Creates deductive observations from explicit observations, can delete duplicates
+DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    TOOLS["search_memory"],
+    TOOLS["get_recent_observations"],
+    TOOLS["create_observations"],
+    TOOLS["delete_observations"],
+    TOOLS["get_reasoning_chain"],
+]
+
+# Tools for the induction specialist (dreamer phase 2)
+# Creates inductive observations from explicit and deductive observations
+INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    TOOLS["search_memory"],
+    TOOLS["get_recent_observations"],
+    TOOLS["create_observations"],
+    TOOLS["get_reasoning_chain"],
+]
+
 
 async def create_observations(
     db: AsyncSession,
@@ -587,6 +611,8 @@ async def create_observations(
             level = "inductive"
         elif level_str == "deductive":
             level = "deductive"
+        elif level_str == "contradiction":
+            level = "contradiction"
         else:
             level = "explicit"
 
@@ -600,9 +626,13 @@ async def create_observations(
             # Deductive-specific (tree linkage + human-readable)
             premise_ids=obs.get("premise_ids") if level == "deductive" else None,
             premises=obs.get("premises") if level == "deductive" else None,
-            # Inductive-specific (tree linkage + human-readable)
-            source_ids=obs.get("source_ids") if level == "inductive" else None,
-            sources=obs.get("sources") if level == "inductive" else None,
+            # Inductive/Contradiction-specific (tree linkage + human-readable)
+            source_ids=obs.get("source_ids")
+            if level in ("inductive", "contradiction")
+            else None,
+            sources=obs.get("sources")
+            if level in ("inductive", "contradiction")
+            else None,
             pattern_type=obs.get("pattern_type") if level == "inductive" else None,
             confidence=obs.get("confidence", "medium")
             if level == "inductive"
@@ -618,7 +648,9 @@ async def create_observations(
             embedding=embedding,
             # Tree linkage columns
             premise_ids=obs.get("premise_ids") if level == "deductive" else None,
-            source_ids=obs.get("source_ids") if level == "inductive" else None,
+            source_ids=obs.get("source_ids")
+            if level in ("inductive", "contradiction")
+            else None,
         )
         documents.append(doc)
 
@@ -1194,7 +1226,7 @@ async def _handle_create_observations(
     if not observations:
         return "ERROR: observations list is empty"
 
-    valid_levels = ["explicit", "deductive", "inductive"]
+    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
     valid_pattern_types = [
         "preference",
         "behavior",
@@ -1259,6 +1291,16 @@ async def _handle_create_observations(
                 if obs.get("confidence") and obs["confidence"] not in valid_confidence:
                     return f"ERROR: observation {i} has invalid confidence '{obs['confidence']}'"
 
+            # Validate contradiction-specific fields (need source_ids for the two contradicting obs)
+            if obs["level"] == "contradiction":
+                if not obs.get("source_ids"):
+                    return f"ERROR: contradiction observation {i} requires 'source_ids' field with IDs of contradicting observations"
+                if len(obs.get("source_ids", [])) < 2:
+                    return f"ERROR: contradiction observation {i} requires at least 2 source_ids (the contradicting observations)"
+                for sid in obs.get("source_ids", []):
+                    if not isinstance(sid, str):
+                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
+
         message_ids = []
         message_created_at = utc_now_iso()
         obs_session_name = ctx.session_name
@@ -1279,7 +1321,10 @@ async def _handle_create_observations(
     explicit_count = sum(1 for o in observations if o.get("level") == "explicit")
     deductive_count = sum(1 for o in observations if o.get("level") == "deductive")
     inductive_count = sum(1 for o in observations if o.get("level") == "inductive")
-    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive)"
+    contradiction_count = sum(
+        1 for o in observations if o.get("level") == "contradiction"
+    )
+    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive, {contradiction_count} contradiction)"
 
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:

@@ -60,6 +60,20 @@ class InductiveObservationBase(BaseModel):
     )
 
 
+class ContradictionObservationBase(BaseModel):
+    """Base model for contradiction observations - when user has made conflicting statements."""
+
+    source_ids: list[str] = Field(
+        description="Document IDs of the contradicting observations",
+        default_factory=list,
+    )
+    sources: list[str] = Field(
+        description="Human-readable text of the contradicting statements",
+        default_factory=list,
+    )
+    content: str = Field(description="Description of the contradiction")
+
+
 class VignetteObservationBase(BaseModel):
     """Base model for vignette observations - consolidated narratives from multiple explicit observations."""
 
@@ -198,6 +212,47 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
         )
 
 
+class ContradictionObservation(ContradictionObservationBase, ObservationMetadata):
+    """Contradiction observation - notes when user has made conflicting statements, plus metadata."""
+
+    def __str__(self) -> str:
+        sources_text = ""
+        if self.sources:
+            source_lines = [f"    - {source}" for source in self.sources]
+            sources_text = "\n" + "\n".join(source_lines)
+        return f"[{_strip_microseconds_and_timezone(self.created_at)}] CONTRADICTION: {self.content}{sources_text}"
+
+    def str_with_id(self) -> str:
+        """Format with ID prefix for use by agents that need to reference observations."""
+        id_prefix = f"[id:{self.id}] " if self.id else ""
+        sources_text = ""
+        if self.sources:
+            source_lines = [f"    - {source}" for source in self.sources]
+            sources_text = "\n" + "\n".join(source_lines)
+        return f"{id_prefix}[{_strip_microseconds_and_timezone(self.created_at)}] CONTRADICTION: {self.content}{sources_text}"
+
+    def str_no_timestamps(self) -> str:
+        sources_text = ""
+        if self.sources:
+            source_lines = [f"    - {source}" for source in self.sources]
+            sources_text = "\n" + "\n".join(source_lines)
+        return f"CONTRADICTION: {self.content}{sources_text}"
+
+    def __hash__(self) -> int:
+        """Make ContradictionObservation hashable for use in sets."""
+        return hash((self.content, self.created_at, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """Define equality for ContradictionObservation objects."""
+        if not isinstance(other, ContradictionObservation):
+            return False
+        return (
+            self.content == other.content
+            and self.created_at == other.created_at
+            and self.session_name == other.session_name
+        )
+
+
 class VignetteObservation(VignetteObservationBase, ObservationMetadata):
     """Vignette observation - a consolidated narrative from multiple explicit observations, plus metadata."""
 
@@ -259,6 +314,10 @@ class Representation(BaseModel):
         description="Consolidated narratives from clusters of explicit observations. Each vignette contains all the facts from its source observations in a coherent format.",
         default_factory=list,
     )
+    contradiction: list[ContradictionObservation] = Field(
+        description="Conflicting statements made by the user that need clarification. The dialectic agent should surface these when relevant.",
+        default_factory=list,
+    )
 
     def is_empty(self) -> bool:
         """
@@ -269,6 +328,7 @@ class Representation(BaseModel):
             and len(self.deductive) == 0
             and len(self.inductive) == 0
             and len(self.vignette) == 0
+            and len(self.contradiction) == 0
         )
 
     def len(self) -> int:
@@ -280,6 +340,7 @@ class Representation(BaseModel):
             + len(self.deductive)
             + len(self.inductive)
             + len(self.vignette)
+            + len(self.contradiction)
         )
 
     def diff_representation(self, other: "Representation") -> "Representation":
@@ -292,6 +353,9 @@ class Representation(BaseModel):
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
         diff.inductive = [o for o in other.inductive if o not in self.inductive]
         diff.vignette = [o for o in other.vignette if o not in self.vignette]
+        diff.contradiction = [
+            o for o in other.contradiction if o not in self.contradiction
+        ]
         return diff
 
     def merge_representation(
@@ -299,7 +363,7 @@ class Representation(BaseModel):
     ):
         """
         Merge another representation object into this one.
-        This will automatically deduplicate explicit, deductive, inductive, and vignette observations.
+        This will automatically deduplicate explicit, deductive, inductive, vignette, and contradiction observations.
         This *preserves order* of observations so that they retain FIFO order.
 
         NOTE: observations with the *same* timestamp will not have order preserved.
@@ -310,17 +374,20 @@ class Representation(BaseModel):
         self.deductive = list(set(self.deductive + other.deductive))
         self.inductive = list(set(self.inductive + other.inductive))
         self.vignette = list(set(self.vignette + other.vignette))
+        self.contradiction = list(set(self.contradiction + other.contradiction))
         # sort by created_at
         self.explicit.sort(key=lambda x: x.created_at)
         self.deductive.sort(key=lambda x: x.created_at)
         self.inductive.sort(key=lambda x: x.created_at)
         self.vignette.sort(key=lambda x: x.created_at)
+        self.contradiction.sort(key=lambda x: x.created_at)
 
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
             self.inductive = self.inductive[-max_observations:]
             self.vignette = self.vignette[-max_observations:]
+            self.contradiction = self.contradiction[-max_observations:]
 
     def __str__(self) -> str:
         """
@@ -362,6 +429,11 @@ class Representation(BaseModel):
 
         parts.append("INDUCTIVE:\n")
         for i, observation in enumerate(self.inductive, 1):
+            parts.append(f"{i}. {observation}")
+        parts.append("")
+
+        parts.append("CONTRADICTION:\n")
+        for i, observation in enumerate(self.contradiction, 1):
             parts.append(f"{i}. {observation}")
         parts.append("")
 
@@ -407,6 +479,11 @@ class Representation(BaseModel):
 
         parts.append("INDUCTIVE:\n")
         for i, observation in enumerate(self.inductive, 1):
+            parts.append(f"{i}. {observation.str_with_id()}")
+        parts.append("")
+
+        parts.append("CONTRADICTION:\n")
+        for i, observation in enumerate(self.contradiction, 1):
             parts.append(f"{i}. {observation.str_with_id()}")
         parts.append("")
 
@@ -457,12 +534,20 @@ class Representation(BaseModel):
             parts.append(f"{i}. {observation.str_no_timestamps()}")
         parts.append("")
 
+        parts.append("CONTRADICTION:\n")
+        for i, observation in enumerate(self.contradiction, 1):
+            parts.append(f"{i}. {observation.str_no_timestamps()}")
+        parts.append("")
+
         return "\n".join(parts)
 
-    def format_as_markdown(self) -> str:
+    def format_as_markdown(self, include_ids: bool = False) -> str:
         """
         Format a Representation object as markdown.
         NOTE: we always strip subsecond precision from the timestamps.
+
+        Args:
+            include_ids: If True, include observation IDs for use with get_reasoning_chain
 
         Returns:
             Formatted markdown string
@@ -474,13 +559,16 @@ class Representation(BaseModel):
         if self.vignette:
             parts.append("## Vignettes\n")
             for obs in self.vignette:
-                parts.append(f"{obs}")
+                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                parts.append(f"{id_prefix}{obs}")
             parts.append("")
 
         # Add explicit observations
         if self.explicit:
             parts.append("## Explicit Observations\n")
             for obs in self.explicit:
+                # Don't need IDs for explicit as these are the lowest level of reasoning.
+                # id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
                 parts.append(f"{obs}")
             parts.append("")
 
@@ -488,7 +576,9 @@ class Representation(BaseModel):
         if self.deductive:
             parts.append("## Deductive Observations\n")
             for obs in self.deductive:
-                parts.append(f"- {obs.conclusion}")
+                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                timestamp = _strip_microseconds_and_timezone(obs.created_at)
+                parts.append(f"{id_prefix}[{timestamp}] {obs.conclusion}")
                 if obs.premises:
                     parts.append("   Premises:")
                     for premise in obs.premises:
@@ -500,7 +590,10 @@ class Representation(BaseModel):
         if self.inductive:
             parts.append("## Inductive Observations\n")
             for obs in self.inductive:
-                parts.append(f"**Pattern** [{obs.confidence}]: {obs.conclusion}")
+                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                parts.append(
+                    f"{id_prefix} **Pattern** [{obs.confidence}]: {obs.conclusion}"
+                )
                 if obs.pattern_type:
                     parts.append(f"   **Type**: {obs.pattern_type}")
                 if obs.sources:
@@ -509,6 +602,19 @@ class Representation(BaseModel):
                         parts.append(f"   - {source}")
                     if len(obs.sources) > 5:
                         parts.append(f"   - ... and {len(obs.sources) - 5} more")
+                parts.append("")
+            parts.append("")
+
+        # Add contradiction observations
+        if self.contradiction:
+            parts.append("## Contradictions\n")
+            for obs in self.contradiction:
+                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                parts.append(f"{id_prefix} **CONTRADICTION**: {obs.content}")
+                if obs.sources:
+                    parts.append("   **Conflicting statements**:")
+                    for source in obs.sources:
+                        parts.append(f"   - {source}")
                 parts.append("")
             parts.append("")
 
@@ -581,6 +687,23 @@ class Representation(BaseModel):
                 )
                 for doc in documents
                 if doc.level == "vignette"
+            ],
+            contradiction=[
+                ContradictionObservation(
+                    id=doc.id,
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    content=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", []),
+                    session_name=doc.session_name,
+                    # Support both top-level and metadata locations for backward compatibility
+                    source_ids=doc.source_ids
+                    or doc.internal_metadata.get("source_ids", []),
+                    sources=doc.internal_metadata.get("sources", []),
+                )
+                for doc in documents
+                if doc.level == "contradiction"
             ],
         )
 

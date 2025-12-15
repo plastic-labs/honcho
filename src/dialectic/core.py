@@ -150,7 +150,8 @@ class DialecticAgent:
             if representation.is_empty():
                 return None
 
-            return representation.format_as_markdown()
+            # Include IDs so agent can use get_reasoning_chain on deductive/inductive obs
+            return representation.format_as_markdown(include_ids=True)
 
         except Exception as e:
             logger.warning(f"Failed to prefetch observations: {e}")
