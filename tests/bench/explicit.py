@@ -8,31 +8,38 @@ A single-file implementation of the 5-axis evaluation system for explicit deriva
 
 1. Save this file to: tests/bench/explicit_revised.py
 
-2. Set your API key:
+2. Set your API key (or pass via --api-key):
    export ANTHROPIC_API_KEY=your_key_here
    # or
-   export LLM_ANTHROPIC_API_KEY=your_key_here
+   export OPENAI_API_KEY=your_key_here
+   # or
+   export OPENROUTER_API_KEY=your_key_here
 
 3. Run against a JSONL file of traces:
-   python -m tests.bench.explicit_revised --traces path/to/traces.jsonl
+   python -m tests.bench.explicit --traces path/to/traces.jsonl
 
 4. Run against a directory of JSONL files:
-   python -m tests.bench.explicit_revised --trace-dir path/to/traces/
+   python -m tests.bench.explicit --trace-dir path/to/traces/
 
 5. Optional flags:
+   --provider anthropic  # Provider: anthropic, openai, or openrouter (default: anthropic)
+   --api-key your_key_here  # API key (overrides environment variable)
    --model claude-sonnet-4-20250514  # Model for evaluation (default)
    --output-dir tests/bench/eval_results  # Where to save results
    --verbose  # Enable detailed logging
    --weights '{"coverage": 0.35, "atomicity": 0.15}'  # Custom score weights
    --limit 10  # Only evaluate first N traces from the file
    --sample 0.1  # Randomly sample 10% of traces
+   --batch-size 5  # Process N traces concurrently (default: 1)
 
-## Input Format (Trace JSONL):
+## Input Format (Trace JSON):
 
-The script expects a JSONL file where each line is a Honcho trace:
-{"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}}
-{"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}}
-...
+The script expects a JSON file with an array of Honcho traces:
+[
+  {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}},
+  {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}},
+  ...
+]
 
 ## Output:
 
@@ -369,10 +376,12 @@ class ExplicitJudge:
         llm_client: AsyncAnthropic | AsyncOpenAI,
         model: str = "claude-sonnet-4-20250514",
         verbose: bool = False,
+        provider: str = "anthropic",
     ):
         self.llm_client = llm_client
         self.model = model
         self.verbose = verbose
+        self.provider = provider
         if verbose:
             logger.setLevel(logging.DEBUG)
 
@@ -384,7 +393,7 @@ class ExplicitJudge:
     ) -> dict[str, Any]:
         """Call LLM with tool use."""
         try:
-            if isinstance(self.llm_client, AsyncAnthropic):
+            if self.provider == "anthropic":
                 resp = await asyncio.wait_for(
                     self.llm_client.messages.create(
                         model=self.model,
@@ -401,8 +410,8 @@ class ExplicitJudge:
                     if block.type == "tool_use":
                         return block.input
                 return {}
-            
-            elif isinstance(self.llm_client, AsyncOpenAI):
+
+            elif self.provider in ["openai", "openrouter"]:
                 openai_tool = {
                     "type": "function",
                     "function": {
@@ -429,7 +438,7 @@ class ExplicitJudge:
                     return json.loads(resp.choices[0].message.tool_calls[0].function.arguments)
                 return {}
             else:
-                raise ValueError(f"Unsupported client: {type(self.llm_client)}")
+                raise ValueError(f"Unsupported provider: {self.provider}")
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return {}
@@ -827,33 +836,18 @@ class ExplicitJudge:
 # TRACE PARSING
 # =============================================================================
 
-def load_traces_from_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Load traces from a JSONL file (one JSON object per line)."""
-    traces = []
+def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
+    """Load traces from a JSON file (array of trace objects)."""
     with open(path) as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                traces.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                logger.warning(f"Skipping invalid JSON on line {line_num}: {e}")
-    return traces
-
-
-def load_traces_from_file(path: Path) -> list[dict[str, Any]]:
-    """Load traces from a file (JSONL or JSON array)."""
-    with open(path) as f:
-        first_char = f.read(1)
-        f.seek(0)
-        
-        if first_char == '[':
-            # JSON array format
-            return json.load(f)
-        else:
-            # JSONL format
-            return load_traces_from_jsonl(path)
+        data = json.load(f)
+    
+    if isinstance(data, list):
+        return data
+    elif isinstance(data, dict):
+        # Single trace, wrap in list
+        return [data]
+    else:
+        raise ValueError(f"Unexpected JSON format in {path}")
 
 
 def extract_propositions(trace: dict[str, Any]) -> list[str]:
@@ -957,20 +951,61 @@ async def main():
     parser.add_argument("--traces", type=Path, help="JSONL file containing traces")
     parser.add_argument("--trace-dir", type=Path, help="Directory of JSONL trace files")
     parser.add_argument("--output-dir", type=Path, default=Path("tests/bench/eval_results"))
+    parser.add_argument(
+        "--provider",
+        choices=["anthropic", "openai", "openrouter"],
+        default="anthropic",
+        help="LLM provider to use (default: anthropic)",
+    )
+    parser.add_argument("--api-key", type=str, help="API key (overrides environment variable)")
     parser.add_argument("--model", default="claude-sonnet-4-20250514")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--weights", type=str, help="JSON string of custom weights")
     parser.add_argument("--limit", type=int, help="Only evaluate first N traces")
     parser.add_argument("--sample", type=float, help="Randomly sample this fraction of traces (0.0-1.0)")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Number of traces to process concurrently (default: 1)",
+    )
     args = parser.parse_args()
-    
-    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("LLM_ANTHROPIC_API_KEY")
+
+    # Get API key from argument or environment
+    api_key = args.api_key
     if not api_key:
-        print("ERROR: Set ANTHROPIC_API_KEY or LLM_ANTHROPIC_API_KEY")
+        if args.provider == "anthropic":
+            api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("LLM_ANTHROPIC_API_KEY")
+            if not api_key:
+                print("ERROR: Set ANTHROPIC_API_KEY or LLM_ANTHROPIC_API_KEY, or use --api-key")
+                return 1
+        elif args.provider == "openai":
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                print("ERROR: Set OPENAI_API_KEY or use --api-key")
+                return 1
+        elif args.provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                print("ERROR: Set OPENROUTER_API_KEY or use --api-key")
+                return 1
+
+    # Initialize client based on provider
+    if args.provider == "anthropic":
+        client = AsyncAnthropic(api_key=api_key)
+    elif args.provider == "openai":
+        client = AsyncOpenAI(api_key=api_key)
+    elif args.provider == "openrouter":
+        # OpenRouter uses OpenAI-compatible API
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+    else:
+        print(f"ERROR: Unsupported provider: {args.provider}")
         return 1
-    
-    client = AsyncAnthropic(api_key=api_key)
-    judge = ExplicitJudge(client, args.model, args.verbose)
+
+    judge = ExplicitJudge(client, args.model, args.verbose, args.provider)
     
     weights = json.loads(args.weights) if args.weights else None
     
@@ -978,17 +1013,12 @@ async def main():
     all_traces: list[tuple[dict[str, Any], str]] = []  # (trace, source_file)
     
     if args.traces:
-        traces = load_traces_from_file(args.traces)
+        traces = load_traces_from_json(args.traces)
         all_traces.extend((t, args.traces.name) for t in traces)
     elif args.trace_dir:
-        for jsonl_file in args.trace_dir.glob("*.jsonl"):
-            traces = load_traces_from_jsonl(jsonl_file)
-            all_traces.extend((t, jsonl_file.name) for t in traces)
-        # Also check for .json files that might be arrays
         for json_file in args.trace_dir.glob("*.json"):
-            traces = load_traces_from_file(json_file)
-            if isinstance(traces, list):
-                all_traces.extend((t, json_file.name) for t in traces)
+            traces = load_traces_from_json(json_file)
+            all_traces.extend((t, json_file.name) for t in traces)
     else:
         parser.error("Specify --traces or --trace-dir")
     
@@ -1006,30 +1036,55 @@ async def main():
         print(f"Limited to first {args.limit} traces")
     
     print(f"\nEvaluating {len(all_traces)} trace(s)...\n")
-    
+
+    # Process traces in batches if batch_size > 1
     results: list[EvaluationResult] = []
-    for idx, (trace, source_file) in enumerate(all_traces):
+
+    async def process_trace(idx: int, trace: dict[str, Any], source_file: str) -> EvaluationResult | None:
+        """Process a single trace and return the result."""
         try:
             props = extract_propositions(trace)
             if not props:
                 logger.warning(f"Trace {idx} from {source_file} has no propositions, skipping")
-                continue
-            
+                return None
+
             msgs = extract_messages(trace)
             peer = extract_peer_name(trace)
             conv_id = extract_conversation_id(trace, idx)
-            
+
             print(f"[{idx+1}/{len(all_traces)}] Evaluating {conv_id} ({len(props)} props)...")
-            
+
             result = await judge.evaluate(props, msgs, peer, conv_id, weights)
-            results.append(result)
             print_summary(result)
-            
+            return result
+
         except Exception as e:
             logger.error(f"Failed trace {idx} from {source_file}: {e}")
             if args.verbose:
                 import traceback
                 traceback.print_exc()
+            return None
+
+    # Process in batches
+    if args.batch_size > 1:
+        print(f"Processing traces in batches of {args.batch_size}...\n")
+        for i in range(0, len(all_traces), args.batch_size):
+            batch = all_traces[i:i + args.batch_size]
+            batch_results = await asyncio.gather(
+                *[process_trace(i + j, trace, source_file) for j, (trace, source_file) in enumerate(batch)],
+                return_exceptions=True
+            )
+            for result in batch_results:
+                if isinstance(result, EvaluationResult):
+                    results.append(result)
+                elif isinstance(result, Exception):
+                    logger.error(f"Batch processing error: {result}")
+    else:
+        # Process sequentially
+        for idx, (trace, source_file) in enumerate(all_traces):
+            result = await process_trace(idx, trace, source_file)
+            if result:
+                results.append(result)
     
     if results:
         args.output_dir.mkdir(parents=True, exist_ok=True)
