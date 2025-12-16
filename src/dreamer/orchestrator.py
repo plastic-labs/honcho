@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 # Predefined probing questions to guide the specialists
 # These serve as semantic entry points for searching observations
 PROBING_QUESTIONS: list[str] = [
-    # Knowledge updates and changes (HIGH PRIORITY)
     "What information has changed or been updated? Look for dates, deadlines, schedules that moved.",
     "What decisions or plans have changed? Look for rescheduled, moved, changed, updated.",
     # Temporal and sequential events
@@ -34,13 +33,10 @@ PROBING_QUESTIONS: list[str] = [
     "What deadlines, dates, or scheduled events have been mentioned?",
     # Identity and background
     "What do we know about this person's identity, name, or background?",
-    "What is their profession, job, or work situation? Has it changed?",
     # Recent activity
-    "What has this person been doing or discussing recently?",
-    "What events or activities have they mentioned?",
+    "What has this entity been doing or discussing recently?",
     # Preferences and interests
     "What are their preferences, likes, or dislikes?",
-    "What hobbies, interests, or activities do they enjoy?",
     # Relationships
     "Who are the important people in their life (family, friends, colleagues)?",
     # Goals and plans

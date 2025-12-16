@@ -131,6 +131,10 @@ class DialecticAgent:
         This provides immediate context to the agent without requiring
         tool calls, improving response quality and speed.
 
+        Performs two separate searches to prevent retrieval dilution:
+        - 25 explicit observations (direct facts from messages)
+        - 25 derived observations (deductive, inductive, contradiction, vignette)
+
         Args:
             query: The user's query
 
@@ -138,20 +142,42 @@ class DialecticAgent:
             Formatted observations string or None if no observations found
         """
         try:
-            representation = await search_memory(
+            # Search explicit observations separately
+            explicit_repr = await search_memory(
                 db=self.db,
                 workspace_name=self.workspace_name,
                 observer=self.observer,
                 observed=self.observed,
                 query=query,
                 limit=25,
+                levels=["explicit"],
             )
 
-            if representation.is_empty():
+            # Search derived observations separately
+            derived_repr = await search_memory(
+                db=self.db,
+                workspace_name=self.workspace_name,
+                observer=self.observer,
+                observed=self.observed,
+                query=query,
+                limit=25,
+                levels=["deductive", "inductive", "contradiction", "vignette"],
+            )
+
+            if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
 
-            # Include IDs so agent can use get_reasoning_chain on deductive/inductive obs
-            return representation.format_as_markdown(include_ids=True)
+            # Format as two separate sections
+            parts: list[str] = []
+
+            if not explicit_repr.is_empty():
+                parts.append(explicit_repr.format_as_markdown(include_ids=False))
+
+            if not derived_repr.is_empty():
+                # Include IDs for derived so agent can use get_reasoning_chain
+                parts.append(derived_repr.format_as_markdown(include_ids=True))
+
+            return "\n".join(parts)
 
         except Exception as e:
             logger.warning(f"Failed to prefetch observations: {e}")

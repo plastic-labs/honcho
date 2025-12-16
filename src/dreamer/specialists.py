@@ -173,11 +173,28 @@ class DeductionSpecialist(BaseSpecialist):
     def build_system_prompt(self, observed: str) -> str:
         return f"""You are a deductive reasoning specialist for {observed}. Your ONLY job is to create deductive observations by calling tools. Do NOT explain your reasoning - just make tool calls.
 
-## CRITICAL RULES
+## MANDATORY WORKFLOW - YOU MUST FOLLOW THIS PATTERN
 
-1. **MINIMIZE TEXT OUTPUT** - Do not write explanations. Just call tools.
+For EACH topic, you MUST alternate: search → create → search → create → ...
+
+**CORRECT pattern:**
+1. search_memory("topic 1")
+2. create_observations([...deductions from topic 1...])
+3. search_memory("topic 2")
+4. create_observations([...deductions from topic 2...])
+5. search_memory("topic 3")
+6. create_observations([...deductions from topic 3...])
+
+**WRONG pattern (DO NOT DO THIS):**
+1. search_memory("topic 1")
+2. search_memory("topic 2")
+3. search_memory("topic 3")
+4. ... more searches ...
+5. create_observations([...]) ← TOO LATE, you'll hit iteration limit!
+
+1. **ALTERNATE SEARCH/CREATE** - After each search, create observations BEFORE your next search.
 2. **CREATE OBSERVATIONS** - Your primary goal is to CREATE deductive observations, not just search.
-3. **SEARCH THEN CREATE** - For each topic: ONE search, then IMMEDIATELY create any deductions you find.
+3. **MINIMIZE TEXT OUTPUT** - Do not write explanations. Just call tools.
 4. **DELETE OUTDATED INFO** - When you find updated information, DELETE the old observation after creating the update.
 
 ## PRIORITY FOCUS AREAS
@@ -239,14 +256,12 @@ Create deductions that make implicit information explicit:
 - "works as SWE at Google" → "has software engineering skills" + "is employed in tech industry"
 - "has 2 kids ages 5 and 8" → "is a parent" + "has school-age children"
 
-## WORKFLOW (for each probing question)
+## WORKFLOW (REPEAT FOR EACH QUESTION)
 
 1. Call `search_memory` with a relevant query
 2. Look at timestamps - are there OLDER and NEWER observations about the same topic?
-3. If yes: Create KNOWLEDGE UPDATE observation, then DELETE the old observation
-4. If you find logically incompatible statements: Create CONTRADICTION observation
-5. Also create any other logical deductions you find
-6. Move to next question
+3. **IMMEDIATELY call `create_observations`** with any deductions you found
+4. If you created a knowledge update, call `delete_observations` for the outdated one
 
 ## CREATING DEDUCTIVE OBSERVATIONS
 
@@ -274,11 +289,16 @@ REMEMBER:
 
     def build_user_prompt(self, probing_questions: list[str]) -> str:
         questions_text = "\n".join(f"- {q}" for q in probing_questions)
-        return f"""Process these topics. For EACH topic: search once, then create deductions from what you find.
+        return f"""Process these topics by ALTERNATING search and create calls:
 
 {questions_text}
 
-Start now. Search for the first topic, then create observations from what you find."""
+Start now:
+1. Search for topic 1
+2. Create observations from what you found
+3. Search for topic 2
+4. Create observations from what you found
+... and so on."""
 
 
 class InductionSpecialist(BaseSpecialist):
@@ -308,11 +328,28 @@ class InductionSpecialist(BaseSpecialist):
     def build_system_prompt(self, observed: str) -> str:
         return f"""You are an inductive reasoning specialist for {observed}. Your ONLY job is to create inductive observations by calling tools. Do NOT explain your reasoning - just make tool calls.
 
-## CRITICAL RULES
+## MANDATORY WORKFLOW - YOU MUST FOLLOW THIS PATTERN
 
-1. **MINIMIZE TEXT OUTPUT** - Do not write explanations or summaries. Just call tools.
+For EACH topic, you MUST alternate: search → create → search → create → ...
+
+**CORRECT pattern:**
+1. search_memory("topic 1")
+2. create_observations([...inductions from topic 1...])
+3. search_memory("topic 2")
+4. create_observations([...inductions from topic 2...])
+5. search_memory("topic 3")
+6. create_observations([...inductions from topic 3...])
+
+**WRONG pattern (DO NOT DO THIS):**
+1. search_memory("topic 1")
+2. search_memory("topic 2")
+3. search_memory("topic 3")
+4. ... more searches ...
+5. create_observations([...]) ← TOO LATE, you'll hit iteration limit!
+
+1. **ALTERNATE SEARCH/CREATE** - After each search, create observations BEFORE your next search.
 2. **CREATE OBSERVATIONS** - Your primary goal is to CREATE inductive observations.
-3. **SEARCH THEN CREATE** - For each topic: search, identify patterns across 2+ observations, create.
+3. **MINIMIZE TEXT OUTPUT** - Do not write explanations or summaries. Just call tools.
 
 ## PRIORITY FOCUS AREAS
 
@@ -338,13 +375,13 @@ Also look for:
 - **Behaviors**: "tends to X", "usually does Y" (from repeated actions)
 - **Personality**: "is generally X" (from multiple indicators)
 
-## WORKFLOW (for each probing question)
+## WORKFLOW (REPEAT FOR EACH QUESTION)
 
 1. Call `search_memory` with a relevant query
 2. Look for PATTERNS across multiple observations (both explicit and deductive levels)
 3. Pay special attention to deductive observations about knowledge updates - these reveal change patterns
-4. If you see a pattern supported by 2+ observations, IMMEDIATELY call `create_observations`
-5. Move to next question
+4. **IMMEDIATELY call `create_observations`** with any patterns you found (need 2+ sources)
+5. **ONLY THEN** move to the next question and search again
 
 ## CREATING INDUCTIVE OBSERVATIONS
 
@@ -376,11 +413,16 @@ REMEMBER: Focus on temporal patterns and how things change. Create observations,
 
     def build_user_prompt(self, probing_questions: list[str]) -> str:
         questions_text = "\n".join(f"- {q}" for q in probing_questions)
-        return f"""Process these topics. For EACH topic: search once, find patterns across 2+ observations, create inductions.
+        return f"""Process these topics by ALTERNATING search and create calls:
 
 {questions_text}
 
-Start now. Search for the first topic, then create observations from patterns you find."""
+Start now:
+1. Search for topic 1
+2. Create observations from patterns you found (need 2+ sources)
+3. Search for topic 2
+4. Create observations from patterns you found
+... and so on."""
 
 
 # Singleton instances

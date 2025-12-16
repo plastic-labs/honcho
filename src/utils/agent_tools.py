@@ -757,6 +757,7 @@ async def search_memory(
     observed: str,
     query: str,
     limit: int,
+    levels: list[str] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -768,10 +769,17 @@ async def search_memory(
         observed: The peer who was observed
         query: Search query text
         limit: Maximum number of results
+        levels: Optional list of observation levels to filter by
+                (e.g., ["explicit"], ["deductive", "inductive", "contradiction", "vignette"])
 
     Returns:
         Representation object containing relevant observations
     """
+    # Build filter for levels if specified
+    filters: dict[str, Any] | None = None
+    if levels:
+        filters = {"level": {"in": levels}}
+
     documents = await crud.query_documents(
         db=db,
         workspace_name=workspace_name,
@@ -779,6 +787,7 @@ async def search_memory(
         observed=observed,
         query=query,
         top_k=limit,
+        filters=filters,
     )
 
     return Representation.from_documents(documents)
