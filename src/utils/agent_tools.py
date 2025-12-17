@@ -259,7 +259,7 @@ TOOLS: dict[str, dict[str, Any]] = {
             "properties": {
                 "message_ids": {
                     "type": "array",
-                    "items": {"type": "integer"},
+                    "items": {"type": "string"},
                     "description": "List of message IDs to retrieve (get these from observation.message_ids in search results)",
                 },
             },
@@ -797,7 +797,7 @@ async def get_observation_context(
     db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
-    message_ids: list[int],
+    message_ids: list[str],
 ) -> list[models.Message]:
     """
     Retrieve messages for given message IDs along with surrounding context.
