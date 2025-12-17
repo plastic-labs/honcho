@@ -15,10 +15,11 @@ A single-file implementation of the 5-axis evaluation system for explicit deriva
    # or
    export OPENROUTER_API_KEY=your_key_here
 
-3. Run against a JSONL file of traces:
+3. Run against a JSON or JSONL file of traces:
+   python -m tests.bench.explicit --traces path/to/traces.json
    python -m tests.bench.explicit --traces path/to/traces.jsonl
 
-4. Run against a directory of JSONL files:
+4. Run against a directory of JSON/JSONL files:
    python -m tests.bench.explicit --trace-dir path/to/traces/
 
 5. Optional flags:
@@ -32,14 +33,21 @@ A single-file implementation of the 5-axis evaluation system for explicit deriva
    --sample 0.1  # Randomly sample 10% of traces
    --batch-size 5  # Process N traces concurrently (default: 1)
 
-## Input Format (Trace JSON):
+## Input Format (Trace JSON/JSONL):
 
-The script expects a JSON file with an array of Honcho traces:
+The script accepts two formats:
+
+1. JSON array:
 [
   {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}},
   {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}},
   ...
 ]
+
+2. JSONL (one JSON object per line):
+{"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}}
+{"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}}
+...
 
 ## Output:
 
@@ -86,9 +94,9 @@ class AtomicityViolation(Enum):
     DISJUNCTION = "disjunction"
     CONDITIONAL = "conditional"
     EMBEDDED_QUOTE = "embedded_quote"
-    COMPOUND_PREDICATE = "compound"
-    CAUSAL_CHAIN = "causal"
-    TEMPORAL_SEQUENCE = "sequence"
+    COMPOUND_PREDICATE = "compound_predicate"
+    CAUSAL_CHAIN = "causal_chain"
+    TEMPORAL_SEQUENCE = "temporal_sequence"
 
 
 class FidelityViolation(Enum):
@@ -96,10 +104,10 @@ class FidelityViolation(Enum):
     NEGATION_FLIP = "negation_flip"
     TEMPORAL_SHIFT = "temporal_shift"
     QUANTITY_CHANGE = "quantity_change"
-    ATTRIBUTION_ERROR = "attribution"
+    ATTRIBUTION_ERROR = "attribution_error"
     OVERGENERALIZATION = "overgeneralization"
     OVERSPECIFICATION = "overspecification"
-    INFERENCE_AS_EXPLICIT = "inference"
+    INFERENCE_AS_EXPLICIT = "inference_as_explicit"
 
 
 class PremiseSuitability(Enum):
@@ -494,7 +502,13 @@ class ExplicitJudge:
             is_atomic = ev.get("is_atomic", True)
             if is_atomic:
                 atomic_count += 1
-            violations = [AtomicityViolation(v) for v in ev.get("violation_types", [])]
+            violations = []
+            for v in ev.get("violation_types", []):
+                try:
+                    violations.append(AtomicityViolation(v))
+                except ValueError as e:
+                    logger.warning(f"Skipping invalid AtomicityViolation type: {v} - {e}")
+                    continue
             for v in violations:
                 violations_by_type[v.value] = violations_by_type.get(v.value, 0) + 1
             decomp = ev.get("suggested_decomposition", [])
@@ -636,9 +650,13 @@ class ExplicitJudge:
             violations_by_sev[sev] = violations_by_sev.get(sev, 0) + 1
             violations: list[tuple[FidelityViolation, str]] = []
             for v in ev.get("violations", []):
-                vtype = FidelityViolation(v["type"])
-                violations_by_type[vtype.value] = violations_by_type.get(vtype.value, 0) + 1
-                violations.append((vtype, v.get("description", "")))
+                try:
+                    vtype = FidelityViolation(v["type"])
+                    violations_by_type[vtype.value] = violations_by_type.get(vtype.value, 0) + 1
+                    violations.append((vtype, v.get("description", "")))
+                except ValueError as e:
+                    logger.warning(f"Skipping invalid FidelityViolation type: {v.get('type')} - {e}")
+                    continue
             detailed.append(FidelityResult(propositions[idx], is_faithful, violations, "", sev))
         
         sev_penalties = {"none": 0, "minor": 0.25, "major": 0.5, "critical": 1.0}
@@ -837,17 +855,52 @@ class ExplicitJudge:
 # =============================================================================
 
 def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
-    """Load traces from a JSON file (array of trace objects)."""
-    with open(path) as f:
-        data = json.load(f)
-    
-    if isinstance(data, list):
-        return data
-    elif isinstance(data, dict):
-        # Single trace, wrap in list
-        return [data]
-    else:
-        raise ValueError(f"Unexpected JSON format in {path}")
+    """Load traces from a JSON or JSONL file.
+
+    Supports:
+    - JSON array: [{"trace": 1}, {"trace": 2}]
+    - JSON object: {"trace": 1}
+    - JSONL: One JSON object per line
+    """
+    traces = []
+
+    # Try JSONL format first (one JSON per line)
+    try:
+        with open(path) as f:
+            first_line = f.readline().strip()
+            if first_line and not first_line.startswith('['):
+                # Likely JSONL format
+                f.seek(0)  # Reset to beginning
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        trace = json.loads(line)
+                        traces.append(trace)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Skipping invalid JSON at line {line_num} in {path}: {e}")
+
+                if traces:
+                    logger.info(f"Loaded {len(traces)} traces from JSONL file: {path}")
+                    return traces
+    except Exception as e:
+        logger.debug(f"Not JSONL format, trying standard JSON: {e}")
+
+    # Try standard JSON format
+    try:
+        with open(path) as f:
+            data = json.load(f)
+
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            # Single trace, wrap in list
+            return [data]
+        else:
+            raise ValueError(f"Unexpected JSON format in {path}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse {path} as JSON or JSONL: {e}")
 
 
 def extract_propositions(trace: dict[str, Any]) -> list[str]:
@@ -948,8 +1001,8 @@ def print_summary(result: EvaluationResult) -> None:
 
 async def main():
     parser = argparse.ArgumentParser(description="Run explicit derivation benchmark")
-    parser.add_argument("--traces", type=Path, help="JSONL file containing traces")
-    parser.add_argument("--trace-dir", type=Path, help="Directory of JSONL trace files")
+    parser.add_argument("--traces", type=Path, help="JSON or JSONL file containing traces")
+    parser.add_argument("--trace-dir", type=Path, help="Directory of JSON/JSONL trace files")
     parser.add_argument("--output-dir", type=Path, default=Path("tests/bench/eval_results"))
     parser.add_argument(
         "--provider",
@@ -1016,7 +1069,8 @@ async def main():
         traces = load_traces_from_json(args.traces)
         all_traces.extend((t, args.traces.name) for t in traces)
     elif args.trace_dir:
-        for json_file in args.trace_dir.glob("*.json"):
+        # Support both .json and .jsonl extensions
+        for json_file in list(args.trace_dir.glob("*.json")) + list(args.trace_dir.glob("*.jsonl")):
             traces = load_traces_from_json(json_file)
             all_traces.extend((t, json_file.name) for t in traces)
     else:
