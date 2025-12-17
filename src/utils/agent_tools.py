@@ -822,7 +822,7 @@ async def get_observation_context(
     stmt = (
         select(models.Message.seq_in_session)
         .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.id.in_(message_ids))
+        .where(models.Message.public_id.in_(message_ids))
     )
 
     if session_name:
@@ -2007,6 +2007,9 @@ def create_tool_executor(
             # We don't re-raise because the LLM should be able to continue with other tools
             error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
             logger.error(error_msg, exc_info=True)
+            # Rollback the transaction to clear any failed state
+            # This is critical for PostgreSQL which blocks subsequent queries on failed transactions
+            await ctx.db.rollback()
             return error_msg
 
     return execute_tool
