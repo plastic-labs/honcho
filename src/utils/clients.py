@@ -367,6 +367,33 @@ def extract_openai_reasoning_content(response: Any) -> str | None:
     return None
 
 
+def extract_openai_reasoning_details(response: Any) -> list[dict[str, Any]]:
+    """
+    Extract reasoning_details array from an OpenAI/OpenRouter ChatCompletion response.
+
+    OpenRouter returns reasoning blocks in reasoning_details that must be preserved
+    and passed back in subsequent requests for Gemini models with tool use.
+
+    Args:
+        response: OpenAI ChatCompletion response object
+
+    Returns:
+        List of reasoning detail objects, or empty list if not present
+    """
+    try:
+        message = response.choices[0].message
+        # Check for reasoning_details (OpenRouter/Gemini)
+        if hasattr(message, "reasoning_details") and message.reasoning_details:
+            # Return the full array for preservation
+            return [
+                detail.model_dump() if hasattr(detail, "model_dump") else dict(detail)
+                for detail in message.reasoning_details
+            ]
+    except (AttributeError, IndexError, TypeError):
+        pass
+    return []
+
+
 def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
     """
     Extract cache token counts from OpenAI-style usage objects.
@@ -440,6 +467,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     thinking_content: str | None = None
     # Full thinking blocks with signatures for multi-turn conversation replay (Anthropic only)
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    # OpenRouter reasoning_details for Gemini models - must be preserved across turns
+    reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -621,6 +650,7 @@ async def _execute_tool_loop(
             response.content,
             response.tool_calls_made,
             response.thinking_blocks,
+            response.reasoning_details,
         )
         conversation_messages.append(assistant_message)
 
@@ -740,6 +770,7 @@ def _format_assistant_tool_message(
     content: Any,
     tool_calls: list[dict[str, Any]],
     thinking_blocks: list[dict[str, Any]] | None = None,
+    reasoning_details: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Format an assistant message with tool calls for a specific provider.
@@ -749,6 +780,7 @@ def _format_assistant_tool_message(
         content: The text content from the response
         tool_calls: List of tool call dicts with id, name, input keys
         thinking_blocks: Full thinking blocks with signatures for multi-turn replay (Anthropic only)
+        reasoning_details: OpenRouter reasoning_details for Gemini models (must be preserved)
 
     Returns:
         Provider-formatted assistant message dict
@@ -820,11 +852,15 @@ def _format_assistant_tool_message(
                     },
                 }
             )
-        return {
+        msg: dict[str, Any] = {
             "role": "assistant",
             "content": content if isinstance(content, str) else None,
             "tool_calls": openai_tool_calls,
         }
+        # Include reasoning_details for OpenRouter/Gemini (required for multi-turn tool use)
+        if reasoning_details:
+            msg["reasoning_details"] = reasoning_details
+        return msg
 
 
 def _append_tool_results(
@@ -1717,6 +1753,7 @@ async def honcho_llm_call_inner(
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=tool_calls_list,
                     thinking_content=extract_openai_reasoning_content(response),
+                    reasoning_details=extract_openai_reasoning_details(response),
                 )
 
         case genai.Client():
