@@ -4,7 +4,7 @@ from typing import Annotated, Any, ClassVar, Literal, Protocol
 
 import tomllib
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -363,6 +363,31 @@ class CacheSettings(HonchoSettings):
     )
 
 
+class SurprisalSettings(BaseModel):
+    """Settings for tree-based surprisal sampling during dreams."""
+
+    ENABLED: bool = True  # Enabled by default
+
+    # Tree configuration
+    TREE_TYPE: Literal[
+        "kdtree", "balltree", "rptree", "covertree", "lsh", "graph", "prototype"
+    ] = "kdtree"
+    TREE_K: Annotated[int, Field(default=5, gt=0, le=20)] = 5  # k for kNN-based trees
+
+    # Sampling strategy
+    SAMPLING_STRATEGY: Literal["recent", "random", "all"] = "recent"
+    SAMPLE_SIZE: Annotated[int, Field(default=200, gt=0, le=2000)] = 200
+
+    # Surprisal filtering
+    SURPRISAL_THRESHOLD: Annotated[float, Field(default=0.0, ge=0.0)] = 0.0
+    TOP_N_SURPRISAL: Annotated[int, Field(default=20, gt=0, le=100)] = 20
+    # Hybrid mode: min high-surprisal observations to replace standard questions
+    MIN_HIGH_SURPRISAL_FOR_REPLACE: Annotated[int, Field(default=10, gt=0)] = 10
+
+    # Observation level filtering
+    INCLUDE_LEVELS: list[str] = ["explicit", "deductive"]
+
+
 class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
@@ -397,6 +422,9 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DEDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
     # InductionSpecialist: identifies patterns across observations
     INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+
+    # Surprisal-based sampling subsystem
+    SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DreamSettings":
