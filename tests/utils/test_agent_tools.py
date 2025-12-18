@@ -477,7 +477,7 @@ class TestGetObservationContext:
         ctx = make_tool_context()
 
         result = await _handle_get_observation_context(
-            ctx, {"message_ids": [messages[2].id]}
+            ctx, {"message_ids": [messages[2].public_id]}
         )
 
         assert "Retrieved" in result or "No messages found" in result

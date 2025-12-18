@@ -72,7 +72,8 @@ def test_representation_formatting_methods():
     md = rep.format_as_markdown()
     assert "## Explicit Observations" in md
     assert "## Deductive Observations" in md
-    assert "**Conclusion**: owns a pet" in md
+    assert "owns a pet" in md
+    assert "Premises:" in md
 
 
 def test_prompt_representation_conversion():

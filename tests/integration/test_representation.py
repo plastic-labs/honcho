@@ -133,8 +133,8 @@ class TestRepresentationWorkflow:
         markdown_output = representation.format_as_markdown()
         assert "## Explicit Observations" in markdown_output
         assert "## Deductive Observations" in markdown_output
-        assert "**Conclusion**:" in markdown_output
-        assert "**Premises**:" in markdown_output
+        assert "User probably has a dog named Rover" in markdown_output
+        assert "Premises:" in markdown_output
 
     async def test_representation_merging_and_diffing(self):
         """Test representation merge and diff operations"""
@@ -408,18 +408,17 @@ class TestPromptRepresentationConversion:
     """Test conversion between PromptRepresentation and Representation"""
 
     async def test_prompt_representation_to_representation(self):
-        """Test converting PromptRepresentation to Representation"""
+        """Test converting PromptRepresentation to Representation.
+
+        Note: In the current architecture, the Deriver only creates explicit observations.
+        Deductive and inductive observations are created by the Dreamer agent.
+        Therefore, from_prompt_representation only converts explicit observations.
+        """
         prompt_rep = PromptRepresentation(
             explicit=[
                 ExplicitObservationBase(content="User likes coffee"),
                 ExplicitObservationBase(content="User works remotely"),
             ],
-            # deductive=[
-            #     DeductiveObservationBase(
-            #         conclusion="User probably works from a coffee shop sometimes",
-            #         premises=["User likes coffee", "User works remotely"],
-            #     )
-            # ],
         )
 
         timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -432,7 +431,9 @@ class TestPromptRepresentationConversion:
         )
 
         assert len(representation.explicit) == 2
-        assert len(representation.deductive) == 1
+        # Deductive observations from PromptRepresentation are not converted
+        # (they would be created directly by the Dreamer via the create_observations tool)
+        assert len(representation.deductive) == 0
 
         # Check explicit observations
         assert representation.explicit[0].content == "User likes coffee"
@@ -440,17 +441,6 @@ class TestPromptRepresentationConversion:
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
         assert representation.explicit[0].created_at == timestamp
-
-        # Check deductive observation
-        deductive_obs = representation.deductive[0]
-        assert (
-            deductive_obs.conclusion
-            == "User probably works from a coffee shop sometimes"
-        )
-        assert deductive_obs.premises == ["User likes coffee", "User works remotely"]
-        assert deductive_obs.message_ids == [123]
-        assert deductive_obs.session_name == "test_session"
-        assert deductive_obs.created_at == timestamp
 
     async def test_empty_prompt_representation_conversion(self):
         """Test converting empty PromptRepresentation"""
