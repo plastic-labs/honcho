@@ -378,9 +378,10 @@ class SurprisalSettings(BaseModel):
     SAMPLING_STRATEGY: Literal["recent", "random", "all"] = "recent"
     SAMPLE_SIZE: Annotated[int, Field(default=200, gt=0, le=2000)] = 200
 
-    # Surprisal filtering
-    SURPRISAL_THRESHOLD: Annotated[float, Field(default=0.0, ge=0.0)] = 0.0
-    TOP_N_SURPRISAL: Annotated[int, Field(default=20, gt=0, le=100)] = 20
+    # Surprisal filtering (normalized scores: 0.0 = lowest, 1.0 = highest)
+    TOP_PERCENT_SURPRISAL: Annotated[float, Field(default=0.10, gt=0.0, le=1.0)] = (
+        0.10  # Top 10% of observations
+    )
     # Hybrid mode: min high-surprisal observations to replace standard questions
     MIN_HIGH_SURPRISAL_FOR_REPLACE: Annotated[int, Field(default=10, gt=0)] = 10
 
@@ -389,7 +390,9 @@ class SurprisalSettings(BaseModel):
 
 
 class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
+    model_config = SettingsConfigDict(
+        env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
+    )  # pyright: ignore
 
     ENABLED: bool = True
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50

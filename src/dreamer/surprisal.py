@@ -108,14 +108,43 @@ async def sample_observations_with_surprisal(
                 f"Filtered {len(scores) - len(valid_scores)} invalid surprisal scores"
             )
 
-        # 5. Rank and filter
-        valid_scores.sort(key=lambda x: x.surprisal, reverse=True)
-        filtered = _filter_by_threshold(valid_scores)
+        # 5. Normalize surprisal scores to [0, 1] range
+        normalized_scores = _normalize_scores(valid_scores)
+
+        # 6. Rank by normalized surprisal
+        normalized_scores.sort(key=lambda x: x.surprisal, reverse=True)
+
+        # Log top 5 scores BEFORE filtering
+        top_n = min(5, len(normalized_scores))
+        percent = settings.DREAM.SURPRISAL.TOP_PERCENT_SURPRISAL * 100
+        logger.info(f"🎯 Surprisal computation complete. Taking top {percent:.0f}%")
+        logger.info(f"Top {top_n} observations by normalized surprisal score:")
+        for i, score in enumerate(normalized_scores[:top_n], 1):
+            content = score.observation.content
+            if len(content) > 80:
+                content = content[:77] + "..."
+            logger.info(
+                f"  #{i} [surprisal={score.surprisal:.3f}] "
+                f"[level={score.observation.level}] {content}"
+            )
+
+        filtered = _filter_by_percent(normalized_scores)
 
         logger.info(
-            f"Computed surprisal for {len(observations)} observations, "
-            f"found {len(filtered)} high-surprisal observations"
+            f"Selected: {len(filtered)}/{len(observations)} observations "
+            f"(top {percent:.0f}%)"
         )
+
+        # Log summary statistics for filtered results
+        if filtered:
+            logger.info(
+                f"📊 Filtered statistics: "
+                f"min={filtered[-1].surprisal:.3f}, "
+                f"max={filtered[0].surprisal:.3f}, "
+                f"mean={sum(s.surprisal for s in filtered) / len(filtered):.3f}"
+            )
+        else:
+            logger.info("No observations exceeded the surprisal threshold")
 
         return filtered
 
@@ -381,9 +410,53 @@ def _compute_surprisal_scores(
     return scores
 
 
-def _filter_by_threshold(scores: list[SurprisalScore]) -> list[SurprisalScore]:
+def _normalize_scores(scores: list[SurprisalScore]) -> list[SurprisalScore]:
     """
-    Filter observations by surprisal threshold and top-N.
+    Normalize surprisal scores to [0, 1] range using min-max normalization.
+
+    Args:
+        scores: List of SurprisalScore objects with raw surprisal values
+
+    Returns:
+        List of SurprisalScore objects with normalized surprisal values
+    """
+    if not scores:
+        return []
+
+    # Handle edge case: all scores are identical
+    surprisal_values = [s.surprisal for s in scores]
+    min_surprisal = min(surprisal_values)
+    max_surprisal = max(surprisal_values)
+
+    if max_surprisal == min_surprisal:
+        # All scores identical - set all to 0.5 (middle of range)
+        return [
+            SurprisalScore(
+                observation=s.observation, surprisal=0.5, embedding=s.embedding
+            )
+            for s in scores
+        ]
+
+    # Min-max normalization: (x - min) / (max - min)
+    normalized = []
+    for score in scores:
+        normalized_value = (score.surprisal - min_surprisal) / (
+            max_surprisal - min_surprisal
+        )
+        normalized.append(
+            SurprisalScore(
+                observation=score.observation,
+                surprisal=normalized_value,
+                embedding=score.embedding,
+            )
+        )
+
+    return normalized
+
+
+def _filter_by_percent(scores: list[SurprisalScore]) -> list[SurprisalScore]:
+    """
+    Filter observations by top percentage.
 
     Assumes scores are already sorted by surprisal (highest first).
 
@@ -391,12 +464,13 @@ def _filter_by_threshold(scores: list[SurprisalScore]) -> list[SurprisalScore]:
         scores: List of SurprisalScore objects, sorted by surprisal DESC
 
     Returns:
-        Filtered list of SurprisalScore objects
+        Filtered list of SurprisalScore objects (top N% by surprisal)
     """
-    # Filter by threshold
-    threshold = settings.DREAM.SURPRISAL.SURPRISAL_THRESHOLD
-    filtered = [s for s in scores if s.surprisal >= threshold]
+    if not scores:
+        return []
 
-    # Take top N
-    top_n = settings.DREAM.SURPRISAL.TOP_N_SURPRISAL
-    return filtered[:top_n]
+    # Take top percentage
+    top_percent = settings.DREAM.SURPRISAL.TOP_PERCENT_SURPRISAL
+    count = max(1, int(len(scores) * top_percent))  # At least 1 observation
+
+    return scores[:count]

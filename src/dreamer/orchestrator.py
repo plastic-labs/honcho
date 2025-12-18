@@ -109,16 +109,29 @@ async def run_dream(
             ):
                 probing_questions = _create_queries_from_surprisal(high_surprisal_obs)
                 logger.info(
-                    f"[{run_id}] Using {len(probing_questions)} "
-                    "surprisal-based queries (replace mode)"
+                    f"[{run_id}] ✨ SURPRISAL REPLACE MODE: Using {len(probing_questions)} "
+                    "surprisal-based queries instead of standard questions"
+                )
+                logger.info(
+                    f"[{run_id}] Targeting observations with surprisal range: "
+                    f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
                 )
             elif len(high_surprisal_obs) > 0:
                 # Supplement mode: Add to standard questions
                 surprisal_queries = _create_queries_from_surprisal(high_surprisal_obs)
                 probing_questions = surprisal_queries + PROBING_QUESTIONS
                 logger.info(
-                    f"[{run_id}] Supplementing with {len(surprisal_queries)} "
-                    "surprisal queries"
+                    f"[{run_id}] ✨ SURPRISAL SUPPLEMENT MODE: Adding {len(surprisal_queries)} "
+                    f"surprisal queries to {len(PROBING_QUESTIONS)} standard questions"
+                )
+                logger.info(
+                    f"[{run_id}] Targeting observations with surprisal range: "
+                    f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
+                )
+            else:
+                logger.info(
+                    f"[{run_id}] No high-surprisal observations found, "
+                    "using standard probing questions"
                 )
 
         except Exception as e:
