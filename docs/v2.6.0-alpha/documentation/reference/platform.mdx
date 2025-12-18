@@ -1,7 +1,7 @@
 ---
 title: "The Honcho Dashboard"
 icon: "rocket"
-description: "Build socially intelligent agents without worrying about infrastructure"
+description: "Build stateful agents without worrying about infrastructure"
 sidebarTitle: "Dashboard Overview"
 ---
 
@@ -10,7 +10,7 @@ sidebarTitle: "Dashboard Overview"
 </Card>
 
 The quickest way to begin using Honcho in production is with the
-[Honcho Cloud Platform](https://app.honcho.dev). Sign up, generate an API key,
+[Honcho Cloud Service](https://app.honcho.dev). Sign up, generate an API key,
 and start building with Honcho.
 
 ## 1. Go to [app.honcho.dev](https://app.honcho.dev)
@@ -93,7 +93,7 @@ Expand the `Peers` list from the `Workspace` dashboard to see a detailed view of
   <img src="/images/app-screenshots/peer-dash.png" alt="Peer Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
 
-Click into any peer to navigate to their respective utilities page. Next to the `Peer` name you can edit the [Global Peer Configuration](/v2/documentation/core-concepts/configuration), and in the tabs below, explore all utilities for the `Peer`.
+Click into any peer to navigate to their respective utilities page. Next to the `Peer` name you can edit the [Peer Configuration](/v2.6.0-alpha/documentation/features/advanced/reasoning-configuration), and in the tabs below, explore all utilities for the `Peer`.
 
 <Frame>
   <img src="/images/app-screenshots/peer-utilities.png" alt="Peer Management Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
@@ -101,14 +101,14 @@ Click into any peer to navigate to their respective utilities page. Next to the 
 
 Utilities include:
 - **Message search** across all sessions for a `Peer`
-- **Dialectic Chat** to query `Peer` representations globally or session-scoped (results vary dependant on the `Peer`'s configuration)
+- **Chat** to query `Peer` representations with an optional session scope (results vary based on the `Peer`'s configuration)
 
 <Frame>
   <img src="/images/app-screenshots/chat-endpoint.png" alt="Chat Endpoint" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
 </Frame>
 
 - **Session logs** view which `Sessions` the `Peer` is active
-- **Peer configuration and metadata management** including [Session-Peer Configuration](/v2/documentation/core-concepts/configuration#session-peer-configuration)
+- **Peer configuration and metadata management** including [Session-Peer Configuration](/v2.6.0-alpha/documentation/features/advanced/reasoning-configuration#session-configuration)
 
 <Frame>
   <img src="/images/app-screenshots/peer-utilities.png" alt="Peer Management Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
@@ -153,9 +153,9 @@ The [Members](https://app.honcho.dev/members) page provides organization adminis
 
 ## Go Further
 
-View the [Architecture](/v2/documentation/core-concepts/architecture) to see how Honcho works under the hood.
+View the [Architecture](/v2.6.0-alpha/documentation/core-concepts/architecture) to see how Honcho works under the hood.
 
-Dive into our [API Reference](/v2/api-reference) to explore all available endpoints.
+Dive into our [API Reference](/v2.6.0-alpha/api-reference) to explore all available endpoints.
 
 ## Next Steps
 
@@ -166,16 +166,11 @@ Dive into our [API Reference](/v2/api-reference) to explore all available endpoi
   <Card title="Join our Discord" icon="discord" href="http://discord.gg/plasticlabs">
     Connect with 1000+ developers building with Honcho
   </Card>
-  <Card title="Contribute to Honcho" icon="code" href="/v2/contributing/guidelines">
+  <Card title="Contribute to Honcho" icon="code" href="/v2.6.0-alpha/contributing/guidelines">
     View our guidelines and explore the codebase
   </Card>
-  <Card title="Explore Examples" icon="book" href="/v2/guides">
+  <Card title="Explore Examples" icon="book" href="/v2.6.0-alpha/guides">
     See Honcho in action with real examples
   </Card>
 </CardGroup>
 
-We're excited to see what you'll build with Honcho Platform. Let's create smarter, more personalized AI experiences together!
-
----
-
-*Ready to build personally aligned AI? [Get started with Honcho →](https://app.honcho.dev)*

@@ -944,7 +944,7 @@ const response = await openai.chat.completions.create({
 When creating messages, you can optionally specify a custom `created_at` timestamp instead of using the server's current time:
 
 ```bash
-curl -X POST "https://api.honcho.dev/v2/workspaces/{workspace_id}/sessions/{session_id}/messages" \
+curl -X POST "https://api.honcho.dev/v2.6.0-alpha/workspaces/{workspace_id}/sessions/{session_id}/messages" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -968,7 +968,7 @@ If `created_at` is not provided, messages will use the server's current timestam
 
 ### Metadata and Filtering
 
-See [Using Filters](/v2/guides/using-filters) for more examples on how to use filters.
+See [Using Filters](/v2.6.0-alpha/guides/using-filters) for more examples on how to use filters.
 
 <CodeGroup>
 ```python Python
