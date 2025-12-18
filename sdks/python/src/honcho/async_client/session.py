@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
-import json
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
@@ -915,7 +915,6 @@ class AsyncSession(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-
         data = await self._client.workspaces.peers.working_representation(
             peer_id,
             workspace_id=self.workspace_id,

@@ -1,8 +1,8 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Generator, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
 from typing import Any, Literal, TypeAlias, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -15,27 +15,6 @@ from src.utils.work_unit import construct_work_unit_key
 
 QueuePayload: TypeAlias = dict[str, Any]
 QueuePayloadEntry: TypeAlias = QueuePayload | tuple[QueuePayload, int | None]
-
-
-@pytest.fixture
-def mock_critical_analysis_call() -> Generator[Callable[..., Any], None, None]:
-    """Mock the critical analysis call to avoid actual LLM calls"""
-
-    async def mock_critical_analysis_call(*_args: Any, **_kwargs: Any) -> MagicMock:
-        # Create a mock response that matches the expected structure
-        mock_response = MagicMock()
-        mock_response.explicit = ["Test explicit observation"]
-        mock_response.deductive = []
-        mock_response.thinking = "Test thinking content"
-        mock_response._response = MagicMock()
-        mock_response._response.thinking = "Test thinking content"
-        return mock_response
-
-    # Patch the actual function in the deriver module
-    with patch(
-        "src.deriver.deriver.critical_analysis_call", mock_critical_analysis_call
-    ):
-        yield mock_critical_analysis_call
 
 
 @pytest.fixture

@@ -89,16 +89,12 @@ class TestEnqueueFunction:
 
     # SESSION MESSAGES
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_deriver_disabled(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test that deriver disabled sessions skip representation but allows summary"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer = sample_data
 
         # Create session with deriver disabled
@@ -129,15 +125,11 @@ class TestEnqueueFunction:
         ), f"Expected no queue items, but got {final_count - initial_count}"
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_normal_processing_single_peer(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer = sample_data
 
         test_session = await crud.get_or_create_session(
@@ -174,16 +166,12 @@ class TestEnqueueFunction:
         assert "representation" in task_types
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_multiple_peers_none_observe_others(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test session processing with multiple peers where some observe others"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer1 = sample_data
 
         # Create second peer
@@ -254,16 +242,12 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_multiple_peers_all_observe_others(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test session processing with multiple peers where some observe others"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer1 = sample_data
 
         # Create second peer
@@ -340,16 +324,12 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_multiple_peers_some_observe_others(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test session processing with multiple peers where some observe others"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer1 = sample_data
 
         # Create second peer
@@ -438,16 +418,12 @@ class TestEnqueueFunction:
         ]
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_peer_config_overrides_peer_config(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test that session peer config overrides peer config"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer = sample_data
 
         # Set peer configuration to observe_me=True
@@ -480,16 +456,12 @@ class TestEnqueueFunction:
         assert final_count - initial_count == 0
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_multi_sender_scenario(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test complex scenario with multiple peers and mixed configurations"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, test_peer1 = sample_data
 
         # Create additional peers
@@ -587,16 +559,12 @@ class TestEnqueueFunction:
 
     # RACE CONDITION TESTS - Testing the new logic for peers that have left
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_sender_left_session_after_message_sent(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test that messages from senders who left the session still get processed with default config"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, sender_peer = sample_data
 
         # Create an observer peer
@@ -680,16 +648,12 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_observer_left_session_no_queue_items_generated(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test that peers who left the session don't get representation tasks enqueued"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, sender_peer = sample_data
 
         # Create observer peers - one will leave, one will stay
@@ -762,16 +726,12 @@ class TestEnqueueFunction:
         assert sender_peer.name in observers
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_sender_not_in_peer_configuration_uses_defaults(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test get_effective_observe_me handles missing sender configuration gracefully"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, existing_peer = sample_data
 
         # Create observer peer
@@ -842,16 +802,12 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_mixed_active_inactive_peers_complex_scenario(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test complex scenario with mix of active/inactive peers and different configurations"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, sender_peer = sample_data
 
         # Create multiple peers with different roles
@@ -1142,16 +1098,12 @@ class TestAdvancedEnqueueEdgeCases:
         return len(result.scalars().all())
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_edge_case_all_peers_left_except_sender(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test edge case where all observer peers have left the session"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, sender_peer = sample_data
 
         # Create multiple observer peers
@@ -1218,16 +1170,12 @@ class TestAdvancedEnqueueEdgeCases:
         assert queue_items[0].payload["task_type"] == "representation"
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_edge_case_sender_and_observer_both_left_different_times(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test race condition where both sender and observer left at different times"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, sender_peer = sample_data
 
         observer_peer = models.Peer(
@@ -1304,16 +1252,12 @@ class TestAdvancedEnqueueEdgeCases:
         assert queue_items[0].payload["task_type"] == "representation"
 
     @pytest.mark.asyncio
-    @patch("src.deriver.enqueue.tracked_db")
     async def test_edge_case_message_from_never_joined_peer(
         self,
-        mock_tracked_db: AsyncMock,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
         """Test handling message from peer who was never in the session"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
         test_workspace, existing_peer = sample_data
 
         observer_peer = models.Peer(
