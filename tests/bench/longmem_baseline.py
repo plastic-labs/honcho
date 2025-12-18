@@ -1,10 +1,8 @@
 """
-LongMemEval Baseline Test Runner (Direct Claude Context)
+LongMemEval Baseline Test Runner (Direct Context)
 
 A script that executes longmemeval tests directly against a model
 by feeding the entire haystack content into the context window.
-
-This serves as a baseline comparison against Honcho's memory framework.
 
 ## To use
 
@@ -29,7 +27,6 @@ Optional arguments:
 
 ## Other notes
 - Uses OpenRouter API (configured via LLM_OPENAI_COMPATIBLE_API_KEY in tests/bench/.env or env var)
-- Default model is anthropic/claude-haiku-4-5
 - Evaluation uses GPT-4o judge per the LongMemEval paper methodology
 """
 
@@ -45,8 +42,6 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from typing_extensions import TypedDict
-
-from src.config import settings
 
 from .longmem_common import (
     calculate_timing_statistics,
@@ -241,7 +236,7 @@ Below is a history of past conversations. Use this history to answer the user's 
             # Call model via OpenRouter with full context
             response = await self.openrouter_client.chat.completions.create(
                 model=MODEL_BEING_TESTED,
-                max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                max_tokens=8192,
                 messages=[
                     {
                         "role": "system",
@@ -340,7 +335,6 @@ Below is a history of past conversations. Use this history to answer the user's 
         print(
             f"found {len(questions)} {'question' if len(questions) == 1 else 'questions'} in {test_file}"
         )
-        print("Running baseline test (direct Claude context, no Honcho)")
 
         overall_start = time.time()
 
@@ -381,7 +375,9 @@ Below is a history of past conversations. Use this history to answer the user's 
     ) -> None:
         """Print a summary of all test results."""
         print(f"\n{'=' * 80}")
-        print("LONGMEMEVAL BASELINE TEST SUMMARY (Direct Claude Context)")
+        print(
+            f"LONGMEMEVAL BASELINE TEST SUMMARY (Direct Context with {MODEL_BEING_TESTED})"
+        )
         print(f"{'=' * 80}")
 
         total_questions = len(results)
@@ -512,7 +508,7 @@ Below is a history of past conversations. Use this history to answer the user's 
 async def main() -> int:
     """Main entry point for the baseline test runner."""
     parser = argparse.ArgumentParser(
-        description="Run longmemeval tests directly against Claude (baseline, no Honcho)",
+        description="Run longmemeval tests directly against a model",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
