@@ -437,7 +437,7 @@ def mock_honcho_llm_call():
     from unittest.mock import AsyncMock
 
     from src.utils.representation import (
-        DeductiveObservationBase,
+        # DeductiveObservationBase,
         ExplicitObservationBase,
         PromptRepresentation,
     )
@@ -460,12 +460,12 @@ def mock_honcho_llm_call():
                     explicit=[
                         ExplicitObservationBase(content="Test explicit observation")
                     ],
-                    deductive=[
-                        DeductiveObservationBase(
-                            conclusion="Test deductive conclusion",
-                            premises=["Test premise 1", "Test premise 2"],
-                        ),
-                    ],
+                    # deductive=[
+                    #     DeductiveObservationBase(
+                    #         conclusion="Test deductive conclusion",
+                    #         premises=["Test premise 1", "Test premise 2"],
+                    #     ),
+                    # ],
                 )
                 mock_response = MagicMock(wraps=_rep)
                 # Add the _response attribute that contains thinking (used in the actual code)
@@ -562,9 +562,8 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.consolidate.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.dreamer.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.agent.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
         patch("src.webhooks.events.tracked_db", mock_tracked_db_context),

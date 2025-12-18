@@ -500,7 +500,7 @@ class TestQueueProcessing:
             # Ensure items are only for alice
             assert all(qi.payload.get("observed") == alice.name for qi in alice_items)
 
-            # Test bob's work unit - starts at message 2 for per-work-unit anchoring
+            # Test bob's work unit - now includes preceding message for context
             bob_work_unit_key = bob_queue_items[0].work_unit_key
             bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
             db_session.add(bob_aqs)
@@ -513,10 +513,11 @@ class TestQueueProcessing:
                 aqs_id=bob_aqs.id,
             )
 
-            # Bob should get 4 messages (2..5)
-            assert len(bob_messages) == 4
+            # Bob should get 5 messages (1..5) - includes preceding alice message for context
+            assert len(bob_messages) == 5
             bob_message_ids: set[int] = {m.id for m in bob_messages}
             expected_bob_ids = {
+                messages[0].id,  # alice(250) - preceding context
                 messages[1].id,  # bob(400)
                 messages[2].id,  # steve(300)
                 messages[3].id,  # alice(500)
@@ -526,7 +527,7 @@ class TestQueueProcessing:
             # Ensure items are only for bob
             assert all(qi.payload.get("observed") == bob.name for qi in bob_items)
 
-            # Test steve's work unit - starts at message 3 for per-work-unit anchoring
+            # Test steve's work unit - now includes preceding message for context
             steve_work_unit_key = steve_queue_items[0].work_unit_key
             steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
             db_session.add(steve_aqs)
@@ -539,10 +540,11 @@ class TestQueueProcessing:
                 aqs_id=steve_aqs.id,
             )
 
-            # Steve should get 5 messages (3..7)
-            assert len(steve_messages) == 5
+            # Steve should get 6 messages (2..7) - includes preceding bob message for context
+            assert len(steve_messages) == 6
             steve_message_ids: set[int] = {m.id for m in steve_messages}
             expected_steve_ids = {
+                messages[1].id,  # bob(400) - preceding context
                 messages[2].id,  # steve(300)
                 messages[3].id,  # alice(500)
                 messages[4].id,  # bob(500)
@@ -640,8 +642,9 @@ class TestQueueProcessing:
         # Mock the token limit to 1500 for this test
         with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 1500):
             # Test alice's work unit
-            # With per-work-unit anchoring, Alice starts at her own first message (message 3)
-            # Alice's batch: alice(100) + alice(200) = 300 tokens, well under 1500 limit
+            # With per-work-unit anchoring + preceding context:
+            # Alice starts at message 3, includes preceding message 2 (steve) for context
+            # Alice's batch: steve(800) + alice(100) + alice(200) = 1100 tokens, under 1500 limit
             if alice_queue_items:
                 alice_work_unit_key = alice_queue_items[0].work_unit_key
                 alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
@@ -655,15 +658,16 @@ class TestQueueProcessing:
                     aqs_id=alice_aqs.id,
                 )
 
-                # Per-work-unit anchoring: Alice starts at message 3 -> [3,4]
-                assert len(alice_messages2) == 2
+                # Includes preceding steve message for context -> [2,3,4]
+                assert len(alice_messages2) == 3
                 assert [m.id for m in alice_messages2] == [
-                    messages[2].id,
-                    messages[3].id,
+                    messages[1].id,  # steve - preceding context
+                    messages[2].id,  # alice
+                    messages[3].id,  # alice
                 ]
 
             # Test bob's work unit
-            # With per-work-unit anchoring, Bob starts at his own first message (message 1)
+            # Bob starts at message 1, no preceding message available
             # Bob's batch: bob(800) only, under 1500 limit
             if bob_queue_items:
                 bob_work_unit_key = bob_queue_items[0].work_unit_key
@@ -682,8 +686,9 @@ class TestQueueProcessing:
                 assert bob_messages2[0].id == messages[0].id  # bob only
 
             # Test steve's work unit
-            # With per-work-unit anchoring, Steve starts at his own first message (message 2)
-            # Steve's batch: steve(800) only, under 1500 limit
+            # Steve starts at message 2, includes preceding message 1 (bob) for context
+            # Steve's batch: bob(800) + steve(800) = 1600 tokens, exceeds 1500 limit
+            # So should only get steve's message
             if steve_queue_items:
                 steve_work_unit_key = steve_queue_items[0].work_unit_key
                 steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
@@ -697,10 +702,11 @@ class TestQueueProcessing:
                     aqs_id=steve_aqs.id,
                 )
 
-                # Per-work-unit anchoring: Steve starts at message 2 -> [2]
-                assert len(steve_messages2) == 1
+                # Includes preceding bob message for context -> [1,2]
+                assert len(steve_messages2) == 2
                 assert [m.id for m in steve_messages2] == [
-                    messages[1].id,
+                    messages[0].id,  # bob - preceding context
+                    messages[1].id,  # steve
                 ]
 
     @pytest.mark.asyncio

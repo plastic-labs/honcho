@@ -1104,24 +1104,28 @@ Examples:
             sys.exit(1)
 
     # Create and run the harness or pool
-    if args.pool_size > 1:
-        pool = HonchoHarnessPool(
-            pool_size=args.pool_size,
-            base_db_port=args.port,
-            base_api_port=args.api_port,
-            base_redis_port=args.redis_port,
-            project_root=args.project_root,
-        )
-        asyncio.run(pool.run())
-    else:
-        harness = HonchoHarness(
-            db_port=args.port,
-            api_port=args.api_port,
-            redis_port=args.redis_port,
-            project_root=args.project_root,
-            instance_id=0,
-        )
-        asyncio.run(harness.run())
+    try:
+        if args.pool_size > 1:
+            pool = HonchoHarnessPool(
+                pool_size=args.pool_size,
+                base_db_port=args.port,
+                base_api_port=args.api_port,
+                base_redis_port=args.redis_port,
+                project_root=args.project_root,
+            )
+            asyncio.run(pool.run())
+        else:
+            harness = HonchoHarness(
+                db_port=args.port,
+                api_port=args.api_port,
+                redis_port=args.redis_port,
+                project_root=args.project_root,
+                instance_id=0,
+            )
+            asyncio.run(harness.run())
+    except KeyboardInterrupt:
+        # Cleanup already handled in run() finally block
+        pass
 
 
 if __name__ == "__main__":

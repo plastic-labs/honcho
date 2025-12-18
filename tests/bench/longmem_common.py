@@ -1,7 +1,5 @@
 """
 Common utilities for LongMemEval test runners.
-
-Shared functionality between the Honcho benchmark and baseline benchmark.
 """
 
 import json

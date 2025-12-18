@@ -47,6 +47,7 @@ Optional arguments:
 --cleanup-workspace: Delete workspace after executing each question (default: False)
 --use-get-context: Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)
 --question-id: Run only the question with this question_id (skips all others)
+--legacy-dream: Use legacy multi-pass dream system instead of orchestrated specialists (default: False)
 ```
 
 ## Other notes
@@ -210,8 +211,8 @@ class LongMemEvalRunner:
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
 
-    def _get_latest_tokens_used(self) -> int | None:
-        """Get the tokens_used_estimate from the most recent dialectic_chat metric.
+    def _get_latest_input_tokens_used(self) -> int | None:
+        """Get the uncached input tokens from the most recent dialectic_chat metric.
 
         Returns:
             Number of tokens used, or None if not found
@@ -235,7 +236,7 @@ class LongMemEvalRunner:
                     if task_name.startswith("dialectic_chat_"):
                         for metric in data.get("metrics", []):
                             metric_name = metric.get("name", "")
-                            if metric_name.endswith("tokens_used_estimate"):
+                            if metric_name.endswith("uncached_input_tokens"):
                                 return int(metric.get("value", 0))
                 except (json.JSONDecodeError, KeyError, ValueError):
                     continue
@@ -311,14 +312,12 @@ class LongMemEvalRunner:
         honcho_url = self.get_honcho_url_for_index(0)
 
         url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
-        payload = {
+        payload: dict[str, Any] = {
             "observer": observer,
             "observed": observed,
             "dream_type": "consolidate",
             "session_id": session_id or f"{workspace_id}_session",
         }
-
-        print(f"[{workspace_id}] Triggering dream at {url}")
 
         # Trigger the dream via API
         try:
@@ -662,19 +661,16 @@ class LongMemEvalRunner:
             # Determine observer based on question type
             observer_peer = "assistant" if is_assistant_type else "user"
 
+            # Single orchestrated dream handles all reasoning types
             dream_success = await self.trigger_dream_and_wait(
                 honcho_client,
                 workspace_id,
                 observer=observer_peer,
                 session_id=dream_session_id,
             )
-
             if not dream_success:
-                print(
-                    f"[{workspace_id}] Warning: Dream did not complete, proceeding anyway"
-                )
-            else:
-                print(f"[{workspace_id}] Dream completed. Executing question...")
+                print(f"[{workspace_id}] Warning: Dream did not complete")
+            print(f"[{workspace_id}] Dream completed. Executing question...")
 
             # Execute the question
             output_lines.append(f"\nAsking question: {question_with_date}")
@@ -738,18 +734,18 @@ class LongMemEvalRunner:
                     actual_response if isinstance(actual_response, str) else ""
                 )
 
-                tokens_used = self._get_latest_tokens_used()
+                input_tokens_used = self._get_latest_input_tokens_used()
 
                 token_efficiency = None
-                if tokens_used is not None and total_available_tokens > 0:
-                    efficiency_ratio = tokens_used / total_available_tokens
+                if input_tokens_used is not None and total_available_tokens > 0:
+                    efficiency_ratio = input_tokens_used / total_available_tokens
                     token_efficiency = {
                         "total_available_tokens": total_available_tokens,
-                        "tokens_used": tokens_used,
+                        "tokens_used": input_tokens_used,
                         "efficiency_ratio": efficiency_ratio,
                     }
                     output_lines.append(
-                        f"  token efficiency: {efficiency_ratio:.4f} ({tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
+                        f"  token efficiency: {efficiency_ratio:.4f} ({input_tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
                     )
 
                 judgment = await judge_response(
@@ -1147,6 +1143,12 @@ Examples:
         "--question-id",
         type=str,
         help="Run only the question with this question_id (skips all others)",
+    )
+
+    parser.add_argument(
+        "--legacy-dream",
+        action="store_true",
+        help="Use legacy multi-pass dream system instead of orchestrated specialists (default: False)",
     )
 
     args = parser.parse_args()

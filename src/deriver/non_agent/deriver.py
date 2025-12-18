@@ -1,9 +1,8 @@
 import logging
 import time
 
-from src import prometheus
+from src import crud, prometheus
 from src.config import settings
-from src.crud import message as message_crud
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
@@ -34,7 +33,7 @@ async def process_representation_tasks_batch(
     Process messages with minimal overhead - single LLM call, no peer card.
 
     Args:
-        messages: List of messages to process.
+        messages: List of messages to process (includes interleaving context).
         message_level_configuration: Optional configuration override.
         observer: The observer peer ID.
         observed: The observed peer ID.
@@ -42,30 +41,17 @@ async def process_representation_tasks_batch(
     if not messages:
         return
 
+    overall_start = time.perf_counter()
+
     messages.sort(key=lambda x: x.id)
     latest_message = messages[-1]
     earliest_message = messages[0]
 
-    accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
-        "starting_message_id",
-        earliest_message.id,
-        "id",
-    )
-    accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
-        "ending_message_id",
-        latest_message.id,
-        "id",
-    )
-
-    overall_start = time.perf_counter()
-
     # Get configuration if not provided
+    # TODO: this appears to be a very rare edge case coming out of `get_queue_item_batch` in queue_manager.py,
+    # possible that we can remove this and require configuration to come through with the payload.
     if message_level_configuration is None:
         async with tracked_db("minimal_deriver.get_config") as db:
-            from src import crud
-
             message_level_configuration = get_configuration(
                 None,
                 await crud.get_session(
@@ -80,65 +66,28 @@ async def process_representation_tasks_batch(
     if message_level_configuration.deriver.enabled is False:
         return
 
-    # Calculate available tokens for messages
-    prompt_tokens = estimate_minimal_deriver_prompt_tokens()
-    safety_buffer = 500
-    available_context_tokens = max(
-        0,
-        settings.DERIVER.MAX_INPUT_TOKENS - prompt_tokens - safety_buffer,
+    accumulate_metric(
+        f"minimal_deriver_{latest_message.id}_{observer}",
+        "starting_message_id",
+        earliest_message.id,
+        "id",
+    )
+    accumulate_metric(
+        f"minimal_deriver_{latest_message.id}_{observer}",
+        "ending_message_id",
+        latest_message.id,
+        "id",
     )
 
-    # Get interleaving messages from starting_message_id to ending_message_id (inclusive)
-    async with tracked_db("minimal_deriver.get_interleaving_messages") as db:
-        starting_message_id = earliest_message.id
-        ending_message_id = latest_message.id
+    # Format messages with timestamps
+    formatted_messages = "\n".join(
+        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
+        for msg in messages
+    )
 
-        # Get all messages in the range (inclusive on both ends)
-        # Note: get_messages_id_range uses exclusive end_id, so we pass ending_message_id + 1
-        interleaving_messages = await message_crud.get_messages_id_range(
-            db,
-            latest_message.workspace_name,
-            latest_message.session_name,
-            start_id=starting_message_id,
-            end_id=ending_message_id + 1,
-            token_limit=available_context_tokens,
-        )
-
-        # Create a dict of messages being processed for quick lookup and deduplication
-        processing_messages_dict: dict[int, Message] = {m.id: m for m in messages}
-
-        # Combine interleaving messages with messages being processed
-        # Messages from DB may not include the ones being processed if they're not yet committed
-        # Use processing messages when available (they're more up-to-date), otherwise use DB messages
-        all_message_ids = {msg.id for msg in interleaving_messages} | {
-            m.id for m in messages
-        }
-
-        # Build combined list sorted by ID for contiguous presentation
-        combined_messages: list[Message] = []
-        for msg_id in sorted(all_message_ids):
-            if msg_id in processing_messages_dict:
-                combined_messages.append(processing_messages_dict[msg_id])
-            else:
-                # Find the message in interleaving_messages
-                for msg in interleaving_messages:
-                    if msg.id == msg_id:
-                        combined_messages.append(msg)
-                        break
-
-        # Format all messages with timestamps for contiguous presentation
-        formatted_messages = "\n".join(
-            [
-                format_new_turn_with_timestamp(
-                    msg.content, msg.created_at, msg.peer_name
-                )
-                for msg in combined_messages
-            ]
-        )
-
+    # Track token usage
+    prompt_tokens = estimate_minimal_deriver_prompt_tokens()
     messages_tokens = estimate_tokens(formatted_messages)
-
-    # Track input tokens
     track_input_tokens(
         task_type="minimal_representation",
         components={
@@ -148,11 +97,7 @@ async def process_representation_tasks_batch(
     )
 
     # Build prompt
-    prompt = minimal_deriver_prompt(
-        peer_id=observed,
-        message_created_at=latest_message.created_at,
-        messages=formatted_messages,
-    )
+    prompt = minimal_deriver_prompt(peer_id=observed, messages=formatted_messages)
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
@@ -162,16 +107,18 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
+    max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
+
     # Single LLM call
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
         llm_settings=settings.DERIVER,
         prompt=prompt,
-        max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
-        or settings.LLM.DEFAULT_MAX_TOKENS,
+        max_tokens=max_tokens,
         track_name="Minimal Deriver",
         response_model=PromptRepresentation,
         json_mode=True,
+        temperature=settings.DERIVER.TEMPERATURE,
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         reasoning_effort="minimal",
@@ -181,13 +128,13 @@ async def process_representation_tasks_batch(
     llm_duration = (time.perf_counter() - llm_start) * 1000
 
     # Log fine-tuning trace
+    # TODO: this should really be a fixture on honcho_llm_call
     log_finetuning_trace(
         task_type="minimal_deriver",
         llm_settings=settings.DERIVER,
         prompt=prompt,
         response=response,
-        max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
-        or settings.LLM.DEFAULT_MAX_TOKENS,
+        max_tokens=max_tokens,
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         reasoning_effort="minimal",
         json_mode=True,
@@ -207,21 +154,27 @@ async def process_representation_tasks_batch(
         component="total",
     ).inc(response.output_tokens)
 
+    message_ids = [m.id for m in messages if m.peer_name == observed]
+
     # Convert to Representation and save
     observations = Representation.from_prompt_representation(
         response.content,
-        [earliest_message.id, latest_message.id],
+        message_ids,
         latest_message.session_name,
         latest_message.created_at,
     )
 
-    if not observations.is_empty():
+    if observations.is_empty():
+        logger.warning(
+            f"Deriver generated zero observations for messages {earliest_message.id}:{latest_message.id} in {latest_message.workspace_name}/{latest_message.session_name}!"
+        )
+    else:
         representation_manager = RepresentationManager(
             workspace_name=latest_message.workspace_name,
             observer=observer,
             observed=observed,
         )
-        message_ids = [m.id for m in messages]
+
         await representation_manager.save_representation(
             observations,
             message_ids,
@@ -248,20 +201,19 @@ async def process_representation_tasks_batch(
     )
 
     if settings.DERIVER.LOG_OBSERVATIONS:
+        # Log messages fed into deriver
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observer}",
+            "messages",
+            formatted_messages,
+            "blob",
+        )
         # Log actual observations created as blob metrics
-        if observations.explicit:
-            accumulate_metric(
-                f"minimal_deriver_{latest_message.id}_{observer}",
-                "explicit_observations",
-                "\n".join(f"  • {obs}" for obs in observations.explicit),
-                "blob",
-            )
-        if observations.deductive:
-            accumulate_metric(
-                f"minimal_deriver_{latest_message.id}_{observer}",
-                "deductive_observations",
-                "\n".join(f"  • {obs}" for obs in observations.deductive),
-                "blob",
-            )
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observer}",
+            "explicit_observations",
+            "\n".join(f"  • {obs}" for obs in observations.explicit),
+            "blob",
+        )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observer}")

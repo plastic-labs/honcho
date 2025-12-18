@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -86,9 +87,35 @@ def _extract_pattern_snippet(
 
 
 TOOLS: dict[str, dict[str, Any]] = {
+    # Simplified tool for Deriver - explicit observations only, no level field needed
+    "create_observations_explicit": {
+        "name": "create_observations",
+        "description": "Create explicit observations - atomic facts directly stated in messages about the peer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observations": {
+                    "type": "array",
+                    "description": "List of explicit facts to record",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {
+                                "type": "string",
+                                "description": "The explicit fact - must be directly stated in message",
+                            },
+                        },
+                        "required": ["content"],
+                    },
+                },
+            },
+            "required": ["observations"],
+        },
+    },
+    # Full tool for Dreamer - supports all levels with tree linkage
     "create_observations": {
         "name": "create_observations",
-        "description": "Create observations, the core unit of information in the memory system, about the observed peer. Use this to record explicit facts mentioned in conversation or deductive inferences about the peer's preferences, behaviors, or characteristics.",
+        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). Use this to record facts, logical inferences, patterns, or note when the user has said contradictory things.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -104,8 +131,51 @@ TOOLS: dict[str, dict[str, Any]] = {
                             },
                             "level": {
                                 "type": "string",
-                                "enum": ["explicit", "deductive"],
-                                "description": "Level of observation: 'explicit' for directly stated facts, 'deductive' for inferred information",
+                                "enum": [
+                                    "explicit",
+                                    "deductive",
+                                    "inductive",
+                                    "contradiction",
+                                ],
+                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'contradiction' for conflicting statements",
+                            },
+                            # Tree linkage for deductive observations
+                            "premise_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "(For deductive) Document IDs of premise observations - REQUIRED for deductive",
+                            },
+                            "premises": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "(For deductive) Human-readable premise text for display",
+                            },
+                            # Tree linkage for inductive/contradiction observations
+                            "source_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "(For inductive/contradiction) Document IDs of source observations - REQUIRED",
+                            },
+                            "sources": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "(For inductive/contradiction) Human-readable source text for display",
+                            },
+                            "pattern_type": {
+                                "type": "string",
+                                "enum": [
+                                    "preference",
+                                    "behavior",
+                                    "personality",
+                                    "tendency",
+                                    "correlation",
+                                ],
+                                "description": "(For inductive only) Type of pattern being identified",
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                                "description": "(For inductive only) Confidence level: 'high' for 3+ sources, 'medium' for 2+, 'low' for tentative",
                             },
                         },
                         "required": ["content", "level"],
@@ -164,7 +234,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_memory": {
         "name": "search_memory",
-        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details. For enumeration questions, call this MULTIPLE times with different query terms.",
+        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -174,8 +244,8 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Number of results to return (default: 5, max: 20). Use higher values for enumeration questions.",
-                    "default": 5,
+                    "description": "(Optional) number of results to return (default: 20, max: 40)",
+                    "default": 20,
                 },
             },
             "required": ["query"],
@@ -189,7 +259,7 @@ TOOLS: dict[str, dict[str, Any]] = {
             "properties": {
                 "message_ids": {
                     "type": "array",
-                    "items": {"type": "integer"},
+                    "items": {"type": "string"},
                     "description": "List of message IDs to retrieve (get these from observation.message_ids in search results)",
                 },
             },
@@ -392,13 +462,45 @@ TOOLS: dict[str, dict[str, Any]] = {
             "properties": {},
         },
     },
+    "get_reasoning_chain": {
+        "name": "get_reasoning_chain",
+        "description": "Get the reasoning chain for an observation - traverse the tree to find premises (for deductive) or sources (for inductive), and/or find conclusions derived from this observation. Use this to understand how an observation was derived or what conclusions depend on it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observation_id": {
+                    "type": "string",
+                    "description": "The document ID of the observation to get the reasoning chain for",
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["premises", "conclusions", "both"],
+                    "description": "'premises' to get what this observation is based on, 'conclusions' to get what depends on it, 'both' for full context",
+                    "default": "both",
+                },
+            },
+            "required": ["observation_id"],
+        },
+    },
+    "create_vignette": {
+        "name": "create_vignette",
+        "description": "Create a vignette that consolidates multiple explicit observations into a single coherent narrative. The vignette should contain ALL the explicit facts from the source observations.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The vignette content - a coherent narrative containing ALL explicit facts from the source observations",
+                },
+            },
+            "required": ["content"],
+        },
+    },
 }
 
-# Tools for the deriver agent (ingestion)
+# Tools for the deriver agent (ingestion) - explicit-only, simplified schema
 DERIVER_TOOLS: list[dict[str, Any]] = [
-    # TOOLS["search_memory"],
-    # TOOLS["search_messages"],
-    TOOLS["create_observations"],
+    TOOLS["create_observations_explicit"],  # Simplified schema enforces explicit-only
     TOOLS["update_peer_card"],
 ]
 
@@ -407,11 +509,11 @@ DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_memory"],
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
-    TOOLS["get_peer_card"],
-    TOOLS["create_observations_deductive"],
+    # TOOLS["create_observations_deductive"],
     TOOLS["grep_messages"],  # For exact text search (names, dates, keywords)
     TOOLS["get_messages_by_date_range"],  # For temporal/date-based queries
     TOOLS["search_messages_temporal"],  # Semantic search + date filtering
+    TOOLS["get_reasoning_chain"],  # Traverse reasoning trees
 ]
 
 # Tools for the dreamer agent (consolidation + peer card + deduplication)
@@ -428,14 +530,35 @@ DREAMER_TOOLS: list[dict[str, Any]] = [
     # Message access tools for context verification
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
+    # Tree traversal
+    TOOLS["get_reasoning_chain"],
     # Completion signal
     TOOLS["finish_consolidation"],
+]
+
+# Tools for the deduction specialist (dreamer phase 1)
+# Creates deductive observations from explicit observations, can delete duplicates
+DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    TOOLS["search_memory"],
+    TOOLS["get_recent_observations"],
+    TOOLS["create_observations"],
+    TOOLS["delete_observations"],
+    TOOLS["get_reasoning_chain"],
+]
+
+# Tools for the induction specialist (dreamer phase 2)
+# Creates inductive observations from explicit and deductive observations
+INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    TOOLS["search_memory"],
+    TOOLS["get_recent_observations"],
+    TOOLS["create_observations"],
+    TOOLS["get_reasoning_chain"],
 ]
 
 
 async def create_observations(
     db: AsyncSession,
-    observations: list[dict[str, str]],
+    observations: list[dict[str, Any]],
     observer: str,
     observed: str,
     session_name: str,
@@ -448,13 +571,17 @@ async def create_observations(
 
     Args:
         db: Database session
-        observations: List of observations, each with 'content' and 'level' keys
+        observations: List of observations, each with 'content', 'level', and level-specific fields
         observer: The peer making the observation
         observed: The peer being observed
         session_name: Session identifier
         workspace_name: Workspace identifier
         message_ids: List of message IDs these observations are based on
         message_created_at: Timestamp of the message that triggered these observations
+
+    Level-specific fields:
+        - deductive: 'premises' (list of strings)
+        - inductive: 'sources' (list of strings), 'pattern_type', 'confidence'
     """
     if not observations:
         logger.warning("create_observations called with empty list")
@@ -479,21 +606,51 @@ async def create_observations(
             continue
 
         # Validate and cast level
-        level: DocumentLevel = "deductive" if level_str == "deductive" else "explicit"
+        level: DocumentLevel
+        if level_str == "inductive":
+            level = "inductive"
+        elif level_str == "deductive":
+            level = "deductive"
+        elif level_str == "contradiction":
+            level = "contradiction"
+        else:
+            level = "explicit"
 
         # Generate embedding for the observation
         embedding = await embedding_client.embed(content)
 
-        # Create document
+        # Build metadata with level-specific fields
+        metadata = schemas.DocumentMetadata(
+            message_ids=message_ids,
+            message_created_at=message_created_at,
+            # Deductive-specific (tree linkage + human-readable)
+            premise_ids=obs.get("premise_ids") if level == "deductive" else None,
+            premises=obs.get("premises") if level == "deductive" else None,
+            # Inductive/Contradiction-specific (tree linkage + human-readable)
+            source_ids=obs.get("source_ids")
+            if level in ("inductive", "contradiction")
+            else None,
+            sources=obs.get("sources")
+            if level in ("inductive", "contradiction")
+            else None,
+            pattern_type=obs.get("pattern_type") if level == "inductive" else None,
+            confidence=obs.get("confidence", "medium")
+            if level == "inductive"
+            else None,
+        )
+
+        # Create document with tree linkage at top level
         doc = schemas.DocumentCreate(
             content=content,
             session_name=session_name,
             level=level,
-            metadata=schemas.DocumentMetadata(
-                message_ids=message_ids,
-                message_created_at=message_created_at,
-            ),
+            metadata=metadata,
             embedding=embedding,
+            # Tree linkage columns
+            premise_ids=obs.get("premise_ids") if level == "deductive" else None,
+            source_ids=obs.get("source_ids")
+            if level in ("inductive", "contradiction")
+            else None,
         )
         documents.append(doc)
 
@@ -599,7 +756,8 @@ async def search_memory(
     observer: str,
     observed: str,
     query: str,
-    limit: int = 5,
+    limit: int,
+    levels: list[str] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -611,10 +769,17 @@ async def search_memory(
         observed: The peer who was observed
         query: Search query text
         limit: Maximum number of results
+        levels: Optional list of observation levels to filter by
+                (e.g., ["explicit"], ["deductive", "inductive", "contradiction", "vignette"])
 
     Returns:
         Representation object containing relevant observations
     """
+    # Build filter for levels if specified
+    filters: dict[str, Any] | None = None
+    if levels:
+        filters = {"level": {"in": levels}}
+
     documents = await crud.query_documents(
         db=db,
         workspace_name=workspace_name,
@@ -622,6 +787,7 @@ async def search_memory(
         observed=observed,
         query=query,
         top_k=limit,
+        filters=filters,
     )
 
     return Representation.from_documents(documents)
@@ -631,7 +797,7 @@ async def get_observation_context(
     db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
-    message_ids: list[int],
+    message_ids: list[str],
 ) -> list[models.Message]:
     """
     Retrieve messages for given message IDs along with surrounding context.
@@ -656,7 +822,7 @@ async def get_observation_context(
     stmt = (
         select(models.Message.seq_in_session)
         .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.id.in_(message_ids))
+        .where(models.Message.public_id.in_(message_ids))
     )
 
     if session_name:
@@ -992,11 +1158,8 @@ async def extract_preferences(
     """
     Extract user preferences and standing instructions from conversation history.
 
-    Performs both semantic and text searches to find:
-    - Standing instructions ("always do X", "never mention Y")
-    - Communication preferences ("I prefer brief responses")
-    - Content preferences ("include examples", "use bullet points")
-    - Decision-making preferences ("I prefer logical approaches")
+    Uses semantic search to find messages that might contain preferences or instructions.
+    This is language-agnostic and doesn't rely on keyword matching.
 
     Args:
         db: Database session
@@ -1005,85 +1168,20 @@ async def extract_preferences(
         observed: The peer whose preferences to extract
 
     Returns:
-        Dict with 'instructions' and 'preferences' lists
+        Dict with 'messages' list containing potentially relevant messages
     """
-    instructions: list[str] = []
-    preferences: list[str] = []
+    messages: list[str] = []
     seen_content: set[str] = set()  # Dedupe by content hash
 
-    # Text patterns to search for standing instructions
-    instruction_patterns = [
-        "always",
-        "never",
-        "don't ever",
-        "make sure to",
-        "remember to",
-        "when I ask",
-        "whenever I",
-    ]
-
-    # Text patterns for preferences
-    preference_patterns = [
-        "I prefer",
-        "I like",
-        "I want",
-        "I'd rather",
-        "I would rather",
-        "I enjoy",
-    ]
-
-    # Semantic queries for broader coverage
+    # Semantic queries to find preference-like content
     semantic_queries = [
         "user preferences and communication style",
         "standing instructions and rules to follow",
         "how user wants responses formatted",
-        "things user always or never wants",
+        "user requirements and constraints",
+        "things user wants or does not want",
     ]
 
-    # 1. Text search for instruction patterns
-    for pattern in instruction_patterns:
-        try:
-            snippets = await crud.grep_messages(
-                db,
-                workspace_name=workspace_name,
-                session_name=session_name,
-                text=pattern,
-                limit=10,
-                context_window=0,  # Just the matching message
-            )
-            for matches, _ in snippets:
-                for msg in matches:
-                    if msg.peer_name == observed:
-                        content_key = msg.content[:100].lower()
-                        if content_key not in seen_content:
-                            seen_content.add(content_key)
-                            # Extract the instruction
-                            instructions.append(f"'{msg.content.strip()}'")
-        except Exception as e:
-            logger.warning(f"Error searching for pattern '{pattern}': {e}")
-
-    # 2. Text search for preference patterns
-    for pattern in preference_patterns:
-        try:
-            snippets = await crud.grep_messages(
-                db,
-                workspace_name=workspace_name,
-                session_name=session_name,
-                text=pattern,
-                limit=10,
-                context_window=0,
-            )
-            for matches, _ in snippets:
-                for msg in matches:
-                    if msg.peer_name == observed:
-                        content_key = msg.content[:100].lower()
-                        if content_key not in seen_content:
-                            seen_content.add(content_key)
-                            preferences.append(f"'{msg.content.strip()}'")
-        except Exception as e:
-            logger.warning(f"Error searching for pattern '{pattern}': {e}")
-
-    # 3. Semantic search for broader coverage
     for query in semantic_queries:
         try:
             snippets = await crud.search_messages(
@@ -1091,33 +1189,23 @@ async def extract_preferences(
                 workspace_name=workspace_name,
                 session_name=session_name,
                 query=query,
-                limit=5,
+                limit=10,
                 context_window=0,
             )
             for matches, _ in snippets:
                 for msg in matches:
                     if msg.peer_name == observed:
-                        content_lower = msg.content.lower()
-                        # Check if this message contains preference-like content
-                        if any(
-                            p in content_lower
-                            for p in instruction_patterns + preference_patterns
-                        ):
-                            content_key = msg.content[:100].lower()
-                            if content_key not in seen_content:
-                                seen_content.add(content_key)
-                                if any(
-                                    p in content_lower for p in instruction_patterns
-                                ):
-                                    instructions.append(f"'{msg.content.strip()}'")
-                                else:
-                                    preferences.append(f"'{msg.content.strip()}'")
+                        content_key = msg.content[:100].lower()
+                        if content_key not in seen_content:
+                            seen_content.add(content_key)
+                            messages.append(f"'{msg.content.strip()}'")
         except Exception as e:
             logger.warning(f"Error in semantic search for '{query}': {e}")
 
     return {
-        "instructions": instructions[:20],  # Cap at 20 each
-        "preferences": preferences[:20],
+        "instructions": [],  # Deprecated - LLM will categorize
+        "preferences": [],  # Deprecated - LLM will categorize
+        "messages": messages[:30],  # Raw messages for LLM to process
     }
 
 
@@ -1133,6 +1221,9 @@ class ToolContext:
     current_messages: list[models.Message] | None
     include_observation_ids: bool
     history_token_limit: int
+    db_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # For consolidation specialist - source IDs to delete after creating vignette
+    vignette_source_ids: list[str] | None = None
 
 
 async def _handle_create_observations(
@@ -1144,59 +1235,117 @@ async def _handle_create_observations(
     if not observations:
         return "ERROR: observations list is empty"
 
+    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
+    valid_pattern_types = [
+        "preference",
+        "behavior",
+        "personality",
+        "tendency",
+        "correlation",
+    ]
+    valid_confidence = ["high", "medium", "low"]
+
     # Determine message context based on whether we have current_messages
     if ctx.current_messages:
-        # Deriver agent: require level field, use message IDs from batch
+        # Deriver agent: uses simplified schema, default all to explicit
         for i, obs in enumerate(observations):
             if "content" not in obs:
                 return f"ERROR: observation {i} missing 'content' field"
+            # Default to explicit - the simplified deriver schema doesn't include level
             if "level" not in obs:
-                return f"ERROR: observation {i} missing 'level' field"
-            if obs["level"] not in ["explicit", "deductive"]:
-                return f"ERROR: observation {i} has invalid level '{obs['level']}', must be 'explicit' or 'deductive'"
+                obs["level"] = "explicit"
+            # Enforce explicit-only for deriver
+            if obs["level"] != "explicit":
+                return f"ERROR: Deriver can only create 'explicit' observations, got '{obs['level']}' at index {i}"
 
         message_ids = [msg.id for msg in ctx.current_messages]
         message_created_at = str(ctx.current_messages[-1].created_at)
         obs_session_name = ctx.session_name or ctx.current_messages[0].session_name
     else:
-        # Dialectic agent: force deductive, no source messages
+        # Dreamer/Dialectic agent: allow deductive and inductive, no source messages
         if not ctx.session_name:
             return "ERROR: Cannot create observations without a session context"
 
-        for obs in observations:
+        for i, obs in enumerate(observations):
             if "content" not in obs:
-                return "ERROR: observation missing 'content' field"
-            obs["level"] = "deductive"
+                return f"ERROR: observation {i} missing 'content' field"
+            # Default to deductive for backwards compatibility
+            if "level" not in obs:
+                obs["level"] = "deductive"
+            if obs["level"] not in valid_levels:
+                return f"ERROR: observation {i} has invalid level '{obs['level']}'"
+
+            # Validate deductive-specific fields (tree linkage required)
+            if obs["level"] == "deductive":
+                if not obs.get("premise_ids"):
+                    return f"ERROR: deductive observation {i} requires 'premise_ids' field with document IDs of premises"
+                # Validate premise_ids are strings
+                for pid in obs.get("premise_ids", []):
+                    if not isinstance(pid, str):
+                        return f"ERROR: observation {i} premise_ids must be strings, got {type(pid)}"
+
+            # Validate inductive-specific fields (tree linkage required)
+            if obs["level"] == "inductive":
+                if not obs.get("source_ids"):
+                    return f"ERROR: inductive observation {i} requires 'source_ids' field with document IDs of sources"
+                # Validate source_ids are strings
+                for sid in obs.get("source_ids", []):
+                    if not isinstance(sid, str):
+                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
+                if (
+                    obs.get("pattern_type")
+                    and obs["pattern_type"] not in valid_pattern_types
+                ):
+                    return f"ERROR: observation {i} has invalid pattern_type '{obs['pattern_type']}'"
+                if obs.get("confidence") and obs["confidence"] not in valid_confidence:
+                    return f"ERROR: observation {i} has invalid confidence '{obs['confidence']}'"
+
+            # Validate contradiction-specific fields (need source_ids for the two contradicting obs)
+            if obs["level"] == "contradiction":
+                if not obs.get("source_ids"):
+                    return f"ERROR: contradiction observation {i} requires 'source_ids' field with IDs of contradicting observations"
+                if len(obs.get("source_ids", [])) < 2:
+                    return f"ERROR: contradiction observation {i} requires at least 2 source_ids (the contradicting observations)"
+                for sid in obs.get("source_ids", []):
+                    if not isinstance(sid, str):
+                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
 
         message_ids = []
         message_created_at = utc_now_iso()
         obs_session_name = ctx.session_name
 
-    await create_observations(
-        ctx.db,
-        observations=observations,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        session_name=obs_session_name,
-        workspace_name=ctx.workspace_name,
-        message_ids=message_ids,
-        message_created_at=message_created_at,
-    )
+    # Use lock to serialize database writes (prevents concurrent commit issues)
+    async with ctx.db_lock:
+        await create_observations(
+            ctx.db,
+            observations=observations,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            session_name=obs_session_name,
+            workspace_name=ctx.workspace_name,
+            message_ids=message_ids,
+            message_created_at=message_created_at,
+        )
 
     explicit_count = sum(1 for o in observations if o.get("level") == "explicit")
     deductive_count = sum(1 for o in observations if o.get("level") == "deductive")
-    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive)"
+    inductive_count = sum(1 for o in observations if o.get("level") == "inductive")
+    contradiction_count = sum(
+        1 for o in observations if o.get("level") == "contradiction"
+    )
+    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive, {contradiction_count} contradiction)"
 
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle update_peer_card tool."""
-    await update_peer_card(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        content=tool_input["content"],
-    )
+    async with ctx.db_lock:
+        await update_peer_card(
+            ctx.db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            content=tool_input["content"],
+        )
     return f"Updated peer card for {ctx.observed} by {ctx.observer}"
 
 
@@ -1228,7 +1377,7 @@ async def _handle_get_recent_history(
 
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
-    top_k = min(tool_input.get("top_k", 5), 20)  # Cap at 20
+    top_k = min(tool_input.get("top_k", 20), 40)
     mem: Representation = await search_memory(
         ctx.db,
         workspace_name=ctx.workspace_name,
@@ -1525,13 +1674,14 @@ async def _handle_delete_observations(
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 
-    deleted_count = await delete_observations(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        observation_ids=observation_ids,
-    )
+    async with ctx.db_lock:
+        deleted_count = await delete_observations(
+            ctx.db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            observation_ids=observation_ids,
+        )
     return f"Deleted {deleted_count} observations"
 
 
@@ -1556,30 +1706,17 @@ async def _handle_extract_preferences(
         observed=ctx.observed,
     )
 
-    instructions = results["instructions"]
-    preferences = results["preferences"]
+    messages = results.get("messages", [])
 
-    if not instructions and not preferences:
-        return "No preferences or standing instructions found in conversation history."
+    if not messages:
+        return "No potentially relevant preference or instruction messages found in conversation history."
 
-    output_parts: list[str] = []
-
-    if instructions:
-        output_parts.append(
-            f"**Standing Instructions Found ({len(instructions)}):**\n"
-            + "\n".join(f"- {inst}" for inst in instructions)
-        )
-
-    if preferences:
-        output_parts.append(
-            f"**Preferences Found ({len(preferences)}):**\n"
-            + "\n".join(f"- {pref}" for pref in preferences)
-        )
-
-    output_parts.append(
-        "\n**Action Required:** Review these and add relevant ones to the peer card using `update_peer_card`. "
-        + "Summarize standing instructions as clear rules (e.g., 'Always include cultural context when discussing social norms')."
-    )
+    output_parts: list[str] = [
+        f"**Potentially Relevant Messages ({len(messages)}):**",
+        "\n".join(f"- {msg}" for msg in messages),
+        "\n**Action Required:** Review these messages and extract any preferences or standing instructions to add to the peer card using `update_peer_card`. "
+        + "Summarize as clear rules (e.g., 'INSTRUCTION: Always include cultural context') or preferences (e.g., 'PREFERENCE: Brief responses').",
+    ]
 
     return "\n\n".join(output_parts)
 
@@ -1610,6 +1747,166 @@ def _format_message_snippets(
     return _truncate_tool_output(output)
 
 
+async def _handle_create_vignette(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle create_vignette tool - create vignette and delete source observations from context."""
+    content = tool_input.get("content")
+
+    if not content:
+        return "ERROR: 'content' is required"
+
+    # Get source_ids from context (set by consolidation specialist)
+    source_ids = ctx.vignette_source_ids
+    if not source_ids:
+        return "ERROR: No source_ids in context - this tool must be used via consolidation specialist"
+
+    if not ctx.session_name:
+        return "ERROR: Cannot create vignette without a session context"
+
+    async with ctx.db_lock:
+        # Create the vignette observation
+        embedding = await embedding_client.embed(content)
+
+        # Build metadata
+        metadata = schemas.DocumentMetadata(
+            message_ids=[],
+            message_created_at=utc_now_iso(),
+            source_ids=source_ids,
+            sources=[f"Consolidated from {len(source_ids)} observations"],
+        )
+
+        doc = schemas.DocumentCreate(
+            content=content,
+            session_name=ctx.session_name,
+            level="vignette",
+            metadata=metadata,
+            embedding=embedding,
+            source_ids=source_ids,
+        )
+
+        # Get or create collection
+        await crud.get_or_create_collection(
+            ctx.db,
+            ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+        )
+
+        # Create the vignette document
+        await crud.create_documents(
+            ctx.db,
+            documents=[doc],
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            deduplicate=False,  # Don't dedupe vignettes
+        )
+
+        # Delete the source observations
+        deleted_count = 0
+        for obs_id in source_ids:
+            try:
+                await crud.delete_document(
+                    ctx.db,
+                    workspace_name=ctx.workspace_name,
+                    document_id=obs_id,
+                    observer=ctx.observer,
+                    observed=ctx.observed,
+                )
+                deleted_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete source observation {obs_id}: {e}")
+
+    return f"Created vignette consolidating {len(source_ids)} observations, deleted {deleted_count} source observations"
+
+
+async def _handle_get_reasoning_chain(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_reasoning_chain tool."""
+    observation_id = tool_input.get("observation_id")
+    if not observation_id:
+        return "ERROR: 'observation_id' is required"
+
+    direction = tool_input.get("direction", "both")
+    if direction not in ("premises", "conclusions", "both"):
+        return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
+
+    # Get the observation itself
+    doc = await crud.get_document_by_id(ctx.db, ctx.workspace_name, observation_id)
+    if not doc:
+        return f"ERROR: Observation '{observation_id}' not found"
+
+    output_parts: list[str] = []
+
+    # Format the main observation
+    level = doc.level or "explicit"
+    output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
+
+    # Get premises/sources if requested
+    if direction in ("premises", "both"):
+        if level == "deductive" and doc.premise_ids:
+            premises = await crud.get_documents_by_ids(
+                ctx.db, ctx.workspace_name, doc.premise_ids
+            )
+            if premises:
+                premise_lines: list[Any] = []
+                for p in premises:
+                    p_level = p.level or "explicit"
+                    premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
+                output_parts.append(
+                    f"\n**Premises ({len(premises)}):**\n" + "\n".join(premise_lines)
+                )
+            else:
+                output_parts.append(
+                    f"\n**Premises:** Referenced {len(doc.premise_ids)} premise IDs but none found in database"
+                )
+        elif level == "inductive" and doc.source_ids:
+            sources = await crud.get_documents_by_ids(
+                ctx.db, ctx.workspace_name, doc.source_ids
+            )
+            if sources:
+                source_lines: list[Any] = []
+                for s in sources:
+                    s_level = s.level or "explicit"
+                    source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
+                output_parts.append(
+                    f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
+                )
+            else:
+                output_parts.append(
+                    f"\n**Sources:** Referenced {len(doc.source_ids)} source IDs but none found in database"
+                )
+        elif level == "explicit":
+            output_parts.append(
+                "\n**Premises/Sources:** N/A (explicit observations have no premises)"
+            )
+        else:
+            output_parts.append("\n**Premises/Sources:** None recorded")
+
+    # Get conclusions if requested
+    if direction in ("conclusions", "both"):
+        children = await crud.get_child_observations(
+            ctx.db,
+            ctx.workspace_name,
+            observation_id,
+            observer=ctx.observer,
+            observed=ctx.observed,
+        )
+        if children:
+            child_lines: list[Any] = []
+            for c in children:
+                c_level = c.level or "explicit"
+                child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
+            output_parts.append(
+                f"\n**Derived Conclusions ({len(children)}):**\n"
+                + "\n".join(child_lines)
+            )
+        else:
+            output_parts.append("\n**Derived Conclusions:** None found")
+
+    return "\n".join(output_parts)
+
+
 # Tool handler dispatch table
 _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "create_observations": _handle_create_observations,
@@ -1628,6 +1925,8 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "delete_observations": _handle_delete_observations,
     "finish_consolidation": _handle_finish_consolidation,
     "extract_preferences": _handle_extract_preferences,
+    "get_reasoning_chain": _handle_get_reasoning_chain,
+    "create_vignette": _handle_create_vignette,
 }
 
 
@@ -1640,6 +1939,7 @@ def create_tool_executor(
     current_messages: list[models.Message] | None = None,
     include_observation_ids: bool = False,
     history_token_limit: int = 8192,
+    vignette_source_ids: list[str] | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1656,6 +1956,7 @@ def create_tool_executor(
         current_messages: List of current messages being processed (optional, for deriver)
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
         history_token_limit: Maximum tokens for get_recent_history (default: 8192)
+        vignette_source_ids: For consolidation specialist - IDs of observations to delete after vignette creation
 
     Returns:
         An async callable that executes tools with the captured context
@@ -1669,6 +1970,7 @@ def create_tool_executor(
         current_messages=current_messages,
         include_observation_ids=include_observation_ids,
         history_token_limit=history_token_limit,
+        vignette_source_ids=vignette_source_ids,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -1705,6 +2007,9 @@ def create_tool_executor(
             # We don't re-raise because the LLM should be able to continue with other tools
             error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
             logger.error(error_msg, exc_info=True)
+            # Rollback the transaction to clear any failed state
+            # This is critical for PostgreSQL which blocks subsequent queries on failed transactions
+            await ctx.db.rollback()
             return error_msg
 
     return execute_tool

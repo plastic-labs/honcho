@@ -266,8 +266,7 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         # Then delete QueueItem entries
         await db.execute(
             delete(models.QueueItem).where(
-                func.split_part(models.QueueItem.work_unit_key, ":", 2)
-                == workspace_name
+                models.QueueItem.workspace_name == workspace_name
             )
         )
 

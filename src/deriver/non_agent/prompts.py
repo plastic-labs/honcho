@@ -5,7 +5,6 @@ This module contains simplified prompt templates focused only on observation ext
 NO peer card instructions, NO working representation - just extract observations.
 """
 
-import datetime
 from functools import cache
 from inspect import cleandoc as c
 
@@ -14,7 +13,6 @@ from src.utils.tokens import estimate_tokens
 
 def minimal_deriver_prompt(
     peer_id: str,
-    message_created_at: datetime.datetime,
     messages: str,
 ) -> str:
     """
@@ -22,7 +20,6 @@ def minimal_deriver_prompt(
 
     Args:
         peer_id: The ID of the user being analyzed.
-        message_created_at: Timestamp of the message.
         messages: All messages in the range (interleaving messages and new turns combined).
 
     Returns:
@@ -30,31 +27,23 @@ def minimal_deriver_prompt(
     """
     return c(
         f"""
-You analyze messages from {peer_id} to extract observations through explicit and deductive reasoning.
+Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
 
-Current timestamp: {message_created_at}
-
-OBSERVATION TYPES:
-1. EXPLICIT: Facts literally stated by {peer_id} - direct quotes/paraphrases only
+[EXPLICIT] DEFINITION: Facts about {peer_id} that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
    - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
 
-2. DEDUCTIVE: Conclusions that MUST be true given explicit facts + general knowledge
-   - Multiple premises → one conclusion
-   - Only derive if logically necessary (not probable/likely)
-   - May NOT use probabilistic conclusions as premises
-
 RULES:
-- Start each observation with {peer_id}'s name (e.g. "Maria is 25 years old")
-- NEVER use generic phrases like "The user..."
+- Properly attribute observations to the correct subject: if it is about {peer_id}, say so. If {peer_id} is referencing someone or something else, make that clear.
+- Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
-- DEDUCTIVE: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
+- EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
 
 Messages to analyze:
 <messages>
@@ -70,7 +59,6 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
     try:
         prompt = minimal_deriver_prompt(
             peer_id="",
-            message_created_at=datetime.datetime.now(datetime.timezone.utc),
             messages="",
         )
         return estimate_tokens(prompt)

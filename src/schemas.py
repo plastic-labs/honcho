@@ -1,7 +1,7 @@
 import datetime
 import ipaddress
 from enum import Enum
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 import tiktoken
@@ -495,9 +495,31 @@ class DocumentMetadata(BaseModel):
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
+    # Deductive observation fields
+    premise_ids: list[str] | None = Field(
+        default=None,
+        description="Document IDs of premise observations for tree traversal -- required for deductive observations",
+    )
     premises: list[str] | None = Field(
         default=None,
-        description="The premises of the deduction -- only applicable for deductive observations",
+        description="Human-readable premise text for display -- only applicable for deductive observations",
+    )
+    # Inductive observation fields
+    source_ids: list[str] | None = Field(
+        default=None,
+        description="Document IDs of source observations for tree traversal -- required for inductive observations",
+    )
+    sources: list[str] | None = Field(
+        default=None,
+        description="Human-readable source text for display -- only applicable for inductive observations",
+    )
+    pattern_type: str | None = Field(
+        default=None,
+        description="Type of pattern identified (preference, behavior, personality, tendency, correlation) -- only applicable for inductive observations",
+    )
+    confidence: str | None = Field(
+        default=None,
+        description="Confidence level (high, medium, low) -- only applicable for inductive observations",
     )
 
 
@@ -508,7 +530,7 @@ class DocumentCreate(DocumentBase):
     )
     level: DocumentLevel = Field(
         default="explicit",
-        description="The level of the document (explicit or deductive)",
+        description="The level of the document (explicit, deductive, or inductive)",
     )
     times_derived: int = Field(
         default=1,
@@ -517,6 +539,15 @@ class DocumentCreate(DocumentBase):
     )
     metadata: DocumentMetadata = Field()
     embedding: list[float] = Field()
+    # Tree linkage fields (also stored in metadata for backward compatibility)
+    premise_ids: list[str] | None = Field(
+        default=None,
+        description="Document IDs of premise observations -- for deductive observations",
+    )
+    source_ids: list[str] | None = Field(
+        default=None,
+        description="Document IDs of source observations -- for inductive observations",
+    )
 
 
 class ObservationGet(BaseModel):
@@ -720,6 +751,15 @@ class TriggerDreamRequest(BaseModel):
     )
     dream_type: DreamType = Field(..., description="Type of dream to trigger")
     session_id: str = Field(..., description="Session ID to scope the dream to")
+    reasoning_focus: Literal["deduction", "induction", "knowledge_update"] | None = (
+        Field(
+            None,
+            description="Optional focus mode to bias the dream toward specific reasoning: "
+            + "'deduction' prioritizes logical inferences from explicit facts, "
+            + "'induction' prioritizes pattern recognition across observations, "
+            + "'knowledge_update' detects when facts have changed over time",
+        )
+    )
 
 
 # Webhook endpoint schemas

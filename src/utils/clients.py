@@ -201,6 +201,15 @@ M = TypeVar("M", bound=BaseModel)
 # Context variable to track retry attempts for provider switching
 _current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
+
+def _get_effective_temperature(temperature: float | None) -> float | None:
+    """Adjust temperature on retries - bump 0.0 to 0.2 to get different results."""
+    if temperature == 0.0 and _current_attempt.get() > 1:
+        logger.debug("Bumping temperature from 0.0 to 0.2 on retry")
+        return 0.2
+    return temperature
+
+
 CLIENTS: dict[
     SupportedProviders,
     AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
@@ -358,6 +367,33 @@ def extract_openai_reasoning_content(response: Any) -> str | None:
     return None
 
 
+def extract_openai_reasoning_details(response: Any) -> list[dict[str, Any]]:
+    """
+    Extract reasoning_details array from an OpenAI/OpenRouter ChatCompletion response.
+
+    OpenRouter returns reasoning blocks in reasoning_details that must be preserved
+    and passed back in subsequent requests for Gemini models with tool use.
+
+    Args:
+        response: OpenAI ChatCompletion response object
+
+    Returns:
+        List of reasoning detail objects, or empty list if not present
+    """
+    try:
+        message = response.choices[0].message
+        # Check for reasoning_details (OpenRouter/Gemini)
+        if hasattr(message, "reasoning_details") and message.reasoning_details:
+            # Return the full array for preservation
+            return [
+                detail.model_dump() if hasattr(detail, "model_dump") else dict(detail)
+                for detail in message.reasoning_details
+            ]
+    except (AttributeError, IndexError, TypeError):
+        pass
+    return []
+
+
 def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
     """
     Extract cache token counts from OpenAI-style usage objects.
@@ -429,6 +465,10 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
     thinking_content: str | None = None
+    # Full thinking blocks with signatures for multi-turn conversation replay (Anthropic only)
+    thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    # OpenRouter reasoning_details for Gemini models - must be preserved across turns
+    reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -464,6 +504,7 @@ async def _execute_tool_loop(
     max_tool_iterations: int,
     response_model: type[BaseModel] | None,
     json_mode: bool,
+    temperature: float | None,
     stop_seqs: list[str] | None,
     reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
@@ -497,6 +538,7 @@ async def _execute_tool_loop(
         max_tool_iterations: Maximum iterations before forcing completion
         response_model: Optional Pydantic model for structured output
         json_mode: Whether to use JSON mode
+        temperature: Temperature for the LLM (default **none**, only some models support this)
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
@@ -558,6 +600,7 @@ async def _execute_tool_loop(
                 max_tokens,
                 response_model,
                 json_mode,
+                _get_effective_temperature(temperature),
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -603,7 +646,11 @@ async def _execute_tool_loop(
 
         # Add assistant message with tool calls to conversation
         assistant_message = _format_assistant_tool_message(
-            current_provider, response.content, response.tool_calls_made
+            current_provider,
+            response.content,
+            response.tool_calls_made,
+            response.thinking_blocks,
+            response.reasoning_details,
         )
         conversation_messages.append(assistant_message)
 
@@ -684,6 +731,7 @@ async def _execute_tool_loop(
             max_tokens,
             response_model,
             json_mode,
+            _get_effective_temperature(temperature),
             stop_seqs,
             reasoning_effort,
             verbosity,
@@ -721,6 +769,8 @@ def _format_assistant_tool_message(
     provider: SupportedProviders,
     content: Any,
     tool_calls: list[dict[str, Any]],
+    thinking_blocks: list[dict[str, Any]] | None = None,
+    reasoning_details: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Format an assistant message with tool calls for a specific provider.
@@ -729,6 +779,8 @@ def _format_assistant_tool_message(
         provider: The LLM provider
         content: The text content from the response
         tool_calls: List of tool call dicts with id, name, input keys
+        thinking_blocks: Full thinking blocks with signatures for multi-turn replay (Anthropic only)
+        reasoning_details: OpenRouter reasoning_details for Gemini models (must be preserved)
 
     Returns:
         Provider-formatted assistant message dict
@@ -736,6 +788,11 @@ def _format_assistant_tool_message(
     if provider == "anthropic":
         # Anthropic requires content to be a list of blocks including tool use blocks
         content_blocks: list[dict[str, Any]] = []
+
+        # Add thinking blocks FIRST if present (required by Anthropic when extended thinking is enabled)
+        # These include signatures which are required for multi-turn conversation replay
+        if thinking_blocks:
+            content_blocks.extend(thinking_blocks)
 
         # Add text content if present
         if isinstance(content, str) and content:
@@ -795,11 +852,15 @@ def _format_assistant_tool_message(
                     },
                 }
             )
-        return {
+        msg: dict[str, Any] = {
             "role": "assistant",
             "content": content if isinstance(content, str) else None,
             "tool_calls": openai_tool_calls,
         }
+        # Include reasoning_details for OpenRouter/Gemini (required for multi-turn tool use)
+        if reasoning_details:
+            msg["reasoning_details"] = reasoning_details
+        return msg
 
 
 def _append_tool_results(
@@ -874,6 +935,7 @@ async def honcho_llm_call(
     *,
     response_model: type[M],
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -899,6 +961,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -924,6 +987,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -949,6 +1013,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -976,6 +1041,7 @@ async def honcho_llm_call(
         track_name: Optional name for AI tracking
         response_model: Optional Pydantic model for structured output
         json_mode: Whether to use JSON mode
+        temperature: Temperature for the LLM (default **none**, only some models support this)
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
@@ -1089,6 +1155,7 @@ async def honcho_llm_call(
                 max_tokens,
                 response_model,
                 json_mode,
+                _get_effective_temperature(temperature),
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1105,6 +1172,7 @@ async def honcho_llm_call(
                 max_tokens,
                 response_model,
                 json_mode,
+                _get_effective_temperature(temperature),
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1171,6 +1239,7 @@ async def honcho_llm_call(
         max_tool_iterations=clamped_iterations,
         response_model=response_model,
         json_mode=json_mode,
+        temperature=temperature,
         stop_seqs=stop_seqs,
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
@@ -1191,6 +1260,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[M],
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1211,6 +1281,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1231,6 +1302,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1250,6 +1322,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    temperature: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1273,6 +1346,9 @@ async def honcho_llm_call_inner(
         "messages": messages,
         "stream": stream,
     }
+
+    if temperature is not None:
+        params["temperature"] = temperature
 
     if stream:
         # Return async generator for streaming responses
@@ -1307,6 +1383,9 @@ async def honcho_llm_call_inner(
                 "max_tokens": params["max_tokens"],
                 "messages": non_system_messages,
             }
+
+            if temperature is not None:
+                anthropic_params["temperature"] = temperature
 
             # Add system parameter if there are system messages
             # Use cache_control for prompt caching
@@ -1369,13 +1448,22 @@ async def honcho_llm_call_inner(
 
             # Extract text content, thinking blocks, and tool use blocks from content blocks
             text_blocks: list[str] = []
-            thinking_blocks: list[str] = []
+            thinking_text_blocks: list[str] = []
+            thinking_full_blocks: list[dict[str, Any]] = []
             tool_calls: list[dict[str, Any]] = []
             for block in anthropic_response.content:
                 if isinstance(block, TextBlock):
                     text_blocks.append(block.text)
                 elif isinstance(block, ThinkingBlock):
-                    thinking_blocks.append(block.thinking)
+                    thinking_text_blocks.append(block.thinking)
+                    # Store full block with signature for multi-turn replay
+                    thinking_full_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": block.thinking,
+                            "signature": block.signature,
+                        }
+                    )
                 elif isinstance(block, ToolUseBlock):
                     tool_calls.append(
                         {
@@ -1390,7 +1478,9 @@ async def honcho_llm_call_inner(
             stop_reason = anthropic_response.stop_reason
 
             text_content = "\n".join(text_blocks)
-            thinking_content = "\n".join(thinking_blocks) if thinking_blocks else None
+            thinking_content = (
+                "\n".join(thinking_text_blocks) if thinking_text_blocks else None
+            )
 
             # Extract cache token counts from Anthropic usage
             # Anthropic's input_tokens = uncached tokens only
@@ -1424,6 +1514,7 @@ async def honcho_llm_call_inner(
                         finish_reasons=[stop_reason] if stop_reason else [],
                         tool_calls_made=tool_calls,
                         thinking_content=thinking_content,
+                        thinking_blocks=thinking_full_blocks,
                     )
                 except (json.JSONDecodeError, ValidationError, ValueError) as e:
                     raise ValueError(
@@ -1439,6 +1530,7 @@ async def honcho_llm_call_inner(
                 finish_reasons=[stop_reason] if stop_reason else [],
                 tool_calls_made=tool_calls,
                 thinking_content=thinking_content,
+                thinking_blocks=thinking_full_blocks,
             )
 
         case AsyncOpenAI():
@@ -1471,6 +1563,10 @@ async def honcho_llm_call_inner(
                 "model": params["model"],
                 "messages": processed_messages,
             }
+
+            if temperature is not None and "gpt-5" not in model:
+                openai_params["temperature"] = temperature
+
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
                 if reasoning_effort:
@@ -1565,7 +1661,7 @@ async def honcho_llm_call_inner(
                     logger.warning(
                         "Using fallback empty Representation due to validation error"
                     )
-                    response_obj = PromptRepresentation(explicit=[], deductive=[])
+                    response_obj = PromptRepresentation(explicit=[])  # , deductive=[])
 
                 cache_creation, cache_read = extract_openai_cache_tokens(usage)
                 return HonchoLLMCallResponse(
@@ -1657,11 +1753,15 @@ async def honcho_llm_call_inner(
                     finish_reasons=[finish_reason] if finish_reason else [],
                     tool_calls_made=tool_calls_list,
                     thinking_content=extract_openai_reasoning_content(response),
+                    reasoning_details=extract_openai_reasoning_details(response),
                 )
 
         case genai.Client():
             # Build config for Gemini
             gemini_config: dict[str, Any] = {}
+
+            if temperature is not None:
+                gemini_config["temperature"] = temperature
 
             # Add tools if provided
             if tools:
@@ -1852,6 +1952,9 @@ async def honcho_llm_call_inner(
                 "max_tokens": params["max_tokens"],
                 "messages": params["messages"],
             }
+
+            if temperature is not None:
+                groq_params["temperature"] = temperature
 
             if response_model:
                 groq_params["response_format"] = response_model
