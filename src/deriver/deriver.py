@@ -472,9 +472,9 @@ class CertaintyReasoner:
             ]
             accumulate_metric(
                 f"deriver_{self.ctx[-1].id}_{self.observer}",
-                "new_peer_card"
+                "updated_peer_card"
                 if self.observer == self.observed
-                else f"new_{self.observed}_peer_card",
+                else f"updated_{self.observed}_peer_card",
                 "\n".join(new_peer_card),
                 "blob",
             )
