@@ -113,6 +113,7 @@ reportExplicitAny = false
 allowedUntypedLibraries = ["langfuse"]
 reportImplicitOverride = false
 reportImportCycles = false
+reportDeprecated = false
 
 [[tool.uv.index]]
 name = "testpypi"

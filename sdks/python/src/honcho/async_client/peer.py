@@ -501,7 +501,7 @@ class AsyncPeer(PeerBase):
         items: list[str] = response.peer_card
         return "\n".join(items)
 
-    async def working_rep(
+    async def get_representation(
         self,
         session: str | SessionBase | None = None,
         target: str | PeerBase | None = None,
@@ -512,7 +512,7 @@ class AsyncPeer(PeerBase):
         max_observations: int | None = None,
     ) -> "Representation":
         """
-        Get a working representation for this peer.
+        Get a representation for this peer.
 
         Args:
             session: Optional session to scope the representation to.
@@ -530,14 +530,14 @@ class AsyncPeer(PeerBase):
         Example:
             ```python
             # Get global representation
-            rep = await peer.working_rep()
+            rep = await peer.get_representation()
             print(rep)
 
             # Get representation scoped to a session
-            session_rep = await peer.working_rep(session='session-123')
+            session_rep = await peer.get_representation(session='session-123')
 
             # Get representation with semantic search
-            searched_rep = await peer.working_rep(
+            searched_rep = await peer.get_representation(
                 search_query='preferences',
                 search_top_k=10,
                 max_observations=50

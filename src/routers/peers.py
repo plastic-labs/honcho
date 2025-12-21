@@ -234,16 +234,16 @@ async def chat(
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
 )
-async def get_working_representation(
+async def get_representation(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
     ),
 ):
-    """Get a peer's working representation for a session.
+    """Get a peer's representation for a session.
 
-    If a session_id is provided in the body, we get the working representation of the peer in that session.
+    If a session_id is provided in the body, we get the representation of the peer in that session.
     If a target is provided, we get the representation of the target from the perspective of the peer.
     If no target is provided, we get the omniscient Honcho representation of the peer.
     """
@@ -266,9 +266,7 @@ async def get_working_representation(
         )
         return {"representation": representation}
     except ValueError as e:
-        logger.warning(
-            f"Failed to get working representation for peer {peer_id}: {str(e)}"
-        )
+        logger.warning(f"Failed to get representation for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer or session not found") from e
 
 
