@@ -1,0 +1,173 @@
+name: Start Fly Runner
+
+on:
+  workflow_call:
+    outputs:
+      runner-ready:
+        description: "Whether the runner is ready"
+        value: ${{ jobs.start-runner.outputs.runner-ready }}
+      machine-id:
+        description: "The Fly machine ID that was started"
+        value: ${{ jobs.start-runner.outputs.machine-id }}
+      runner-labels:
+        description: "Labels to target the self-hosted runner"
+        value: ${{ jobs.start-runner.outputs.runner-labels }}
+      runner-name:
+        description: "Resolved GitHub runner name"
+        value: ${{ jobs.start-runner.outputs.runner-name }}
+
+env:
+  FLY_RUNNER_APP: ivysaur
+  FLY_RUNNER_REGION: iad
+  FLY_RUNNER_IMAGE: registry.fly.io/ivysaur:latest
+
+jobs:
+  start-runner:
+    name: Start Fly Runner
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      runner-ready: ${{ steps.wait-for-runner.outputs.ready }}
+      machine-id: ${{ steps.machine-management.outputs.machine-id }}
+      runner-labels: ${{ steps.generate-labels.outputs.labels }}
+      runner-name: ${{ steps.wait-for-runner.outputs.runner-name }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate unique runner labels
+        id: generate-labels
+        run: |
+          UNIQUE_LABELS='"self-hosted","${{ github.run_id }}"'
+          echo "Generated unique labels: $UNIQUE_LABELS"
+          echo "labels=$UNIQUE_LABELS" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Get Fly app info
+        id: get-app-info
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
+        run: |
+          echo "Getting app info for ${FLY_RUNNER_APP}..."
+          flyctl status -a "${FLY_RUNNER_APP}"
+
+      - name: Set GH_TOKEN in Fly secrets
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
+        run: |
+          echo "Setting GH_TOKEN in Fly secrets..."
+          flyctl secrets set GH_TOKEN="${{ secrets.GH_TOKEN_ACTIONS }}" -a "${FLY_RUNNER_APP}"
+
+      - name: Fly machine management
+        id: machine-management
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
+        run: |
+          set -euo pipefail
+
+          # Get list of machines and their status
+          MACHINES_JSON=$(flyctl machines list -a "${FLY_RUNNER_APP}" --json)
+
+          # Count online machines
+          ONLINE_COUNT=$(echo "$MACHINES_JSON" | jq '[.[] | select(.state == "started")] | length')
+          echo "📊 Online machines: $ONLINE_COUNT"
+
+          if [ "$ONLINE_COUNT" -ge 2 ]; then
+            echo "✅ Found $ONLINE_COUNT online machines (>=2), will reuse existing machine"
+
+            # Pick the first online machine
+            MACHINE_ID=$(echo "$MACHINES_JSON" | jq -r '[.[] | select(.state == "started")][0].id')
+
+            if [ -z "$MACHINE_ID" ] || [ "$MACHINE_ID" = "null" ]; then
+              echo "❌ Failed to find online machine ID"
+              exit 1
+            fi
+
+            echo "🔄 Reusing machine ID: $MACHINE_ID"
+            echo "machine-id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
+
+          else
+            echo "📦 Need to create new machine (only $ONLINE_COUNT online machines)"
+
+            # Get available volumes
+            VOLUMES_JSON=$(flyctl volumes list -a "${FLY_RUNNER_APP}" --json)
+
+            # Find a volume with null attached_machine_id
+            AVAILABLE_VOLUME=$(echo "$VOLUMES_JSON" | jq -r '[.[] | select(.attached_machine_id == null)][0].id')
+
+            if [ -z "$AVAILABLE_VOLUME" ] || [ "$AVAILABLE_VOLUME" = "null" ]; then
+              echo "❌ No available volumes found"
+              echo "Available volumes: $(echo "$VOLUMES_JSON" | jq -r '.[] | select(.attached_machine_id == null) | .id')"
+              exit 1
+            fi
+
+            echo "📁 Using available volume: $AVAILABLE_VOLUME"
+
+            # Create new machine with the available volume
+            # Note: GH_TOKEN should be set via Fly secrets: flyctl secrets set GH_TOKEN=...
+            FULL_OUTPUT=$(flyctl machines run "${FLY_RUNNER_IMAGE}" \
+              -a "${FLY_RUNNER_APP}" \
+              --region "${FLY_RUNNER_REGION}" \
+              --env RUN_ID=${{ github.run_id }} \
+              --env TEST_TYPE="honcho-unified-runner" \
+              --vm-size shared-cpu-8x \
+              --vm-memory 8192 \
+              --volume "$AVAILABLE_VOLUME":/mnt/vol )
+
+            MACHINE_ID=$(echo "$FULL_OUTPUT" | grep "Machine ID:" | awk '{print $3}')
+            echo "✅ Created new machine ID: $MACHINE_ID"
+            echo "machine-id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for runner to be online
+        id: wait-for-runner
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ACTIONS }}
+          MAX_WAIT: 420
+        run: |
+          set -euo pipefail
+          if [ -z "${GITHUB_TOKEN}" ]; then
+            echo "GH_TOKEN secret is required to poll the Actions runner API."
+            exit 1
+          fi
+
+          EXPECTED_RUNNER_NAME="honcho-unified-runner-${{ github.run_id }}"
+          echo "Waiting for runner named ${EXPECTED_RUNNER_NAME} to come online..."
+
+          WAITED=0
+          RUNNER_NAME=""
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            RESPONSE=$(curl -s \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runners")
+
+            if echo "$RESPONSE" | grep -q '"message"'; then
+              echo "API Error: $(echo "$RESPONSE" | jq -r '.message')"
+              exit 1
+            fi
+
+            # Find runner with exact name and is online and not busy
+            RUNNER_LINE=$(echo "$RESPONSE" | jq -r --arg runner_name "$EXPECTED_RUNNER_NAME" '.runners[]? | select(.name == $runner_name) | select(.status == "online") | select(.busy == false) | "\(.name)|\(.id)"' | head -n 1)
+
+            if [ -n "$RUNNER_LINE" ]; then
+              RUNNER_NAME=$(echo "$RUNNER_LINE" | cut -d'|' -f1)
+              echo "✅ Found runner: ${RUNNER_NAME}"
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              echo "runner-name=${RUNNER_NAME}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "⏳ Waiting for runner... (${WAITED}s elapsed)"
+            sleep 15
+            WAITED=$((WAITED + 15))
+          done
+
+          echo "Runner failed to come online within ${MAX_WAIT} seconds"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          exit 1
