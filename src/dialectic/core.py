@@ -135,6 +135,8 @@ class DialecticAgent:
         - 25 explicit observations (direct facts from messages)
         - 25 derived observations (deductive, inductive, contradiction, vignette)
 
+        If PVD is enabled, uses Probabilistic Vector Database scoring.
+
         Args:
             query: The user's query
 
@@ -142,27 +144,70 @@ class DialecticAgent:
             Formatted observations string or None if no observations found
         """
         try:
-            # Search explicit observations separately
-            explicit_repr = await search_memory(
-                db=self.db,
-                workspace_name=self.workspace_name,
-                observer=self.observer,
-                observed=self.observed,
-                query=query,
-                limit=25,
-                levels=["explicit"],
-            )
+            # Check if PVD is enabled
+            if settings.DIALECTIC.PVD.ENABLED:
+                # Use PVD-enhanced retrieval
+                from src.dialectic.pvd.retrieval import pvd_search
+                from src.utils.representation import Representation
 
-            # Search derived observations separately
-            derived_repr = await search_memory(
-                db=self.db,
-                workspace_name=self.workspace_name,
-                observer=self.observer,
-                observed=self.observed,
-                query=query,
-                limit=25,
-                levels=["deductive", "inductive", "contradiction", "vignette"],
-            )
+                # Search explicit observations with PVD
+                explicit_docs, explicit_meta = await pvd_search(
+                    db=self.db,
+                    workspace_name=self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    query=query,
+                    session_name=self.session_name,
+                    top_k=25,
+                    levels=["explicit"],
+                )
+
+                # Search derived observations with PVD
+                derived_docs, derived_meta = await pvd_search(
+                    db=self.db,
+                    workspace_name=self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    query=query,
+                    session_name=self.session_name,
+                    top_k=25,
+                    levels=["deductive", "inductive", "contradiction", "vignette"],
+                )
+
+                # Log PVD metadata
+                logger.info(
+                    f"PVD prefetch: query_type={explicit_meta['query_type']}, "
+                    f"α={explicit_meta['parameters'].alpha:.2f}, "
+                    f"β={explicit_meta['parameters'].beta:.2f}, "
+                    f"γ={explicit_meta['parameters'].gamma:.2f}, "
+                    f"timing={explicit_meta['timing_info']['total_ms']:.0f}ms"
+                )
+
+                # Convert to Representation format
+                explicit_repr = Representation.from_documents(explicit_docs)
+                derived_repr = Representation.from_documents(derived_docs)
+
+            else:
+                # Use standard semantic search
+                explicit_repr = await search_memory(
+                    db=self.db,
+                    workspace_name=self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    query=query,
+                    limit=25,
+                    levels=["explicit"],
+                )
+
+                derived_repr = await search_memory(
+                    db=self.db,
+                    workspace_name=self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    query=query,
+                    limit=25,
+                    levels=["deductive", "inductive", "contradiction", "vignette"],
+                )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None

@@ -77,6 +77,18 @@ Peer cards are **constructed summaries** - they are synthesized from the same ob
 - Information in a peer card originates from observations you can also find via `search_memory`
 - The peer card is a convenience summary, not a separate source of truth
 
+## RETRIEVAL STRATEGY
+
+Your memory retrieval uses an intelligent Probabilistic Vector Database (PVD) system that automatically adapts to different query types:
+
+- **Temporal/event queries** (when, recently, latest): Emphasizes novel, recently-changed information
+- **Preference queries** (usually, typically, prefers): Emphasizes stable patterns within sessions
+- **Contradiction queries**: Balances session-specific and global context to surface conflicts
+- **Factual lookup**: Prioritizes semantic similarity
+- **Multi-session queries**: Minimizes session bias, searches across all conversations
+
+The system automatically optimizes retrieval based on your query - no special syntax needed. You don't need to think about this; just search naturally and trust that relevant information will surface.
+
 ## AVAILABLE TOOLS
 
 **Observation Tools (read):**

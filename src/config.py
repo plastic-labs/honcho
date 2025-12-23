@@ -285,6 +285,43 @@ class PeerCardSettings(HonchoSettings):
     ENABLED: bool = True
 
 
+class PVDSettings(BaseModel):
+    """Settings for Probabilistic Vector Database retrieval."""
+
+    ENABLED: bool = False  # Feature flag to enable/disable PVD retrieval
+
+    # Tree configuration
+    TREE_TYPE: Literal[
+        "kdtree", "balltree", "rptree", "covertree", "lsh", "graph", "prototype"
+    ] = "kdtree"
+    TREE_K: Annotated[int, Field(default=5, gt=0, le=20)] = 5
+
+    # Semantic oversampling factor (fetch top_k * SEMANTIC_OVERSAMPLE candidates)
+    SEMANTIC_OVERSAMPLE: Annotated[int, Field(default=3, gt=1, le=10)] = 3
+
+    # LLM settings for classification and parameter generation
+    # Defaults to anthropic with fast models (Haiku) for low latency
+    PROVIDER: SupportedProviders = "anthropic"
+    CLASSIFIER_MODEL: str = "claude-haiku-4-5"
+    PARAMETER_MODEL: str = "claude-haiku-4-5"
+
+    # Fallback parameters (used if LLM generation fails)
+    DEFAULT_ALPHA: Annotated[float, Field(default=0.6, ge=0.0, le=1.0)] = 0.6
+    DEFAULT_BETA: Annotated[float, Field(default=0.2, ge=0.0, le=1.0)] = 0.2
+    DEFAULT_GAMMA: Annotated[float, Field(default=0.2, ge=0.0, le=1.0)] = 0.2
+
+    # Performance limits
+    MAX_GLOBAL_OBSERVATIONS: Annotated[int, Field(default=10000, gt=0)] = 10000
+
+    # Skip tree building if weights are too small (optimization)
+    MIN_BETA_FOR_SESSION_TREE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = (
+        0.1
+    )
+    MIN_GAMMA_FOR_GLOBAL_TREE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = (
+        0.1
+    )
+
+
 class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
 
@@ -307,6 +344,9 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
     SESSION_HISTORY_MAX_TOKENS: Annotated[
         int, Field(default=16_384, ge=0, le=100_000)
     ] = 16_384
+
+    # Probabilistic Vector Database settings
+    PVD: PVDSettings = Field(default_factory=PVDSettings)
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":

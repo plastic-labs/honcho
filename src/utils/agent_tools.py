@@ -758,9 +758,13 @@ async def search_memory(
     query: str,
     limit: int,
     levels: list[str] | None = None,
+    session_name: str | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
+
+    If PVD is enabled, uses Probabilistic Vector Database scoring
+    with query-adaptive parameters.
 
     Args:
         db: Database session
@@ -771,11 +775,33 @@ async def search_memory(
         limit: Maximum number of results
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction", "vignette"])
+        session_name: Optional session context for PVD entity-conditioned probability
 
     Returns:
         Representation object containing relevant observations
     """
-    # Build filter for levels if specified
+    # Check if PVD is enabled
+    if settings.DIALECTIC.PVD.ENABLED:
+        try:
+            from src.dialectic.pvd.retrieval import pvd_search
+
+            # Use PVD-enhanced retrieval
+            documents, _ = await pvd_search(
+                db=db,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                query=query,
+                session_name=session_name,
+                top_k=limit,
+                levels=levels,
+            )
+            return Representation.from_documents(documents)
+        except Exception as e:
+            logger.warning(f"PVD search failed, falling back to semantic: {e}")
+            # Fall through to standard search
+
+    # Standard semantic search (fallback or when PVD disabled)
     filters: dict[str, Any] | None = None
     if levels:
         filters = {"level": {"in": levels}}
