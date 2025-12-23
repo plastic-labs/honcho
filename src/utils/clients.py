@@ -22,6 +22,7 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
+from src.utils.finetuning_traces import log_finetuning_trace
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.logging import conditional_observe
 from src.utils.representation import PromptRepresentation
@@ -950,6 +951,7 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
+    trace_name: str | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -976,6 +978,7 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
+    trace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -1002,6 +1005,7 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
+    trace_name: str | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -1028,6 +1032,7 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
+    trace_name: str | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """
     Make an LLM call with automatic backup provider failover. Backup provider/model
@@ -1215,7 +1220,21 @@ async def honcho_llm_call(
 
     # If no tools or no tool_executor, just call once and return
     if not tools or not tool_executor:
-        return await decorated()
+        result = await decorated()
+        if trace_name:
+            log_finetuning_trace(
+                task_type=trace_name,
+                llm_settings=llm_settings,
+                prompt=prompt,
+                response=result,
+                max_tokens=max_tokens,
+                thinking_budget_tokens=thinking_budget_tokens,
+                reasoning_effort=reasoning_effort,
+                json_mode=json_mode,
+                stop_seqs=stop_seqs,
+                messages=messages,
+            )
+        return result
 
     # Validate and clamp max_tool_iterations
     clamped_iterations = max(
@@ -1228,7 +1247,7 @@ async def honcho_llm_call(
         )
 
     # Delegate to the tool execution loop
-    return await _execute_tool_loop(
+    result = await _execute_tool_loop(
         llm_settings=llm_settings,
         prompt=prompt,
         max_tokens=max_tokens,
@@ -1250,6 +1269,20 @@ async def honcho_llm_call(
         get_provider_and_model=_get_provider_and_model,
         before_retry_callback=before_retry_callback,
     )
+    if trace_name:
+        log_finetuning_trace(
+            task_type=trace_name,
+            llm_settings=llm_settings,
+            prompt=prompt,
+            response=result,
+            max_tokens=max_tokens,
+            thinking_budget_tokens=thinking_budget_tokens,
+            reasoning_effort=reasoning_effort,
+            json_mode=json_mode,
+            stop_seqs=stop_seqs,
+            messages=messages,
+        )
+    return result
 
 
 @overload
