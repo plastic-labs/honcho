@@ -9,7 +9,6 @@ from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
-from src.utils.finetuning_traces import log_finetuning_trace
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import accumulate_metric, log_performance_metrics
 from src.utils.representation import PromptRepresentation, Representation
@@ -124,22 +123,9 @@ async def process_representation_tasks_batch(
         reasoning_effort="minimal",
         enable_retry=True,
         retry_attempts=3,
+        trace_name="minimal_deriver",
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
-
-    # Log fine-tuning trace
-    # TODO: this should really be a fixture on honcho_llm_call
-    log_finetuning_trace(
-        task_type="minimal_deriver",
-        llm_settings=settings.DERIVER,
-        prompt=prompt,
-        response=response,
-        max_tokens=max_tokens,
-        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
-        reasoning_effort="minimal",
-        json_mode=True,
-        stop_seqs=["   \n", "\n\n\n\n"],
-    )
 
     accumulate_metric(
         f"minimal_deriver_{latest_message.id}_{observer}",

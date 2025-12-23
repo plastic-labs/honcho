@@ -273,6 +273,7 @@ class DialecticAgent:
             track_name="Dialectic Agent",
             thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS,
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+            trace_name="dialectic_chat",
         )
 
         # Log tool calls made with inputs and outputs
