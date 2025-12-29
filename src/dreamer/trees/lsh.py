@@ -2,7 +2,11 @@
 Locality-Sensitive Hashing based surprisal estimation.
 """
 
+from typing import Any
+
 import numpy as np
+from numpy.typing import NDArray
+
 from .base import SurprisalTree
 
 
@@ -12,35 +16,44 @@ class LSHSurprisal(SurprisalTree):
     O(1) operations using hash collision frequency as density proxy.
     """
 
-    def __init__(self, num_tables: int = 10, num_bits: int = 8):
-        super().__init__()
+    num_tables: int
+    num_bits: int
+    tables: list[dict[int, int]]
+    hash_directions: list[NDArray[np.floating[Any]]]
+    initialized: bool
+    total_points: int
+
+    def __init__(
+        self, num_tables: int = 10, num_bits: int = 8, max_leaf_size: int = 10
+    ) -> None:
+        super().__init__(max_leaf_size)
         self.num_tables = num_tables
         self.num_bits = num_bits
-        self.tables = [dict() for _ in range(num_tables)]
+        self.tables = [{} for _ in range(num_tables)]
         self.hash_directions = []
         self.initialized = False
 
-    def _initialize_hash_functions(self, dim: int):
+    def _initialize_hash_functions(self, dim: int) -> None:
         """Initialize random projection directions for LSH."""
         if not self.initialized:
             for _ in range(self.num_tables):
-                # Random projection directions
-                directions = np.random.randn(self.num_bits, dim)
-                directions = directions / np.linalg.norm(directions, axis=1, keepdims=True)
+                directions: NDArray[np.floating[Any]] = np.random.randn(
+                    self.num_bits, dim
+                )
+                directions = directions / np.linalg.norm(
+                    directions, axis=1, keepdims=True
+                )
                 self.hash_directions.append(directions)
             self.initialized = True
 
     def _hash_vector(self, point: np.ndarray, table_idx: int) -> int:
         """Hash a vector using random projections."""
-        projections = self.hash_directions[table_idx] @ point
-        # Convert to binary hash
-        binary = (projections > 0).astype(int)
-        # Convert binary to integer
-        hash_val = int(''.join(map(str, binary)), 2)
+        projections: NDArray[np.floating[Any]] = self.hash_directions[table_idx] @ point
+        binary: NDArray[np.intp] = (projections > 0).astype(np.intp)
+        hash_val = int("".join(str(b) for b in binary), 2)
         return hash_val
 
-    def insert(self, point: np.ndarray):
-        # Initialize on first insert
+    def insert(self, point: np.ndarray) -> None:
         if not self.initialized:
             self._initialize_hash_functions(len(point))
 
@@ -57,17 +70,15 @@ class LSHSurprisal(SurprisalTree):
         Low collision = high surprisal (rare pattern)
         """
         if self.total_points == 0 or not self.initialized:
-            return float('inf')
+            return float("inf")
 
-        counts = []
+        counts: list[int] = []
         for i, table in enumerate(self.tables):
             bucket = self._hash_vector(point, i)
             count = table.get(bucket, 0)
             counts.append(count)
 
-        # Average density estimate across tables
         avg_count = np.mean(counts)
-        avg_density = avg_count / self.total_points
+        avg_density = float(avg_count) / self.total_points
 
-        # Surprisal = -log(density)
-        return -np.log(avg_density + 1e-10)
+        return float(-np.log(avg_density + 1e-10))

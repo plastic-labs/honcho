@@ -390,9 +390,9 @@ class SurprisalSettings(BaseModel):
 
 
 class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(
+    model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
-    )  # pyright: ignore
+    )
 
     ENABLED: bool = True
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50

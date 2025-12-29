@@ -2,7 +2,11 @@
 Prototype-based surprisal using clustering.
 """
 
+from typing import Any
+
 import numpy as np
+from numpy.typing import NDArray
+
 from .base import SurprisalTree
 
 
@@ -12,43 +16,48 @@ class PrototypeSurprisal(SurprisalTree):
     Surprisal proportional to distance from nearest prototype centroid.
     """
 
-    def __init__(self, n_clusters: int = 10):
-        super().__init__()
+    n_clusters: int
+    points: list[NDArray[np.floating[Any]]]
+    prototypes: NDArray[np.floating[Any]] | None
+    clusters_built: bool
+    total_points: int
+
+    def __init__(self, n_clusters: int = 10, max_leaf_size: int = 10) -> None:
+        super().__init__(max_leaf_size)
         self.n_clusters = n_clusters
         self.points = []
         self.prototypes = None
         self.clusters_built = False
 
-    def insert(self, point: np.ndarray):
+    def insert(self, point: np.ndarray) -> None:
         self.points.append(point)
         self.total_points += 1
         self.clusters_built = False
 
-    def batch_insert(self, points: np.ndarray):
+    def batch_insert(self, points: np.ndarray) -> None:
         """More efficient batch insertion."""
         self.points.extend(points)
         self.total_points += len(points)
         self.clusters_built = False
 
-    def _build_clusters(self):
+    def _build_clusters(self) -> None:
         """Build clusters and identify prototypes."""
         if len(self.points) < self.n_clusters:
-            # Not enough points, use all points as prototypes
             self.prototypes = np.array(self.points)
             self.clusters_built = True
             return
 
         from sklearn.cluster import KMeans
 
-        points_array = np.array(self.points)
+        points_array: NDArray[np.floating[Any]] = np.array(self.points)
         n_clusters_actual = min(self.n_clusters, len(self.points))
 
-        # Perform k-means clustering
-        kmeans = KMeans(n_clusters=n_clusters_actual, random_state=42, n_init=10)
-        kmeans.fit(points_array)
+        kmeans: KMeans = KMeans(
+            n_clusters=n_clusters_actual, random_state=42, n_init="auto"
+        )
+        kmeans.fit(points_array)  # pyright: ignore[reportUnknownMemberType]
 
-        # Store cluster centers as prototypes
-        self.prototypes = kmeans.cluster_centers_
+        self.prototypes = kmeans.cluster_centers_  # pyright: ignore[reportUnknownMemberType]
         self.clusters_built = True
 
     def surprisal(self, point: np.ndarray) -> float:
@@ -61,12 +70,11 @@ class PrototypeSurprisal(SurprisalTree):
             self._build_clusters()
 
         if self.prototypes is None or len(self.prototypes) == 0:
-            return float('inf')
+            return float("inf")
 
-        # Find distance to nearest prototype
-        distances = np.linalg.norm(self.prototypes - point, axis=1)
-        min_distance = np.min(distances)
+        distances: NDArray[np.floating[Any]] = np.linalg.norm(
+            self.prototypes - point, axis=1
+        )
+        min_distance: float = float(np.min(distances))
 
-        # Surprisal proportional to distance
-        # Add scaling factor to make values comparable
         return min_distance * 10.0
