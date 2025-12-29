@@ -6,7 +6,7 @@ A single-file implementation of the 5-axis evaluation system for explicit deriva
 
 ## To Run:
 
-1. Save this file to: tests/bench/explicit_revised.py
+1. Save this file to: tests/bench/explicit.py
 
 2. Set your API key (or pass via --api-key):
    export ANTHROPIC_API_KEY=your_key_here
@@ -60,8 +60,9 @@ import asyncio
 import json
 import logging
 import os
+import random
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -379,6 +380,11 @@ Evaluates whether propositions can serve as valid logical premises.
 # =============================================================================
 
 class ExplicitJudge:
+    llm_client: AsyncAnthropic | AsyncOpenAI
+    model: str
+    verbose: bool
+    provider: str
+
     def __init__(
         self,
         llm_client: AsyncAnthropic | AsyncOpenAI,
@@ -900,7 +906,7 @@ def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
         else:
             raise ValueError(f"Unexpected JSON format in {path}")
     except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse {path} as JSON or JSONL: {e}")
+        raise ValueError(f"Failed to parse {path} as JSON or JSONL: {e}") from e
 
 
 def extract_propositions(trace: dict[str, Any]) -> list[str]:
@@ -1030,17 +1036,17 @@ async def main():
         if args.provider == "anthropic":
             api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("LLM_ANTHROPIC_API_KEY")
             if not api_key:
-                print("ERROR: Set ANTHROPIC_API_KEY or LLM_ANTHROPIC_API_KEY, or use --api-key")
+                logger.error("Set ANTHROPIC_API_KEY or LLM_ANTHROPIC_API_KEY, or use --api-key")
                 return 1
         elif args.provider == "openai":
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                print("ERROR: Set OPENAI_API_KEY or use --api-key")
+                logger.error("Set OPENAI_API_KEY or use --api-key")
                 return 1
         elif args.provider == "openrouter":
             api_key = os.getenv("OPENROUTER_API_KEY")
             if not api_key:
-                print("ERROR: Set OPENROUTER_API_KEY or use --api-key")
+                logger.error("Set OPENROUTER_API_KEY or use --api-key")
                 return 1
 
     # Initialize client based on provider
@@ -1055,7 +1061,7 @@ async def main():
             base_url="https://openrouter.ai/api/v1",
         )
     else:
-        print(f"ERROR: Unsupported provider: {args.provider}")
+        logger.error(f"Unsupported provider: {args.provider}")
         return 1
 
     judge = ExplicitJudge(client, args.model, args.verbose, args.provider)
@@ -1077,9 +1083,8 @@ async def main():
         parser.error("Specify --traces or --trace-dir")
     
     print(f"Loaded {len(all_traces)} trace(s)")
-    
+
     # Apply sampling/limiting
-    import random
     if args.sample and 0 < args.sample < 1:
         sample_size = max(1, int(len(all_traces) * args.sample))
         all_traces = random.sample(all_traces, sample_size)
@@ -1142,21 +1147,23 @@ async def main():
     
     if results:
         args.output_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_file = args.output_dir / f"explicit_revised_{ts}.json"
-        
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        out_file = args.output_dir / f"explicit_{ts}.json"
+
+        averages: dict[str, float] = {
+            "overall": sum(r.overall_score for r in results) / len(results),
+            "atomicity": sum(r.atomicity.score for r in results) / len(results),
+            "coverage": sum(r.coverage.coverage_score for r in results) / len(results),
+            "fidelity": sum(r.fidelity.fidelity_score for r in results) / len(results),
+            "efficiency": sum(r.efficiency.efficiency_score for r in results) / len(results),
+            "utility": sum(r.downstream_utility.utility_score for r in results) / len(results),
+        }
+
         agg = {
             "timestamp": ts,
             "model": args.model,
             "count": len(results),
-            "averages": {
-                "overall": sum(r.overall_score for r in results) / len(results),
-                "atomicity": sum(r.atomicity.score for r in results) / len(results),
-                "coverage": sum(r.coverage.coverage_score for r in results) / len(results),
-                "fidelity": sum(r.fidelity.fidelity_score for r in results) / len(results),
-                "efficiency": sum(r.efficiency.efficiency_score for r in results) / len(results),
-                "utility": sum(r.downstream_utility.utility_score for r in results) / len(results),
-            },
+            "averages": averages,
             "results": [r.to_dict() for r in results],
         }
         
@@ -1171,7 +1178,7 @@ async def main():
             print("=" * 70)
             print(f"Traces evaluated: {len(results)}")
             print()
-            for k, v in agg["averages"].items():
+            for k, v in averages.items():
                 print(f"  {k:<20} {v:.1%}")
     else:
         print("\n⚠️  No traces were successfully evaluated")
