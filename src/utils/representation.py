@@ -8,6 +8,40 @@ from src import models
 from src.utils.formatting import parse_datetime_iso
 
 
+def flatten_message_ids(
+    message_ids: list[int] | list[list[int]] | list[tuple[int, int]],
+) -> list[int]:
+    """
+    Flatten message_ids that may be in old tuple format or nested list format.
+
+    This handles backwards compatibility with the old schema where message_ids
+    was list[tuple[int, int]] representing ranges, and the new schema where
+    it's list[int] representing individual message IDs.
+
+    Args:
+        message_ids: Either a flat list of ints, nested list, or list of tuples
+
+    Returns:
+        A flat list of unique message IDs, sorted
+
+    Examples:
+        [1, 2, 3] -> [1, 2, 3]
+        [[1, 2], [3, 4]] -> [1, 2, 3, 4]
+        [(105, 105)] -> [105]
+        [[105, 105]] -> [105]
+    """
+    result: list[int] = []
+    for item in message_ids:
+        if isinstance(item, (list | tuple)):
+            # Nested list or tuple - flatten it
+            result.extend(item)
+        else:
+            # Already flat
+            result.append(item)
+    # Remove duplicates and sort
+    return sorted(set(result))
+
+
 class ObservationMetadata(BaseModel):
     id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
@@ -323,7 +357,9 @@ class Representation(BaseModel):
                         doc.internal_metadata, doc.created_at
                     ),
                     content=doc.content,
-                    message_ids=doc.internal_metadata.get("message_ids", []),
+                    message_ids=flatten_message_ids(
+                        doc.internal_metadata.get("message_ids", [])
+                    ),
                     session_name=doc.session_name,
                 )
                 for doc in documents
@@ -336,7 +372,9 @@ class Representation(BaseModel):
                         doc.internal_metadata, doc.created_at
                     ),
                     conclusion=doc.content,
-                    message_ids=doc.internal_metadata.get("message_ids", []),
+                    message_ids=flatten_message_ids(
+                        doc.internal_metadata.get("message_ids", [])
+                    ),
                     session_name=doc.session_name,
                     premises=doc.internal_metadata.get("premises", []),
                 )

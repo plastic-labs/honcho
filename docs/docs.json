@@ -2,6 +2,12 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Honcho",
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/v2/documentation/introduction/overview"
+    }
+  ],
   "colors": {
     "primary": "#66AAFF",
     "dark": "#151E27",
@@ -19,7 +25,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.5.0",
+        "version": "v2.5.1",
         "api": {
           "openapi": [
             "openapi.json"
@@ -254,7 +260,7 @@
                     "pages": [
                       "v2.6.0-alpha/documentation/features/advanced/overview",
                       "v2.6.0-alpha/documentation/features/advanced/queue-status",
-                      "v2.6.0-alpha/documentation/features/advanced/toggle-reasoning",
+                      "v2.6.0-alpha/documentation/features/advanced/reasoning-configuration",
                       "v2.6.0-alpha/documentation/features/advanced/representation-scopes",
                       "v2.6.0-alpha/documentation/features/advanced/summarizer",
                       "v2.6.0-alpha/documentation/features/advanced/search",
