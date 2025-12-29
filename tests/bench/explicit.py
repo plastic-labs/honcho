@@ -65,7 +65,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
@@ -407,7 +407,7 @@ class ExplicitJudge:
     ) -> dict[str, Any]:
         """Call LLM with tool use."""
         try:
-            if self.provider == "anthropic":
+            if isinstance(self.llm_client, AsyncAnthropic):
                 resp = await asyncio.wait_for(
                     self.llm_client.messages.create(
                         model=self.model,
@@ -415,17 +415,18 @@ class ExplicitJudge:
                         temperature=0.0,
                         system=system,
                         messages=[{"role": "user", "content": user}],
-                        tools=[tool_def],
-                        tool_choice={"type": "tool", "name": tool_def["name"]},
+                        tools=[tool_def],  # pyright: ignore[reportArgumentType]
+                        tool_choice={"type": "tool", "name": tool_def["name"]},  # pyright: ignore[reportArgumentType]
                     ),
                     timeout=120.0,
                 )
                 for block in resp.content:
                     if block.type == "tool_use":
-                        return block.input
+                        # block.input is typed as object, but we know it's a dict
+                        return block.input if isinstance(block.input, dict) else {}  # type: ignore[return-value]
                 return {}
 
-            elif self.provider in ["openai", "openrouter"]:
+            elif isinstance(self.llm_client, AsyncOpenAI):
                 openai_tool = {
                     "type": "function",
                     "function": {
@@ -443,13 +444,18 @@ class ExplicitJudge:
                             {"role": "system", "content": system},
                             {"role": "user", "content": user},
                         ],
-                        tools=[openai_tool],
-                        tool_choice={"type": "function", "function": {"name": tool_def["name"]}},
+                        tools=[openai_tool],  # pyright: ignore[reportArgumentType]
+                        tool_choice={"type": "function", "function": {"name": tool_def["name"]}},  # pyright: ignore[reportArgumentType]
                     ),
                     timeout=120.0,
                 )
                 if resp.choices and resp.choices[0].message.tool_calls:
-                    return json.loads(resp.choices[0].message.tool_calls[0].function.arguments)
+                    tool_call = resp.choices[0].message.tool_calls[0]
+                    # Check if tool_call has function attribute
+                    if hasattr(tool_call, 'function'):
+                        func = tool_call.function  # pyright: ignore[reportAttributeAccessIssue]
+                        if hasattr(func, 'arguments'):
+                            return json.loads(func.arguments)
                 return {}
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
