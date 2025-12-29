@@ -103,7 +103,7 @@ exclude_lines = [
 # BasedPyright currently seems like the best type checker option, much faster
 # https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
 include = ["src", "tests", "sdks/python/src"]
-exclude = ["tests/**/disabled*.py"]
+exclude = ["tests/**/disabled*.py", "tests/bench/**"]
 reportIgnoreCommentWithoutRule = false
 reportMissingTypeStubs = false
 reportUnusedCallResult = false
