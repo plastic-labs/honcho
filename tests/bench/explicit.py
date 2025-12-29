@@ -65,7 +65,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
@@ -416,17 +416,20 @@ class ExplicitJudge:
                         system=system,
                         messages=[{"role": "user", "content": user}],
                         tools=[tool_def],  # pyright: ignore[reportArgumentType]
-                        tool_choice={"type": "tool", "name": tool_def["name"]},  # pyright: ignore[reportArgumentType]
+                        tool_choice={"type": "tool", "name": tool_def["name"]},
                     ),
                     timeout=120.0,
                 )
                 for block in resp.content:
                     if block.type == "tool_use":
                         # block.input is typed as object, but we know it's a dict
-                        return block.input if isinstance(block.input, dict) else {}  # type: ignore[return-value]
+                        input_data = block.input
+                        if isinstance(input_data, dict):
+                            # Cast to dict[str, Any] for type checker
+                            return dict(input_data)  # pyright: ignore[reportUnknownArgumentType]
                 return {}
 
-            elif isinstance(self.llm_client, AsyncOpenAI):
+            else:  # AsyncOpenAI
                 openai_tool = {
                     "type": "function",
                     "function": {
@@ -445,20 +448,20 @@ class ExplicitJudge:
                             {"role": "user", "content": user},
                         ],
                         tools=[openai_tool],  # pyright: ignore[reportArgumentType]
-                        tool_choice={"type": "function", "function": {"name": tool_def["name"]}},  # pyright: ignore[reportArgumentType]
+                        tool_choice={"type": "function", "function": {"name": tool_def["name"]}},
                     ),
                     timeout=120.0,
                 )
                 if resp.choices and resp.choices[0].message.tool_calls:
                     tool_call = resp.choices[0].message.tool_calls[0]
-                    # Check if tool_call has function attribute
+                    # tool_call.function exists for OpenAI ChatCompletionMessageToolCall
                     if hasattr(tool_call, 'function'):
-                        func = tool_call.function  # pyright: ignore[reportAttributeAccessIssue]
+                        func = getattr(tool_call, 'function')
                         if hasattr(func, 'arguments'):
-                            return json.loads(func.arguments)
+                            arguments = getattr(func, 'arguments')
+                            if isinstance(arguments, str):
+                                return json.loads(arguments)
                 return {}
-            else:
-                raise ValueError(f"Unsupported provider: {self.provider}")
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return {}
@@ -507,15 +510,25 @@ class ExplicitJudge:
         atomic_count = 0
         total_suggested = 0
         
-        for ev in result.get("evaluations", []):
-            idx = ev.get("index", 0) - 1
+        evaluations: list[Any] = result.get("evaluations", [])
+        for ev in evaluations:
+            if not isinstance(ev, dict):
+                continue
+            idx_raw: Any = ev.get("index", 0)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            if not isinstance(idx_raw, int):
+                continue
+            idx: int = idx_raw - 1
             if idx < 0 or idx >= len(propositions):
                 continue
-            is_atomic = ev.get("is_atomic", True)
+            is_atomic_raw: Any = ev.get("is_atomic", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            is_atomic: bool = bool(is_atomic_raw) if isinstance(is_atomic_raw, bool) else True
             if is_atomic:
                 atomic_count += 1
-            violations = []
-            for v in ev.get("violation_types", []):
+            violations: list[AtomicityViolation] = []
+            violation_types: list[Any] = ev.get("violation_types", [])  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            for v in violation_types:  # pyright: ignore[reportUnknownVariableType]
+                if not isinstance(v, str):
+                    continue
                 try:
                     violations.append(AtomicityViolation(v))
                 except ValueError as e:
@@ -523,10 +536,13 @@ class ExplicitJudge:
                     continue
             for v in violations:
                 violations_by_type[v.value] = violations_by_type.get(v.value, 0) + 1
-            decomp = ev.get("suggested_decomposition", [])
+            decomp_raw: list[Any] = ev.get("suggested_decomposition", [])  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            decomp: list[str] = [str(d) for d in decomp_raw if isinstance(d, str)]  # pyright: ignore[reportUnknownVariableType]
             total_suggested += len(decomp)
+            reasoning_raw: Any = ev.get("reasoning", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            reasoning: str = str(reasoning_raw) if isinstance(reasoning_raw, str) else ""
             detailed.append(AtomicityResult(
-                propositions[idx], is_atomic, violations, decomp, ev.get("reasoning", "")
+                propositions[idx], is_atomic, violations, decomp, reasoning
             ))
         
         return AtomicityReport(
@@ -651,23 +667,40 @@ class ExplicitJudge:
         violations_by_sev: dict[str, int] = {"none": 0, "minor": 0, "major": 0, "critical": 0}
         faithful_count = 0
         
-        for ev in result.get("evaluations", []):
-            idx = ev.get("index", 0) - 1
+        evaluations: list[Any] = result.get("evaluations", [])
+        for ev in evaluations:
+            if not isinstance(ev, dict):
+                continue
+            idx_raw: Any = ev.get("index", 0)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            if not isinstance(idx_raw, int):
+                continue
+            idx: int = idx_raw - 1
             if idx < 0 or idx >= len(propositions):
                 continue
-            is_faithful = ev.get("is_faithful", True)
+            is_faithful_raw: Any = ev.get("is_faithful", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            is_faithful: bool = bool(is_faithful_raw) if isinstance(is_faithful_raw, bool) else True
             if is_faithful:
                 faithful_count += 1
-            sev = ev.get("severity", "none")
+            sev_raw: Any = ev.get("severity", "none")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            sev: str = str(sev_raw) if isinstance(sev_raw, str) else "none"
             violations_by_sev[sev] = violations_by_sev.get(sev, 0) + 1
             violations: list[tuple[FidelityViolation, str]] = []
-            for v in ev.get("violations", []):
+            violations_raw: list[Any] = ev.get("violations", [])  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            for v in violations_raw:  # pyright: ignore[reportUnknownVariableType]
+                if not isinstance(v, dict):
+                    continue
                 try:
-                    vtype = FidelityViolation(v["type"])
+                    vtype_str_raw: Any = v.get("type", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+                    if not isinstance(vtype_str_raw, str):
+                        continue
+                    vtype_str: str = vtype_str_raw
+                    vtype = FidelityViolation(vtype_str)
                     violations_by_type[vtype.value] = violations_by_type.get(vtype.value, 0) + 1
-                    violations.append((vtype, v.get("description", "")))
-                except ValueError as e:
-                    logger.warning(f"Skipping invalid FidelityViolation type: {v.get('type')} - {e}")
+                    desc_raw: Any = v.get("description", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+                    desc: str = str(desc_raw) if isinstance(desc_raw, str) else ""
+                    violations.append((vtype, desc))
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"Skipping invalid FidelityViolation type: {v.get('type')} - {e}")  # pyright: ignore[reportUnknownMemberType]
                     continue
             detailed.append(FidelityResult(propositions[idx], is_faithful, violations, "", sev))
         
@@ -721,11 +754,18 @@ class ExplicitJudge:
         
         clusters: list[RedundancyCluster] = []
         exact = near = subs = 0
-        
-        for c in result.get("redundancy_clusters", []):
-            indices = c.get("proposition_indices", [])
-            props = [propositions[i-1] for i in indices if 0 < i <= len(propositions)]
-            rtype = c.get("redundancy_type", "overlap")
+
+        redundancy_clusters_raw: list[Any] = result.get("redundancy_clusters", [])
+        for c in redundancy_clusters_raw:
+            if not isinstance(c, dict):
+                continue
+            indices_raw: Any = c.get("proposition_indices", [])  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            if not isinstance(indices_raw, list):
+                continue
+            indices: list[int] = [i for i in indices_raw if isinstance(i, int)]  # pyright: ignore[reportUnknownVariableType]
+            props: list[str] = [propositions[i-1] for i in indices if 0 < i <= len(propositions)]
+            rtype_raw: Any = c.get("redundancy_type", "overlap")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            rtype: str = str(rtype_raw) if isinstance(rtype_raw, str) else "overlap"
             count = len(props) - 1 if props else 0
             if rtype == "exact_duplicate":
                 exact += count
@@ -733,7 +773,9 @@ class ExplicitJudge:
                 near += count
             elif rtype == "subsumption":
                 subs += count
-            clusters.append(RedundancyCluster(props, c.get("canonical_form", ""), rtype))
+            canonical_raw: Any = c.get("canonical_form", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            canonical: str = str(canonical_raw) if isinstance(canonical_raw, str) else ""
+            clusters.append(RedundancyCluster(props, canonical, rtype))
         
         unique = result.get("unique_proposition_count", len(propositions))
         
@@ -787,21 +829,34 @@ class ExplicitJudge:
         detailed: list[DownstreamUtilityResult] = []
         dist: dict[str, int] = {s.value: 0 for s in PremiseSuitability}
         clarity = complete = stable = compos = temporal = 0
-        
-        for ev in result.get("evaluations", []):
-            idx = ev.get("index", 0) - 1
+
+        evaluations: list[Any] = result.get("evaluations", [])
+        for ev in evaluations:
+            if not isinstance(ev, dict):
+                continue
+            idx_raw: Any = ev.get("index", 0)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            if not isinstance(idx_raw, int):
+                continue
+            idx: int = idx_raw - 1
             if idx < 0 or idx >= len(propositions):
                 continue
-            suit = ev.get("suitability", "marginal")
+            suit_raw: Any = ev.get("suitability", "marginal")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            suit: str = str(suit_raw) if isinstance(suit_raw, str) else "marginal"
             dist[suit] = dist.get(suit, 0) + 1
-            
-            subj = ev.get("has_clear_subject", True)
-            pred = ev.get("has_clear_predicate", True)
-            comp = ev.get("is_contextually_complete", True)
-            stab = ev.get("has_stable_truth_value", True)
-            comb = ev.get("is_composable", True)
-            temp = ev.get("temporal_handling", "appropriate")
-            
+
+            subj_raw: Any = ev.get("has_clear_subject", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            subj: bool = bool(subj_raw) if isinstance(subj_raw, bool) else True
+            pred_raw: Any = ev.get("has_clear_predicate", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            pred: bool = bool(pred_raw) if isinstance(pred_raw, bool) else True
+            comp_raw: Any = ev.get("is_contextually_complete", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            comp: bool = bool(comp_raw) if isinstance(comp_raw, bool) else True
+            stab_raw: Any = ev.get("has_stable_truth_value", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            stab: bool = bool(stab_raw) if isinstance(stab_raw, bool) else True
+            comb_raw: Any = ev.get("is_composable", True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            comb: bool = bool(comb_raw) if isinstance(comb_raw, bool) else True
+            temp_raw: Any = ev.get("temporal_handling", "appropriate")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            temp: str = str(temp_raw) if isinstance(temp_raw, str) else "appropriate"
+
             if subj and pred:
                 clarity += 1
             if comp:
@@ -812,10 +867,14 @@ class ExplicitJudge:
                 compos += 1
             if temp == "appropriate":
                 temporal += 1
-            
+
+            issues_raw: Any = ev.get("issues", [])  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            if not isinstance(issues_raw, list):
+                issues_raw = []
+            issues: list[str] = [str(i) for i in issues_raw if isinstance(i, str)]  # pyright: ignore[reportUnknownVariableType]
             detailed.append(DownstreamUtilityResult(
                 propositions[idx], PremiseSuitability(suit),
-                ev.get("issues", []), subj, pred, comp, stab, comb, temp,
+                issues, subj, pred, comp, stab, comb, temp,
             ))
         
         n = len(propositions)
@@ -874,7 +933,7 @@ def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
     - JSON object: {"trace": 1}
     - JSONL: One JSON object per line
     """
-    traces = []
+    traces: list[dict[str, Any]] = []
 
     # Try JSONL format first (one JSON per line)
     try:
@@ -888,8 +947,9 @@ def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
                     if not line:
                         continue
                     try:
-                        trace = json.loads(line)
-                        traces.append(trace)
+                        trace: Any = json.loads(line)
+                        if isinstance(trace, dict):
+                            traces.append(trace)  # pyright: ignore[reportUnknownArgumentType]
                     except json.JSONDecodeError as e:
                         logger.warning(f"Skipping invalid JSON at line {line_num} in {path}: {e}")
 
@@ -902,10 +962,10 @@ def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
     # Try standard JSON format
     try:
         with open(path) as f:
-            data = json.load(f)
+            data: Any = json.load(f)
 
         if isinstance(data, list):
-            return data
+            return data  # pyright: ignore[reportUnknownVariableType]
         elif isinstance(data, dict):
             # Single trace, wrap in list
             return [data]
@@ -916,14 +976,32 @@ def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
 
 
 def extract_propositions(trace: dict[str, Any]) -> list[str]:
-    explicit = trace.get("output", {}).get("content", {}).get("explicit", [])
-    return [item["content"] for item in explicit if "content" in item]
+    output: Any = trace.get("output", {})
+    if not isinstance(output, dict):
+        return []
+    content: Any = output.get("content", {})  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    if not isinstance(content, dict):
+        return []
+    explicit: Any = content.get("explicit", [])  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    if not isinstance(explicit, list):
+        return []
+    propositions: list[str] = []
+    for item in explicit:  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(item, dict) and "content" in item:
+            content_val: Any = item["content"]  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(content_val, str):
+                propositions.append(content_val)
+    return propositions
 
 
 def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
-    prompt = trace.get("input", {}).get("prompt", "")
-    messages = []
-    
+    input_data: Any = trace.get("input", {})
+    if not isinstance(input_data, dict):
+        return []
+    prompt_raw: Any = input_data.get("prompt", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    prompt: str = str(prompt_raw) if isinstance(prompt_raw, str) else ""
+    messages: list[dict[str, Any]] = []
+
     if "<messages>" in prompt:
         section = prompt.split("<messages>")[1].split("</messages>")[0]
         for line in section.strip().split("\n"):
@@ -932,12 +1010,12 @@ def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             parts = line.split(" ", 3)
             if len(parts) >= 3:
-                speaker = parts[2].rstrip(":")
-                text = parts[3] if len(parts) > 3 else ""
+                speaker: str = parts[2].rstrip(":")
+                text: str = parts[3] if len(parts) > 3 else ""
                 if "->->" in text:
                     text = text.split("->->")[0].strip()
                 messages.append({"speaker": speaker, "text": text})
-    
+
     return messages
 
 
