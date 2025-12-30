@@ -69,7 +69,6 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # Deriver settings
 [deriver]
 ENABLED = true
-USE_LEGACY = false
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
 STALE_SESSION_TIMEOUT_MINUTES = 5

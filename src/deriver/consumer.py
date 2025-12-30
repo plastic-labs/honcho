@@ -4,15 +4,9 @@ import sentry_sdk
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from src import config, crud, models
+from src import crud, models
 from src.dependencies import tracked_db
-from src.deriver.agent.worker import process_agent_task_batch
-from src.deriver.legacy_deriver.deriver import (
-    process_representation_tasks_batch as legacy_process_representation_batch,
-)
-from src.deriver.non_agent.deriver import (
-    process_representation_tasks_batch as minimal_process_representation_batch,
-)
+from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
@@ -156,55 +150,7 @@ async def process_representation_batch(
     if observed is None or observer is None:
         raise ValueError("observed and observer are required for representation tasks")
 
-    logger.debug(
-        "process_representation_batch received %s messages (use_legacy=%s)",
-        len(messages),
-        config.settings.DERIVER.USE_LEGACY,
-    )
-
-    if config.settings.DERIVER.USE_LEGACY:
-        await legacy_process_representation_batch(
-            messages,
-            message_level_configuration,
-            observer=observer,
-            observed=observed,
-        )
-    else:
-        await minimal_process_representation_batch(
-            messages,
-            message_level_configuration,
-            observer=observer,
-            observed=observed,
-        )
-
-
-async def process_representation_agent_batch(
-    messages: list[Message],
-    message_level_configuration: ResolvedConfiguration | None,
-    *,
-    observer: str | None,
-    observed: str | None,
-) -> None:
-    """
-    Prepares and processes a batch of messages for agent tasks.
-
-    Args:
-        messages: List of messages to process
-        message_level_configuration: Resolved configuration for this batch
-    """
-    if not messages or not messages[0]:
-        logger.debug("process_agent_batch received no messages")
-        return
-
-    if observed is None or observer is None:
-        raise ValueError("observed and observer are required for agent tasks")
-
-    logger.debug(
-        "process_agent_batch received %s messages",
-        len(messages),
-    )
-
-    await process_agent_task_batch(
+    await process_representation_tasks_batch(
         messages,
         message_level_configuration,
         observer=observer,

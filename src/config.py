@@ -233,8 +233,6 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
-    AGENTIC: bool = False
-    USE_LEGACY: bool = False  # Set to True to use legacy deriver with peer card updates
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -260,12 +258,6 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     LOG_OBSERVATIONS: bool = False
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
-
-    # Agent iteration limit - controls how many tool calling rounds the agent gets
-    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=3, gt=0, le=20)] = 3
-
-    # Token limit for recent history retrieval
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
