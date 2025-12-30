@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -17,6 +17,36 @@ from src.utils.representation import Representation
 from src.utils.types import DocumentLevel
 
 logger = logging.getLogger(__name__)
+
+# Module-level lock registry for thread-safe observation creation.
+# Keyed by (workspace_name, observer, observed) to ensure all tool executors
+# operating on the same data share the same lock.
+_observation_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+_registry_lock = asyncio.Lock()
+
+
+async def get_observation_lock(
+    workspace_name: str, observer: str, observed: str
+) -> asyncio.Lock:
+    """
+    Get or create a lock for a specific workspace/observer/observed combination.
+
+    This ensures that concurrent tool executors operating on the same observation
+    space share a lock, preventing race conditions during document creation.
+
+    Args:
+        workspace_name: Workspace identifier
+        observer: The observing peer
+        observed: The peer being observed
+
+    Returns:
+        An asyncio.Lock shared by all executors for this combination
+    """
+    key = (workspace_name, observer, observed)
+    async with _registry_lock:
+        if key not in _observation_locks:
+            _observation_locks[key] = asyncio.Lock()
+        return _observation_locks[key]
 
 
 def _truncate_tool_output(output: str, max_chars: int | None = None) -> str:
@@ -1221,7 +1251,10 @@ class ToolContext:
     current_messages: list[models.Message] | None
     include_observation_ids: bool
     history_token_limit: int
-    db_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Shared lock for serializing writes to the same workspace/observer/observed.
+    # This lock is obtained from the module-level registry to ensure all concurrent
+    # tool executors for the same data share the same lock.
+    db_lock: asyncio.Lock
     # For consolidation specialist - source IDs to delete after creating vignette
     vignette_source_ids: list[str] | None = None
 
@@ -1930,7 +1963,7 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
 }
 
 
-def create_tool_executor(
+async def create_tool_executor(
     db: AsyncSession,
     workspace_name: str,
     observer: str,
@@ -1961,6 +1994,10 @@ def create_tool_executor(
     Returns:
         An async callable that executes tools with the captured context
     """
+    # Get shared lock from registry to prevent race conditions when multiple
+    # tool executors operate on the same workspace/observer/observed concurrently
+    shared_lock = await get_observation_lock(workspace_name, observer, observed)
+
     ctx = ToolContext(
         db=db,
         workspace_name=workspace_name,
@@ -1970,6 +2007,7 @@ def create_tool_executor(
         current_messages=current_messages,
         include_observation_ids=include_observation_ids,
         history_token_limit=history_token_limit,
+        db_lock=shared_lock,
         vignette_source_ids=vignette_source_ids,
     )
 

@@ -116,7 +116,9 @@ class Agent:
         self._current_messages = messages
 
         # Create tool executor with context
-        tool_executor: Callable[[str, dict[str, Any]], Any] = create_tool_executor(
+        tool_executor: Callable[
+            [str, dict[str, Any]], Any
+        ] = await create_tool_executor(
             db=self.db,
             workspace_name=self.workspace_name,
             session_name=self.session_name,

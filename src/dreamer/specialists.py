@@ -98,7 +98,9 @@ class BaseSpecialist(ABC):
         ]
 
         # Create tool executor
-        tool_executor: Callable[[str, dict[str, Any]], Any] = create_tool_executor(
+        tool_executor: Callable[
+            [str, dict[str, Any]], Any
+        ] = await create_tool_executor(
             db=db,
             workspace_name=workspace_name,
             observer=observer,
