@@ -34,20 +34,22 @@ def log_finetuning_trace(
     reasoning_effort: str | None = None,
     json_mode: bool = False,
     stop_seqs: list[str] | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> None:
     """
     Log a fine-tuning trace to the configured JSONL file.
 
     Args:
-        task_type: Type of task (e.g., "minimal_deriver")
+        task_type: Type of task (e.g., "minimal_deriver", "dialectic_chat")
         llm_settings: LLM settings used for the call
-        prompt: The full prompt text sent to the LLM
+        prompt: The full prompt text sent to the LLM (used if messages is None)
         response: HonchoLLMCallResponse object with the LLM response
         max_tokens: Max output tokens setting
         thinking_budget_tokens: Anthropic thinking budget (if used)
         reasoning_effort: OpenAI reasoning effort (if used)
         json_mode: Whether JSON mode was enabled
         stop_seqs: Stop sequences used (if any)
+        messages: Full conversation history for multi-turn/agentic calls
     """
     traces_file = get_finetuning_traces_file_path()
     if not traces_file:
@@ -58,7 +60,7 @@ def log_finetuning_trace(
     if isinstance(content, BaseModel):
         content = content.model_dump()
 
-    trace_entry = {
+    trace_entry: dict[str, Any] = {
         "timestamp": time.time(),
         "task_type": task_type,
         "provider": llm_settings.PROVIDER,
@@ -71,7 +73,6 @@ def log_finetuning_trace(
             "stop_seqs": stop_seqs,
         },
         "input": {
-            "prompt": prompt,
             "tokens": response.input_tokens,
         },
         "output": {
@@ -81,6 +82,16 @@ def log_finetuning_trace(
             "thinking_content": response.thinking_content,
         },
     }
+
+    # Use messages for multi-turn/agentic calls, otherwise use prompt
+    if messages is not None:
+        trace_entry["input"]["messages"] = messages
+    else:
+        trace_entry["input"]["prompt"] = prompt
+
+    # Include tool calls if present
+    if hasattr(response, "tool_calls_made") and response.tool_calls_made:
+        trace_entry["output"]["tool_calls"] = response.tool_calls_made
 
     # Use file locking to handle concurrent writes from multiple processes
     with open(traces_file, "a") as f:
