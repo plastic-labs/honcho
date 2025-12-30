@@ -903,7 +903,7 @@ describe('Session', () => {
     })
   })
 
-  describe('workingRep', () => {
+  describe('getRepresentation', () => {
     it('should get working representation with peer string', async () => {
       const mockRepresentationData = {
         explicit: [
@@ -920,7 +920,7 @@ describe('Session', () => {
         representation: mockRepresentationData,
       })
 
-      const result = await session.workingRep('peer1')
+      const result = await session.getRepresentation('peer1')
 
       expect(result).toBeInstanceOf(Representation)
       expect(result.explicit).toHaveLength(1)
@@ -951,7 +951,7 @@ describe('Session', () => {
         representation: mockRepresentationData,
       })
 
-      const result = await session.workingRep(peer)
+      const result = await session.getRepresentation(peer)
 
       expect(result).toBeInstanceOf(Representation)
       expect(result.explicit).toHaveLength(1)
@@ -981,7 +981,7 @@ describe('Session', () => {
         representation: mockRepresentationData,
       })
 
-      const result = await session.workingRep('peer1', 'target-peer')
+      const result = await session.getRepresentation('peer1', 'target-peer')
 
       expect(result).toBeInstanceOf(Representation)
       expect(result.explicit).toHaveLength(1)
@@ -1013,7 +1013,7 @@ describe('Session', () => {
         representation: mockRepresentationData,
       })
 
-      const result = await session.workingRep(peer, target)
+      const result = await session.getRepresentation(peer, target)
 
       expect(result).toBeInstanceOf(Representation)
       expect(result.explicit).toHaveLength(1)
@@ -1032,7 +1032,7 @@ describe('Session', () => {
         new Error('Failed to get working representation')
       )
 
-      await expect(session.workingRep('peer1')).rejects.toThrow()
+      await expect(session.getRepresentation('peer1')).rejects.toThrow()
     })
   })
   describe('delete', () => {

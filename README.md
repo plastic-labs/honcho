@@ -96,8 +96,8 @@ response = client.chat.completions.create(
 ### 3. Search for similar messages
 results = alice.search("Math Homework")
 
-### 4. Get a cached working representation of a Peer for the Session
-alice_representation = session.working_rep("alice")
+### 4. Get a cached representation of a Peer for the Session
+alice_representation = session.get_representation("alice")
 
 ```
 
@@ -642,10 +642,10 @@ API include:
 - Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
 - Getting personalized responses that incorporate long-term facts and context
 
-#### Working Representations
+#### Representations
 
 For low-latency use cases,
-Honcho provides access to a `get_working_representation` endpoint that
+Honcho provides access to a `get_representation` endpoint that
 returns a static document with insights about a `Peer` in the context of a
 particular session.
 

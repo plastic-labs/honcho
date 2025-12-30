@@ -405,7 +405,7 @@ describe('Honcho SDK Integration Tests', () => {
       const bob = await honcho.peer('bob')
 
       // Test working representation without target
-      const globalRep = await session.workingRep('alice')
+      const globalRep = await session.getRepresentation('alice')
       expect(globalRep).toBeInstanceOf(Representation)
       expect(globalRep.explicit).toHaveLength(2)
       expect(globalRep.explicit[0].content).toBe('Alice likes coffee')
@@ -420,7 +420,7 @@ describe('Honcho SDK Integration Tests', () => {
       })
 
       // Test working representation with target
-      const targetRep = await session.workingRep(alice, bob)
+      const targetRep = await session.getRepresentation(alice, bob)
       expect(targetRep).toBeInstanceOf(Representation)
       expect(
         mockWorkspacesApi.workspaces.peers.workingRepresentation

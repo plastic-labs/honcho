@@ -750,9 +750,9 @@
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/representation": {
       "post": {
         "tags": ["peers"],
-        "summary": "Get Working Representation",
-        "description": "Get a peer's working representation for a session.\n\nIf a session_id is provided in the body, we get the working representation of the peer in that session.\nIf a target is provided, we get the representation of the target from the perspective of the peer.\nIf no target is provided, we get the omniscient Honcho representation of the peer.",
-        "operationId": "get_working_representation_v2_workspaces__workspace_id__peers__peer_id__representation_post",
+        "summary": "Get Representation",
+        "description": "Get a peer's representation for a session.\n\nIf a session_id is provided in the body, we get the representation of the peer in that session.\nIf a target is provided, we get the representation of the target from the perspective of the peer.\nIf no target is provided, we get the omniscient Honcho representation of the peer.",
+        "operationId": "get_representation_v2_workspaces__workspace_id__peers__peer_id__representation_post",
         "security": [{ "HTTPBearer": [] }],
         "parameters": [
           {
@@ -797,7 +797,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id  Representation Post"
+                  "title": "Response Get Representation V2 Workspaces  Workspace Id  Peers  Peer Id  Representation Post"
                 }
               }
             }
@@ -950,7 +950,7 @@
       "get": {
         "tags": ["peers"],
         "summary": "Get Peer Context",
-        "description": "Get context for a peer, including their representation and peer card.\n\nThis endpoint returns the working representation and peer card for a peer.\nIf a target is specified, returns the context for the target from the\nobserver peer's perspective. If no target is specified, returns the\npeer's own context (self-observation).\n\nThis is useful for getting all the context needed about a peer without\nmaking multiple API calls.",
+        "description": "Get context for a peer, including their representation and peer card.\n\nThis endpoint returns the representation and peer card for a peer.\nIf a target is specified, returns the context for the target from the\nobserver peer's perspective. If no target is specified, returns the\npeer's own context (self-observation).\n\nThis is useful for getting all the context needed about a peer without\nmaking multiple API calls.",
         "operationId": "get_peer_context_v2_workspaces__workspace_id__peers__peer_id__context_get",
         "security": [{ "HTTPBearer": [] }],
         "parameters": [
@@ -3808,7 +3808,7 @@
               { "$ref": "#/components/schemas/Representation" },
               { "type": "null" }
             ],
-            "description": "The working representation of the target peer from the observer's perspective"
+            "description": "The representation of the target peer from the observer's perspective"
           },
           "peer_card": {
             "anyOf": [
@@ -3870,7 +3870,7 @@
           "session_id": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Session Id",
-            "description": "Get the working representation within this session"
+            "description": "Get the representation within this session"
           },
           "target": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
@@ -3953,7 +3953,7 @@
         },
         "type": "object",
         "title": "Representation",
-        "description": "A Representation is a traversable and diffable map of observations.\nAt the base, we have a list of explicit observations, derived from a peer's messages.\n\nFrom there, deductive observations can be made by establishing logical relationships between explicit observations.\n\nIn the future, we can add more levels of reasoning on top of these.\n\nAll of a peer's observations are stored as documents in a collection. These documents can be queried in various ways\nto produce this Representation object.\n\nAdditionally, a \"working representation\" is a version of this data structure representing the most recent observations\nwithin a single session.\n\nA representation can have a maximum number of observations, which is applied individually to each level of reasoning.\nIf a maximum is set, observations are added and removed in FIFO order."
+        "description": "A Representation is a traversable and diffable map of observations.\nAt the base, we have a list of explicit observations, derived from a peer's messages.\n\nFrom there, deductive observations can be made by establishing logical relationships between explicit observations.\n\nIn the future, we can add more levels of reasoning on top of these.\n\nAll of a peer's observations are stored as documents in a collection. These documents can be queried in various ways\nto produce this Representation object.\n\nAdditionally, a \" representation\" is a version of this data structure representing the most recent observations\nwithin a single session.\n\nA representation can have a maximum number of observations, which is applied individually to each level of reasoning.\nIf a maximum is set, observations are added and removed in FIFO order."
       },
       "Session": {
         "properties": {
