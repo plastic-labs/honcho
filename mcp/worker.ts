@@ -141,19 +141,22 @@ class HonchoWorker {
    * @returns A session ID for the conversation
    */
   async startConversation(): Promise<string> {
-    // Get/create the assistant peer with observe_me=false
-    const assistant = await this.honcho.peer(this.config.assistantName!, {
+    // Get/create the peers first, before session creation
+    // This avoids a race condition where peer creation during session.addPeers
+    // could rollback the session if there's an IntegrityError
+    const userPeer = await this.honcho.peer(this.config.userName);
+    const assistantPeer = await this.honcho.peer(this.config.assistantName!, {
       config: { observe_me: false },
     });
 
-    // Create a new session
+    // Create a new session - pass empty config to force API call
     const sessionId = crypto.randomUUID();
-    const session = await this.honcho.session(sessionId);
+    const session = await this.honcho.session(sessionId, { config: {} });
 
     // Add the user and assistant peers to the session
     await session.addPeers([
-      this.config.userName,
-      [assistant, { observe_me: null, observe_others: false }],
+      userPeer,
+      [assistantPeer, { observe_me: null, observe_others: false }],
     ]);
 
     return sessionId;
@@ -400,7 +403,9 @@ class HonchoWorker {
     sessionId: string,
     config?: Record<string, any>,
   ): Promise<{ session_id: string; config?: Record<string, any> }> {
-    const session = await this.honcho.session(sessionId, { config });
+    // Always pass config (even if empty) to force the API call to create the session
+    // Without this, the SDK just creates a local Session object without making an API call
+    const session = await this.honcho.session(sessionId, { config: config ?? {} });
     return {
       session_id: session.id,
       config,
