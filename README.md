@@ -613,7 +613,7 @@ the results.
 #### Dialectic API
 
 The flagship interface for using these insights is through
-the [Dialectic Endpoint](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API).
+the [Dialectic Endpoint](https://blog.plasticlabs.ai/archive/ARCHIVED;-Introducing-Honcho's-Dialectic-API).
 
 This is a regular API endpoint (`/peers/{peer_id}/chat`) that takes natural language requests to get data
 about the `Peer`. This robust design lets us use this single endpoint for all
