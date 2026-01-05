@@ -307,13 +307,13 @@ class DialecticAgent:
         # Track prometheus metrics - actual token counts from API
         if prometheus.METRICS_ENABLED:
             prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
-                token_type=prometheus.DIALECTIC_TOKEN_TYPES.INPUT.value,
-                component=prometheus.DIALECTIC_COMPONENTS.TOTAL.value,
+                token_type=prometheus.DialecticTokenTypes.INPUT.value,
+                component=prometheus.DialecticComponents.TOTAL.value,
             ).inc(input_tokens)
 
             prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
-                token_type=prometheus.DIALECTIC_TOKEN_TYPES.OUTPUT.value,
-                component=prometheus.DIALECTIC_COMPONENTS.TOTAL.value,
+                token_type=prometheus.DialecticTokenTypes.OUTPUT.value,
+                component=prometheus.DialecticComponents.TOTAL.value,
             ).inc(output_tokens)
 
     async def answer(self, query: str) -> str:

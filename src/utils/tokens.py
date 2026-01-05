@@ -18,8 +18,8 @@ def estimate_tokens(text: str | list[str] | None) -> int:
 
 
 def track_deriver_input_tokens(
-    task_type: prometheus.DERIVER_TASK_TYPES,
-    components: dict[prometheus.DERIVER_COMPONENTS, int],
+    task_type: prometheus.DeriverTaskTypes,
+    components: dict[prometheus.DeriverComponents, int],
 ) -> None:
     """
     Helper method to track input token components for a given task type.
@@ -31,6 +31,6 @@ def track_deriver_input_tokens(
     for component, token_count in components.items():
         prometheus.DERIVER_TOKENS_PROCESSED.labels(
             task_type=task_type.value,
-            token_type=prometheus.DERIVER_TOKEN_TYPES.INPUT.value,
+            token_type=prometheus.DeriverTokenTypes.INPUT.value,
             component=component.value,
         ).inc(token_count)

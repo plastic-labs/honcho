@@ -88,10 +88,10 @@ async def process_representation_tasks_batch(
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
     messages_tokens = estimate_tokens(formatted_messages)
     track_deriver_input_tokens(
-        task_type=prometheus.DERIVER_TASK_TYPES.INGESTION,
+        task_type=prometheus.DeriverTaskTypes.INGESTION,
         components={
-            prometheus.DERIVER_COMPONENTS.PROMPT: prompt_tokens,
-            prometheus.DERIVER_COMPONENTS.MESSAGES: messages_tokens,
+            prometheus.DeriverComponents.PROMPT: prompt_tokens,
+            prometheus.DeriverComponents.MESSAGES: messages_tokens,
         },
     )
 
@@ -135,9 +135,9 @@ async def process_representation_tasks_batch(
     )
 
     prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type=prometheus.DERIVER_TASK_TYPES.INGESTION.value,
-        token_type=prometheus.DERIVER_TOKEN_TYPES.OUTPUT.value,
-        component=prometheus.DERIVER_COMPONENTS.OUTPUT_TOTAL.value,
+        task_type=prometheus.DeriverTaskTypes.INGESTION.value,
+        token_type=prometheus.DeriverTokenTypes.OUTPUT.value,
+        component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
     ).inc(response.output_tokens)
 
     message_ids = [m.id for m in messages if m.peer_name == observed]

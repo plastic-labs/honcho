@@ -113,17 +113,17 @@ DERIVER_TOKENS_PROCESSED = NamespacedCounter(
 )
 
 
-class DERIVER_TASK_TYPES(Enum):
+class DeriverTaskTypes(Enum):
     INGESTION = "ingestion"
     SUMMARY = "summary"
 
 
-class DERIVER_TOKEN_TYPES(Enum):
+class DeriverTokenTypes(Enum):
     INPUT = "input"
     OUTPUT = "output"
 
 
-class DERIVER_COMPONENTS(Enum):
+class DeriverComponents(Enum):
     PROMPT = "prompt"  # used in ingestion and summary
     MESSAGES = "messages"  # used in ingestion and summary
     PREVIOUS_SUMMARY = "previous_summary"  # only used for summary
@@ -147,12 +147,12 @@ DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
 )
 
 
-class DIALECTIC_TOKEN_TYPES(Enum):
+class DialecticTokenTypes(Enum):
     INPUT = "input"
     OUTPUT = "output"
 
 
-class DIALECTIC_COMPONENTS(Enum):
+class DialecticComponents(Enum):
     TOTAL = "total"
 
 

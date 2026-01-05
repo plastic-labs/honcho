@@ -396,19 +396,19 @@ async def _create_and_save_summary(
             prompt_tokens = estimate_long_summary_prompt_tokens()
 
         track_deriver_input_tokens(
-            task_type=prometheus.DERIVER_TASK_TYPES.SUMMARY,
+            task_type=prometheus.DeriverTaskTypes.SUMMARY,
             components={
-                prometheus.DERIVER_COMPONENTS.PROMPT: prompt_tokens,
-                prometheus.DERIVER_COMPONENTS.MESSAGES: messages_tokens,
-                prometheus.DERIVER_COMPONENTS.PREVIOUS_SUMMARY: previous_summary_tokens,
+                prometheus.DeriverComponents.PROMPT: prompt_tokens,
+                prometheus.DeriverComponents.MESSAGES: messages_tokens,
+                prometheus.DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
             },
         )
 
         # Track output tokens
         prometheus.DERIVER_TOKENS_PROCESSED.labels(
-            task_type=prometheus.DERIVER_TASK_TYPES.SUMMARY.value,
-            token_type=prometheus.DERIVER_TOKEN_TYPES.OUTPUT.value,
-            component=prometheus.DERIVER_COMPONENTS.OUTPUT_TOTAL.value,
+            task_type=prometheus.DeriverTaskTypes.SUMMARY.value,
+            token_type=prometheus.DeriverTokenTypes.OUTPUT.value,
+            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
         ).inc(new_summary["token_count"])
 
         # Save summary to database
