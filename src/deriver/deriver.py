@@ -12,7 +12,7 @@ from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import accumulate_metric, log_performance_metrics
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.tokens import estimate_tokens, track_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 from src.utils.tracing import with_sentry_transaction
 
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
@@ -87,11 +87,11 @@ async def process_representation_tasks_batch(
     # Track token usage
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
     messages_tokens = estimate_tokens(formatted_messages)
-    track_input_tokens(
-        task_type="minimal_representation",
+    track_deriver_input_tokens(
+        task_type=prometheus.DERIVER_TASK_TYPES.INGESTION,
         components={
-            "prompt": prompt_tokens,
-            "messages": messages_tokens,
+            prometheus.DERIVER_COMPONENTS.PROMPT: prompt_tokens,
+            prometheus.DERIVER_COMPONENTS.MESSAGES: messages_tokens,
         },
     )
 
@@ -134,10 +134,10 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(  # nosec B106 <- dumb false positive
-        task_type="minimal_representation",
-        token_type="output",
-        component="total",
+    prometheus.DERIVER_TOKENS_PROCESSED.labels(
+        task_type=prometheus.DERIVER_TASK_TYPES.INGESTION.value,
+        token_type=prometheus.DERIVER_TOKEN_TYPES.OUTPUT.value,
+        component=prometheus.DERIVER_COMPONENTS.OUTPUT_TOTAL.value,
     ).inc(response.output_tokens)
 
     message_ids = [m.id for m in messages if m.peer_name == observed]

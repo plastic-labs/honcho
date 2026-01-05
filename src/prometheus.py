@@ -5,6 +5,7 @@ This module defines all Prometheus metrics for all Honcho processes and exposes 
 """
 
 import logging
+from enum import Enum
 from typing import cast
 
 from prometheus_client import (
@@ -97,9 +98,9 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
 #
 # Incremented in: src/deriver/deriver.py after the critical analysis call is made
 # Labels:
-#   - task_type: The type of task that processed the tokens (e.g., "representation", "summary")
+#   - task_type: The type of task that processed the tokens
 #   - token_type: The type of tokens ("input" or "output")
-#   - component: The component of the input (e.g., "peer_card", "working_representation", "prompt", "new_turns", "session_context")
+#   - component: The component of the input
 DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     "deriver_tokens_processed_total",
     "Total tokens processed by the deriver",
@@ -111,19 +112,48 @@ DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     ],
 )
 
+
+class DERIVER_TASK_TYPES(Enum):
+    INGESTION = "ingestion"
+    SUMMARY = "summary"
+
+
+class DERIVER_TOKEN_TYPES(Enum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class DERIVER_COMPONENTS(Enum):
+    PROMPT = "prompt"  # used in ingestion and summary
+    MESSAGES = "messages"  # used in ingestion and summary
+    PREVIOUS_SUMMARY = "previous_summary"  # only used for summary
+    OUTPUT_TOTAL = "output_total"
+
+
 # Tracks the total number of input and output tokens processed by the dialectic.
 #
 # Incremented in: src/dialectic/chat.py after the dialectic call is made
 # Labels:
-#   - token_type: The type of tokens ("input" or "output")
+#   - token_type: The type of tokens
+#   - component: The component of the input
 DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
     "dialectic_tokens_processed_total",
     "Total tokens processed by the dialectic",
     [
         "namespace",
         "token_type",
+        "component",
     ],
 )
+
+
+class DIALECTIC_TOKEN_TYPES(Enum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class DIALECTIC_COMPONENTS(Enum):
+    TOTAL = "total"
 
 
 async def metrics() -> StarletteResponse:
