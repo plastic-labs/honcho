@@ -367,11 +367,25 @@ async def _create_and_save_summary(
 
     previous_summary_text = latest_summary["content"] if latest_summary else None
 
+    # Check if we have any new messages to summarize. This can happen if queue items
+    # are processed out of order and the summary is already ahead of this message_id.
+    start_id = latest_summary["message_id"] if latest_summary else 0
+    if start_id >= message_id:
+        logger.debug(
+            "Skipping %s summary for %s/%s - already summarized up to message %d (requested: %d)",
+            summary_type.name,
+            workspace_name,
+            session_name,
+            start_id,
+            message_id,
+        )
+        return
+
     messages = await crud.get_messages_id_range(
         db,
         workspace_name,
         session_name,
-        start_id=latest_summary["message_id"] if latest_summary else 0,
+        start_id=start_id,
         end_id=message_id,
     )
 
