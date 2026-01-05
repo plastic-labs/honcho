@@ -87,7 +87,11 @@ class GraphSurprisal(SurprisalTree):
                 transition[i, j] = 1.0
 
         row_sums = transition.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1
+        # Add self-loops for isolated nodes to maintain stochasticity
+        for i in range(n):
+            if row_sums[i, 0] == 0:
+                transition[i, i] = 1.0
+                row_sums[i, 0] = 1.0
         transition = transition / row_sums
 
         stationary: NDArray[np.floating[Any]] = np.ones(n) / n
