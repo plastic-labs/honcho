@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from src.config import settings
+from src.config import ReasoningLevel, settings
 from src.utils.representation import Representation
 from src.utils.types import DocumentLevel
 
@@ -650,6 +650,10 @@ class DialecticOptions(BaseModel):
         str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
     ]
     stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or extra-high",
+    )
 
 
 class DialecticResponse(BaseModel):

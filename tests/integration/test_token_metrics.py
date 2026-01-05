@@ -652,6 +652,7 @@ class TestDialecticTokenMetrics:
             "namespace": "test",
             "token_type": "input",
             "component": "total",
+            "reasoning_level": "low",
         }
         before = metric_checker.capture("dialectic_tokens_processed", labels)
 
@@ -698,6 +699,7 @@ class TestDialecticTokenMetrics:
             "namespace": "test",
             "token_type": "output",
             "component": "total",
+            "reasoning_level": "low",
         }
         before = metric_checker.capture("dialectic_tokens_processed", labels)
 

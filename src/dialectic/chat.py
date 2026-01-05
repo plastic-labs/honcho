@@ -9,6 +9,7 @@ import logging
 from collections.abc import AsyncIterator
 
 from src import crud
+from src.config import ReasoningLevel
 from src.dependencies import tracked_db
 from src.dialectic.core import DialecticAgent
 
@@ -21,6 +22,7 @@ async def agentic_chat(
     query: str,
     observer: str,
     observed: str,
+    reasoning_level: ReasoningLevel = "low",
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -31,6 +33,7 @@ async def agentic_chat(
         query: The question to answer about the peer
         observer: The peer making the query
         observed: The peer being queried about
+        reasoning_level: Level of reasoning to apply
 
     Returns:
         The synthesized answer string
@@ -55,6 +58,7 @@ async def agentic_chat(
             observed=observed,
             observer_peer_card=observer_peer_card,
             observed_peer_card=observed_peer_card,
+            reasoning_level=reasoning_level,
         )
 
         response = await agent.answer(query)
@@ -68,6 +72,7 @@ async def agentic_chat_stream(
     query: str,
     observer: str,
     observed: str,
+    reasoning_level: ReasoningLevel = "low",
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -78,6 +83,7 @@ async def agentic_chat_stream(
         query: The question to answer about the peer
         observer: The peer making the query
         observed: The peer being queried about
+        reasoning_level: Level of reasoning to apply
 
     Yields:
         Chunks of the response text as they are generated
@@ -102,6 +108,7 @@ async def agentic_chat_stream(
             observed=observed,
             observer_peer_card=observer_peer_card,
             observed_peer_card=observed_peer_card,
+            reasoning_level=reasoning_level,
         )
 
         async for chunk in agent.answer_stream(query):

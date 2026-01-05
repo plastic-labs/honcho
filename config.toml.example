@@ -90,12 +90,44 @@ ENABLED = true
 
 # Dialectic settings
 [dialectic]
+MAX_OUTPUT_TOKENS = 8192
+MAX_INPUT_TOKENS = 100000
+HISTORY_TOKEN_LIMIT = 8192
+SESSION_HISTORY_MAX_TOKENS = 16384
+
+# Per-level settings for reasoning levels
+[dialectic.levels.minimal]
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 2
+
+[dialectic.levels.low]
+PROVIDER = "google"
+MODEL = "gemini-3-flash"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 5
+
+[dialectic.levels.medium]
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-4-5"
-MAX_OUTPUT_TOKENS = 2500
-THINKING_BUDGET_TOKENS = 1024
+THINKING_BUDGET_TOKENS = 512
+MAX_TOOL_ITERATIONS = 4
+
+[dialectic.levels.high]
+PROVIDER = "anthropic"
+MODEL = "claude-opus-4-5"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 4
+
+[dialectic.levels.extra-high]
+PROVIDER = "anthropic"
+MODEL = "claude-opus-4-5"
+THINKING_BUDGET_TOKENS = 512
+MAX_TOOL_ITERATIONS = 10
+# Backup provider example (optional, must set both or neither):
 # BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-3-pro"
+# BACKUP_MODEL = "gemini-2.5-pro"
 
 # Summary settings
 [summary]

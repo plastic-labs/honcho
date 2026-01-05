@@ -182,6 +182,7 @@ async def chat(
         if prometheus.METRICS_ENABLED:
             prometheus.DIALECTIC_CALLS.labels(
                 workspace_name=workspace_id,
+                reasoning_level=options.reasoning_level,
             ).inc()
 
         return StreamingResponse(
@@ -192,6 +193,7 @@ async def chat(
                     query=options.query,
                     observer=peer_id,
                     observed=options.target if options.target is not None else peer_id,
+                    reasoning_level=options.reasoning_level,
                 )
             ),
             media_type="text/event-stream",
@@ -205,11 +207,13 @@ async def chat(
         # if target is given, that's the observed peer. otherwise, observer==observed
         # and it's answered from the omniscient Honcho perspective
         observed=options.target if options.target is not None else peer_id,
+        reasoning_level=options.reasoning_level,
     )
 
     if prometheus.METRICS_ENABLED:
         prometheus.DIALECTIC_CALLS.labels(
             workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
         ).inc()
 
     return schemas.DialecticResponse(content=str(response))

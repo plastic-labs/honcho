@@ -277,19 +277,81 @@ class PeerCardSettings(HonchoSettings):
     ENABLED: bool = True
 
 
-class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
+# Reasoning levels for dialectic - defined here to avoid circular imports with schemas
+ReasoningLevel = Literal["minimal", "low", "medium", "high", "extra-high"]
+REASONING_LEVELS: list[ReasoningLevel] = [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "extra-high",
+]
 
-    PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-haiku-4-5"
+
+class DialecticLevelSettings(BaseModel):
+    """Settings for a specific reasoning level in the dialectic."""
+
+    PROVIDER: SupportedProviders
+    MODEL: str
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(ge=0, le=100_000)]
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(ge=0, le=50)]
+
+    @model_validator(mode="after")
+    def _validate_backup_configuration(self) -> "DialecticLevelSettings":
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
+
+
+class DialecticSettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
+    )
+
+    # Per-level settings for provider, model, thinking budget, and tool iterations
+    # TODO: Fill in appropriate values for each reasoning level
+    LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
+        default_factory=lambda: {
+            "minimal": DialecticLevelSettings(
+                PROVIDER="google",
+                MODEL="gemini-2.5-flash-lite",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=2,
+            ),
+            "low": DialecticLevelSettings(
+                PROVIDER="google",
+                MODEL="gemini-3-flash",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=5,
+            ),
+            "medium": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-haiku-4-5",
+                THINKING_BUDGET_TOKENS=512,
+                MAX_TOOL_ITERATIONS=4,
+            ),
+            "high": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-opus-4-5",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=4,
+            ),
+            "extra-high": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-opus-4-5",
+                THINKING_BUDGET_TOKENS=512,
+                MAX_TOOL_ITERATIONS=10,
+            ),
+        }
+    )
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
-
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=4096, gt=0, le=10_000)] = 4096
-
-    # Agent iteration limit - controls how many tool calling rounds the agent gets
-    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
     # Token limit for get_recent_history tool within the agent
     HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
@@ -302,11 +364,20 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
-        """Ensure the output token limit exceeds the thinking budget."""
-        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
-            raise ValueError(
-                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
-            )
+        """Ensure the output token limit exceeds all thinking budgets."""
+        for level, level_settings in self.LEVELS.items():
+            if self.MAX_OUTPUT_TOKENS <= level_settings.THINKING_BUDGET_TOKENS:
+                raise ValueError(
+                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_all_levels_present(self) -> "DialecticSettings":
+        """Ensure all reasoning levels are configured."""
+        missing = set(REASONING_LEVELS) - set(self.LEVELS.keys())
+        if missing:
+            raise ValueError(f"Missing configuration for reasoning levels: {missing}")
         return self
 
 

@@ -14,7 +14,7 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, prometheus
-from src.config import settings
+from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
 from src.utils.clients import (
@@ -51,6 +51,7 @@ class DialecticAgent:
         observer_peer_card: list[str] | None = None,
         observed_peer_card: list[str] | None = None,
         metric_key: str | None = None,
+        reasoning_level: ReasoningLevel = "low",
     ):
         """
         Initialize the dialectic agent.
@@ -64,6 +65,7 @@ class DialecticAgent:
             observer_peer_card: Biographical information about the observer
             observed_peer_card: Biographical information about the observed peer
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
+            reasoning_level: Level of reasoning to apply
         """
         self.db: AsyncSession = db
         self.workspace_name: str = workspace_name
@@ -73,6 +75,7 @@ class DialecticAgent:
         self.observer_peer_card: list[str] | None = observer_peer_card
         self.observed_peer_card: list[str] | None = observed_peer_card
         self.metric_key: str | None = metric_key
+        self.reasoning_level: ReasoningLevel = reasoning_level
 
         # Initialize conversation history with system prompt
         self.messages: list[dict[str, str]] = [
@@ -219,7 +222,8 @@ class DialecticAgent:
                 f"workspace: {self.workspace_name}\n"
                 f"session: {self.session_name or '(global)'}\n"
                 f"observer: {self.observer}\n"
-                f"observed: {self.observed}"
+                f"observed: {self.observed}\n"
+                f"reasoning_level: {self.reasoning_level}"
             ),
             "blob",
         )
@@ -309,11 +313,13 @@ class DialecticAgent:
             prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
                 token_type=prometheus.DialecticTokenTypes.INPUT.value,
                 component=prometheus.DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
             ).inc(input_tokens)
 
             prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
                 token_type=prometheus.DialecticTokenTypes.OUTPUT.value,
                 component=prometheus.DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
             ).inc(output_tokens)
 
     async def answer(self, query: str) -> str:
@@ -333,17 +339,20 @@ class DialecticAgent:
         """
         tool_executor, task_name, run_id, start_time = await self._prepare_query(query)
 
+        # Get level-specific settings
+        level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
+
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            llm_settings=settings.DIALECTIC,
+            llm_settings=level_settings,
             prompt="",  # Ignored since we pass messages
             max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
             tools=DIALECTIC_TOOLS,
             tool_choice=None,
             tool_executor=tool_executor,
-            max_tool_iterations=settings.DIALECTIC.MAX_TOOL_ITERATIONS,
+            max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
             messages=self.messages,
             track_name="Dialectic Agent",
-            thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS,
+            thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name="dialectic_chat",
         )
@@ -380,10 +389,13 @@ class DialecticAgent:
         """
         tool_executor, task_name, run_id, start_time = await self._prepare_query(query)
 
+        # Get level-specific settings
+        level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
+
         response = cast(
             StreamingResponseWithMetadata,
             await honcho_llm_call(
-                llm_settings=settings.DIALECTIC,
+                llm_settings=level_settings,
                 prompt="",  # Ignored since we pass messages
                 max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
                 stream=True,
@@ -391,10 +403,10 @@ class DialecticAgent:
                 tools=DIALECTIC_TOOLS,
                 tool_choice=None,
                 tool_executor=tool_executor,
-                max_tool_iterations=settings.DIALECTIC.MAX_TOOL_ITERATIONS,
+                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
                 track_name="Dialectic Agent Stream",
-                thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS,
+                thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             ),
         )

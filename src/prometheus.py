@@ -73,12 +73,14 @@ MESSAGES_CREATED = NamespacedCounter(
 # Incremented in: src/routers/peers.py when successful dialectic calls are made
 # Labels:
 #   - workspace_name: The workspace where the dialectic call was made
+#   - reasoning_level: The reasoning level used for the call
 DIALECTIC_CALLS = NamespacedCounter(
     "dialectic_calls_total",
     "Total dialectic calls",
     [
         "namespace",
         "workspace_name",
+        "reasoning_level",
     ],
 )
 
@@ -132,10 +134,11 @@ class DeriverComponents(Enum):
 
 # Tracks the total number of input and output tokens processed by the dialectic.
 #
-# Incremented in: src/dialectic/chat.py after the dialectic call is made
+# Incremented in: src/dialectic/core.py after the dialectic call is made
 # Labels:
 #   - token_type: The type of tokens
 #   - component: The component of the input
+#   - reasoning_level: The reasoning level used for the call
 DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
     "dialectic_tokens_processed_total",
     "Total tokens processed by the dialectic",
@@ -143,6 +146,7 @@ DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
         "namespace",
         "token_type",
         "component",
+        "reasoning_level",
     ],
 )
 
