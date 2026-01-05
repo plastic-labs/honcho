@@ -21,13 +21,30 @@ class PrototypeSurprisal(SurprisalTree):
     prototypes: NDArray[np.floating[Any]] | None
     clusters_built: bool
     total_points: int
+    surprisal_scale: float
 
-    def __init__(self, n_clusters: int = 10, max_leaf_size: int = 10) -> None:
+    def __init__(
+        self,
+        n_clusters: int = 10,
+        max_leaf_size: int = 10,
+        surprisal_scale: float = 10.0,
+    ) -> None:
+        """
+        Initialize the prototype-based surprisal tree.
+
+        Args:
+            n_clusters: Number of prototype clusters to form.
+            max_leaf_size: Maximum size for leaf nodes (passed to base class).
+            surprisal_scale: Multiplier applied to the minimum distance from
+                prototypes. Default is 10.0 to normalize raw embedding distances
+                (typically in [0, 1]) to a more interpretable surprisal range.
+        """
         super().__init__(max_leaf_size)
         self.n_clusters = n_clusters
         self.points = []
         self.prototypes = None
         self.clusters_built = False
+        self.surprisal_scale = surprisal_scale
 
     def insert(self, point: np.ndarray) -> None:
         self.points.append(point)
@@ -77,4 +94,4 @@ class PrototypeSurprisal(SurprisalTree):
         )
         min_distance: float = float(np.min(distances))
 
-        return min_distance * 10.0
+        return min_distance * self.surprisal_scale

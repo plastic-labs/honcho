@@ -530,7 +530,7 @@ class DocumentCreate(DocumentBase):
     )
     level: DocumentLevel = Field(
         default="explicit",
-        description="The level of the document (explicit, deductive, or inductive)",
+        description="The level of the document (explicit, deductive, inductive, vignette, or contradiction)",
     )
     times_derived: int = Field(
         default=1,
@@ -607,7 +607,7 @@ class ObservationCreate(BaseModel):
     @model_validator(mode="after")
     def validate_token_count(self) -> Self:
         """Validate that content doesn't exceed embedding token limit."""
-        encoding = tiktoken.get_encoding("cl100k_base")
+        encoding = tiktoken.get_encoding("o200k_base")
         tokens = encoding.encode(self.content)
         self._token_count = len(tokens)
 

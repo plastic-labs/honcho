@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -127,13 +127,13 @@ async def query_documents_recent(
     """
     stmt = (
         select(models.Document)
-        .limit(limit)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
         )
         .order_by(models.Document.created_at.desc())
+        .limit(limit)
     )
 
     if session_name is not None:
@@ -166,13 +166,13 @@ async def query_documents_most_derived(
     """
     stmt = (
         select(models.Document)
-        .limit(limit)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
         )
         .order_by(models.Document.times_derived.desc())
+        .limit(limit)
     )
 
     result = await db.execute(stmt)
@@ -616,8 +616,6 @@ async def get_child_observations(
     Returns:
         Sequence of documents that reference this document as a premise or source
     """
-    from sqlalchemy import or_
-
     # Find documents where premise_ids or source_ids contains the parent_id
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,

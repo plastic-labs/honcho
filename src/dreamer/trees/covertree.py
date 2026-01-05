@@ -84,8 +84,6 @@ class CoverTree(SurprisalTree):
 
         surprisal_value = 0.0
         node: CoverNode = self.root
-        scale = self.root.scale
-        depth = 0
 
         while node.children:
             best_child: CoverNode | None = None
@@ -107,8 +105,6 @@ class CoverTree(SurprisalTree):
             surprisal_value += -np.log(p_branch + 1e-10)
 
             node = best_child
-            scale -= 1
-            depth += 1
 
         dist_to_rep = float(np.linalg.norm(node.point - point))
 

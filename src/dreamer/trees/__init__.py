@@ -48,17 +48,17 @@ def create_tree(tree_type: str, **kwargs: Any) -> SurprisalTree:
 
 
 __all__ = [
+    "create_tree",
+    "CoverNode",
+    "CoverTree",
+    "GraphSurprisal",
+    "InternalNode",
+    "LeafNode",
+    "LSHSurprisal",
+    "PrototypeSurprisal",
+    "RPInternalNode",
+    "RPTree",
+    "SklearnTreeWrapper",
     "SurprisalTree",
     "TreeNode",
-    "LeafNode",
-    "InternalNode",
-    "RPTree",
-    "RPInternalNode",
-    "CoverTree",
-    "CoverNode",
-    "SklearnTreeWrapper",
-    "LSHSurprisal",
-    "GraphSurprisal",
-    "PrototypeSurprisal",
-    "create_tree",
 ]

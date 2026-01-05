@@ -150,9 +150,13 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
-    if observations.is_empty():
+    if observations.is_empty() or not message_ids:
         logger.warning(
-            f"Deriver generated zero observations for messages {earliest_message.id}:{latest_message.id} in {latest_message.workspace_name}/{latest_message.session_name}!"
+            "Deriver generated zero observations for messages %s:%s in %s/%s!",
+            earliest_message.id,
+            latest_message.id,
+            latest_message.workspace_name,
+            latest_message.session_name,
         )
     else:
         representation_manager = RepresentationManager(

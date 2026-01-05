@@ -199,7 +199,13 @@ async def trigger_dream(
     # Convert reasoning_focus string to enum if provided
     reasoning_focus: ReasoningFocus | None = None
     if request.reasoning_focus is not None:
-        reasoning_focus = ReasoningFocus(request.reasoning_focus)
+        try:
+            reasoning_focus = ReasoningFocus(request.reasoning_focus)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid reasoning_focus: {request.reasoning_focus}. Valid values: {[f.value for f in ReasoningFocus]}",
+            ) from None
 
     # Enqueue the dream task for immediate processing
     await enqueue_dream(
@@ -214,5 +220,11 @@ async def trigger_dream(
 
     focus_str = f", focus: {reasoning_focus.value}" if reasoning_focus else ""
     logger.info(
-        f"Manually triggered dream: {dream_type.value} for {workspace_id}/{observer}/{observed} (session: {request.session_id}{focus_str})"
+        "Manually triggered dream: %s for %s/%s/%s (session: %s%s)",
+        dream_type.value,
+        workspace_id,
+        observer,
+        observed,
+        request.session_id,
+        focus_str,
     )

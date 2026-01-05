@@ -165,9 +165,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                                     "explicit",
                                     "deductive",
                                     "inductive",
+                                    "vignette",
                                     "contradiction",
                                 ],
-                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'contradiction' for conflicting statements",
+                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'vignette' for narrative snapshots, 'contradiction' for conflicting statements",
                             },
                             # Tree linkage for deductive observations
                             "premise_ids": {
@@ -1268,7 +1269,7 @@ async def _handle_create_observations(
     if not observations:
         return "ERROR: observations list is empty"
 
-    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
+    valid_levels = ["explicit", "deductive", "inductive", "vignette", "contradiction"]
     valid_pattern_types = [
         "preference",
         "behavior",

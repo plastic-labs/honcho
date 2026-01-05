@@ -153,16 +153,16 @@ class DreamScheduler:
                     observer=observer,
                     observed=observed,
                 )
-                logger.info(f"Executed dream for {work_unit_key}")
+                logger.info("Executed dream for %s", work_unit_key)
             else:
                 logger.info(
-                    f"Skipping dream for {work_unit_key} - collection is active"
+                    "Skipping dream for %s - collection is active", work_unit_key
                 )
 
         except asyncio.CancelledError:
-            logger.debug(f"Dream task cancelled for {work_unit_key}")
+            logger.debug("Dream task cancelled for %s", work_unit_key)
         except Exception as e:
-            logger.error(f"Error in delayed dream for {work_unit_key}: {str(e)}")
+            logger.error("Error in delayed dream for %s: %s", work_unit_key, e)
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
 

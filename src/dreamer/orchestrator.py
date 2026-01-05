@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.dreamer.specialists import SPECIALISTS
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
+from src.exceptions import SpecialistExecutionError, SurprisalError
 from src.utils.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -132,7 +133,7 @@ async def run_dream(
                     f"[{run_id}] No high-surprisal observations found using standard probing questions"
                 )
 
-        except Exception as e:
+        except SurprisalError as e:
             logger.error(f"[{run_id}] Surprisal sampling failed: {e}", exc_info=True)
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Fall back to standard probing questions
@@ -151,7 +152,7 @@ async def run_dream(
         )
         logger.info(f"[{run_id}] Deduction completed: {deduction_result[:200]}...")
         accumulate_metric(task_name, "deduction_result", deduction_result, "blob")
-    except Exception as e:
+    except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "deduction_error", str(e), "blob")
 
@@ -169,7 +170,7 @@ async def run_dream(
         )
         logger.info(f"[{run_id}] Induction completed: {induction_result[:200]}...")
         accumulate_metric(task_name, "induction_result", induction_result, "blob")
-    except Exception as e:
+    except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "induction_error", str(e), "blob")
 
