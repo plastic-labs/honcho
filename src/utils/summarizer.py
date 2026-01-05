@@ -279,6 +279,7 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.LONG,
                     message_public_id,
+                    configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -296,6 +297,7 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.SHORT,
                     message_public_id,
+                    configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -320,6 +322,7 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.LONG,
                     message_public_id,
+                    configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -335,6 +338,7 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.SHORT,
                     message_public_id,
+                    configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -351,6 +355,7 @@ async def _create_and_save_summary(
     message_id: int,
     summary_type: SummaryType,
     message_public_id: str,
+    configuration: schemas.ResolvedConfiguration,
 ) -> None:
     """
     Create a new summary and save it to the database.
@@ -371,9 +376,9 @@ async def _create_and_save_summary(
     # Check if we have any new messages to summarize. This can happen if queue items
     # are processed out of order and the summary is already ahead of this message_id.
     start_id: int = (
-        max(message_id - 60, 0)
+        max(message_id - configuration.summary.messages_per_long_summary, 0)
         if summary_type == SummaryType.LONG
-        else max(message_id - 20, 0)
+        else max(message_id - configuration.summary.messages_per_short_summary, 0)
     )
 
     messages: list[Message] = await crud.get_messages_id_range(
