@@ -15,6 +15,7 @@ from src.config import settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
+from src.models import Message
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric, conditional_observe
@@ -369,19 +370,13 @@ async def _create_and_save_summary(
 
     # Check if we have any new messages to summarize. This can happen if queue items
     # are processed out of order and the summary is already ahead of this message_id.
-    start_id = latest_summary["message_id"] if latest_summary else 0
-    if start_id >= message_id:
-        logger.debug(
-            "Skipping %s summary for %s/%s - already summarized up to message %d (requested: %d)",
-            summary_type.name,
-            workspace_name,
-            session_name,
-            start_id,
-            message_id,
-        )
-        return
+    start_id: int = (
+        max(message_id - 60, 0)
+        if summary_type == SummaryType.LONG
+        else max(message_id - 20, 0)
+    )
 
-    messages = await crud.get_messages_id_range(
+    messages: list[Message] = await crud.get_messages_id_range(
         db,
         workspace_name,
         session_name,
