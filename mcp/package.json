@@ -9,13 +9,13 @@
     "bun": ">=1.2.0"
   },
   "scripts": {
-    "preinstall": "node -e \"if(process.env.npm_config_user_agent?.includes('npm')){console.error('❌ Please use bun instead of npm!\\n📦 Run: bun install\\n🌐 Install bun: https://bun.sh/');process.exit(1)}\"",
+    "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(ua.includes('npm')&&!ua.includes('bun')){console.error('❌ Please use bun instead of npm!\\n📦 Run: bun install\\n🌐 Install bun: https://bun.sh/');process.exit(1)}\"",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:staging": "wrangler deploy --env staging"
   },
   "dependencies": {
-    "@honcho-ai/sdk": "^1.2.1"
+    "@honcho-ai/sdk": "^1.6.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241002.0",

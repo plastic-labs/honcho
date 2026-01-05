@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.5.0"
+version = "2.5.1"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -33,7 +33,7 @@ dependencies = [
     "typing-extensions>=4.11.0",
     "prometheus-client>=0.20.0",
     "json-repair>=0.49.0",
-    "redis>=6.0.0",
+    "redis>=7.0.0,<8.0.0",
     "cashews[redis]==7.4.1",
 ]
 [tool.uv]
