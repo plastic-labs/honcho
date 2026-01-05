@@ -489,9 +489,116 @@ class HonchoLLMCallStreamChunk(BaseModel):
     output_tokens: int | None = None
 
 
+class StreamingResponseWithMetadata:
+    """
+    Wrapper for streaming responses that includes metadata from the tool execution phase.
+
+    This allows callers to access tool call counts, token usage, and thinking content
+    from the tool loop while still streaming the final response.
+    """
+
+    _stream: AsyncIterator[HonchoLLMCallStreamChunk]
+    tool_calls_made: list[dict[str, Any]]
+    input_tokens: int
+    output_tokens: int
+    cache_creation_input_tokens: int
+    cache_read_input_tokens: int
+    thinking_content: str | None
+
+    def __init__(
+        self,
+        stream: AsyncIterator[HonchoLLMCallStreamChunk],
+        tool_calls_made: list[dict[str, Any]],
+        input_tokens: int,
+        output_tokens: int,
+        cache_creation_input_tokens: int,
+        cache_read_input_tokens: int,
+        thinking_content: str | None = None,
+    ):
+        self._stream = stream
+        self.tool_calls_made = tool_calls_made
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_creation_input_tokens = cache_creation_input_tokens
+        self.cache_read_input_tokens = cache_read_input_tokens
+        self.thinking_content = thinking_content
+
+    def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+        return self._stream.__aiter__()
+
+    async def __anext__(self) -> HonchoLLMCallStreamChunk:
+        return await self._stream.__anext__()
+
+
 # Bounds for max_tool_iterations to prevent runaway loops
 MIN_TOOL_ITERATIONS = 1
 MAX_TOOL_ITERATIONS = 100
+
+
+async def _stream_final_response(
+    llm_settings: "LLMComponentSettings",
+    prompt: str,
+    max_tokens: int,
+    conversation_messages: list[dict[str, Any]],
+    response_model: type[BaseModel] | None,
+    json_mode: bool,
+    temperature: float | None,
+    stop_seqs: list[str] | None,
+    reasoning_effort: ReasoningEffortType,
+    verbosity: VerbosityType,
+    thinking_budget_tokens: int | None,
+) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+    """
+    Stream the final response after tool execution is complete.
+
+    Makes a streaming LLM call with the accumulated conversation messages
+    (which include all tool call results) to generate the final answer.
+
+    Args:
+        llm_settings: Settings for the LLM provider
+        prompt: Original prompt (used as fallback)
+        max_tokens: Maximum tokens to generate
+        conversation_messages: Full conversation history including tool results
+        response_model: Optional Pydantic model for structured output
+        json_mode: Whether to use JSON mode
+        temperature: Temperature for the LLM
+        stop_seqs: Stop sequences
+        reasoning_effort: OpenAI reasoning effort (GPT-5 only)
+        verbosity: OpenAI verbosity (GPT-5 only)
+        thinking_budget_tokens: Anthropic thinking budget
+
+    Yields:
+        HonchoLLMCallStreamChunk objects containing the streaming response
+    """
+    provider = llm_settings.PROVIDER
+    model = llm_settings.MODEL
+
+    client = CLIENTS.get(provider)
+    if not client:
+        raise ValueError(f"Missing client for {provider}")
+
+    # Make a streaming call without tools
+    stream_response = await honcho_llm_call_inner(
+        provider,
+        model,
+        prompt,
+        max_tokens,
+        response_model,
+        json_mode,
+        _get_effective_temperature(temperature),
+        stop_seqs,
+        reasoning_effort,
+        verbosity,
+        thinking_budget_tokens,
+        True,  # stream=True
+        None,  # No tools
+        None,  # No tool_choice
+        conversation_messages,
+    )
+
+    # Yield chunks from the streaming response
+    async for chunk in stream_response:
+        yield chunk
 
 
 async def _execute_tool_loop(
@@ -518,7 +625,8 @@ async def _execute_tool_loop(
         tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType],
     ],
     before_retry_callback: Callable[[Any], None],
-) -> HonchoLLMCallResponse[Any]:
+    stream_final: bool = False,
+) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """
     Execute the tool calling loop for agentic LLM interactions.
 
@@ -549,9 +657,11 @@ async def _execute_tool_loop(
         max_input_tokens: Maximum input tokens (for truncation)
         get_provider_and_model: Function to get current provider/model based on attempt
         before_retry_callback: Callback for retry events
+        stream_final: If True, stream the final response instead of returning it synchronously
 
     Returns:
-        Final HonchoLLMCallResponse with accumulated token counts and tool call history
+        Final HonchoLLMCallResponse with accumulated token counts and tool call history,
+        or an AsyncIterator of HonchoLLMCallStreamChunk if stream_final=True
     """
     # Initialize conversation messages
     conversation_messages: list[dict[str, Any]] = (
@@ -635,6 +745,32 @@ async def _execute_tool_loop(
         if not response.tool_calls_made:
             # No tool calls, return final response
             logger.debug("No tool calls in response, finishing")
+
+            if stream_final:
+                # Stream the final response with metadata from tool execution
+                stream = _stream_final_response(
+                    llm_settings=llm_settings,
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    conversation_messages=conversation_messages,
+                    response_model=response_model,
+                    json_mode=json_mode,
+                    temperature=temperature,
+                    stop_seqs=stop_seqs,
+                    reasoning_effort=reasoning_effort,
+                    verbosity=verbosity,
+                    thinking_budget_tokens=thinking_budget_tokens,
+                )
+                return StreamingResponseWithMetadata(
+                    stream=stream,
+                    tool_calls_made=all_tool_calls,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    cache_creation_input_tokens=total_cache_creation_tokens,
+                    cache_read_input_tokens=total_cache_read_tokens,
+                    thinking_content=response.thinking_content,
+                )
+
             response.tool_calls_made = all_tool_calls
             response.input_tokens = total_input_tokens
             response.output_tokens = total_output_tokens
@@ -712,6 +848,31 @@ async def _execute_tool_loop(
     logger.warning(
         f"Tool execution loop reached max iterations ({max_tool_iterations})"
     )
+
+    # If streaming the final response, use the streaming helper with metadata
+    if stream_final:
+        stream = _stream_final_response(
+            llm_settings=llm_settings,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            conversation_messages=conversation_messages,
+            response_model=response_model,
+            json_mode=json_mode,
+            temperature=temperature,
+            stop_seqs=stop_seqs,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
+            thinking_budget_tokens=thinking_budget_tokens,
+        )
+        return StreamingResponseWithMetadata(
+            stream=stream,
+            tool_calls_made=all_tool_calls,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            cache_creation_input_tokens=total_cache_creation_tokens,
+            cache_read_input_tokens=total_cache_read_tokens,
+            thinking_content=None,  # No thinking content at max iterations
+        )
 
     # Make one final call to get a text response
     _current_attempt.set(1)  # Reset attempt counter
@@ -945,6 +1106,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
+    stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
@@ -972,6 +1134,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
+    stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
@@ -999,6 +1162,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[True] = ...,
+    stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
@@ -1006,7 +1170,7 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
-) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
+) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
 @conditional_observe(name="LLM Call")
@@ -1026,6 +1190,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: bool = False,
+    stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
@@ -1033,7 +1198,11 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
-) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
+) -> (
+    HonchoLLMCallResponse[Any]
+    | AsyncIterator[HonchoLLMCallStreamChunk]
+    | StreamingResponseWithMetadata
+):
     """
     Make an LLM call with automatic backup provider failover. Backup provider/model
     is used on the final retry attempt, which is 3 by default.
@@ -1054,6 +1223,7 @@ async def honcho_llm_call(
         enable_retry: Whether to enable retry with exponential backoff
         retry_attempts: Number of retry attempts
         stream: Whether to stream the response
+        stream_final_only: If True with tools, run tool loop non-streaming then stream final answer
         tools: Tool definitions for tool calling (Anthropic/OpenAI format)
         tool_choice: Tool selection strategy (auto/required/specific tool)
         tool_executor: Async callable to execute tools, receives (tool_name, tool_input)
@@ -1067,9 +1237,11 @@ async def honcho_llm_call(
         ValueError: If provider is not configured
     """
     # Validate that streaming and tools are not used together
-    if stream and tools:
+    # (unless stream_final_only is set, which streams only the final response after tool calls)
+    if stream and tools and not stream_final_only:
         raise ValueError(
-            "Streaming is not supported with tool calling. Set stream=False when using tools."
+            "Streaming is not supported with tool calling. Set stream=False when using tools, "
+            + "or use stream_final_only=True to stream only the final response after tool calls."
         )
 
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
@@ -1268,6 +1440,7 @@ async def honcho_llm_call(
         max_input_tokens=max_input_tokens,
         get_provider_and_model=_get_provider_and_model,
         before_retry_callback=before_retry_callback,
+        stream_final=stream_final_only,
     )
     if trace_name:
         log_finetuning_trace(
@@ -2063,11 +2236,24 @@ async def handle_streaming_response(
     """
     match client:
         case AsyncAnthropic():
+            # Anthropic requires system messages as a top-level parameter
+            messages = params["messages"]
+            system_content = "\n\n".join(
+                m["content"] for m in messages if m.get("role") == "system"
+            )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
-                "messages": list(params["messages"]),
+                "messages": [m for m in messages if m.get("role") != "system"],
             }
+            if system_content:
+                anthropic_params["system"] = [
+                    {
+                        "type": "text",
+                        "text": system_content,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
 
             # For response models, we need to request JSON and parse manually
             # Note: Streaming with response_model is not ideal but we'll accumulate and parse at the end

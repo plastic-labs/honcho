@@ -54,7 +54,6 @@ async def sample_observations_with_surprisal(
         workspace_name: Workspace identifier
         observer: Observer peer name
         observed: Observed peer name
-        session_name: Session identifier
 
     Returns:
         List of SurprisalScore objects, ranked by surprisal (highest first)
@@ -269,19 +268,17 @@ async def _fetch_random_observations(
     Returns:
         List of Document objects in random order
     """
-    stmt = (
-        select(models.Document)
-        .where(
-            models.Document.workspace_name == workspace_name,
-            models.Document.observer == observer,
-            models.Document.observed == observed,
-        )
-        .order_by(func.random())
-        .limit(limit)
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
     )
 
     if levels:
         stmt = stmt.where(models.Document.level.in_(levels))
+
+    # important: limit applied after level filter
+    stmt = stmt.order_by(func.random()).limit(limit)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())

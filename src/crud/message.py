@@ -10,6 +10,7 @@ from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
+from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 
 from .session import get_or_create_session
 
@@ -503,10 +504,13 @@ async def grep_messages(
         Each snippet may contain multiple matches if they were close together.
     """
     # Build the base query with ILIKE for case-insensitive text search
+    escaped_text = escape_ilike_pattern(text)
     match_stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.content.ilike(f"%{text}%"))
+        .where(
+            models.Message.content.ilike(f"%{escaped_text}%", escape=ILIKE_ESCAPE_CHAR)
+        )
         .order_by(models.Message.created_at.desc())
         .limit(limit)
     )

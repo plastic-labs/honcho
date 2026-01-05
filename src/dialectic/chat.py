@@ -6,6 +6,7 @@ using the DialecticAgent.
 """
 
 import logging
+from collections.abc import AsyncIterator
 
 from src import crud
 from src.dependencies import tracked_db
@@ -59,3 +60,49 @@ async def agentic_chat(
         response = await agent.answer(query)
 
     return response
+
+
+async def agentic_chat_stream(
+    workspace_name: str,
+    session_name: str | None,
+    query: str,
+    observer: str,
+    observed: str,
+) -> AsyncIterator[str]:
+    """
+    Stream an answer to a query about a peer using the agentic dialectic.
+
+    Args:
+        workspace_name: Workspace identifier
+        session_name: Session identifier (may be None for global queries)
+        query: The question to answer about the peer
+        observer: The peer making the query
+        observed: The peer being queried about
+
+    Yields:
+        Chunks of the response text as they are generated
+    """
+    async with tracked_db("dialectic.agentic_chat_stream") as db:
+        # Get peer cards for context
+        observer_peer_card = await crud.get_peer_card(
+            db, workspace_name, observer=observer, observed=observer
+        )
+        observed_peer_card = None
+        if observer != observed:
+            observed_peer_card = await crud.get_peer_card(
+                db, workspace_name, observer=observer, observed=observed
+            )
+
+        # Create and run the dialectic agent
+        agent = DialecticAgent(
+            db=db,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            observer=observer,
+            observed=observed,
+            observer_peer_card=observer_peer_card,
+            observed_peer_card=observed_peer_card,
+        )
+
+        async for chunk in agent.answer_stream(query):
+            yield chunk

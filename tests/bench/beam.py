@@ -773,12 +773,6 @@ async def main() -> int:
         help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
     )
 
-    parser.add_argument(
-        "--legacy-dream",
-        action="store_true",
-        help="Use legacy multi-pass dream system instead of orchestrated specialists (default: False)",
-    )
-
     args = parser.parse_args()
 
     # Setup data directory

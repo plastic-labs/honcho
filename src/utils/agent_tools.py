@@ -1633,7 +1633,7 @@ async def _handle_get_recent_observations(
         limit=tool_input.get("limit", 10),
         session_name=ctx.session_name if session_only else None,
     )
-    total_count = len(representation.explicit) + len(representation.deductive)
+    total_count = representation.len()
     if total_count == 0:
         return "No recent observations found"
     scope = "this session" if session_only else "all sessions"
@@ -1656,7 +1656,7 @@ async def _handle_get_most_derived_observations(
         observed=ctx.observed,
         limit=tool_input.get("limit", 10),
     )
-    total_count = len(representation.explicit) + len(representation.deductive)
+    total_count = representation.len()
     if total_count == 0:
         return "No established observations found"
     repr_str = (
