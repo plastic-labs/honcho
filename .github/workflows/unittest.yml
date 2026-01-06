@@ -105,8 +105,16 @@ jobs:
           LLM_OPENAI_COMPATIBLE_BASE_URL: http://localhost:8000
           DERIVER_PROVIDER: openai
           DERIVER_MODEL: test
-          DIALECTIC_PROVIDER: openai
-          DIALECTIC_MODEL: test
+          DIALECTIC_LEVELS__minimal__PROVIDER: openai
+          DIALECTIC_LEVELS__minimal__MODEL: test
+          DIALECTIC_LEVELS__low__PROVIDER: openai
+          DIALECTIC_LEVELS__low__MODEL: test
+          DIALECTIC_LEVELS__medium__PROVIDER: openai
+          DIALECTIC_LEVELS__medium__MODEL: test
+          DIALECTIC_LEVELS__high__PROVIDER: openai
+          DIALECTIC_LEVELS__high__MODEL: test
+          DIALECTIC_LEVELS__extra-high__PROVIDER: openai
+          DIALECTIC_LEVELS__extra-high__MODEL: test
           DIALECTIC_QUERY_GENERATION_PROVIDER: openai
           DIALECTIC_QUERY_GENERATION_MODEL: test
           SUMMARY_PROVIDER: openai
