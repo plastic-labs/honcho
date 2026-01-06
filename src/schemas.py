@@ -16,7 +16,6 @@ from pydantic import (
 )
 
 from src.config import ReasoningLevel, settings
-from src.utils.representation import Representation
 from src.utils.types import DocumentLevel
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
@@ -28,21 +27,21 @@ class DreamType(str, Enum):
     CONSOLIDATE = "consolidate"
 
 
-class DeriverConfiguration(BaseModel):
+class ReasoningConfiguration(BaseModel):
     enabled: bool | None = Field(
         default=None,
-        description="Whether to enable deriver functionality.",
+        description="Whether to enable reasoning functionality.",
     )
     custom_instructions: str | None = Field(
         default=None,
-        description="TODO: currently unused. Custom instructions to use for the deriver on this workspace/session/message.",
+        description="TODO: currently unused. Custom instructions to use for the reasoning system on this workspace/session/message.",
     )
 
 
 class PeerCardConfiguration(BaseModel):
     use: bool | None = Field(
         default=None,
-        description="Whether to use peer card related to this peer during deriver process.",
+        description="Whether to use peer card related to this peer during reasoning process.",
     )
     create: bool | None = Field(
         default=None,
@@ -83,7 +82,7 @@ class SummaryConfiguration(BaseModel):
 class DreamConfiguration(BaseModel):
     enabled: bool | None = Field(
         default=None,
-        description="Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored.",
+        description="Whether to enable dream functionality. If reasoning is disabled, dreams will also be disabled and this setting will be ignored.",
     )
 
 
@@ -96,13 +95,13 @@ class WorkspaceConfiguration(BaseModel):
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore
 
-    deriver: DeriverConfiguration | None = Field(
+    reasoning: ReasoningConfiguration | None = Field(
         default=None,
-        description="Configuration for deriver functionality.",
+        description="Configuration for reasoning functionality.",
     )
     peer_card: PeerCardConfiguration | None = Field(
         default=None,
-        description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
+        description="Configuration for peer card functionality. If reasoning is disabled, peer cards will also be disabled and these settings will be ignored.",
     )
     summary: SummaryConfiguration | None = Field(
         default=None,
@@ -110,7 +109,7 @@ class WorkspaceConfiguration(BaseModel):
     )
     dream: DreamConfiguration | None = Field(
         default=None,
-        description="Configuration for dream functionality. If deriver is disabled, dreams will also be disabled and these settings will be ignored.",
+        description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and these settings will be ignored.",
     )
 
 
@@ -131,17 +130,17 @@ class MessageConfiguration(BaseModel):
     All fields are optional. Message-level configuration overrides all other configurations.
     """
 
-    deriver: DeriverConfiguration | None = Field(
+    reasoning: ReasoningConfiguration | None = Field(
         default=None,
-        description="Configuration for deriver functionality.",
+        description="Configuration for reasoning functionality.",
     )
     peer_card: PeerCardConfiguration | None = Field(
         default=None,
-        description="Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored.",
+        description="Configuration for peer card functionality. If reasoning is disabled, peer cards will also be disabled and these settings will be ignored.",
     )
 
 
-class ResolvedDeriverConfiguration(BaseModel):
+class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
 
 
@@ -166,7 +165,7 @@ class ResolvedConfiguration(BaseModel):
     Hierarchy: message > session > workspace > global configuration
     """
 
-    deriver: ResolvedDeriverConfiguration
+    reasoning: ResolvedReasoningConfiguration
     peer_card: ResolvedPeerCardConfiguration
     summary: ResolvedSummaryConfiguration
     dream: ResolvedDreamConfiguration
@@ -176,7 +175,7 @@ class PeerConfig(BaseModel):
     # TODO: Update description - should say "Whether honcho forms a representation of the peer itself"
     observe_me: bool | None = Field(
         default=None,
-        description="Whether honcho should form a global theory-of-mind representation of this peer",
+        description="Whether Honcho will use reasoning to form a representation of this peer",
     )
 
 
@@ -267,7 +266,7 @@ class Peer(PeerBase):
 
 class PeerRepresentationGet(BaseModel):
     session_id: str | None = Field(
-        None, description="Get the working representation within this session"
+        None, description="Optional session ID within which to scope the representation"
     )
     target: str | None = Field(
         None,
@@ -442,9 +441,9 @@ class SessionContext(SessionBase):
     summary: Summary | None = Field(
         default=None, description="The summary if available"
     )
-    peer_representation: Representation | None = Field(
+    peer_representation: str | None = Field(
         default=None,
-        description="The peer representation, if context is requested from a specific perspective",
+        description="A curated subset of a peer representation, if context is requested from a specific perspective",
     )
     peer_card: list[str] | None = Field(
         default=None,
@@ -461,9 +460,9 @@ class PeerContext(BaseModel):
 
     peer_id: str = Field(description="The ID of the peer")
     target_id: str = Field(description="The ID of the target peer being observed")
-    representation: Representation | None = Field(
+    representation: str | None = Field(
         default=None,
-        description="The working representation of the target peer from the observer's perspective",
+        description="A curated subset of the representation of the target peer from the observer's perspective",
     )
     peer_card: list[str] | None = Field(
         default=None,
@@ -785,21 +784,12 @@ class QueueStatus(BaseModel):
     )
 
 
-class SessionDeriverStatus(SessionQueueStatus):
-    """Deprecated: use SessionQueueStatus."""
-
-
-class DeriverStatus(QueueStatus):
-    """Deprecated: use QueueStatus."""
-
-
-# Dream trigger schema
-class TriggerDreamRequest(BaseModel):
+class ScheduleDreamRequest(BaseModel):
     observer: str = Field(..., description="Observer peer name")
     observed: str | None = Field(
         None, description="Observed peer name (defaults to observer if not specified)"
     )
-    dream_type: DreamType = Field(..., description="Type of dream to trigger")
+    dream_type: DreamType = Field(..., description="Type of dream to schedule")
     session_id: str = Field(..., description="Session ID to scope the dream to")
     reasoning_focus: Literal["deduction", "induction", "knowledge_update"] | None = (
         Field(

@@ -132,14 +132,16 @@ class TestEnqueueFunction:
     ):
         test_workspace, test_peer = sample_data
 
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         payload = await self.create_sample_payload(
@@ -180,17 +182,19 @@ class TestEnqueueFunction:
         )
         db_session.add(test_peer2)
 
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    test_peer1.name: schemas.SessionPeerConfig(),
-                    test_peer2.name: schemas.SessionPeerConfig(),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        test_peer1.name: schemas.SessionPeerConfig(),
+                        test_peer2.name: schemas.SessionPeerConfig(),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
 
         await db_session.commit()
 
@@ -256,17 +260,19 @@ class TestEnqueueFunction:
         )
         db_session.add(test_peer2)
 
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    test_peer1.name: schemas.SessionPeerConfig(),
-                    test_peer2.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        test_peer1.name: schemas.SessionPeerConfig(),
+                        test_peer2.name: schemas.SessionPeerConfig(observe_others=True),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         NUM_MESSAGES = 3
@@ -345,18 +351,22 @@ class TestEnqueueFunction:
         db_session.add(unobserving_peer)
 
         # Create session
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    test_peer1.name: schemas.SessionPeerConfig(observe_me=True),
-                    observing_peer.name: schemas.SessionPeerConfig(observe_others=True),
-                    unobserving_peer.name: schemas.SessionPeerConfig(),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        test_peer1.name: schemas.SessionPeerConfig(observe_me=True),
+                        observing_peer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                        unobserving_peer.name: schemas.SessionPeerConfig(),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         NUM_MESSAGES = 3
@@ -430,14 +440,16 @@ class TestEnqueueFunction:
         test_peer.configuration = {"observe_me": True}
 
         # Create session
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={test_peer.name: schemas.SessionPeerConfig(observe_me=False)},
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={test_peer.name: schemas.SessionPeerConfig(observe_me=False)},
+                ),
+                test_workspace.name,
+            )
+        ).resource
 
         await db_session.commit()
 
@@ -475,18 +487,22 @@ class TestEnqueueFunction:
 
         db_session.add_all([additional_sender_peer, observer_peer])
 
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    test_peer1.name: schemas.SessionPeerConfig(),
-                    additional_sender_peer.name: schemas.SessionPeerConfig(),
-                    observer_peer.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        test_peer1.name: schemas.SessionPeerConfig(),
+                        additional_sender_peer.name: schemas.SessionPeerConfig(),
+                        observer_peer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         payload1 = await self.create_sample_payload(
@@ -574,17 +590,21 @@ class TestEnqueueFunction:
         db_session.add(observer_peer)
 
         # Create session with both peers
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                    observer_peer.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
+                        observer_peer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Simulate sender leaving the session by setting left_at
@@ -666,22 +686,24 @@ class TestEnqueueFunction:
         db_session.add_all([observer_who_left, observer_who_stayed])
 
         # Create session with all peers
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                    observer_who_left.name: schemas.SessionPeerConfig(
-                        observe_others=True
-                    ),
-                    observer_who_stayed.name: schemas.SessionPeerConfig(
-                        observe_others=True
-                    ),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
+                        observer_who_left.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                        observer_who_stayed.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Simulate one observer leaving the session
@@ -741,16 +763,20 @@ class TestEnqueueFunction:
         db_session.add(observer_peer)
 
         # Create session with only observer (sender not in peers_with_configuration)
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    observer_peer.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        observer_peer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Create message from peer NOT in the session configuration
@@ -834,28 +860,30 @@ class TestEnqueueFunction:
         )
 
         # Create session with all peers having different configurations
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                    active_observer.name: schemas.SessionPeerConfig(
-                        observe_others=True
-                    ),
-                    inactive_observer.name: schemas.SessionPeerConfig(
-                        observe_others=True
-                    ),
-                    active_non_observer.name: schemas.SessionPeerConfig(
-                        observe_others=False
-                    ),
-                    inactive_non_observer.name: schemas.SessionPeerConfig(
-                        observe_others=False
-                    ),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
+                        active_observer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                        inactive_observer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                        active_non_observer.name: schemas.SessionPeerConfig(
+                            observe_others=False
+                        ),
+                        inactive_non_observer.name: schemas.SessionPeerConfig(
+                            observe_others=False
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Mark some peers as having left the session
@@ -1116,18 +1144,20 @@ class TestAdvancedEnqueueEdgeCases:
         db_session.add_all([observer1, observer2])
 
         # Create session with all peers
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                    observer1.name: schemas.SessionPeerConfig(observe_others=True),
-                    observer2.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
+                        observer1.name: schemas.SessionPeerConfig(observe_others=True),
+                        observer2.name: schemas.SessionPeerConfig(observe_others=True),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Mark all observers as having left
@@ -1184,17 +1214,21 @@ class TestAdvancedEnqueueEdgeCases:
         db_session.add(observer_peer)
 
         # Create session
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                    observer_peer.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
+                        observer_peer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Mark both as having left (observer left first, then sender)
@@ -1266,16 +1300,20 @@ class TestAdvancedEnqueueEdgeCases:
         db_session.add(observer_peer)
 
         # Create session with only observer peer
-        test_session = await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    observer_peer.name: schemas.SessionPeerConfig(observe_others=True),
-                },
-            ),
-            test_workspace.name,
-        )
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={
+                        observer_peer.name: schemas.SessionPeerConfig(
+                            observe_others=True
+                        ),
+                    },
+                ),
+                test_workspace.name,
+            )
+        ).resource
         await db_session.commit()
 
         # Create message from peer who was NEVER in the session
@@ -1376,7 +1414,7 @@ class TestGenerateQueueRecordsSeqInSession:
                 ]
             }
             resolved_configuration = schemas.ResolvedConfiguration(
-                deriver=schemas.ResolvedDeriverConfiguration(enabled=True),
+                reasoning=schemas.ResolvedReasoningConfiguration(enabled=True),
                 summary=schemas.ResolvedSummaryConfiguration(
                     enabled=True,
                     messages_per_short_summary=20,
@@ -1456,7 +1494,7 @@ class TestGenerateQueueRecordsSeqInSession:
                 ]
             }
             resolved_configuration = schemas.ResolvedConfiguration(
-                deriver=schemas.ResolvedDeriverConfiguration(enabled=True),
+                reasoning=schemas.ResolvedReasoningConfiguration(enabled=True),
                 summary=schemas.ResolvedSummaryConfiguration(
                     enabled=True,
                     messages_per_short_summary=20,

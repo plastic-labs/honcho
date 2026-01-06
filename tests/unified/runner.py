@@ -36,10 +36,10 @@ from tests.unified.schema import (
     LLMJudgeAssertion,
     NotContainsAssertion,
     QueryAction,
+    ScheduleDreamAction,
     SetSessionConfigAction,
     SetWorkspaceConfigAction,
     TestDefinition,
-    TriggerDreamAction,
     WaitAction,
 )
 
@@ -166,9 +166,9 @@ class UnifiedTestExecutor:
             if step.target == "queue_empty":
                 await self.wait_for_queue(step.timeout)
 
-        elif isinstance(step, TriggerDreamAction):
+        elif isinstance(step, ScheduleDreamAction):
             # Use the core SDK to trigger a dream
-            await self.client.core.workspaces.trigger_dream(
+            await self.client.core.workspaces.schedule_dream(
                 workspace_id=self.client.workspace_id,
                 observer=step.observer,
                 observed=step.observed,

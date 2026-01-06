@@ -2,7 +2,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -30,13 +30,13 @@ router = APIRouter(
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_peers(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
     db: AsyncSession = db,
 ):
-    """Get All Peers for a Workspace"""
+    """Get all Peers for a Workspace, paginated with optional filters."""
     filter_param = None
     if options and hasattr(options, "filters"):
         filter_param = options.filters
@@ -54,13 +54,14 @@ async def get_peers(
     response_model=schemas.Peer,
 )
 async def get_or_create_peer(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    response: Response,
+    workspace_id: str = Path(...),
     peer: schemas.PeerCreate = Body(..., description="Peer creation parameters"),
     jwt_params: JWTParams = Depends(require_auth()),
     db: AsyncSession = db,
 ):
     """
-    Get a Peer by ID
+    Get a Peer by ID or create a new Peer with the given ID.
 
     If peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).
     Otherwise, it uses the peer_id from the JWT.
@@ -77,10 +78,11 @@ async def get_or_create_peer(
         if not jwt_params.p:
             raise AuthenticationException("Peer ID not found in query parameter or JWT")
         peer.name = jwt_params.p
-    peer = (
-        await crud.get_or_create_peers(db, workspace_name=workspace_id, peers=[peer])
-    )[0]
-    return peer
+    result = await crud.get_or_create_peers(
+        db, workspace_name=workspace_id, peers=[peer]
+    )
+    response.status_code = 201 if result.created else 200
+    return result.resource[0]
 
 
 @router.put(
@@ -91,12 +93,12 @@ async def get_or_create_peer(
     ],
 )
 async def update_peer(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer to update"),
+    workspace_id: str = Path(...),
+    peer_id: str = Path(...),
     peer: schemas.PeerUpdate = Body(..., description="Updated peer parameters"),
     db: AsyncSession = db,
 ):
-    """Update a Peer's name and/or metadata"""
+    """Update a Peer's metadata and/or configuration."""
     updated_peer = await crud.update_peer(
         db, workspace_name=workspace_id, peer_name=peer_id, peer=peer
     )
@@ -111,14 +113,14 @@ async def update_peer(
     ],
 )
 async def get_sessions_for_peer(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
+    workspace_id: str = Path(...),
+    peer_id: str = Path(...),
     options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
     db: AsyncSession = db,
 ):
-    """Get All Sessions for a Peer"""
+    """Get all Sessions for a Peer, paginated with optional filters."""
     filter_param = None
 
     if options and hasattr(options, "filters"):
@@ -138,9 +140,9 @@ async def get_sessions_for_peer(
 
 @router.post(
     "/{peer_id}/chat",
+    summary="Query a Peer's representation using natural language",
     responses={
         200: {
-            "description": "Response to a question informed by Honcho's User Representation",
             "content": {
                 "application/json": {
                     "schema": schemas.DialecticResponse.model_json_schema()
@@ -154,12 +156,14 @@ async def get_sessions_for_peer(
     ],
 )
 async def chat(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
-    options: schemas.DialecticOptions = Body(
-        ..., description="Dialectic Endpoint Parameters"
-    ),
+    workspace_id: str = Path(...),
+    peer_id: str = Path(...),
+    options: schemas.DialecticOptions = Body(...),
 ):
+    """
+    Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively
+    answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
+    """
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
         await crud.get_or_create_peers(
@@ -226,18 +230,20 @@ async def chat(
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
 )
-async def get_working_representation(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
+async def get_representation(
+    workspace_id: str = Path(...),
+    peer_id: str = Path(...),
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
     ),
 ):
-    """Get a peer's working representation for a session.
+    """Get a curated subset of a Peer's Representation. A Representation is always a subset of the total
+    knowledge about the Peer. The subset can be scoped and filtered in various ways.
 
-    If a session_id is provided in the body, we get the working representation of the peer in that session.
-    If a target is provided, we get the representation of the target from the perspective of the peer.
-    If no target is provided, we get the omniscient Honcho representation of the peer.
+
+    If a session_id is provided in the body, we get the Representation of the Peer scoped to that Session.
+    If a target is provided, we get the Representation of the target from the perspective of the Peer.
+    If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
     try:
         # If no target specified, get global representation (omniscient Honcho perspective)
@@ -256,11 +262,9 @@ async def get_working_representation(
             if options.max_observations is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
         )
-        return {"representation": representation}
+        return {"representation": representation.format_as_markdown()}
     except ValueError as e:
-        logger.warning(
-            f"Failed to get working representation for peer {peer_id}: {str(e)}"
-        )
+        logger.warning(f"Failed to get representation for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer or session not found") from e
 
 
@@ -272,11 +276,11 @@ async def get_working_representation(
     ],
 )
 async def get_peer_card(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     peer_id: str = Path(..., description="ID of the observer peer"),
     target: str | None = Query(
         None,
-        description="The peer whose card to retrieve. If not provided, returns the observer's own card",
+        description="Optional target peer to retrieve a card for, from the observer's perspective. If not provided, returns the observer's own card",
     ),
     db: AsyncSession = db,
 ):
@@ -302,14 +306,14 @@ async def get_peer_card(
     ],
 )
 async def set_peer_card(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     peer_id: str = Path(..., description="ID of the observer peer"),
     peer_card_data: schemas.PeerCardSet = Body(
         ..., description="Peer card data to set"
     ),
     target: str | None = Query(
         None,
-        description="The peer whose card to set. If not provided, sets the observer's own card",
+        description="Optional target peer to set a card for, from the observer's perspective. If not provided, sets the observer's own card",
     ),
     db: AsyncSession = db,
 ):
@@ -344,11 +348,11 @@ async def set_peer_card(
     ],
 )
 async def get_peer_context(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer (observer)"),
+    workspace_id: str = Path(...),
+    peer_id: str = Path(..., description="ID of the observer peer"),
     target: str | None = Query(
         None,
-        description="The target peer to get context for. If not provided, returns the peer's own context (self-observation)",
+        description="Optional target peer to get context for, from the observer's perspective. If not provided, returns the observer's own context (self-observation)",
     ),
     search_query: str | None = Query(
         None,
@@ -381,7 +385,7 @@ async def get_peer_context(
     """
     Get context for a peer, including their representation and peer card.
 
-    This endpoint returns the working representation and peer card for a peer.
+    This endpoint returns a curated subset of the representation and peer card for a peer.
     If a target is specified, returns the context for the target from the
     observer peer's perspective. If no target is specified, returns the
     peer's own context (self-observation).
@@ -416,7 +420,7 @@ async def get_peer_context(
         return schemas.PeerContext(
             peer_id=peer_id,
             target_id=observed,
-            representation=representation,
+            representation=representation.format_as_markdown(),
             peer_card=peer_card,
         )
     except ValueError as e:
@@ -432,14 +436,15 @@ async def get_peer_context(
     ],
 )
 async def search_peer(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
+    workspace_id: str = Path(...),
+    peer_id: str = Path(...),
     body: schemas.MessageSearchOptions = Body(
-        ..., description="Message search parameters "
+        ...,
+        description="Message search parameters. Use `limit` to control the number of results returned.",
     ),
     db: AsyncSession = db,
 ):
-    """Search a Peer"""
+    """Search a Peer's messages, optionally filtered by various criteria."""
     # take user-provided filter and add workspace_id and peer_id to it
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
