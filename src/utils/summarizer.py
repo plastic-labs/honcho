@@ -276,11 +276,11 @@ async def summarize_if_needed(
                     db_session,
                     workspace_name,
                     session_name,
-                    message_id,
-                    message_seq_in_session,
-                    SummaryType.LONG,
-                    message_public_id,
-                    configuration,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.LONG,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -295,11 +295,11 @@ async def summarize_if_needed(
                     db_session,
                     workspace_name,
                     session_name,
-                    message_id,
-                    message_seq_in_session,
-                    SummaryType.SHORT,
-                    message_public_id,
-                    configuration,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.SHORT,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -321,11 +321,11 @@ async def summarize_if_needed(
                     db,
                     workspace_name,
                     session_name,
-                    message_id,
-                    message_seq_in_session,
-                    SummaryType.LONG,
-                    message_public_id,
-                    configuration,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.LONG,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -338,11 +338,11 @@ async def summarize_if_needed(
                     db,
                     workspace_name,
                     session_name,
-                    message_id,
-                    message_seq_in_session,
-                    SummaryType.SHORT,
-                    message_public_id,
-                    configuration,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.SHORT,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -356,10 +356,11 @@ async def _create_and_save_summary(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
+    *,
     message_id: int,
     message_seq_in_session: int,
-    summary_type: SummaryType,
     message_public_id: str,
+    summary_type: SummaryType,
     configuration: schemas.ResolvedConfiguration,
 ) -> None:
     """
@@ -394,6 +395,9 @@ async def _create_and_save_summary(
         start_seq=start_seq,
         end_seq=message_seq_in_session,
     )
+    if not messages:
+        logger.warning("No messages to summarize for message %s", message_id)
+        return
 
     messages_tokens = sum([message.token_count for message in messages])
     previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0

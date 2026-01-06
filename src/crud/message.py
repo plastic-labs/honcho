@@ -292,8 +292,7 @@ async def get_messages_by_seq_range(
     """
     Get messages from a session by seq_in_session range.
 
-    This is useful for getting the last N messages in a session regardless of
-    gaps in the global message ID sequence.
+    This is useful for getting the last N messages in a session.
 
     Args:
         db: Database session
