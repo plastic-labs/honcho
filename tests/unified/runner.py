@@ -45,9 +45,11 @@ from tests.unified.schema import (
     WaitAction,
 )
 
-# Configure logging
+# Override log level with UNIFIED_TEST_LOG_LEVEL env var if needed (e.g., INFO, DEBUG)
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(
+        logging, os.getenv("UNIFIED_TEST_LOG_LEVEL", "WARNING").upper(), logging.WARNING
+    ),
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
