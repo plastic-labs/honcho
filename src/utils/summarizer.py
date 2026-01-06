@@ -376,6 +376,11 @@ async def _create_and_save_summary(
     summary_start = time.perf_counter()
 
     latest_summary = await get_summary(db, workspace_name, session_name, summary_type)
+    if latest_summary:
+        latest_summary_message_id = latest_summary["message_id"]
+        # Skip if latest summary already covers message.
+        if latest_summary_message_id >= message_id:
+            return
 
     previous_summary_text = latest_summary["content"] if latest_summary else None
 
