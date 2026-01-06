@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Generator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from honcho_core import Honcho as HonchoCore
-from honcho_core._types import omit
-from honcho_core.types.workspaces import PeerCardResponse
-from honcho_core.types.workspaces.session import Session as SessionCore
-from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
-from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
+from .api_types import (
+    Configuration,
+    Message,
+    MessageCreateParam,
+    PeerCore,
+)
 from .base import PeerBase, SessionBase
-from .pagination import SyncPage
+from .http import HttpClient, SyncPage
 from .types import DialecticStreamResponse
 
 if TYPE_CHECKING:
@@ -43,7 +42,7 @@ class Peer(PeerBase):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: HonchoCore = PrivateAttr()
+    _http: HttpClient = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -66,8 +65,8 @@ class Peer(PeerBase):
         workspace_id: str = Field(
             ..., min_length=1, description="Workspace ID for scoping operations"
         ),
-        client: HonchoCore = Field(
-            ..., description="Reference to the parent Honcho client instance"
+        http: HttpClient = Field(
+            ..., description="Reference to the HTTP client instance"
         ),
         *,
         metadata: dict[str, object] | None = Field(
@@ -88,7 +87,7 @@ class Peer(PeerBase):
         Args:
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent Honcho client instance
+            http: Reference to the HTTP client instance
             metadata: Optional metadata dictionary to associate with this peer.
             If set, will get/create peer immediately with metadata.
             config: Optional configuration to set for this peer.
@@ -98,17 +97,23 @@ class Peer(PeerBase):
             id=peer_id,
             workspace_id=workspace_id,
         )
-        self._client = client
+        self._http = http
         self._metadata = metadata
         self._configuration = config
 
         if config is not None or metadata is not None:
-            peer_data = self._client.workspaces.peers.get_or_create(
-                workspace_id=workspace_id,
-                id=peer_id,
-                configuration=config if config is not None else omit,
-                metadata=metadata if metadata is not None else omit,
+            body: dict[str, Any] = {"id": peer_id}
+            if config is not None:
+                body["configuration"] = config
+            if metadata is not None:
+                body["metadata"] = metadata
+
+            response = self._http.request(
+                "POST",
+                f"/v2/workspaces/{workspace_id}/peers",
+                json=body,
             )
+            peer_data = PeerCore.model_validate(response)
             # Update cached values with API response
             self._metadata = peer_data.metadata
             self._configuration = peer_data.configuration
@@ -155,52 +160,53 @@ class Peer(PeerBase):
             else (session if isinstance(session, str) else session.id)
         )
 
+        body: dict[str, Any] = {
+            "query": query,
+            "stream": stream,
+        }
+        if target_id is not None:
+            body["target"] = target_id
+        if resolved_session_id is not None:
+            body["session_id"] = resolved_session_id
+
         if stream:
 
             def stream_response() -> Generator[str, None, None]:
                 import json
 
-                # Use core SDK with_streaming_response
-                with self._client.workspaces.peers.with_streaming_response.chat(
-                    peer_id=self.id,
-                    workspace_id=self.workspace_id,
-                    query=query,
-                    stream=True,
-                    target=target_id,
-                    session_id=resolved_session_id,
-                ) as response:
-                    response.http_response.raise_for_status()
-                    for line in response.iter_lines():
-                        if line.startswith("data: "):
-                            json_str = line[6:]  # Remove "data: " prefix
-                            try:
-                                chunk_data = json.loads(json_str)
-                                if chunk_data.get("done"):
-                                    break
-                                delta_obj = chunk_data.get("delta", {})
-                                content = delta_obj.get("content")
-                                if content:
-                                    yield content
-                            except json.JSONDecodeError:
-                                continue
+                for line in self._http.stream(
+                    "POST",
+                    f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/chat",
+                    json=body,
+                ):
+                    if line.startswith("data: "):
+                        json_str = line[6:]  # Remove "data: " prefix
+                        try:
+                            chunk_data = json.loads(json_str)
+                            if chunk_data.get("done"):
+                                break
+                            delta_obj = chunk_data.get("delta", {})
+                            content = delta_obj.get("content")
+                            if content:
+                                yield content
+                        except json.JSONDecodeError:
+                            continue
 
             return DialecticStreamResponse(stream_response())
 
-        response = self._client.workspaces.peers.chat(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            stream=stream,
-            target=target_id,
-            session_id=resolved_session_id,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/chat",
+            json=body,
         )
-        if response.content in ("", None, "None"):
+        content = response.get("content") if response else None
+        if content in ("", None, "None"):
             return None
-        return response.content
+        return content
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[SessionCore, Session]:
+    ) -> SyncPage[dict[str, Any], Session]:
         """
         Get all sessions this peer is a member of.
 
@@ -213,15 +219,27 @@ class Peer(PeerBase):
         """
         from .session import Session
 
-        sessions_page = self._client.workspaces.peers.sessions.list(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            filters=filters,
-        )
-        return SyncPage(
-            sessions_page,
-            lambda session: Session(session.id, self.workspace_id, self._client),
-        )
+        def fetch_page(
+            page: int = 1, size: int = 50
+        ) -> SyncPage[dict[str, Any], Session]:
+            response = self._http.request(
+                "POST",
+                f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/sessions/list",
+                json={"filters": filters, "page": page, "size": size},
+            )
+            return SyncPage(
+                items=response.get("items", []),
+                total=response.get("total"),
+                page=response.get("page", page),
+                size=response.get("size", size),
+                pages=response.get("pages"),
+                transform_func=lambda s: Session(
+                    s["id"], self.workspace_id, self._http
+                ),
+                fetch_next=lambda: fetch_page(page + 1, size),
+            )
+
+        return fetch_page()
 
     @validate_call
     def message(
@@ -233,7 +251,7 @@ class Peer(PeerBase):
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
-        config: Configuration | None = Field(
+        config: Configuration | dict[str, Any] | None = Field(
             None,
             description="Optional configuration dictionary to associate with the message",
         ),
@@ -261,10 +279,18 @@ class Peer(PeerBase):
         else:
             created_at_str = created_at
 
+        # Convert Configuration to dict if needed
+        config_dict: dict[str, Any] | None = None
+        if config is not None:
+            if isinstance(config, Configuration):
+                config_dict = config.model_dump()
+            else:
+                config_dict = config
+
         return MessageCreateParam(
             peer_id=self.id,
             content=content,
-            configuration=config,
+            configuration=config_dict,
             metadata=metadata,
             created_at=created_at_str,
         )
@@ -281,10 +307,12 @@ class Peer(PeerBase):
             A dictionary containing the peer's metadata. Returns an empty dictionary
             if no metadata is set
         """
-        peer = self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers",
+            json={"id": self.id},
         )
+        peer = PeerCore.model_validate(response)
         self._metadata = peer.metadata or {}
         return self._metadata
 
@@ -306,10 +334,10 @@ class Peer(PeerBase):
             metadata: A dictionary of metadata to associate with this peer.
             Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.peers.update(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            metadata=metadata,
+        self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}",
+            json={"metadata": metadata},
         )
         self._metadata = metadata
 
@@ -324,10 +352,12 @@ class Peer(PeerBase):
         Returns:
             A dictionary containing the peer's configuration
         """
-        peer = self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers",
+            json={"id": self.id},
         )
+        peer = PeerCore.model_validate(response)
         self._configuration = peer.configuration or {}
         return self._configuration
 
@@ -351,10 +381,10 @@ class Peer(PeerBase):
             config: A dictionary of configuration to associate with this peer.
             Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.peers.update(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            configuration=config,
+        self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}",
+            json={"configuration": config},
         )
         self._configuration = config
 
@@ -395,10 +425,12 @@ class Peer(PeerBase):
         Makes a single API call to retrieve the latest metadata and configuration
         associated with this peer and updates the cached attributes.
         """
-        peer = self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers",
+            json={"id": self.id},
         )
+        peer = PeerCore.model_validate(response)
         self._metadata = peer.metadata or {}
         self._configuration = peer.configuration or {}
 
@@ -427,13 +459,12 @@ class Peer(PeerBase):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.peers.search(
-            self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            filters=filters,
-            limit=limit,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/search",
+            json={"query": query, "filters": filters, "limit": limit},
         )
+        return [Message.model_validate(m) for m in (response or [])]
 
     def card(
         self,
@@ -462,17 +493,21 @@ class Peer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        response: PeerCardResponse = self._client.workspaces.peers.card(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            target=target_id,
+
+        params: dict[str, Any] = {}
+        if target_id is not None:
+            params["target"] = target_id
+
+        response = self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/card",
+            params=params,
         )
-        if response.peer_card is None:
+        peer_card = response.get("peer_card") if response else None
+        if peer_card is None:
             return ""
 
-        items: list[str] = response.peer_card
-
-        return "\n".join(items)
+        return "\n".join(peer_card)
 
     def working_rep(
         self,
@@ -532,26 +567,33 @@ class Peer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data = self._client.workspaces.peers.working_representation(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            session_id=session_id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+
+        body: dict[str, Any] = {}
+        if session_id is not None:
+            body["session_id"] = session_id
+        if target_id is not None:
+            body["target"] = target_id
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_derived is not None:
+            body["include_most_derived"] = include_most_derived
+        if max_observations is not None:
+            body["max_observations"] = max_observations
+
+        data = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/representation",
+            json=body,
         )
-        representation = data.get("representation")
+        representation = data.get("representation") if data else None
         if representation is not None:
             return _Representation.from_dict(cast(dict[str, object], representation))
         else:
-            return _Representation.from_dict(data)
+            return _Representation.from_dict(data or {})
 
     def get_context(
         self,
@@ -606,22 +648,27 @@ class Peer(PeerBase):
             else (target if isinstance(target, str) else target.id)
         )
 
-        response = self._client.workspaces.peers.get_context(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+        body: dict[str, Any] = {}
+        if target_id is not None:
+            body["target"] = target_id
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_derived is not None:
+            body["include_most_derived"] = include_most_derived
+        if max_observations is not None:
+            body["max_observations"] = max_observations
+
+        response = self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/context",
+            params=body,
         )
 
-        return _PeerContext.from_api_response(response)
+        return _PeerContext.from_api_response(response or {})
 
     @property
     def observations(self) -> "ObservationScope":
@@ -648,7 +695,7 @@ class Peer(PeerBase):
         """
         from .observations import ObservationScope as _ObservationScope
 
-        return _ObservationScope(self._client, self.workspace_id, self.id, self.id)
+        return _ObservationScope(self._http, self.workspace_id, self.id, self.id)
 
     def observations_of(self, target: str | PeerBase) -> "ObservationScope":
         """
@@ -681,7 +728,7 @@ class Peer(PeerBase):
         from .observations import ObservationScope as _ObservationScope
 
         target_id = target.id if isinstance(target, PeerBase) else target
-        return _ObservationScope(self._client, self.workspace_id, self.id, target_id)
+        return _ObservationScope(self._http, self.workspace_id, self.id, target_id)
 
     def __repr__(self) -> str:
         """

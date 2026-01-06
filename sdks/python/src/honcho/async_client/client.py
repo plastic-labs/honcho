@@ -5,17 +5,15 @@ import time
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import httpx
-from honcho_core import AsyncHoncho as AsyncHonchoCore
-from honcho_core import Honcho as HonchoCore
-from honcho_core.types import DeriverStatus, Workspace
-from honcho_core.types.workspaces.peer import Peer as PeerCore
-from honcho_core.types.workspaces.session import Session as SessionCore
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from ..api_types import (
+    DeriverStatus,
+    Message,
+    Workspace,
+)
 from ..base import PeerBase, SessionBase
-from .pagination import AsyncPage
+from ..http import AsyncHttpClient, AsyncPage
 from .peer import AsyncPeer
 from .session import AsyncSession
 
@@ -30,16 +28,12 @@ class AsyncHoncho(BaseModel):
     from environment variables or explicit parameters. This is the primary entry
     point for interacting with the Honcho conversational memory platform asynchronously.
 
-    For advanced usage, the underlying honcho_core client can be accessed via the
-    `core` property to use functionality not exposed through this SDK.
-
     Attributes:
         workspace_id: Workspace ID for scoping operations
         metadata: Cached metadata for this workspace. May be stale if not recently
             fetched. Call get_metadata() for fresh data.
         configuration: Cached configuration for this workspace. May be stale if not
             recently fetched. Call get_config() for fresh data.
-        core: Access to the underlying honcho_core client for advanced usage
     """
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore
@@ -51,7 +45,7 @@ class AsyncHoncho(BaseModel):
     )
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: AsyncHonchoCore = PrivateAttr()
+    _http: AsyncHttpClient = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -64,24 +58,9 @@ class AsyncHoncho(BaseModel):
         return self._configuration
 
     @property
-    def core(self) -> AsyncHonchoCore:
-        """
-        Access the underlying honcho_core client. The honcho_core client is the raw Stainless-generated client,
-        allowing users to access functionality that is not exposed through this SDK.
-
-        Returns:
-            The underlying AsyncHonchoCore client instance
-
-        Example:
-            ```python
-            from honcho import AsyncHoncho
-
-            client = AsyncHoncho()
-
-            workspace = await client.core.workspaces.get_or_create(id="custom-workspace-id")
-            ```
-        """
-        return self._client
+    def base_url(self) -> str:
+        """The base URL of the Honcho API."""
+        return self._http.base_url
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -97,13 +76,7 @@ class AsyncHoncho(BaseModel):
             None, ge=0, description="Maximum number of retries"
         ),
         default_headers: Mapping[str, str] | None = None,
-        default_query: Mapping[str, object] | None = None,
-        async_http_client: httpx.AsyncClient | None = Field(
-            None, description="Custom HTTP client"
-        ),
-        http_client: httpx.Client | None = Field(
-            None, description="Custom HTTP client"
-        ),
+        **kwargs: Any,  # Accept additional kwargs for backwards compatibility
     ) -> None:
         """
         Initialize the AsyncHoncho client.
@@ -113,7 +86,7 @@ class AsyncHoncho(BaseModel):
                 API key for authentication. If not provided, will attempt to
                 read from HONCHO_API_KEY environment variable
             environment:
-                Environment to use (local or production)
+                Environment to use (local, demo, or production)
             base_url:
                 Base URL for the Honcho API. If not provided, will attempt to
                 read from HONCHO_URL environment variable or default to the
@@ -128,10 +101,6 @@ class AsyncHoncho(BaseModel):
                 Optional custom maximum number of retries for the HTTP client.
             default_headers:
                 Optional custom default headers for the HTTP client.
-            default_query:
-                Optional custom default query parameters for the HTTP client.
-            http_client:
-                Optional custom httpx client.
         """
         # Resolve workspace_id before calling super().__init__
         resolved_workspace_id = workspace_id or os.getenv(
@@ -140,37 +109,37 @@ class AsyncHoncho(BaseModel):
 
         super().__init__(workspace_id=resolved_workspace_id)
 
-        # Build client kwargs, excluding None values that AsyncHonchoCore doesn't handle well
-        client_kwargs: dict[str, Any] = {}
+        # Resolve API key
+        resolved_api_key = api_key or os.getenv("HONCHO_API_KEY")
 
-        if api_key is not None:
-            client_kwargs["api_key"] = api_key
-        if environment is not None:
-            client_kwargs["environment"] = environment
-        if base_url is not None:
-            client_kwargs["base_url"] = base_url
-        if timeout is not None:
-            client_kwargs["timeout"] = timeout
-        if max_retries is not None:
-            client_kwargs["max_retries"] = max_retries
-        if default_headers is not None:
-            client_kwargs["default_headers"] = default_headers
-        if default_query is not None:
-            client_kwargs["default_query"] = default_query
+        # Resolve base URL
+        resolved_base_url = base_url or os.getenv("HONCHO_URL")
+        if not resolved_base_url:
+            if environment == "local":
+                resolved_base_url = "http://localhost:8000"
+            elif environment == "demo":
+                resolved_base_url = "https://demo.honcho.dev"
+            else:
+                resolved_base_url = "https://api.honcho.dev"
 
-        sync_client_kwargs = client_kwargs.copy()
-        async_client_kwargs = client_kwargs.copy()
+        self._http = AsyncHttpClient(
+            base_url=resolved_base_url,
+            api_key=resolved_api_key,
+            timeout=timeout or 60.0,
+            max_retries=max_retries or 2,
+            default_headers=dict(default_headers) if default_headers else None,
+        )
 
-        if http_client is not None:
-            sync_client_kwargs["http_client"] = http_client
-        if async_http_client is not None:
-            async_client_kwargs["http_client"] = async_http_client
+        # Note: We can't call async workspace creation in __init__
+        # The workspace will be created on first use
 
-        self._client = AsyncHonchoCore(**async_client_kwargs)
-
-        # Get or create the workspace using synchronous client
-        sync_client = HonchoCore(**sync_client_kwargs)
-        sync_client.workspaces.get_or_create(id=self.workspace_id)
+    async def _ensure_workspace(self) -> None:
+        """Ensure the workspace exists."""
+        await self._http.request(
+            "POST",
+            "/v2/workspaces",
+            json={"id": self.workspace_id},
+        )
 
     @validate_call
     async def peer(
@@ -197,7 +166,7 @@ class AsyncHoncho(BaseModel):
 
         Args:
             id: Unique identifier for the peer within the workspace. Should be a
-            stable identifier that can be used consistently across sessions
+            stable identifier that can be used consistently across sessions.
             metadata: Optional metadata dictionary to associate with this peer.
             If set, will get/create peer immediately with metadata.
             config: Optional configuration to set for this peer.
@@ -210,38 +179,49 @@ class AsyncHoncho(BaseModel):
         Raises:
             ValidationError: If the peer ID is empty or invalid
         """
-        if config or metadata:
-            return await AsyncPeer.create(
-                id, self.workspace_id, self._client, config=config, metadata=metadata
-            )
-        return AsyncPeer(id, self.workspace_id, self._client)
+        # AsyncPeer constructor handles API call and caching when metadata/config provided
+        return await AsyncPeer.create(
+            id, self.workspace_id, self._http, config=config, metadata=metadata
+        )
 
     async def get_peers(
         self, filters: dict[str, object] | None = None
-    ) -> AsyncPage[PeerCore, AsyncPeer]:
+    ) -> AsyncPage[dict[str, Any], AsyncPeer]:
         """
         Get all peers in the current workspace.
 
         Makes an async API call to retrieve all peers that have been created or used
-        within the current workspace. Returns a paginated result that transforms
-        inner client Peer objects to SDK AsyncPeer objects as they are consumed.
+        within the current workspace.
 
         Returns:
             An AsyncPage of AsyncPeer objects representing all peers in the workspace
         """
-        peers_page = await self._client.workspaces.peers.list(
-            workspace_id=self.workspace_id, filters=filters
-        )
-        return AsyncPage(
-            peers_page,
-            lambda peer: AsyncPeer(
-                peer.id,
-                self.workspace_id,
-                self._client,
-                metadata=peer.metadata,
-                config=peer.configuration,
-            ),
-        )
+
+        async def fetch_page(
+            page: int = 1, size: int = 50
+        ) -> AsyncPage[dict[str, Any], AsyncPeer]:
+            response = await self._http.request(
+                "POST",
+                f"/v2/workspaces/{self.workspace_id}/peers/list",
+                json={"filters": filters, "page": page, "size": size},
+            )
+            return AsyncPage(
+                items=response.get("items", []),
+                total=response.get("total"),
+                page=response.get("page", page),
+                size=response.get("size", size),
+                pages=response.get("pages"),
+                transform_func=lambda p: AsyncPeer(
+                    p["id"],
+                    self.workspace_id,
+                    self._http,
+                    metadata=p.get("metadata"),
+                    config=p.get("configuration"),
+                ),
+                fetch_next=lambda: fetch_page(page + 1, size),
+            )
+
+        return await fetch_page()
 
     @validate_call
     async def session(
@@ -263,33 +243,24 @@ class AsyncHoncho(BaseModel):
         Get or create a session with the given ID.
 
         Creates an AsyncSession object that can be used to manage conversations between
-        multiple peers. This method does not make an API call unless `config` or
-        `metadata` is provided.
+        multiple peers.
 
         Args:
-            id: Unique identifier for the session within the workspace. Should be a
-            stable identifier that can be used consistently to reference the
-            same conversation
+            id: Unique identifier for the session within the workspace.
             metadata: Optional metadata dictionary to associate with this session.
-            If set, will get/create session immediately with metadata.
             config: Optional configuration to set for this session.
-            If set, will get/create session immediately with flags.
+
         Returns:
             An AsyncSession object that can be used to add peers, send messages, and
             manage conversation context
-
-        Raises:
-            ValidationError: If the session ID is empty or invalid
         """
-        if config or metadata:
-            return await AsyncSession.create(
-                id, self.workspace_id, self._client, config=config, metadata=metadata
-            )
-        return AsyncSession(id, self.workspace_id, self._client)
+        return await AsyncSession.create(
+            id, self.workspace_id, self._http, config=config, metadata=metadata
+        )
 
     async def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> AsyncPage[SessionCore, AsyncSession]:
+    ) -> AsyncPage[dict[str, Any], AsyncSession]:
         """
         Get all sessions in the current workspace.
 
@@ -298,36 +269,42 @@ class AsyncHoncho(BaseModel):
 
         Returns:
             An AsyncPage of AsyncSession objects representing all sessions in the workspace.
-            Returns an empty page if no sessions exist
         """
-        sessions_page = await self._client.workspaces.sessions.list(
-            workspace_id=self.workspace_id, filters=filters
-        )
-        return AsyncPage(
-            sessions_page,
-            lambda session: AsyncSession(
-                session.id,
-                self.workspace_id,
-                self._client,
-                metadata=session.metadata,
-                config=session.configuration,
-            ),
-        )
+
+        async def fetch_page(
+            page: int = 1, size: int = 50
+        ) -> AsyncPage[dict[str, Any], AsyncSession]:
+            response = await self._http.request(
+                "POST",
+                f"/v2/workspaces/{self.workspace_id}/sessions/list",
+                json={"filters": filters, "page": page, "size": size},
+            )
+            return AsyncPage(
+                items=response.get("items", []),
+                total=response.get("total"),
+                page=response.get("page", page),
+                size=response.get("size", size),
+                pages=response.get("pages"),
+                transform_func=lambda s: AsyncSession(
+                    s["id"],
+                    self.workspace_id,
+                    self._http,
+                    metadata=s.get("metadata"),
+                    config=s.get("configuration"),
+                ),
+                fetch_next=lambda: fetch_page(page + 1, size),
+            )
+
+        return await fetch_page()
 
     async def get_metadata(self) -> dict[str, object]:
-        """
-        Get metadata for the current workspace.
-
-        Makes an async API call to retrieve metadata associated with the current workspace.
-        Workspace metadata can include settings, configuration, or any other
-        key-value data associated with the workspace. This method also updates the
-        cached metadata attribute.
-
-        Returns:
-            A dictionary containing the workspace's metadata. Returns an empty
-            dictionary if no metadata is set
-        """
-        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        """Get metadata for the current workspace."""
+        response = await self._http.request(
+            "POST",
+            "/v2/workspaces",
+            json={"id": self.workspace_id},
+        )
+        workspace = Workspace.model_validate(response)
         self._metadata = workspace.metadata or {}
         return self._metadata
 
@@ -336,33 +313,22 @@ class AsyncHoncho(BaseModel):
         self,
         metadata: dict[str, object] = Field(..., description="Metadata dictionary"),
     ) -> None:
-        """
-        Set metadata for the current workspace.
-
-        Makes an async API call to update the metadata associated with the current workspace.
-        This will overwrite any existing metadata with the provided values.
-        This method also updates the cached metadata attribute.
-
-        Args:
-            metadata: A dictionary of metadata to associate with the workspace.
-                      Keys must be strings, values can be any JSON-serializable type
-        """
-        await self._client.workspaces.update(self.workspace_id, metadata=metadata)
+        """Set metadata for the current workspace."""
+        await self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}",
+            json={"metadata": metadata},
+        )
         self._metadata = metadata
 
     async def get_config(self) -> dict[str, object]:
-        """
-        Get configuration for the current workspace.
-
-        Makes an async API call to retrieve configuration associated with the current workspace.
-        Configuration includes settings that control workspace behavior.
-        This method also updates the cached configuration attribute.
-
-        Returns:
-            A dictionary containing the workspace's configuration. Returns an empty
-            dictionary if no configuration is set
-        """
-        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        """Get configuration for the current workspace."""
+        response = await self._http.request(
+            "POST",
+            "/v2/workspaces",
+            json={"id": self.workspace_id},
+        )
+        workspace = Workspace.model_validate(response)
         self._configuration = workspace.configuration or {}
         return self._configuration
 
@@ -373,51 +339,36 @@ class AsyncHoncho(BaseModel):
             ..., description="Configuration dictionary"
         ),
     ) -> None:
-        """
-        Set configuration for the current workspace.
-
-        Makes an async API call to update the configuration associated with the current workspace.
-        This will overwrite any existing configuration with the provided values.
-        This method also updates the cached configuration attribute.
-
-        Args:
-            configuration: A dictionary of configuration to associate with the workspace.
-                          Keys must be strings, values can be any JSON-serializable type
-        """
-        await self._client.workspaces.update(
-            self.workspace_id, configuration=configuration
+        """Set configuration for the current workspace."""
+        await self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}",
+            json={"configuration": configuration},
         )
         self._configuration = configuration
 
     async def refresh(self) -> None:
-        """
-        Refresh cached metadata and configuration for the current workspace.
-
-        Makes a single async API call to retrieve the latest metadata and configuration
-        associated with the current workspace and updates the cached attributes.
-        """
-        workspace = await self._client.workspaces.get_or_create(id=self.workspace_id)
+        """Refresh cached metadata and configuration for the current workspace."""
+        response = await self._http.request(
+            "POST",
+            "/v2/workspaces",
+            json={"id": self.workspace_id},
+        )
+        workspace = Workspace.model_validate(response)
         self._metadata = workspace.metadata or {}
         self._configuration = workspace.configuration or {}
 
     async def get_workspaces(
         self, filters: dict[str, object] | None = None
     ) -> list[str]:
-        """
-        Get all workspace IDs from the Honcho instance.
-
-        Makes an async API call to retrieve all workspace IDs that the authenticated
-        user has access to.
-
-        Returns:
-            A list of workspace ID strings. Returns an empty list if no workspaces
-            are accessible or none exist
-        """
-        workspaces_page = await self._client.workspaces.list(filters=filters)
-        workspace_ids: list[str] = []
-        async for workspace in workspaces_page:
-            workspace_ids.append(workspace.id)
-        return workspace_ids
+        """Get all workspace IDs from the Honcho instance."""
+        response = await self._http.request(
+            "POST",
+            "/v2/workspaces/list",
+            json={"filters": filters},
+        )
+        items = response.get("items", []) if response else []
+        return [workspace["id"] for workspace in items]
 
     @validate_call
     async def delete_workspace(
@@ -426,18 +377,12 @@ class AsyncHoncho(BaseModel):
             ..., min_length=1, description="ID of the workspace to delete"
         ),
     ) -> Workspace:
-        """
-        Delete a workspace.
-
-        Makes an async API call to delete the specified workspace.
-
-        Args:
-            workspace_id: The ID of the workspace to delete
-
-        Returns:
-            The deleted Workspace object
-        """
-        return await self._client.workspaces.delete(workspace_id)
+        """Delete a workspace."""
+        response = await self._http.request(
+            "DELETE",
+            f"/v2/workspaces/{workspace_id}",
+        )
+        return Workspace.model_validate(response)
 
     @validate_call
     async def search(
@@ -450,26 +395,13 @@ class AsyncHoncho(BaseModel):
             default=10, ge=1, le=100, description="Number of results to return"
         ),
     ) -> list[Message]:
-        """
-        Search for messages in the current workspace.
-
-        Makes an async API call to search for messages in the current workspace.
-
-        Args:
-            query: The search query to use
-            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-            limit: Number of results to return (1-100, default: 10)
-
-        Returns:
-            A list of Message objects representing the search results.
-            Returns an empty list if no messages are found.
-        """
-        return await self._client.workspaces.search(
-            self.workspace_id,
-            query=query,
-            filters=filters,
-            limit=limit,
+        """Search for messages in the current workspace."""
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/search",
+            json={"query": query, "filters": filters, "limit": limit},
         )
+        return [Message.model_validate(m) for m in (response or [])]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_deriver_status(
@@ -478,14 +410,7 @@ class AsyncHoncho(BaseModel):
         sender: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
     ) -> DeriverStatus:
-        """
-        Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
-
-        Args:
-            observer: Optional observer (ID string or Peer object) to scope the status check
-            sender: Optional sender (ID string or Peer object) to scope the status check
-            session: Optional session (ID string or Session object) to scope the status check
-        """
+        """Get the deriver processing status."""
         resolved_observer_id = (
             None
             if observer is None
@@ -502,12 +427,20 @@ class AsyncHoncho(BaseModel):
             else (session if isinstance(session, str) else session.id)
         )
 
-        return await self._client.workspaces.deriver_status(
-            workspace_id=self.workspace_id,
-            observer_id=resolved_observer_id,
-            sender_id=resolved_sender_id,
-            session_id=resolved_session_id,
+        params: dict[str, Any] = {}
+        if resolved_observer_id:
+            params["observer_id"] = resolved_observer_id
+        if resolved_sender_id:
+            params["sender_id"] = resolved_sender_id
+        if resolved_session_id:
+            params["session_id"] = resolved_session_id
+
+        response = await self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/queue/status",
+            params=params,
         )
+        return DeriverStatus.model_validate(response)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def poll_deriver_status(
@@ -521,26 +454,7 @@ class AsyncHoncho(BaseModel):
             description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
         ),
     ) -> DeriverStatus:
-        """
-        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
-        This allows you to guarantee that all messages have been processed by the deriver for
-        use with the dialectic endpoint.
-
-        The polling estimates sleep time by assuming each work unit takes 1 second.
-
-        Args:
-            observer: Optional observer (ID string or AsyncPeer object) to scope the status check
-            sender: Optional sender (ID string or AsyncPeer object) to scope the status check
-            session: Optional session (ID string or AsyncSession object) to scope the status check
-            timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
-
-        Returns:
-            DeriverStatus when all work units are complete
-
-        Raises:
-            TimeoutError: If timeout is exceeded before work units complete
-            Exception: If get_deriver_status fails repeatedly
-        """
+        """Poll get_deriver_status until work is complete."""
         start_time = time.time()
 
         while True:
@@ -548,10 +462,7 @@ class AsyncHoncho(BaseModel):
                 status = await self.get_deriver_status(observer, sender, session)
             except Exception as e:
                 logger.warning(f"Failed to get deriver status: {e}")
-                # Sleep briefly before retrying
                 await asyncio.sleep(1)
-
-                # Check timeout after error
                 elapsed_time = time.time() - start_time
                 if elapsed_time >= timeout:
                     raise TimeoutError(
@@ -563,7 +474,6 @@ class AsyncHoncho(BaseModel):
             if status.pending_work_units == 0 and status.in_progress_work_units == 0:
                 return status
 
-            # Check timeout before sleeping
             elapsed_time = time.time() - start_time
             if elapsed_time >= timeout:
                 raise TimeoutError(
@@ -572,12 +482,8 @@ class AsyncHoncho(BaseModel):
                     + f"{status.in_progress_work_units} in progress work units."
                 )
 
-            # Sleep for the expected time to complete all current work units
-            # Assuming each pending and in-progress work unit takes 1 second
             total_work_units = status.pending_work_units + status.in_progress_work_units
             sleep_time = max(1, total_work_units)
-
-            # Don't sleep past the timeout
             remaining_time = timeout - elapsed_time
             sleep_time = min(sleep_time, remaining_time)
             if sleep_time <= 0:
@@ -599,32 +505,13 @@ class AsyncHoncho(BaseModel):
             False, description="Whether to reverse the order of results"
         ),
     ):
-        """
-        List all observations in the current workspace with optional filtering.
-
-        Makes an async API call to retrieve observations that match the specified filters.
-        Observations can be filtered by session_id, observer_id, and observed_id.
-
-        Args:
-            filters: Optional filter criteria for observations. Supported filters include:
-                    - session_id: Filter observations by session
-                    - observer_id: Filter observations by observer peer
-                    - observed_id: Filter observations by observed peer
-            reverse: Whether to reverse the order of results (default: False)
-
-        Returns:
-            A paginated list of Observation objects matching the specified criteria
-
-        Example:
-            >>> observations = await client.list_observations(
-            ...     filters={"observer_id": "user123", "observed_id": "assistant"}
-            ... )
-        """
-        return await self._client.workspaces.observations.list(
-            workspace_id=self.workspace_id,
-            filters=filters,
-            reverse=reverse,
+        """List all observations in the current workspace with optional filtering."""
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations/list",
+            json={"filters": filters, "reverse": reverse},
         )
+        return response.get("items", []) if response else []
 
     @validate_call
     async def query_observations(
@@ -649,46 +536,24 @@ class AsyncHoncho(BaseModel):
             None, description="Additional filters to apply"
         ),
     ):
-        """
-        Query observations using semantic search.
-
-        Performs vector similarity search on observations to find semantically relevant results.
-        Observer and observed peer IDs are required for semantic search.
-
-        Args:
-            query: The semantic search query
-            observer: The observer peer ID (required)
-            observed: The observed peer ID (required)
-            top_k: Number of results to return (1-100, default: 10)
-            distance: Maximum cosine distance threshold for results (0.0-1.0)
-            filters: Optional filters to scope the query
-
-        Returns:
-            A list of Observation objects matching the query
-
-        Example:
-            >>> observations = await client.query_observations(
-            ...     query="user preferences about music",
-            ...     observer="user123",
-            ...     observed="assistant",
-            ...     top_k=5,
-            ...     distance=0.8
-            ... )
-        """
-        # Merge observer/observed into filters without mutating the input
+        """Query observations using semantic search."""
         query_filters: dict[str, object | str] = {
             **(filters or {}),
             "observer": observer,
             "observed": observed,
         }
 
-        return await self._client.workspaces.observations.query(
-            workspace_id=self.workspace_id,
-            query=query,
-            top_k=top_k,
-            distance=distance,
-            filters=query_filters,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations/query",
+            json={
+                "query": query,
+                "top_k": top_k,
+                "distance": distance,
+                "filters": query_filters,
+            },
         )
+        return response or []
 
     @validate_call
     async def delete_observation(
@@ -697,21 +562,10 @@ class AsyncHoncho(BaseModel):
             ..., min_length=1, description="ID of the observation to delete"
         ),
     ) -> None:
-        """
-        Delete a specific observation by ID.
-
-        This permanently deletes the observation (document) from the theory-of-mind system.
-        This action cannot be undone.
-
-        Args:
-            observation_id: The ID of the observation to delete
-
-        Example:
-            >>> await client.delete_observation('obs_123abc')
-        """
-        await self._client.workspaces.observations.delete(
-            workspace_id=self.workspace_id,
-            observation_id=observation_id,
+        """Delete a specific observation by ID."""
+        await self._http.request(
+            "DELETE",
+            f"/v2/workspaces/{self.workspace_id}/observations/{observation_id}",
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -728,22 +582,7 @@ class AsyncHoncho(BaseModel):
             description="The session (ID string or Session object) - required if message is a string ID",
         ),
     ) -> Message:
-        """
-        Update the metadata of a message.
-
-        Makes an API call to update the metadata of a specific message within a session.
-
-        Args:
-            message: Either a Message object or a message ID string
-            metadata: The metadata to update for the message
-            session: The session (ID string or Session object) - required if message is a string ID, ignored if message is a Message object
-
-        Returns:
-            The updated Message object
-
-        Raises:
-            ValidationError: If message is a string ID but session_id is not provided
-        """
+        """Update the metadata of a message."""
         if isinstance(message, Message):
             message_id = message.id
             resolved_session_id = message.session_id
@@ -753,27 +592,15 @@ class AsyncHoncho(BaseModel):
                 raise ValueError("session is required when message is a string ID")
             resolved_session_id = session if isinstance(session, str) else session.id
 
-        return await self._client.workspaces.sessions.messages.update(
-            message_id=message_id,
-            workspace_id=self.workspace_id,
-            session_id=resolved_session_id,
-            metadata=metadata,
+        response = await self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{resolved_session_id}/messages/{message_id}",
+            json={"metadata": metadata},
         )
+        return Message.model_validate(response)
 
     def __repr__(self) -> str:
-        """
-        Return a string representation of the AsyncHoncho client.
-
-        Returns:
-            A string representation suitable for debugging
-        """
-        return f"AsyncHoncho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
+        return f"AsyncHoncho(workspace_id='{self.workspace_id}', base_url='{self._http.base_url}')"
 
     def __str__(self) -> str:
-        """
-        Return a human-readable string representation of the AsyncHoncho client.
-
-        Returns:
-            A string showing the workspace ID
-        """
         return f"AsyncHoncho Client (workspace: {self.workspace_id})"

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, Field, validate_call
+
+from .api_types import Message
 
 if TYPE_CHECKING:
     from .peer import Peer

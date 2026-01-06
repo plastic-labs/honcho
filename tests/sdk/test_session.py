@@ -1,8 +1,8 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from honcho_core.types import DeriverStatus
 
+from sdks.python.src.honcho.api_types import DeriverStatus
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.peer import AsyncPeer
 from sdks.python.src.honcho.async_client.session import (
@@ -296,7 +296,7 @@ async def test_session_add_messages_return_value(
         assert isinstance(assistant, AsyncPeer)
 
         # Test single message return value
-        from honcho_core.types.workspaces.sessions.message import Message
+        from sdks.python.src.honcho.api_types import Message
 
         result = await session.add_messages(user.message("Hello assistant"))
         assert isinstance(result, list)
@@ -329,7 +329,7 @@ async def test_session_add_messages_return_value(
         assert isinstance(assistant, Peer)
 
         # Test single message return value
-        from honcho_core.types.workspaces.sessions.message import Message
+        from sdks.python.src.honcho.api_types import Message
 
         result = session.add_messages(user.message("Hello assistant"))
         assert isinstance(result, list)

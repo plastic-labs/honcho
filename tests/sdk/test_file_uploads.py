@@ -317,7 +317,7 @@ async def test_file_upload_with_configuration(
 
     from typing import cast
 
-    from honcho_core.types.workspaces.sessions.message_create_param import Configuration
+    from honcho.api_types import Configuration
 
     configuration = cast(
         Configuration, cast(object, {"skip_deriver": True, "custom_flag": "test"})
@@ -389,7 +389,7 @@ async def test_file_upload_with_created_at(
     assert messages[0].peer_id == user.id
     assert messages[0].session_id == session.id
     # Check that created_at was applied (compare timestamps, allowing for small differences)
-    # Message.created_at from honcho_core is a datetime object
+    # Message.created_at is a datetime object
     message_timestamp = messages[0].created_at
     assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
 
@@ -412,7 +412,7 @@ async def test_file_upload_with_all_parameters(
 
     from typing import cast
 
-    from honcho_core.types.workspaces.sessions.message_create_param import Configuration
+    from honcho.api_types import Configuration
 
     metadata: dict[str, object] = {"source": "comprehensive_test", "version": "1.0"}
     configuration = cast(
@@ -449,7 +449,7 @@ async def test_file_upload_with_all_parameters(
     # Check metadata
     assert messages[0].metadata == metadata
     # Check created_at
-    # Message.created_at from honcho_core is a datetime object
+    # Message.created_at is a datetime object
     message_timestamp = messages[0].created_at
     assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
 
@@ -490,6 +490,6 @@ async def test_file_upload_with_datetime_object(
     assert messages[0].peer_id == user.id
     assert messages[0].session_id == session.id
     # Check that created_at was applied
-    # Message.created_at from honcho_core is a datetime object
+    # Message.created_at is a datetime object
     message_timestamp = messages[0].created_at
     assert abs((message_timestamp - test_timestamp).total_seconds()) < 1

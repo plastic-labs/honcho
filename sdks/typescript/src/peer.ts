@@ -1,14 +1,23 @@
-import type HonchoCore from '@honcho-ai/core'
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
+import type { HttpClient } from './http'
+import { Page } from './http/pagination'
 import { ObservationScope } from './observations'
-import { Page } from './pagination'
 import {
   Representation,
   type RepresentationData,
   type RepresentationOptions,
 } from './representation'
 import { Session } from './session'
-import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
+import {
+  type DialecticResponse,
+  type DialecticStreamChunk,
+  DialecticStreamResponse,
+  type Message,
+  type PageResponse,
+  type PeerCardResponse,
+  type PeerContextResponse,
+  type PeerResponse,
+  type SessionResponse,
+} from './types'
 import {
   ChatQuerySchema,
   FilterSchema,
@@ -38,9 +47,9 @@ export class Peer {
    */
   readonly workspaceId: string
   /**
-   * Reference to the parent Honcho client instance.
+   * Reference to the HTTP client instance.
    */
-  private _client: HonchoCore
+  private _http: HttpClient
   /**
    * Private cached metadata for this peer.
    */
@@ -77,20 +86,20 @@ export class Peer {
    *
    * @param id - Unique identifier for this peer within the workspace
    * @param workspaceId - Workspace ID for scoping operations
-   * @param client - Reference to the parent Honcho client instance
+   * @param http - Reference to the HTTP client instance
    * @param metadata - Optional metadata to initialize the cached value
    * @param configuration - Optional configuration to initialize the cached value
    */
   constructor(
     id: string,
     workspaceId: string,
-    client: HonchoCore,
+    http: HttpClient,
     metadata?: Record<string, unknown>,
     configuration?: Record<string, unknown>
   ) {
     this.id = id
     this.workspaceId = workspaceId
-    this._client = client
+    this._http = http
     this._metadata = metadata
     this._configuration = configuration
   }
@@ -149,8 +158,8 @@ export class Peer {
         session_id: chatParams.session,
       }
 
-      const url = `${this._client.baseURL}/v2/workspaces/${this.workspaceId}/peers/${this.id}/chat`
-      const apiKey = this._client.apiKey
+      const url = `${this._http.baseURL}/v2/workspaces/${this.workspaceId}/peers/${this.id}/chat`
+      const apiKey = this._http.apiKey
 
       async function* streamResponse(): AsyncGenerator<
         string,
@@ -215,14 +224,16 @@ export class Peer {
       return new DialecticStreamResponse(streamResponse())
     }
 
-    const response = await this._client.workspaces.peers.chat(
-      this.workspaceId,
-      this.id,
+    const response = await this._http.request<DialecticResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}/chat`,
       {
-        query: chatParams.query,
-        stream: false,
-        target: chatParams.target,
-        session_id: chatParams.session,
+        json: {
+          query: chatParams.query,
+          stream: false,
+          target: chatParams.target,
+          session_id: chatParams.session,
+        },
       }
     )
     if (!response.content || response.content === 'None') {
@@ -241,18 +252,41 @@ export class Peer {
    * @returns Promise resolving to a paginated list of Session objects this peer belongs to.
    *          Returns an empty list if the peer is not a member of any sessions
    */
-  async getSessions(filters?: Filters | null): Promise<Page<Session>> {
+  async getSessions(
+    filters?: Filters | null
+  ): Promise<Page<SessionResponse, Session>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const sessionsPage = await this._client.workspaces.peers.sessions.list(
-      this.workspaceId,
-      this.id,
+    const data = await this._http.request<PageResponse<SessionResponse>>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}/sessions`,
       {
-        filters: validatedFilter,
+        json: validatedFilter ? { filters: validatedFilter } : {},
       }
     )
-    return new Page(
-      sessionsPage,
-      (session) => new Session(session.id, this.workspaceId, this._client)
+
+    const fetchNext =
+      data.page < (data.pages ?? 0)
+        ? async () => {
+            const nextData = await this._http.request<
+              PageResponse<SessionResponse>
+            >(
+              'POST',
+              `/v2/workspaces/${this.workspaceId}/peers/${this.id}/sessions`,
+              {
+                json: { filters: validatedFilter, page: data.page + 1 },
+              }
+            )
+            return new Page<SessionResponse, Session>(
+              nextData,
+              (session) => new Session(session.id, this.workspaceId, this._http)
+            )
+          }
+        : undefined
+
+    return new Page<SessionResponse, Session>(
+      data,
+      (session) => new Session(session.id, this.workspaceId, this._http),
+      fetchNext
     )
   }
 
@@ -306,9 +340,12 @@ export class Peer {
    *          Returns an empty dictionary if no metadata is set
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const peer = await this._client.workspaces.peers.getOrCreate(
-      this.workspaceId,
-      { id: this.id }
+    const peer = await this._http.request<PeerResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers`,
+      {
+        json: { id: this.id },
+      }
     )
     this._metadata = peer.metadata || {}
     return this._metadata
@@ -325,9 +362,13 @@ export class Peer {
    *                   Keys must be strings, values can be any JSON-serializable type
    */
   async setMetadata(metadata: Record<string, unknown>): Promise<void> {
-    await this._client.workspaces.peers.update(this.workspaceId, this.id, {
-      metadata,
-    })
+    await this._http.request<PeerResponse>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}`,
+      {
+        json: { metadata },
+      }
+    )
     this._metadata = metadata
   }
 
@@ -341,9 +382,12 @@ export class Peer {
    * @returns Promise resolving to a dictionary containing the peer's configuration
    */
   async getConfig(): Promise<Record<string, unknown>> {
-    const peer = await this._client.workspaces.peers.getOrCreate(
-      this.workspaceId,
-      { id: this.id }
+    const peer = await this._http.request<PeerResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers`,
+      {
+        json: { id: this.id },
+      }
     )
     this._configuration = peer.configuration || {}
     return this._configuration
@@ -362,9 +406,13 @@ export class Peer {
    *                 Keys must be strings, values can be any JSON-serializable type
    */
   async setConfig(config: Record<string, unknown>): Promise<void> {
-    await this._client.workspaces.peers.update(this.workspaceId, this.id, {
-      configuration: config,
-    })
+    await this._http.request<PeerResponse>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}`,
+      {
+        json: { configuration: config },
+      }
+    )
     this._configuration = config
   }
 
@@ -395,9 +443,12 @@ export class Peer {
    * associated with this peer and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    const peer = await this._client.workspaces.peers.getOrCreate(
-      this.workspaceId,
-      { id: this.id }
+    const peer = await this._http.request<PeerResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers`,
+      {
+        json: { id: this.id },
+      }
     )
     this._metadata = peer.metadata || {}
     this._configuration = peer.configuration || {}
@@ -425,13 +476,15 @@ export class Peer {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.peers.search(
-      this.workspaceId,
-      this.id,
+    return await this._http.request<Message[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}/search`,
       {
-        query: validatedQuery,
-        filters: validatedFilters,
-        limit: validatedLimit,
+        json: {
+          query: validatedQuery,
+          filters: validatedFilters,
+          limit: validatedLimit,
+        },
       }
     )
   }
@@ -463,11 +516,13 @@ export class Peer {
       throw new Error('target string cannot be empty')
     }
 
-    const response = await this._client.workspaces.peers.card(
-      this.workspaceId,
-      this.id,
+    const targetId = target instanceof Peer ? target.id : target
+
+    const response = await this._http.request<PeerCardResponse>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}/card`,
       {
-        target: target instanceof Peer ? target.id : target,
+        params: targetId ? { target: targetId } : undefined,
       }
     )
 
@@ -529,17 +584,21 @@ export class Peer {
         : workingRepParams.target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.workingRepresentation(
-      this.workspaceId,
-      this.id,
+    const response = await this._http.request<
+      RepresentationData | { representation?: RepresentationData | null }
+    >(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}/representation`,
       {
-        session_id: sessionId,
-        target: targetId,
-        search_query: workingRepParams.options?.searchQuery,
-        search_top_k: workingRepParams.options?.searchTopK,
-        search_max_distance: workingRepParams.options?.searchMaxDistance,
-        include_most_derived: workingRepParams.options?.includeMostDerived,
-        max_observations: workingRepParams.options?.maxObservations,
+        json: {
+          session_id: sessionId,
+          target: targetId,
+          search_query: workingRepParams.options?.searchQuery,
+          search_top_k: workingRepParams.options?.searchTopK,
+          search_max_distance: workingRepParams.options?.searchMaxDistance,
+          include_most_derived: workingRepParams.options?.includeMostDerived,
+          max_observations: workingRepParams.options?.maxObservations,
+        },
       }
     )
     const maybe = response as
@@ -590,16 +649,18 @@ export class Peer {
         : target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.getContext(
-      this.workspaceId,
-      this.id,
+    const response = await this._http.request<PeerContextResponse>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.id}/context`,
       {
-        target: targetId,
-        search_query: options?.searchQuery,
-        search_top_k: options?.searchTopK,
-        search_max_distance: options?.searchMaxDistance,
-        include_most_derived: options?.includeMostDerived,
-        max_observations: options?.maxObservations,
+        params: {
+          target: targetId,
+          search_query: options?.searchQuery,
+          search_top_k: options?.searchTopK?.toString(),
+          search_max_distance: options?.searchMaxDistance?.toString(),
+          include_most_derived: options?.includeMostDerived?.toString(),
+          max_observations: options?.maxObservations?.toString(),
+        },
       }
     )
 
@@ -629,12 +690,7 @@ export class Peer {
    * ```
    */
   get observations(): ObservationScope {
-    return new ObservationScope(
-      this._client,
-      this.workspaceId,
-      this.id,
-      this.id
-    )
+    return new ObservationScope(this._http, this.workspaceId, this.id, this.id)
   }
 
   /**
@@ -663,12 +719,7 @@ export class Peer {
    */
   observationsOf(target: string | Peer): ObservationScope {
     const targetId = typeof target === 'string' ? target : target.id
-    return new ObservationScope(
-      this._client,
-      this.workspaceId,
-      this.id,
-      targetId
-    )
+    return new ObservationScope(this._http, this.workspaceId, this.id, targetId)
   }
 
   /**

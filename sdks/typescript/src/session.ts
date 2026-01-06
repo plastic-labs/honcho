@@ -1,11 +1,5 @@
-import type HonchoCore from '@honcho-ai/core'
-import type {
-  DeriverStatus,
-  WorkspaceDeriverStatusParams,
-} from '@honcho-ai/core/resources/index'
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
-import type { Uploadable } from '@honcho-ai/core/uploads'
-import { Page } from './pagination'
+import type { HttpClient } from './http'
+import { Page } from './http/pagination'
 import { Peer } from './peer'
 import {
   Representation,
@@ -13,8 +7,17 @@ import {
   type RepresentationOptions,
 } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
-// Disabled: observations not ready for release
-// import type { Observation, ObservationQueryParams } from './types'
+import type {
+  DeriverStatus,
+  Message,
+  PageResponse,
+  PeerResponse,
+  SessionContextResponse,
+  SessionPeerConfigResponse,
+  SessionResponse,
+  SessionSummariesResponse,
+  Uploadable,
+} from './types'
 import {
   ContextParamsSchema,
   type DeriverStatusOptions,
@@ -24,7 +27,6 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
-  // ObservationQueryParamsSchema,  // Disabled: observations not ready for release
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -80,31 +82,6 @@ export class SessionPeerConfig {
  * conversations and interactions. Sessions serve as containers for conversations,
  * allowing peers to communicate while maintaining both global and local
  * representations of each other.
- *
- * Key features:
- * - Multi-peer conversations with configurable observation settings
- * - Message storage and retrieval with filtering capabilities
- * - Context optimization for token-limited scenarios
- * - File upload support with automatic message creation
- * - Session-scoped peer representations and theory-of-mind modeling
- * - Search functionality across session messages
- *
- * @example
- * ```typescript
- * const session = await honcho.session('conversation-123')
- *
- * // Add peers to the session
- * await session.addPeers(['user1', 'assistant1'])
- *
- * // Send messages
- * await session.addMessages([
- *   { peer_id: 'user1', content: 'Hello!' },
- *   { peer_id: 'assistant1', content: 'Hi there!' }
- * ])
- *
- * // Get optimized context
- * const context = await session.getContext(true, 4000)
- * ```
  */
 export class Session {
   /**
@@ -116,9 +93,9 @@ export class Session {
    */
   readonly workspaceId: string
   /**
-   * Reference to the parent Honcho client instance.
+   * Reference to the HTTP client instance.
    */
-  private _client: HonchoCore
+  private _http: HttpClient
   /**
    * Private cached metadata for this session.
    */
@@ -155,20 +132,20 @@ export class Session {
    *
    * @param id - Unique identifier for this session within the workspace
    * @param workspaceId - Workspace ID for scoping operations
-   * @param client - Reference to the parent Honcho client instance
+   * @param http - Reference to the HTTP client instance
    * @param metadata - Optional metadata to initialize the cached value
    * @param configuration - Optional configuration to initialize the cached value
    */
   constructor(
     id: string,
     workspaceId: string,
-    client: HonchoCore,
+    http: HttpClient,
     metadata?: Record<string, unknown>,
     configuration?: Record<string, unknown>
   ) {
     this.id = id
     this.workspaceId = workspaceId
-    this._client = client
+    this._http = http
     this._metadata = metadata
     this._configuration = configuration
   }
@@ -178,35 +155,9 @@ export class Session {
    *
    * Makes an API call to add one or more peers to this session. Adding peers
    * creates bidirectional relationships and allows them to participate in
-   * the session's conversations. Peers can be added with optional session-specific
-   * configuration to control observation behaviors.
+   * the session's conversations.
    *
-   * @param peers - Peers to add to the session. Can be:
-   *   - string: Single peer ID
-   *   - Peer: Single Peer object
-   *   - Array<string | Peer>: List of peer IDs and/or Peer objects
-   *   - [string | Peer, SessionPeerConfig]: Single peer with session config
-   *   - Array<string | Peer | [string | Peer, SessionPeerConfig]>: Mixed list
-   *     of peers and peer+config combinations
-   *
-   * @example
-   * ```typescript
-   * // Add single peer
-   * await session.addPeers('user123')
-   *
-   * // Add multiple peers
-   * await session.addPeers(['user1', 'user2', peer3])
-   *
-   * // Add peer with custom config
-   * await session.addPeers(['user1', new SessionPeerConfig(false, true)])
-   *
-   * // Add mixed peers with and without configs
-   * await session.addPeers([
-   *   'user1',
-   *   ['user2', new SessionPeerConfig(true, false)],
-   *   peer3
-   * ])
-   * ```
+   * @param peers - Peers to add to the session
    */
   async addPeers(peers: PeerAddition): Promise<void> {
     const validatedPeers = PeerAdditionSchema.parse(peers)
@@ -217,25 +168,21 @@ export class Session {
 
     for (const peer of peersArray) {
       if (typeof peer === 'string') {
-        // Handle string peer ID
         peerDict[peer] = {}
       } else if (Array.isArray(peer)) {
-        // Handle tuple [string | Peer, SessionPeerConfig]
         const peerId = typeof peer[0] === 'string' ? peer[0] : peer[0].id
         peerDict[peerId] = peer[1]
       } else if (typeof peer === 'object' && 'id' in peer) {
-        // Handle Peer object
         peerDict[peer.id] = {}
       } else {
-        // This should never happen with proper typing, but handle gracefully
         throw new Error(`Invalid peer type: ${typeof peer}`)
       }
     }
 
-    await this._client.workspaces.sessions.peers.add(
-      this.workspaceId,
-      this.id,
-      peerDict
+    await this._http.request<SessionResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
+      { json: peerDict }
     )
   }
 
@@ -243,16 +190,8 @@ export class Session {
    * Set the complete peer list for this session.
    *
    * Makes an API call to replace the current peer list with the provided peers.
-   * This will remove any peers not in the new list and add any that are missing.
-   * Unlike addPeers(), this method overwrites the entire peer membership.
    *
-   * @param peers - Peers to set for the session. Can be:
-   *   - string: Single peer ID
-   *   - Peer: Single Peer object
-   *   - Array<string | Peer>: List of peer IDs and/or Peer objects
-   *   - [string | Peer, SessionPeerConfig]: Single peer with session config
-   *   - Array<string | Peer | [string | Peer, SessionPeerConfig]>: Mixed list
-   *     of peers and peer+config combinations
+   * @param peers - Peers to set for the session
    */
   async setPeers(peers: PeerAddition): Promise<void> {
     const validatedPeers = PeerAdditionSchema.parse(peers)
@@ -263,25 +202,21 @@ export class Session {
 
     for (const peer of peersArray) {
       if (typeof peer === 'string') {
-        // Handle string peer ID
         peerDict[peer] = {}
       } else if (Array.isArray(peer)) {
-        // Handle tuple [string | Peer, SessionPeerConfig]
         const peerId = typeof peer[0] === 'string' ? peer[0] : peer[0].id
         peerDict[peerId] = peer[1]
       } else if (typeof peer === 'object' && 'id' in peer) {
-        // Handle Peer object
         peerDict[peer.id] = {}
       } else {
-        // This should never happen with proper typing, but handle gracefully
         throw new Error(`Invalid peer type: ${typeof peer}`)
       }
     }
 
-    await this._client.workspaces.sessions.peers.set(
-      this.workspaceId,
-      this.id,
-      peerDict
+    await this._http.request<SessionResponse>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
+      { json: peerDict }
     )
   }
 
@@ -289,13 +224,8 @@ export class Session {
    * Remove peers from this session.
    *
    * Makes an API call to remove one or more peers from this session.
-   * Removed peers will no longer be able to participate in the session
-   * unless added back. Their existing messages remain in the session.
    *
-   * @param peers - Peers to remove from the session. Can be:
-   *   - string: Single peer ID
-   *   - Peer: Single Peer object
-   *   - Array<string | Peer>: List of peer IDs and/or Peer objects
+   * @param peers - Peers to remove from the session
    */
   async removePeers(peers: PeerRemoval): Promise<void> {
     const validatedPeers = PeerRemovalSchema.parse(peers)
@@ -306,10 +236,10 @@ export class Session {
             ? validatedPeers
             : validatedPeers.id,
         ]
-    await this._client.workspaces.sessions.peers.remove(
-      this.workspaceId,
-      this.id,
-      peerIds
+    await this._http.request<SessionResponse>(
+      'DELETE',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
+      { json: peerIds }
     )
   }
 
@@ -317,48 +247,39 @@ export class Session {
    * Get all peers in this session.
    *
    * Makes an API call to retrieve the list of peers that are currently
-   * members of this session. Automatically converts the paginated response
-   * into a list for convenience -- the max number of peers in a session is usually 10.
+   * members of this session.
    *
    * @returns Promise resolving to a list of Peer objects that are members of this session
    */
   async getPeers(): Promise<Peer[]> {
-    const peersPage = await this._client.workspaces.sessions.peers.list(
-      this.workspaceId,
-      this.id
+    const data = await this._http.request<PageResponse<PeerResponse>>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/peers`
     )
-    return peersPage.items.map(
-      (peer) => new Peer(peer.id, this.workspaceId, this._client)
+    return data.items.map(
+      (peer) => new Peer(peer.id, this.workspaceId, this._http)
     )
   }
 
   /**
    * Get the configuration for a peer in this session.
    *
-   * Makes an API call to retrieve the session-specific configuration for a peer.
-   * This includes observation settings that control how this peer interacts
-   * with other peers within this session context.
-   *
-   * @param peer - The peer to get configuration for. Can be peer ID string or Peer object
+   * @param peer - The peer to get configuration for
    * @returns Promise resolving to SessionPeerConfig object with the peer's session settings
    */
   async getPeerConfig(peer: string | Peer): Promise<SessionPeerConfig> {
     const peerId = typeof peer === 'string' ? peer : peer.id
-    return await this._client.workspaces.sessions.peers.getConfig(
-      this.workspaceId,
-      this.id,
-      peerId
+    const data = await this._http.request<SessionPeerConfigResponse>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/peers/${peerId}/config`
     )
+    return new SessionPeerConfig(data.observe_me, data.observe_others)
   }
 
   /**
    * Set the configuration for a peer in this session.
    *
-   * Makes an API call to update the session-specific configuration for a peer.
-   * This controls observation behaviors and theory-of-mind formation within
-   * this session context.
-   *
-   * @param peer - The peer to configure. Can be peer ID string or Peer object
+   * @param peer - The peer to configure
    * @param config - SessionPeerConfig object specifying the observation settings
    */
   async setPeerConfig(
@@ -367,13 +288,14 @@ export class Session {
   ): Promise<void> {
     const peerId = typeof peer === 'string' ? peer : peer.id
     const validatedConfig = SessionPeerConfigSchema.parse(config)
-    await this._client.workspaces.sessions.peers.setConfig(
-      this.workspaceId,
-      this.id,
-      peerId,
+    await this._http.request<void>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/peers/${peerId}/config`,
       {
-        observe_others: validatedConfig.observe_others,
-        observe_me: validatedConfig.observe_me,
+        json: {
+          observe_others: validatedConfig.observe_others,
+          observe_me: validatedConfig.observe_me,
+        },
       }
     )
   }
@@ -381,46 +303,18 @@ export class Session {
   /**
    * Add one or more messages to this session.
    *
-   * Makes an API call to store messages in this session. Any message added
-   * to a session will automatically add the creating peer to the session
-   * if they are not already a member. Messages are the primary way content
-   * flows through the Honcho system.
-   *
-   * @param messages - Messages to add to the session. Can be:
-   *   - MessageCreate: Single message object with peer_id and content
-   *   - MessageCreate[]: Array of message objects
-   *
-   * @example
-   * ```typescript
-   * // Add single message
-   * await session.addMessages({
-   *   peer_id: 'user123',
-   *   content: 'Hello world!'
-   * })
-   *
-   * // Add multiple messages
-   * await session.addMessages([
-   *   { peer_id: 'user1', content: 'Hello!' },
-   *   { peer_id: 'assistant', content: 'Hi there!' }
-   * ])
-   * // Add message with custom ISO 8601 timestamp
-   * await session.addMessages({
-   *   peer_id: 'user123',
-   *   content: 'Hello world!',
-   *   created_at: '2021-01-01T00:00:00.000Z'
-   * })
-   * ```
+   * @param messages - Messages to add to the session
    */
   async addMessages(messages: MessageAddition): Promise<Message[]> {
     const validatedMessages = MessageAdditionSchema.parse(messages)
     const messagesList = Array.isArray(validatedMessages)
       ? validatedMessages
       : [validatedMessages]
-    return await this._client.workspaces.sessions.messages.create(
-      this.workspaceId,
-      this.id,
+    return await this._http.request<Message[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/messages`,
       {
-        messages: messagesList,
+        json: { messages: messagesList },
       }
     )
   }
@@ -428,38 +322,48 @@ export class Session {
   /**
    * Get messages from this session with optional filtering.
    *
-   * Makes an API call to retrieve messages from this session. Results can be
-   * filtered based on various criteria and are returned in a paginated format.
-   * Messages are ordered by creation time (most recent first by default).
-   *
-   * @param filters - Optional filter criteria for messages. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-   * @returns Promise resolving to a Page of Message objects matching the specified criteria
+   * @param filters - Optional filter criteria for messages
+   * @returns Promise resolving to a Page of Message objects
    */
-  async getMessages(filters?: Filters): Promise<Page<Message>> {
+  async getMessages(filters?: Filters): Promise<Page<Message, Message>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const messagesPage = await this._client.workspaces.sessions.messages.list(
-      this.workspaceId,
-      this.id,
-      validatedFilter
+    const data = await this._http.request<PageResponse<Message>>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/messages/list`,
+      {
+        json: validatedFilter ? { filters: validatedFilter } : {},
+      }
     )
-    return new Page(messagesPage)
+
+    const fetchNext =
+      data.page < (data.pages ?? 0)
+        ? async () => {
+            const nextData = await this._http.request<PageResponse<Message>>(
+              'POST',
+              `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/messages/list`,
+              {
+                json: { filters: validatedFilter, page: data.page + 1 },
+              }
+            )
+            return new Page<Message, Message>(nextData)
+          }
+        : undefined
+
+    return new Page<Message, Message>(data, undefined, fetchNext)
   }
 
   /**
    * Get metadata for this session.
    *
-   * Makes an API call to retrieve the current metadata associated with this session.
-   * Metadata can include custom attributes, settings, or any other key-value data
-   * that provides context about the session. This method also updates the cached
-   * metadata property.
-   *
-   * @returns Promise resolving to a dictionary containing the session's metadata.
-   *          Returns an empty dictionary if no metadata is set
+   * @returns Promise resolving to a dictionary containing the session's metadata
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const session = await this._client.workspaces.sessions.getOrCreate(
-      this.workspaceId,
-      { id: this.id }
+    const session = await this._http.request<SessionResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions`,
+      {
+        json: { id: this.id },
+      }
     )
     this._metadata = session.metadata || {}
     return this._metadata
@@ -468,36 +372,31 @@ export class Session {
   /**
    * Set metadata for this session.
    *
-   * Makes an API call to update the metadata associated with this session.
-   * This will overwrite any existing metadata with the provided values.
-   * Metadata is useful for storing custom attributes, configuration, or
-   * contextual information about the session. This method also updates the
-   * cached metadata property.
-   *
-   * @param metadata - A dictionary of metadata to associate with this session.
-   *                   Keys must be strings, values can be any JSON-serializable type
+   * @param metadata - A dictionary of metadata to associate with this session
    */
   async setMetadata(metadata: Record<string, unknown>): Promise<void> {
-    await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
-      metadata,
-    })
+    await this._http.request<SessionResponse>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}`,
+      {
+        json: { metadata },
+      }
+    )
     this._metadata = metadata
   }
 
   /**
    * Get configuration for this session.
    *
-   * Makes an API call to retrieve the current configuration associated with this session.
-   * Configuration includes settings that control session behavior. This method also
-   * updates the cached configuration property.
-   *
-   * @returns Promise resolving to a dictionary containing the session's configuration.
-   *          Returns an empty dictionary if no configuration is set
+   * @returns Promise resolving to a dictionary containing the session's configuration
    */
   async getConfig(): Promise<Record<string, unknown>> {
-    const session = await this._client.workspaces.sessions.getOrCreate(
-      this.workspaceId,
-      { id: this.id }
+    const session = await this._http.request<SessionResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions`,
+      {
+        json: { id: this.id },
+      }
     )
     this._configuration = session.configuration || {}
     return this._configuration
@@ -506,30 +405,29 @@ export class Session {
   /**
    * Set configuration for this session.
    *
-   * Makes an API call to update the configuration associated with this session.
-   * This will overwrite any existing configuration with the provided values.
-   * This method also updates the cached configuration property.
-   *
-   * @param configuration - A dictionary of configuration to associate with this session.
-   *                        Keys must be strings, values can be any JSON-serializable type
+   * @param configuration - A dictionary of configuration to associate with this session
    */
   async setConfig(configuration: Record<string, unknown>): Promise<void> {
-    await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
-      configuration,
-    })
+    await this._http.request<SessionResponse>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}`,
+      {
+        json: { configuration },
+      }
+    )
     this._configuration = configuration
   }
 
   /**
    * Refresh cached metadata and configuration for this session.
-   *
-   * Makes a single API call to retrieve the latest metadata and configuration
-   * associated with this session and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    const session = await this._client.workspaces.sessions.getOrCreate(
-      this.workspaceId,
-      { id: this.id }
+    const session = await this._http.request<SessionResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions`,
+      {
+        json: { id: this.id },
+      }
     )
     this._metadata = session.metadata || {}
     this._configuration = session.configuration || {}
@@ -537,53 +435,33 @@ export class Session {
 
   /**
    * Delete this session and all associated data.
-   *
-   * Makes an API call to permanently delete this session and all related data including:
-   * - Messages
-   * - Message embeddings
-   * - Observations
-   * - Session-Peer associations
-   * - Background processing queue items
-   *
-   * This action cannot be undone.
    */
   async delete(): Promise<void> {
-    await this._client.workspaces.sessions.delete(this.workspaceId, this.id)
+    await this._http.request<void>(
+      'DELETE',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}`
+    )
   }
 
   /**
    * Clone this session, optionally up to a specific message.
    *
-   * Makes an API call to create a copy of this session with a new ID.
-   * All messages and peers from the original session are copied to the new session.
-   * If a messageId is provided, only messages up to and including that message
-   * are copied.
-   *
-   * @param messageId - Optional message ID to cut off the clone at. If provided,
-   *                    the cloned session will only contain messages up to and
-   *                    including this message.
+   * @param messageId - Optional message ID to cut off the clone at
    * @returns Promise resolving to a new Session object representing the cloned session
-   *
-   * @example
-   * ```typescript
-   * // Clone entire session
-   * const cloned = await session.clone()
-   *
-   * // Clone session up to a specific message
-   * const cloned = await session.clone('msg_abc123')
-   * ```
    */
   async clone(messageId?: string): Promise<Session> {
-    const clonedSessionData = await this._client.workspaces.sessions.clone(
-      this.workspaceId,
-      this.id,
-      messageId ? { message_id: messageId } : {}
+    const clonedSessionData = await this._http.request<SessionResponse>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/clone`,
+      {
+        params: messageId ? { message_id: messageId } : undefined,
+      }
     )
 
     return new Session(
       clonedSessionData.id,
       this.workspaceId,
-      this._client,
+      this._http,
       clonedSessionData.metadata ?? undefined,
       clonedSessionData.configuration ?? undefined
     )
@@ -591,34 +469,6 @@ export class Session {
 
   /**
    * Get optimized context for this session within a token limit.
-   *
-   * Makes an API call to retrieve a curated list of messages that provides
-   * optimal context for the conversation while staying within the specified
-   * token limit. Uses tiktoken for token counting, so results should be
-   * compatible with OpenAI models. The context optimization balances
-   * recency and relevance to provide the best conversational context.
-   *
-   * @param options - Configuration options for context retrieval
-   * @param options.summary - Whether to include summary information in the context.
-   *                          When true, includes session summary if available. Defaults to true
-   * @param options.tokens - Maximum number of tokens to include in the context. If not provided,
-   *                         uses the server's default configuration
-   * @param options.peerTarget - The target of the perspective. If given without `peerPerspective`,
-   *                             will get the Honcho-level representation and peer card for this peer.
-   *                             If given with `peerPerspective`, will get the representation and card
-   *                             for this peer from the perspective of that peer.
-   * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
-   *                                  observations and returned as part of the context object.
-   *                                  Can be either a message ID string or a Message object.
-   * @param options.peerPerspective - A peer to get context for. If given, response will attempt to
-   *                                  include representation and card from the perspective of that peer.
-   *                                  Must be provided with `peerTarget`.
-   * @returns Promise resolving to a SessionContext object containing the optimized
-   *          message history and summary (if available) that maximizes conversational
-   *          context while respecting the token limit
-   *
-   * @note Token counting is performed using tiktoken. For models using different
-   *       tokenizers, you may need to adjust the token limit accordingly.
    */
   async getContext(
     summary?: boolean,
@@ -707,30 +557,39 @@ export class Session {
         ? contextParams.lastUserMessage
         : contextParams.lastUserMessage?.id
 
-    const context = await this._client.workspaces.sessions.getContext(
-      this.workspaceId,
-      this.id,
-      {
-        tokens: contextParams.tokens,
-        summary: contextParams.summary,
-        last_message: lastMessageId,
-        peer_target: contextParams.peerTarget,
-        peer_perspective: contextParams.peerPerspective,
-        limit_to_session: contextParams.limitToSession,
-        search_top_k: contextParams.representationOptions?.searchTopK,
-        search_max_distance:
-          contextParams.representationOptions?.searchMaxDistance,
-        include_most_derived:
-          contextParams.representationOptions?.includeMostDerived,
-        max_observations: contextParams.representationOptions?.maxObservations,
-      }
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (contextParams.tokens !== undefined) params.tokens = contextParams.tokens
+    if (contextParams.summary !== undefined)
+      params.summary = contextParams.summary
+    if (lastMessageId) params.last_message = lastMessageId
+    if (contextParams.peerTarget) params.peer_target = contextParams.peerTarget
+    if (contextParams.peerPerspective)
+      params.peer_perspective = contextParams.peerPerspective
+    if (contextParams.limitToSession !== undefined)
+      params.limit_to_session = contextParams.limitToSession
+    if (contextParams.representationOptions?.searchTopK !== undefined)
+      params.search_top_k = contextParams.representationOptions.searchTopK
+    if (contextParams.representationOptions?.searchMaxDistance !== undefined)
+      params.search_max_distance =
+        contextParams.representationOptions.searchMaxDistance
+    if (contextParams.representationOptions?.includeMostDerived !== undefined)
+      params.include_most_derived =
+        contextParams.representationOptions.includeMostDerived
+    if (contextParams.representationOptions?.maxObservations !== undefined)
+      params.max_observations =
+        contextParams.representationOptions.maxObservations
+
+    const context = await this._http.request<SessionContextResponse>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/context`,
+      { params }
     )
     // Convert the summary response to Summary object if present
-    const summary = context.summary ? new Summary(context.summary) : null
+    const summaryObj = context.summary ? new Summary(context.summary) : null
     return new SessionContext(
       this.id,
       context.messages,
-      summary,
+      summaryObj,
       context.peer_representation
         ? JSON.stringify(context.peer_representation)
         : null,
@@ -741,41 +600,23 @@ export class Session {
   /**
    * Get available summaries for this session.
    *
-   * Makes an API call to retrieve both short and long summaries for this session,
-   * if they are available. Summaries are created asynchronously by the backend
-   * as messages are added to the session.
-   *
-   * @returns Promise resolving to a SessionSummaries object containing:
-   *          - id: The session ID
-   *          - shortSummary: The short summary if available, including metadata
-   *          - longSummary: The long summary if available, including metadata
-   *
-   * @note Summaries may be null if:
-   *       - Not enough messages have been added to trigger summary generation
-   *       - The summary generation is still in progress
-   *       - Summary generation is disabled for this session
+   * @returns Promise resolving to a SessionSummaries object
    */
   async getSummaries(): Promise<SessionSummaries> {
-    // Use the core SDK's summaries method
-    const data = await this._client.workspaces.sessions.summaries(
-      this.workspaceId,
-      this.id
+    const data = await this._http.request<SessionSummariesResponse>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/summaries`
     )
-
-    // Return a SessionSummaries instance
     return new SessionSummaries(data)
   }
 
   /**
    * Search for messages in this session.
    *
-   * Makes an API call to search for messages in this session.
-   *
    * @param query The search query to use
-   * @param filters - Optional filters to scope the search: see [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-   * @param limit Number of results to return (1-100, default: 10).
-   * @returns A list of Message objects representing the search results.
-   *          Returns an empty list if no messages are found.
+   * @param options.filters - Optional filters to scope the search
+   * @param options.limit Number of results to return (1-100, default: 10)
+   * @returns A list of Message objects representing the search results
    */
   async search(
     query: string,
@@ -791,113 +632,24 @@ export class Session {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.sessions.search(
-      this.workspaceId,
-      this.id,
+    return await this._http.request<Message[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/search`,
       {
-        query: validatedQuery,
-        filters: validatedFilters,
-        limit: validatedLimit,
+        json: {
+          query: validatedQuery,
+          filters: validatedFilters,
+          limit: validatedLimit,
+        },
       }
     )
   }
 
   /**
-   * List all observations for this session.
-   *
-   * Observations are theory-of-mind data (documents) that peers have formed about each other.
-   * Returns paginated results that can be filtered by observer_id and observed_id.
-   *
-   * @param filters - Optional filters to scope the observations: see [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-   * @returns A paginated list of Observation objects.
-   *
-   * @example
-   * ```typescript
-   * const observations = await session.listObservations()
-   * for await (const observation of observations) {
-   *   console.log(`${observation.observer_id} observed: ${observation.content}`)
-   * }
-   * ```
-   */
-  // Disabled: observations not ready for release
-  // async listObservations(filters?: Filters): Promise<Page<Observation>> {
-  //   const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
-  //   const response = await this._client.workspaces.sessions.observations.list(
-  //     this.workspaceId,
-  //     this.id,
-  //     { filters: validatedFilters }
-  //   )
-  //   return new Page(response)
-  // }
-
-  /**
-   * Query observations using semantic search.
-   *
-   * Performs vector similarity search on observations to find semantically relevant results.
-   * Use this to find observations related to a specific topic or concept.
-   *
-   * @param params - Query parameters
-   * @param params.query - The semantic search query
-   * @param params.top_k - Number of results to return (1-100, default: 10)
-   * @param params.distance - Maximum cosine distance threshold for results (0.0-1.0)
-   * @param params.filters - Optional filters to scope the query
-   * @returns A list of Observation objects matching the query
-   *
-   * @example
-   * ```typescript
-   * const observations = await session.queryObservations({
-   *   query: "user preferences about music",
-   *   top_k: 5,
-   *   distance: 0.8
-   * })
-   * ```
-   */
-  // Disabled: observations not ready for release
-  // async queryObservations(
-  //   params: ObservationQueryParams
-  // ): Promise<Observation[]> {
-  //   const validated = ObservationQueryParamsSchema.parse(params)
-  //   return await this._client.workspaces.sessions.observations.query(
-  //     this.workspaceId,
-  //     this.id,
-  //     validated
-  //   )
-  // }
-
-  /**
-   * Delete a specific observation by ID.
-   *
-   * This permanently deletes the observation (document) from the theory-of-mind system.
-   * This action cannot be undone.
-   *
-   * @param observationId - The ID of the observation to delete
-   * @returns A promise that resolves when the observation is deleted
-   *
-   * @example
-   * ```typescript
-   * await session.deleteObservation('obs_123abc')
-   * ```
-   */
-  // Disabled: observations not ready for release
-  // async deleteObservation(observationId: string): Promise<void> {
-  //   await this._client.workspaces.sessions.observations.delete(
-  //     this.workspaceId,
-  //     this.id,
-  //     observationId
-  //   )
-  // }
-
-  /**
-   * Get the deriver processing status for this session, optionally scoped to an observer or sender.
-   *
-   * Makes an API call to retrieve the current status of the deriver processing queue.
-   * The deriver is responsible for processing messages and updating peer representations.
-   * This method automatically scopes the status to this session.
+   * Get the deriver processing status for this session.
    *
    * @param options - Configuration options for the status request
-   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
-   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
-   * @returns Promise resolving to the deriver status information including work unit counts
+   * @returns Promise resolving to the deriver status information
    */
   async getDeriverStatus(
     options?: Omit<
@@ -912,7 +664,7 @@ export class Session {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: DeriverStatus['sessions']
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -925,15 +677,16 @@ export class Session {
         : options.sender.id
       : undefined
 
-    const queryParams: WorkspaceDeriverStatusParams = {
-      session_id: this.id, // Always use this session's ID
+    const params: Record<string, string | undefined> = {
+      session_id: this.id,
     }
-    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
-    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
+    if (resolvedObserverId) params.observer_id = resolvedObserverId
+    if (resolvedSenderId) params.sender_id = resolvedSenderId
 
-    const status = await this._client.workspaces.deriverStatus(
-      this.workspaceId,
-      queryParams
+    const status = await this._http.request<DeriverStatus>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/queue/status`,
+      { params }
     )
 
     return {
@@ -947,15 +700,8 @@ export class Session {
 
   /**
    * Poll getDeriverStatus until pending_work_units and in_progress_work_units are both 0.
-   * This allows you to guarantee that all messages have been processed by the deriver for
-   * use with the dialectic endpoint.
-   *
-   * The polling estimates sleep time by assuming each work unit takes 1 second.
    *
    * @param options - Configuration options for the status request
-   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
-   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
-   * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
    * @returns Promise resolving to the final deriver status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
@@ -972,7 +718,7 @@ export class Session {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: DeriverStatus['sessions']
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
@@ -993,10 +739,9 @@ export class Session {
       }
 
       // Sleep for the expected time to complete all current work units
-      // Assuming each pending and in-progress work unit takes 1 second
       const totalWorkUnits =
         status.pendingWorkUnits + status.inProgressWorkUnits
-      const sleepMs = Math.max(1000, totalWorkUnits * 1000) // Sleep at least 1 second
+      const sleepMs = Math.max(1000, totalWorkUnits * 1000)
 
       // Ensure we don't sleep past the timeout
       const remainingTime = timeoutMs - elapsedTime
@@ -1011,38 +756,10 @@ export class Session {
   /**
    * Upload a file to create messages in this session.
    *
-   * Makes an API call to upload a file and convert it into messages. The file is
-   * processed to extract text content, split into appropriately sized chunks,
-   * and created as messages attributed to the specified peer. The peer will be
-   * automatically added to the session if not already a member.
-   *
-   * @param file - File to upload. Can be:
-   *   - File objects (browser File API)
-   *   - Buffer or Uint8Array with filename and content_type
-   *   - { filename: string, content: Buffer | Uint8Array, content_type: string }
-   * @param peer - The peer (ID string or Peer object) to attribute the created messages to
+   * @param file - File to upload
+   * @param peer - The peer to attribute the created messages to
    * @param options - Optional parameters for the uploaded messages
-   * @param options.metadata - Optional metadata dictionary to associate with the messages
-   * @param options.configuration - Optional configuration dictionary to associate with the messages
-   * @param options.created_at - Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.
    * @returns Promise resolving to a list of Message objects representing the created messages
-   *
-   * @note Supported file types include PDFs, text files, and JSON documents.
-   *       Large files will be automatically split into multiple messages to fit
-   *       within message size limits.
-   *
-   * @example
-   * ```typescript
-   * // Upload a file
-   * const messages = await session.uploadFile(fileInput.files[0], 'user123')
-   * console.log(`Created ${messages.length} messages from file`)
-   *
-   * // Upload a file with metadata and timestamp
-   * const messages = await session.uploadFile(fileInput.files[0], 'user123', {
-   *   metadata: { source: 'upload' },
-   *   created_at: '2021-01-01T00:00:00.000Z'
-   * })
-   * ```
    */
   async uploadFile(
     file: Uploadable,
@@ -1068,60 +785,55 @@ export class Session {
       created_at: createdAt,
     })
 
-    // Build body with file and peer_id, plus optional fields as JSON strings
-    const body = {
-      file: uploadParams.file,
-      peer_id: resolvedPeerId,
-      ...(uploadParams.metadata !== undefined && uploadParams.metadata !== null
-        ? { metadata: JSON.stringify(uploadParams.metadata) }
-        : {}),
-      ...(uploadParams.configuration !== undefined &&
-      uploadParams.configuration !== null
-        ? { configuration: JSON.stringify(uploadParams.configuration) }
-        : {}),
-      ...(uploadParams.created_at !== undefined &&
-      uploadParams.created_at !== null
-        ? { created_at: uploadParams.created_at }
-        : {}),
+    // Build FormData for file upload
+    const formData = new FormData()
+
+    // Handle file based on type
+    if (file instanceof File) {
+      formData.append('file', file)
+    } else if ('filename' in file && 'content' in file) {
+      // Convert Buffer/Uint8Array to Blob
+      const blob = new Blob([file.content as BlobPart], {
+        type: file.content_type,
+      })
+      formData.append('file', blob, file.filename)
     }
 
-    const response = await this._client.workspaces.sessions.messages.upload(
-      this.workspaceId,
-      this.id,
-      body
-    )
+    formData.append('peer_id', resolvedPeerId)
 
-    return response
+    if (uploadParams.metadata !== undefined && uploadParams.metadata !== null) {
+      formData.append('metadata', JSON.stringify(uploadParams.metadata))
+    }
+    if (
+      uploadParams.configuration !== undefined &&
+      uploadParams.configuration !== null
+    ) {
+      formData.append(
+        'configuration',
+        JSON.stringify(uploadParams.configuration)
+      )
+    }
+    if (
+      uploadParams.created_at !== undefined &&
+      uploadParams.created_at !== null
+    ) {
+      formData.append('created_at', uploadParams.created_at)
+    }
+
+    return await this._http.request<Message[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/messages/upload`,
+      { formData }
+    )
   }
 
   /**
    * Get the current working representation of a peer in this session.
    *
-   * Makes an API call to retrieve the session-scoped representation that has been
-   * built for a peer. This can be either the peer's global representation or
-   * their local representation of another peer (theory-of-mind).
-   *
-   * @param peer - The peer to get the working representation of. Can be peer ID string or Peer object
-   * @param target - Optional target peer. If provided, returns what `peer` knows about
-   *                 `target` within this session context rather than `peer`'s global representation
-   * @param options - Optional representation options to filter and configure the results
-   * @returns Promise resolving to a Representation object containing explicit and deductive observations
-   *
-   * @example
-   * ```typescript
-   * // Get peer's global representation in this session
-   * const globalRep = await session.workingRep('user123')
-   * console.log(globalRep.toString())
-   *
-   * // Get what user123 knows about assistant in this session
-   * const localRep = await session.workingRep('user123', 'assistant')
-   *
-   * // Get representation with semantic search
-   * const searchedRep = await session.workingRep('user123', undefined, {
-   *   searchQuery: 'preferences',
-   *   searchTopK: 10
-   * })
-   * ```
+   * @param peer - The peer to get the working representation of
+   * @param target - Optional target peer for theory-of-mind representation
+   * @param options - Optional representation options
+   * @returns Promise resolving to a Representation object
    */
   async workingRep(
     peer: string | Peer,
@@ -1149,17 +861,21 @@ export class Session {
         : workingRepParams.target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.workingRepresentation(
-      this.workspaceId,
-      peerId,
+    const response = await this._http.request<
+      RepresentationData | { representation?: RepresentationData | null }
+    >(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/${peerId}/representation`,
       {
-        session_id: this.id,
-        target: targetId,
-        search_query: workingRepParams.options?.searchQuery,
-        search_top_k: workingRepParams.options?.searchTopK,
-        search_max_distance: workingRepParams.options?.searchMaxDistance,
-        include_most_derived: workingRepParams.options?.includeMostDerived,
-        max_observations: workingRepParams.options?.maxObservations,
+        json: {
+          session_id: this.id,
+          target: targetId,
+          search_query: workingRepParams.options?.searchQuery,
+          search_top_k: workingRepParams.options?.searchTopK,
+          search_max_distance: workingRepParams.options?.searchMaxDistance,
+          include_most_derived: workingRepParams.options?.includeMostDerived,
+          max_observations: workingRepParams.options?.maxObservations,
+        },
       }
     )
     const maybe = response as

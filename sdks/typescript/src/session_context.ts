@@ -1,5 +1,5 @@
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type { Peer } from './peer'
+import type { Message } from './types'
 
 export interface SummaryData {
   content: string

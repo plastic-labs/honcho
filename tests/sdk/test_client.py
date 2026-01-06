@@ -2,9 +2,8 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from honcho_core.types import DeriverStatus
-from honcho_core.types.workspaces.sessions.message import Message
 
+from sdks.python.src.honcho.api_types import DeriverStatus, Message
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.pagination import AsyncPage
 from sdks.python.src.honcho.async_client.peer import AsyncPeer
@@ -53,9 +52,9 @@ async def test_client_init(
 
         page += 1
 
-    assert (
-        found_workspace
-    ), f"Workspace {honcho_client.workspace_id} not found in any page of results"
+    assert found_workspace, (
+        f"Workspace {honcho_client.workspace_id} not found in any page of results"
+    )
 
 
 @pytest.mark.asyncio

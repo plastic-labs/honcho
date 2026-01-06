@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from .base import SessionBase
+from .http import AsyncHttpClient, HttpClient
 
 if TYPE_CHECKING:
     from .types import ObservationCreateParam, Representation
@@ -110,14 +111,14 @@ class ObservationScope:
         ```
     """
 
-    _client: Any
+    _http: HttpClient
     workspace_id: str
     observer: str
     observed: str
 
     def __init__(
         self,
-        client: Any,
+        http: HttpClient,
         workspace_id: str,
         observer: str,
         observed: str,
@@ -126,12 +127,12 @@ class ObservationScope:
         Initialize an ObservationScope.
 
         Args:
-            client: The Honcho client instance
+            http: The HTTP client instance
             workspace_id: The workspace ID
             observer: The observer peer ID
             observed: The observed peer ID
         """
-        self._client = client
+        self._http = http
         self.workspace_id = workspace_id
         self.observer = observer
         self.observed = observed
@@ -165,17 +166,15 @@ class ObservationScope:
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
-        response = self._client.workspaces.observations.list(
-            workspace_id=self.workspace_id,
-            filters=filters,
-            page=page,
-            size=size,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations/list",
+            json={"filters": filters, "page": page, "size": size},
         )
 
-        # response.items is List[Observations] (Pydantic models)
+        items = response.get("items", []) if response else []
         return [
-            Observation.from_api_response(_convert_observation(item))
-            for item in response.items
+            Observation.from_api_response(_convert_observation(item)) for item in items
         ]
 
     def query(
@@ -200,18 +199,20 @@ class ObservationScope:
             "observed": self.observed,
         }
 
-        response = self._client.workspaces.observations.query(
-            workspace_id=self.workspace_id,
-            query=query,
-            top_k=top_k,
-            distance=distance,
-            filters=filters,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations/query",
+            json={
+                "query": query,
+                "top_k": top_k,
+                "distance": distance,
+                "filters": filters,
+            },
         )
 
-        # response is List[Observations] (Pydantic models)
         return [
             Observation.from_api_response(_convert_observation(item))
-            for item in response
+            for item in (response or [])
         ]
 
     def delete(self, observation_id: str) -> None:
@@ -221,9 +222,9 @@ class ObservationScope:
         Args:
             observation_id: The ID of the observation to delete
         """
-        self._client.workspaces.observations.delete(
-            workspace_id=self.workspace_id,
-            observation_id=observation_id,
+        self._http.request(
+            "DELETE",
+            f"/v2/workspaces/{self.workspace_id}/observations/{observation_id}",
         )
 
     def create(
@@ -271,15 +272,15 @@ class ObservationScope:
             for obs in observations
         ]
 
-        response = self._client.workspaces.observations.create(  # type: ignore[attr-defined]
-            workspace_id=self.workspace_id,
-            observations=request_observations,
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations",
+            json={"observations": request_observations},
         )
 
-        # response is List[Observations] (Pydantic models)
         return [
             Observation.from_api_response(_convert_observation(item))
-            for item in response
+            for item in (response or [])
         ]
 
     def get_representation(
@@ -306,30 +307,31 @@ class ObservationScope:
         Returns:
             A Representation object containing explicit and deductive observations
         """
-        from honcho_core._types import omit
-
         from .types import Representation
 
-        response = self._client.workspaces.peers.working_representation(
-            peer_id=self.observer,
-            workspace_id=self.workspace_id,
-            target=self.observed,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+        body: dict[str, Any] = {"target": self.observed}
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_derived is not None:
+            body["include_most_derived"] = include_most_derived
+        if max_observations is not None:
+            body["max_observations"] = max_observations
+
+        response = self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.observer}/representation",
+            json=body,
         )
 
-        representation = response.get("representation")
+        representation = response.get("representation") if response else None
         if representation is not None:
             return Representation.from_dict(cast(dict[str, Any], representation))
         else:
-            return Representation.from_dict(response)
+            return Representation.from_dict(response or {})
 
     def __repr__(self) -> str:
         return (
@@ -361,14 +363,14 @@ class AsyncObservationScope:
         ```
     """
 
-    _client: Any
+    _http: AsyncHttpClient
     workspace_id: str
     observer: str
     observed: str
 
     def __init__(
         self,
-        client: Any,
+        http: AsyncHttpClient,
         workspace_id: str,
         observer: str,
         observed: str,
@@ -377,12 +379,12 @@ class AsyncObservationScope:
         Initialize an AsyncObservationScope.
 
         Args:
-            client: The AsyncHoncho client instance
+            http: The async HTTP client instance
             workspace_id: The workspace ID
             observer: The observer peer ID
             observed: The observed peer ID
         """
-        self._client = client
+        self._http = http
         self.workspace_id = workspace_id
         self.observer = observer
         self.observed = observed
@@ -416,17 +418,15 @@ class AsyncObservationScope:
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
-        response = await self._client.workspaces.observations.list(
-            workspace_id=self.workspace_id,
-            filters=filters,
-            page=page,
-            size=size,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations/list",
+            json={"filters": filters, "page": page, "size": size},
         )
 
-        # response.items is List[Observations] (Pydantic models)
+        items = response.get("items", []) if response else []
         return [
-            Observation.from_api_response(_convert_observation(item))
-            for item in response.items
+            Observation.from_api_response(_convert_observation(item)) for item in items
         ]
 
     async def query(
@@ -451,18 +451,20 @@ class AsyncObservationScope:
             "observed": self.observed,
         }
 
-        response = await self._client.workspaces.observations.query(
-            workspace_id=self.workspace_id,
-            query=query,
-            top_k=top_k,
-            distance=distance,
-            filters=filters,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations/query",
+            json={
+                "query": query,
+                "top_k": top_k,
+                "distance": distance,
+                "filters": filters,
+            },
         )
 
-        # response is List[Observations] (Pydantic models)
         return [
             Observation.from_api_response(_convert_observation(item))
-            for item in response
+            for item in (response or [])
         ]
 
     async def delete(self, observation_id: str) -> None:
@@ -472,9 +474,9 @@ class AsyncObservationScope:
         Args:
             observation_id: The ID of the observation to delete
         """
-        await self._client.workspaces.observations.delete(
-            workspace_id=self.workspace_id,
-            observation_id=observation_id,
+        await self._http.request(
+            "DELETE",
+            f"/v2/workspaces/{self.workspace_id}/observations/{observation_id}",
         )
 
     async def create(
@@ -522,15 +524,15 @@ class AsyncObservationScope:
             for obs in observations
         ]
 
-        response = await self._client.workspaces.observations.create(  # type: ignore[attr-defined]
-            workspace_id=self.workspace_id,
-            observations=request_observations,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/observations",
+            json={"observations": request_observations},
         )
 
-        # response is List[Observations] (Pydantic models)
         return [
             Observation.from_api_response(_convert_observation(item))
-            for item in response
+            for item in (response or [])
         ]
 
     async def get_representation(
@@ -557,30 +559,31 @@ class AsyncObservationScope:
         Returns:
             A Representation object containing explicit and deductive observations
         """
-        from honcho_core._types import omit
-
         from .types import Representation
 
-        response = await self._client.workspaces.peers.working_representation(
-            peer_id=self.observer,
-            workspace_id=self.workspace_id,
-            target=self.observed,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+        body: dict[str, Any] = {"target": self.observed}
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_derived is not None:
+            body["include_most_derived"] = include_most_derived
+        if max_observations is not None:
+            body["max_observations"] = max_observations
+
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers/{self.observer}/representation",
+            json=body,
         )
 
-        representation = response.get("representation")
+        representation = response.get("representation") if response else None
         if representation is not None:
             return Representation.from_dict(cast(dict[str, Any], representation))
         else:
-            return Representation.from_dict(response)
+            return Representation.from_dict(response or {})
 
     def __repr__(self) -> str:
         return (

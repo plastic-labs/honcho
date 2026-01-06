@@ -7,18 +7,19 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from honcho_core import AsyncHoncho as AsyncHonchoCore
-from honcho_core._types import omit
-from honcho_core.types import DeriverStatus
-from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
-from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from ..api_types import (
+    Configuration,
+    DeriverStatus,
+    Message,
+    MessageCreateParam,
+    SessionCore,
+)
 from ..base import PeerBase, SessionBase
+from ..http import AsyncHttpClient, AsyncPage
 from ..session_context import SessionContext, SessionSummaries, Summary
 from ..utils import prepare_file_for_upload
-from .pagination import AsyncPage
 
 if TYPE_CHECKING:
     from ..types import Representation
@@ -57,7 +58,7 @@ class AsyncSession(SessionBase):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: AsyncHonchoCore = PrivateAttr()
+    _http: AsyncHttpClient = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -78,8 +79,8 @@ class AsyncSession(SessionBase):
         workspace_id: str = Field(
             ..., min_length=1, description="Workspace ID for scoping operations"
         ),
-        client: AsyncHonchoCore = Field(
-            ..., description="Reference to the parent AsyncHoncho client instance"
+        http: AsyncHttpClient = Field(
+            ..., description="Reference to the HTTP client instance"
         ),
         *,
         metadata: dict[str, object] | None = None,
@@ -91,7 +92,7 @@ class AsyncSession(SessionBase):
         Args:
             session_id: Unique identifier for this session within the workspace
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent AsyncHoncho client instance
+            http: Reference to the HTTP client instance
             metadata: Optional metadata to initialize the cached value
             config: Optional configuration to initialize the cached value
         """
@@ -99,7 +100,7 @@ class AsyncSession(SessionBase):
             id=session_id,
             workspace_id=workspace_id,
         )
-        self._client = client
+        self._http = http
         self._metadata = metadata
         self._configuration = config
 
@@ -108,7 +109,7 @@ class AsyncSession(SessionBase):
         cls,
         session_id: str,
         workspace_id: str,
-        client: AsyncHonchoCore,
+        http: AsyncHttpClient,
         *,
         metadata: dict[str, object] | None = None,
         config: dict[str, object] | None = None,
@@ -122,7 +123,7 @@ class AsyncSession(SessionBase):
         Args:
             session_id: Unique identifier for this session within the workspace
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent AsyncHoncho client instance
+            http: Reference to the HTTP client instance
             metadata: Optional metadata dictionary to associate with this session.
             If set, will get/create session immediately with metadata.
             config: Optional configuration to set for this session.
@@ -131,22 +132,25 @@ class AsyncSession(SessionBase):
         Returns:
             A new AsyncSession instance
         """
-        if config is not None or metadata is not None:
-            session_data = await client.workspaces.sessions.get_or_create(
-                workspace_id=workspace_id,
-                id=session_id,
-                configuration=config if config is not None else omit,
-                metadata=metadata if metadata is not None else omit,
-            )
-            return cls(
-                session_id,
-                workspace_id,
-                client,
-                metadata=session_data.metadata,
-                config=session_data.configuration,
-            )
+        instance = cls(session_id, workspace_id, http, metadata=metadata, config=config)
 
-        return cls(session_id, workspace_id, client)
+        if config is not None or metadata is not None:
+            body: dict[str, Any] = {"id": session_id}
+            if config is not None:
+                body["configuration"] = config
+            if metadata is not None:
+                body["metadata"] = metadata
+
+            response = await http.request(
+                "POST",
+                f"/v2/workspaces/{workspace_id}/sessions",
+                json=body,
+            )
+            session_data = SessionCore.model_validate(response)
+            instance._metadata = session_data.metadata
+            instance._configuration = session_data.configuration
+
+        return instance
 
     async def add_peers(
         self,
@@ -192,10 +196,10 @@ class AsyncSession(SessionBase):
                 peer_id = peer if isinstance(peer, str) else peer.id
                 peer_dict[peer_id] = {}
 
-        await self._client.workspaces.sessions.peers.add(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            body=peer_dict,
+        await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/add",
+            json=peer_dict,
         )
 
     async def set_peers(
@@ -241,10 +245,10 @@ class AsyncSession(SessionBase):
                 peer_id = peer if isinstance(peer, str) else peer.id
                 peer_dict[peer_id] = {}
 
-        await self._client.workspaces.sessions.peers.set(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            body=peer_dict,
+        await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/set",
+            json=peer_dict,
         )
 
     async def remove_peers(
@@ -271,10 +275,10 @@ class AsyncSession(SessionBase):
 
         peer_ids = [peer if isinstance(peer, str) else peer.id for peer in peers]
 
-        await self._client.workspaces.sessions.peers.remove(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            body=peer_ids,
+        await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/remove",
+            json=peer_ids,
         )
 
     async def get_peers(self) -> list[AsyncPeer]:
@@ -290,30 +294,26 @@ class AsyncSession(SessionBase):
         """
         from .peer import AsyncPeer
 
-        peers_page = await self._client.workspaces.sessions.peers.list(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/list",
+            json={},
         )
-        return [
-            AsyncPeer(peer.id, self.workspace_id, self._client)
-            for peer in peers_page.items
-        ]
+        items = response.get("items", []) if response else []
+        return [AsyncPeer(peer["id"], self.workspace_id, self._http) for peer in items]
 
     async def get_peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        peer_get_config_response = (
-            await self._client.workspaces.sessions.peers.get_config(
-                peer_id=peer_id,
-                workspace_id=self.workspace_id,
-                session_id=self.id,
-            )
+        response = await self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/{peer_id}/config",
         )
         return SessionPeerConfig(
-            observe_others=peer_get_config_response.observe_others,
-            observe_me=peer_get_config_response.observe_me,
+            observe_others=response.get("observe_others") if response else None,
+            observe_me=response.get("observe_me") if response else None,
         )
 
     async def set_peer_config(
@@ -323,20 +323,24 @@ class AsyncSession(SessionBase):
         Set the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        await self._client.workspaces.sessions.peers.set_config(
-            peer_id=peer_id,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
-            observe_others=omit
-            if config.observe_others is None
-            else config.observe_others,
-            observe_me=omit if config.observe_me is None else config.observe_me,
+        body: dict[str, Any] = {}
+        if config.observe_others is not None:
+            body["observe_others"] = config.observe_others
+        if config.observe_me is not None:
+            body["observe_me"] = config.observe_me
+
+        await self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/{peer_id}/config",
+            json=body,
         )
 
     @validate_call
     async def add_messages(
         self,
-        messages: MessageCreateParam | list[MessageCreateParam] = Field(
+        messages: MessageCreateParam
+        | dict[str, Any]
+        | list[MessageCreateParam | dict[str, Any]] = Field(
             ..., description="Messages to add to the session"
         ),
     ) -> list[Message]:
@@ -355,11 +359,20 @@ class AsyncSession(SessionBase):
         if not isinstance(messages, list):
             messages = [messages]
 
-        return await self._client.workspaces.sessions.messages.create(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            messages=[MessageCreateParam(**message) for message in messages],
+        # Convert to dicts for the API
+        message_dicts = []
+        for msg in messages:
+            if isinstance(msg, MessageCreateParam):
+                message_dicts.append(msg.model_dump(exclude_none=True))
+            else:
+                message_dicts.append(msg)
+
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/messages",
+            json={"messages": message_dicts},
         )
+        return [Message.model_validate(m) for m in (response or [])]
 
     @validate_call
     async def get_messages(
@@ -368,7 +381,7 @@ class AsyncSession(SessionBase):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
-    ) -> AsyncPage[Message]:
+    ) -> AsyncPage[dict[str, Any], Message]:
         """
         Get messages from this session with optional filtering.
 
@@ -386,12 +399,26 @@ class AsyncSession(SessionBase):
             An async paginated list of Message objects matching the specified criteria, ordered by
             creation time (most recent first)
         """
-        messages_page = await self._client.workspaces.sessions.messages.list(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            filters=filters,
-        )
-        return AsyncPage(messages_page)
+
+        async def fetch_page(
+            page: int = 1, size: int = 50
+        ) -> AsyncPage[dict[str, Any], Message]:
+            response = await self._http.request(
+                "POST",
+                f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/messages/list",
+                json={"filters": filters, "page": page, "size": size},
+            )
+            return AsyncPage(
+                items=response.get("items", []),
+                total=response.get("total"),
+                page=response.get("page", page),
+                size=response.get("size", size),
+                pages=response.get("pages"),
+                transform_func=lambda m: Message.model_validate(m),
+                fetch_next=lambda: fetch_page(page + 1, size),
+            )
+
+        return await fetch_page()
 
     async def delete(self) -> None:
         """
@@ -406,9 +433,9 @@ class AsyncSession(SessionBase):
 
         This action cannot be undone.
         """
-        await self._client.workspaces.sessions.delete(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        await self._http.request(
+            "DELETE",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}",
         )
 
     async def clone(
@@ -441,18 +468,22 @@ class AsyncSession(SessionBase):
             cloned = await session.clone(message_id="msg_abc123")
             ```
         """
-        # Make the API call using the core SDK's clone method
-        cloned_session_data = await self._client.workspaces.sessions.clone(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            message_id=message_id if message_id is not None else omit,
+        body: dict[str, Any] = {}
+        if message_id is not None:
+            body["message_id"] = message_id
+
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/clone",
+            json=body,
         )
+        cloned_session_data = SessionCore.model_validate(response)
 
         # Return a new AsyncSession object with the cloned session's data
         return AsyncSession(
             cloned_session_data.id,
             self.workspace_id,
-            self._client,
+            self._http,
             metadata=cloned_session_data.metadata,
             config=cloned_session_data.configuration,
         )
@@ -469,11 +500,13 @@ class AsyncSession(SessionBase):
             A dictionary containing the session's metadata. Returns an empty dictionary
             if no metadata is set
         """
-        session = await self._client.workspaces.sessions.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions",
+            json={"id": self.id},
         )
-        self._metadata = session.metadata or {}
+        session_data = SessionCore.model_validate(response)
+        self._metadata = session_data.metadata or {}
         return self._metadata
 
     @validate_call
@@ -494,10 +527,10 @@ class AsyncSession(SessionBase):
             metadata: A dictionary of metadata to associate with this session.
                      Keys must be strings, values can be any JSON-serializable type
         """
-        await self._client.workspaces.sessions.update(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            metadata=metadata,
+        await self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}",
+            json={"metadata": metadata},
         )
         self._metadata = metadata
 
@@ -513,11 +546,13 @@ class AsyncSession(SessionBase):
             A dictionary containing the session's configuration. Returns an empty dictionary
             if no configuration is set
         """
-        session = await self._client.workspaces.sessions.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions",
+            json={"id": self.id},
         )
-        self._configuration = session.configuration or {}
+        session_data = SessionCore.model_validate(response)
+        self._configuration = session_data.configuration or {}
         return self._configuration
 
     @validate_call
@@ -538,10 +573,10 @@ class AsyncSession(SessionBase):
             configuration: A dictionary of configuration to associate with this session.
                           Keys must be strings, values can be any JSON-serializable type
         """
-        await self._client.workspaces.sessions.update(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            configuration=configuration,
+        await self._http.request(
+            "PUT",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}",
+            json={"configuration": configuration},
         )
         self._configuration = configuration
 
@@ -552,12 +587,14 @@ class AsyncSession(SessionBase):
         Makes a single async API call to retrieve the latest metadata and configuration
         associated with this session and updates the cached attributes.
         """
-        session = await self._client.workspaces.sessions.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions",
+            json={"id": self.id},
         )
-        self._metadata = session.metadata or {}
-        self._configuration = session.configuration or {}
+        session_data = SessionCore.model_validate(response)
+        self._metadata = session_data.metadata or {}
+        self._configuration = session_data.configuration or {}
 
     @validate_call
     async def get_context(
@@ -652,46 +689,59 @@ class AsyncSession(SessionBase):
             if isinstance(last_user_message, Message)
             else last_user_message
         )
-        context = await self._client.workspaces.sessions.get_context(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            tokens=tokens if tokens is not None else omit,
-            summary=summary,
-            last_message=last_user_message_id
-            if last_user_message_id is not None
-            else omit,
-            peer_target=peer_target if peer_target is not None else omit,
-            peer_perspective=peer_perspective if peer_perspective is not None else omit,
-            limit_to_session=limit_to_session,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+
+        params: dict[str, Any] = {
+            "summary": summary,
+            "limit_to_session": limit_to_session,
+        }
+        if tokens is not None:
+            params["tokens"] = tokens
+        if last_user_message_id is not None:
+            params["last_message"] = last_user_message_id
+        if peer_target is not None:
+            params["peer_target"] = peer_target
+        if peer_perspective is not None:
+            params["peer_perspective"] = peer_perspective
+        if search_top_k is not None:
+            params["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            params["search_max_distance"] = search_max_distance
+        if include_most_derived is not None:
+            params["include_most_derived"] = include_most_derived
+        if max_observations is not None:
+            params["max_observations"] = max_observations
+
+        context = await self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/context",
+            params=params,
         )
 
-        # Convert the honcho_core summary to our Summary if it exists
+        # Convert the summary to our Summary if it exists
         session_summary = None
-        if context.summary:
+        if context and context.get("summary"):
+            summary_data = context["summary"]
             session_summary = Summary(
-                content=context.summary.content,
-                message_id=context.summary.message_id,
-                summary_type=context.summary.summary_type,
-                created_at=context.summary.created_at,
-                token_count=context.summary.token_count,
+                content=summary_data.get("content", ""),
+                message_id=summary_data.get("message_id", ""),
+                summary_type=summary_data.get("summary_type", ""),
+                created_at=summary_data.get("created_at", ""),
+                token_count=summary_data.get("token_count", 0),
             )
+
+        messages = [
+            Message.model_validate(m)
+            for m in (context.get("messages", []) if context else [])
+        ]
 
         return SessionContext(
             session_id=self.id,
-            messages=context.messages,
+            messages=messages,
             summary=session_summary,
-            peer_representation=str(context.peer_representation)
-            if context.peer_representation
+            peer_representation=str(context.get("peer_representation"))
+            if context and context.get("peer_representation")
             else None,
-            peer_card=context.peer_card,
+            peer_card=context.get("peer_card") if context else None,
         )
 
     async def get_summaries(self) -> SessionSummaries:
@@ -714,35 +764,36 @@ class AsyncSession(SessionBase):
             - The summary generation is still in progress
             - Summary generation is disabled for this session
         """
-        # Use the honcho_core client to get summaries
-        response = await self._client.workspaces.sessions.summaries(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        response = await self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/summaries",
         )
 
         # Create Summary objects from the response data
         short_summary = None
-        if response.short_summary:
+        if response and response.get("short_summary"):
+            summary_data = response["short_summary"]
             short_summary = Summary(
-                content=response.short_summary.content,
-                message_id=response.short_summary.message_id,
-                summary_type=response.short_summary.summary_type,
-                created_at=response.short_summary.created_at,
-                token_count=response.short_summary.token_count,
+                content=summary_data.get("content", ""),
+                message_id=summary_data.get("message_id", ""),
+                summary_type=summary_data.get("summary_type", ""),
+                created_at=summary_data.get("created_at", ""),
+                token_count=summary_data.get("token_count", 0),
             )
 
         long_summary = None
-        if response.long_summary:
+        if response and response.get("long_summary"):
+            summary_data = response["long_summary"]
             long_summary = Summary(
-                content=response.long_summary.content,
-                message_id=response.long_summary.message_id,
-                summary_type=response.long_summary.summary_type,
-                created_at=response.long_summary.created_at,
-                token_count=response.long_summary.token_count,
+                content=summary_data.get("content", ""),
+                message_id=summary_data.get("message_id", ""),
+                summary_type=summary_data.get("summary_type", ""),
+                created_at=summary_data.get("created_at", ""),
+                token_count=summary_data.get("token_count", 0),
             )
 
         return SessionSummaries(
-            id=response.id or self.id,
+            id=response.get("id", self.id) if response else self.id,
             short_summary=short_summary,
             long_summary=long_summary,
         )
@@ -772,13 +823,12 @@ class AsyncSession(SessionBase):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return await self._client.workspaces.sessions.search(
-            self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            filters=filters,
-            limit=limit,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/search",
+            json={"query": query, "filters": filters, "limit": limit},
         )
+        return [Message.model_validate(m) for m in (response or [])]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def upload_file(
@@ -794,7 +844,7 @@ class AsyncSession(SessionBase):
             None,
             description="Optional metadata dictionary to associate with the messages",
         ),
-        configuration: Configuration | None = Field(
+        configuration: Configuration | dict[str, Any] | None = Field(
             None,
             description="Optional configuration dictionary to associate with the messages",
         ),
@@ -811,7 +861,7 @@ class AsyncSession(SessionBase):
         - (filename, bytes, content_type) tuples
         - (filename, fileobj, content_type) tuples
 
-        Files are normalized to (filename, fileobj, content_type) tuples for the Stainless client.
+        Files are normalized to (filename, fileobj, content_type) tuples for the HTTP client.
 
         Args:
             file: File to upload. Can be:
@@ -839,29 +889,35 @@ class AsyncSession(SessionBase):
         # Extract peer ID from AsyncPeer object if needed
         resolved_peer_id = peer if isinstance(peer, str) else peer.id
 
-        # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
-        extra_body_data: dict[str, str] = {}
+        # Build form data
+        files = {"file": (filename, content_bytes, content_type)}
+
+        # Build extra data dict with optional fields
+        data: dict[str, str] = {"peer_id": resolved_peer_id}
         if metadata is not None:
-            extra_body_data["metadata"] = json.dumps(metadata)
+            data["metadata"] = json.dumps(metadata)
         if configuration is not None:
-            extra_body_data["configuration"] = json.dumps(configuration)
+            config_dict = (
+                configuration.model_dump()
+                if isinstance(configuration, Configuration)
+                else configuration
+            )
+            data["configuration"] = json.dumps(config_dict)
         if created_at is not None:
             # Ensure created_at is a string (ISO format)
             if isinstance(created_at, datetime):
-                extra_body_data["created_at"] = created_at.isoformat()
+                data["created_at"] = created_at.isoformat()
             else:
-                extra_body_data["created_at"] = created_at
+                data["created_at"] = created_at
 
-        # Call the upload endpoint with extra_body for the additional form fields
-        response = await self._client.workspaces.sessions.messages.upload(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            file=(filename, content_bytes, content_type),
-            peer_id=resolved_peer_id,
-            extra_body=extra_body_data if extra_body_data else None,
+        response = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/messages/upload",
+            files=files,
+            json=data,
         )
 
-        return [Message.model_validate(msg) for msg in response]
+        return [Message.model_validate(msg) for msg in (response or [])]
 
     async def working_rep(
         self,
@@ -915,22 +971,27 @@ class AsyncSession(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data = await self._client.workspaces.peers.working_representation(
-            peer_id,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+
+        body: dict[str, Any] = {"session_id": self.id}
+        if target_id is not None:
+            body["target"] = target_id
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_derived is not None:
+            body["include_most_derived"] = include_most_derived
+        if max_observations is not None:
+            body["max_observations"] = max_observations
+
+        data = await self._http.request(
+            "POST",
+            f"/v2/workspaces/{self.workspace_id}/peers/{peer_id}/representation",
+            json=body,
         )
-        return _Representation.from_dict(data)  # type: ignore
+        return _Representation.from_dict(data or {})
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_deriver_status(
@@ -956,12 +1017,18 @@ class AsyncSession(SessionBase):
             else (sender if isinstance(sender, str) else sender.id)
         )
 
-        return await self._client.workspaces.deriver_status(
-            workspace_id=self.workspace_id,
-            observer_id=resolved_observer_id,
-            sender_id=resolved_sender_id,
-            session_id=self.id,
+        params: dict[str, Any] = {"session_id": self.id}
+        if resolved_observer_id:
+            params["observer_id"] = resolved_observer_id
+        if resolved_sender_id:
+            params["sender_id"] = resolved_sender_id
+
+        response = await self._http.request(
+            "GET",
+            f"/v2/workspaces/{self.workspace_id}/queue/status",
+            params=params,
         )
+        return DeriverStatus.model_validate(response)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def poll_deriver_status(

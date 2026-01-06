@@ -9,21 +9,18 @@ from pathlib import Path
 from typing import Any, cast
 
 from anthropic import AsyncAnthropic
+from honcho.api_types import DeriverStatus
 from honcho.async_client.session import AsyncSession
 from honcho.session_context import SessionContext
-from honcho_core.types.deriver_status import DeriverStatus
 from pydantic import ValidationError
 
 # Adjust path to allow imports from tests.bench
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from honcho import AsyncHoncho
+from honcho.api_types import Configuration, MessageCreateParam
 from honcho.async_client.session import SessionPeerConfig as SDKSessionPeerConfig
 from honcho.base import PeerBase
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    Configuration,
-    MessageCreateParam,
-)
 
 from tests.bench.harness import HonchoHarness
 from tests.unified.schema import (

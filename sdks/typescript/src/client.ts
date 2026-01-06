@@ -1,13 +1,15 @@
-import HonchoCore from '@honcho-ai/core'
-import type { DefaultQuery } from '@honcho-ai/core/core'
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
-import type {
-  DeriverStatus,
-  WorkspaceDeriverStatusParams,
-} from '@honcho-ai/core/resources/workspaces/workspaces'
-import { Page } from './pagination'
+import { HttpClient } from './http'
+import { Page } from './http/pagination'
 import { Peer } from './peer'
 import { Session } from './session'
+import type {
+  DeriverStatus,
+  Message,
+  PageResponse,
+  PeerResponse,
+  SessionResponse,
+  Workspace,
+} from './types'
 import {
   type DeriverStatusOptions,
   FilterSchema,
@@ -40,9 +42,6 @@ import {
  * from environment variables or explicit parameters. This is the primary entry
  * point for interacting with the Honcho conversational memory platform.
  *
- * For advanced usage, the underlying @honcho-ai/core client can be accessed via the
- * `core` property to use functionality not exposed through this SDK.
- *
  * @example
  * ```typescript
  * const honcho = new Honcho({
@@ -60,9 +59,9 @@ export class Honcho {
    */
   readonly workspaceId: string
   /**
-   * Reference to the core Honcho client instance.
+   * Reference to the HTTP client instance.
    */
-  private _client: HonchoCore
+  private _http: HttpClient
   /**
    * Private cached metadata for this workspace.
    */
@@ -95,22 +94,26 @@ export class Honcho {
   }
 
   /**
-   * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
-   * allowing users to access functionality that is not exposed through this SDK.
+   * Access the underlying HTTP client for advanced usage.
    *
-   * @returns The underlying HonchoCore client instance
-   *
-   * @example
-   * ```typescript
-   * import { Honcho } from '@honcho-ai/sdk';
-   *
-   * const client = new Honcho();
-   *
-   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace-id" });
-   * ```
+   * @returns The underlying HttpClient instance
    */
-  get core(): InstanceType<typeof HonchoCore> {
-    return this._client
+  get http(): HttpClient {
+    return this._http
+  }
+
+  /**
+   * Get the base URL of the API.
+   */
+  get baseURL(): string {
+    return this._http.baseURL
+  }
+
+  /**
+   * Get the API key (if set).
+   */
+  get apiKey(): string | undefined {
+    return this._http.apiKey
   }
 
   /**
@@ -137,19 +140,35 @@ export class Honcho {
       validatedOptions.workspaceId ||
       process.env.HONCHO_WORKSPACE_ID ||
       'default'
-    this._client = new HonchoCore({
+
+    // Resolve base URL
+    let baseURL = validatedOptions.baseURL || process.env.HONCHO_URL
+    if (!baseURL) {
+      if (validatedOptions.environment === 'local') {
+        baseURL = 'http://localhost:8000'
+      } else if (validatedOptions.environment === 'demo') {
+        baseURL = 'https://demo.honcho.dev'
+      } else {
+        baseURL = 'https://api.honcho.dev'
+      }
+    }
+
+    this._http = new HttpClient({
+      baseURL,
       apiKey: validatedOptions.apiKey || process.env.HONCHO_API_KEY,
-      environment: validatedOptions.environment,
-      baseURL: validatedOptions.baseURL || process.env.HONCHO_URL,
       timeout: validatedOptions.timeout,
       maxRetries: validatedOptions.maxRetries,
       defaultHeaders: validatedOptions.defaultHeaders,
-      defaultQuery: validatedOptions.defaultQuery as DefaultQuery,
     })
-    // Note: Constructor cannot be async, so we can't await here
-    // The workspace will be created on first use if it doesn't exist
-    // due to the upsert behavior of the API
-    this._client.workspaces.getOrCreate({ id: this.workspaceId })
+
+    // Initialize workspace (fire and forget - will be created on first use if it doesn't exist)
+    this._http
+      .request<Workspace>('POST', '/v2/workspaces', {
+        json: { id: this.workspaceId },
+      })
+      .catch(() => {
+        // Ignore initialization errors - workspace will be created on demand
+      })
   }
 
   /**
@@ -188,24 +207,27 @@ export class Honcho {
       : undefined
 
     if (validatedConfig || validatedMetadata) {
-      const peerData = await this._client.workspaces.peers.getOrCreate(
-        this.workspaceId,
+      const peerData = await this._http.request<PeerResponse>(
+        'POST',
+        `/v2/workspaces/${this.workspaceId}/peers`,
         {
-          id: validatedId,
-          configuration: validatedConfig,
-          metadata: validatedMetadata,
+          json: {
+            id: validatedId,
+            configuration: validatedConfig,
+            metadata: validatedMetadata,
+          },
         }
       )
       return new Peer(
         validatedId,
         this.workspaceId,
-        this._client,
+        this._http,
         peerData.metadata ?? undefined,
         peerData.configuration ?? undefined
       )
     }
 
-    return new Peer(validatedId, this.workspaceId, this._client)
+    return new Peer(validatedId, this.workspaceId, this._http)
   }
 
   /**
@@ -217,22 +239,49 @@ export class Honcho {
    * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async getPeers(filters?: Filters): Promise<Page<Peer>> {
+  async getPeers(filters?: Filters): Promise<Page<PeerResponse, Peer>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const peersPage = await this._client.workspaces.peers.list(
-      this.workspaceId,
-      { filters: validatedFilter }
+    const data = await this._http.request<PageResponse<PeerResponse>>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/list`,
+      {
+        json: validatedFilter ? { filters: validatedFilter } : {},
+      }
     )
-    return new Page(
-      peersPage,
+
+    const fetchNext =
+      data.page < (data.pages ?? 0)
+        ? async () => {
+            const nextData = await this._http.request<
+              PageResponse<PeerResponse>
+            >('POST', `/v2/workspaces/${this.workspaceId}/peers/list`, {
+              json: { filters: validatedFilter, page: data.page + 1 },
+            })
+            return new Page<PeerResponse, Peer>(
+              nextData,
+              (peer) =>
+                new Peer(
+                  peer.id,
+                  this.workspaceId,
+                  this._http,
+                  peer.metadata ?? undefined,
+                  peer.configuration ?? undefined
+                )
+            )
+          }
+        : undefined
+
+    return new Page<PeerResponse, Peer>(
+      data,
       (peer) =>
         new Peer(
           peer.id,
           this.workspaceId,
-          this._client,
+          this._http,
           peer.metadata ?? undefined,
           peer.configuration ?? undefined
-        )
+        ),
+      fetchNext
     )
   }
 
@@ -273,24 +322,27 @@ export class Honcho {
       : undefined
 
     if (validatedConfig || validatedMetadata) {
-      const sessionData = await this._client.workspaces.sessions.getOrCreate(
-        this.workspaceId,
+      const sessionData = await this._http.request<SessionResponse>(
+        'POST',
+        `/v2/workspaces/${this.workspaceId}/sessions`,
         {
-          id: validatedId,
-          configuration: validatedConfig,
-          metadata: validatedMetadata,
+          json: {
+            id: validatedId,
+            configuration: validatedConfig,
+            metadata: validatedMetadata,
+          },
         }
       )
       return new Session(
         validatedId,
         this.workspaceId,
-        this._client,
+        this._http,
         sessionData.metadata ?? undefined,
         sessionData.configuration ?? undefined
       )
     }
 
-    return new Session(validatedId, this.workspaceId, this._client)
+    return new Session(validatedId, this.workspaceId, this._http)
   }
 
   /**
@@ -303,22 +355,51 @@ export class Honcho {
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async getSessions(filters?: Filters): Promise<Page<Session>> {
+  async getSessions(
+    filters?: Filters
+  ): Promise<Page<SessionResponse, Session>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const sessionsPage = await this._client.workspaces.sessions.list(
-      this.workspaceId,
-      { filters: validatedFilter }
+    const data = await this._http.request<PageResponse<SessionResponse>>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/sessions/list`,
+      {
+        json: validatedFilter ? { filters: validatedFilter } : {},
+      }
     )
-    return new Page(
-      sessionsPage,
+
+    const fetchNext =
+      data.page < (data.pages ?? 0)
+        ? async () => {
+            const nextData = await this._http.request<
+              PageResponse<SessionResponse>
+            >('POST', `/v2/workspaces/${this.workspaceId}/sessions/list`, {
+              json: { filters: validatedFilter, page: data.page + 1 },
+            })
+            return new Page<SessionResponse, Session>(
+              nextData,
+              (session) =>
+                new Session(
+                  session.id,
+                  this.workspaceId,
+                  this._http,
+                  session.metadata ?? undefined,
+                  session.configuration ?? undefined
+                )
+            )
+          }
+        : undefined
+
+    return new Page<SessionResponse, Session>(
+      data,
       (session) =>
         new Session(
           session.id,
           this.workspaceId,
-          this._client,
+          this._http,
           session.metadata ?? undefined,
           session.configuration ?? undefined
-        )
+        ),
+      fetchNext
     )
   }
 
@@ -334,9 +415,13 @@ export class Honcho {
    *          Returns an empty dictionary if no metadata is set
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    const workspace = await this._http.request<Workspace>(
+      'POST',
+      '/v2/workspaces',
+      {
+        json: { id: this.workspaceId },
+      }
+    )
     this._metadata = workspace.metadata || {}
     return this._metadata
   }
@@ -353,9 +438,13 @@ export class Honcho {
    */
   async setMetadata(metadata: WorkspaceMetadata): Promise<void> {
     const validatedMetadata = WorkspaceMetadataSchema.parse(metadata)
-    await this._client.workspaces.update(this.workspaceId, {
-      metadata: validatedMetadata,
-    })
+    await this._http.request<Workspace>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}`,
+      {
+        json: { metadata: validatedMetadata },
+      }
+    )
     this._metadata = validatedMetadata
   }
 
@@ -370,9 +459,13 @@ export class Honcho {
    *          Returns an empty dictionary if no configuration is set
    */
   async getConfig(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    const workspace = await this._http.request<Workspace>(
+      'POST',
+      '/v2/workspaces',
+      {
+        json: { id: this.workspaceId },
+      }
+    )
     this._configuration = workspace.configuration || {}
     return this._configuration
   }
@@ -389,9 +482,13 @@ export class Honcho {
    */
   async setConfig(configuration: WorkspaceConfig): Promise<void> {
     const validatedConfig = WorkspaceConfigSchema.parse(configuration)
-    await this._client.workspaces.update(this.workspaceId, {
-      configuration: validatedConfig,
-    })
+    await this._http.request<Workspace>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}`,
+      {
+        json: { configuration: validatedConfig },
+      }
+    )
     this._configuration = validatedConfig
   }
 
@@ -402,9 +499,13 @@ export class Honcho {
    * associated with the current workspace and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    const workspace = await this._http.request<Workspace>(
+      'POST',
+      '/v2/workspaces',
+      {
+        json: { id: this.workspaceId },
+      }
+    )
     this._metadata = workspace.metadata || {}
     this._configuration = workspace.configuration || {}
   }
@@ -421,13 +522,30 @@ export class Honcho {
    */
   async getWorkspaces(filters?: Filters): Promise<string[]> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const workspacesPage = await this._client.workspaces.list({
-      filters: validatedFilter,
-    })
-    const ids: string[] = []
-    for await (const workspace of workspacesPage) {
-      ids.push(workspace.id)
+    const data = await this._http.request<PageResponse<Workspace>>(
+      'POST',
+      '/v2/workspaces/list',
+      {
+        json: validatedFilter ? { filters: validatedFilter } : {},
+      }
+    )
+
+    const ids: string[] = data.items.map((w) => w.id)
+
+    // Fetch all pages
+    let currentPage = data.page
+    while (currentPage < (data.pages ?? 0)) {
+      currentPage++
+      const nextData = await this._http.request<PageResponse<Workspace>>(
+        'POST',
+        '/v2/workspaces/list',
+        {
+          json: { filters: validatedFilter, page: currentPage },
+        }
+      )
+      ids.push(...nextData.items.map((w) => w.id))
     }
+
     return ids
   }
 
@@ -439,10 +557,11 @@ export class Honcho {
    * @param workspaceId - The ID of the workspace to delete
    * @returns Promise resolving to the deleted Workspace object
    */
-  async deleteWorkspace(
-    workspaceId: string
-  ): Promise<Awaited<ReturnType<typeof this._client.workspaces.delete>>> {
-    return await this._client.workspaces.delete(workspaceId)
+  async deleteWorkspace(workspaceId: string): Promise<Workspace> {
+    return await this._http.request<Workspace>(
+      'DELETE',
+      `/v2/workspaces/${workspaceId}`
+    )
   }
 
   /**
@@ -471,11 +590,17 @@ export class Honcho {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.search(this.workspaceId, {
-      query: validatedQuery,
-      filters: validatedFilters,
-      limit: validatedLimit,
-    })
+    return await this._http.request<Message[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/search`,
+      {
+        json: {
+          query: validatedQuery,
+          filters: validatedFilters,
+          limit: validatedLimit,
+        },
+      }
+    )
   }
 
   /**
@@ -504,7 +629,7 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: DeriverStatus['sessions']
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -522,14 +647,15 @@ export class Honcho {
         : options.session.id
       : undefined
 
-    const queryParams: WorkspaceDeriverStatusParams = {}
-    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
-    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
-    if (resolvedSessionId) queryParams.session_id = resolvedSessionId
+    const params: Record<string, string | undefined> = {}
+    if (resolvedObserverId) params.observer_id = resolvedObserverId
+    if (resolvedSenderId) params.sender_id = resolvedSenderId
+    if (resolvedSessionId) params.session_id = resolvedSessionId
 
-    const status = await this._client.workspaces.deriverStatus(
-      this.workspaceId,
-      queryParams
+    const status = await this._http.request<DeriverStatus>(
+      'GET',
+      `/v2/workspaces/${this.workspaceId}/queue/status`,
+      { params }
     )
 
     return {
@@ -570,7 +696,7 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: DeriverStatus['sessions']
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
@@ -637,12 +763,11 @@ export class Honcho {
       resolvedSessionId = message.session_id
     }
 
-    return await this._client.workspaces.sessions.messages.update(
-      this.workspaceId,
-      resolvedSessionId,
-      messageId,
+    return await this._http.request<Message>(
+      'PUT',
+      `/v2/workspaces/${this.workspaceId}/sessions/${resolvedSessionId}/messages/${messageId}`,
       {
-        metadata: validatedMetadata,
+        json: { metadata: validatedMetadata },
       }
     )
   }
@@ -653,6 +778,6 @@ export class Honcho {
    * @returns A string representation suitable for debugging
    */
   toString(): string {
-    return `Honcho(workspaceId='${this.workspaceId}', baseURL='${this._client.baseURL}')`
+    return `Honcho(workspaceId='${this.workspaceId}', baseURL='${this._http.baseURL}')`
   }
 }

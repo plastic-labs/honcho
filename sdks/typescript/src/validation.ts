@@ -1,5 +1,5 @@
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { z } from 'zod'
+import type { Message } from './types'
 
 /**
  * Validation schemas for the Honcho TypeScript SDK.
@@ -13,7 +13,7 @@ import { z } from 'zod'
  */
 export const HonchoConfigSchema = z.object({
   apiKey: z.string().optional(),
-  environment: z.enum(['local', 'production']).optional(),
+  environment: z.enum(['local', 'demo', 'production']).optional(),
   baseURL: z.string().url('Base URL must be a valid URL').optional(),
   workspaceId: z
     .string()

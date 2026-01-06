@@ -74,10 +74,8 @@ from typing import Any, cast
 
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
+from honcho.api_types import MessageCreateParam
 from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
 from openai import AsyncOpenAI
 
 from src.config import settings

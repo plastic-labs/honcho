@@ -1,4 +1,4 @@
-import type HonchoCore from '@honcho-ai/core'
+import type { HttpClient } from './http'
 import {
   Representation,
   type RepresentationData,
@@ -9,6 +9,18 @@ import type { ObservationCreateParam } from './types'
 
 // Re-export for consumers who import from this module
 export type { RepresentationOptions, ObservationCreateParam }
+
+/**
+ * API response shape for an observation.
+ */
+interface ObservationResponse {
+  id: string
+  content: string
+  observer_id: string
+  observed_id: string
+  session_id: string
+  created_at: string
+}
 
 /**
  * An observation from the theory-of-mind system.
@@ -69,14 +81,14 @@ export class Observation {
    * @param data - API response data
    * @returns A new Observation instance
    */
-  static fromApiResponse(data: Record<string, unknown>): Observation {
+  static fromApiResponse(data: ObservationResponse): Observation {
     return new Observation(
-      (data.id as string) ?? '',
-      (data.content as string) ?? '',
-      (data.observer_id as string) ?? '',
-      (data.observed_id as string) ?? '',
-      (data.session_id as string) ?? '',
-      (data.created_at as string) ?? ''
+      data.id ?? '',
+      data.content ?? '',
+      data.observer_id ?? '',
+      data.observed_id ?? '',
+      data.session_id ?? '',
+      data.created_at ?? ''
     )
   }
 
@@ -121,7 +133,7 @@ export class Observation {
  * - DELETE /workspaces/{workspace_id}/observations/{observation_id}
  */
 export class ObservationScope {
-  private _client: HonchoCore
+  private _http: HttpClient
 
   /**
    * The workspace ID.
@@ -141,18 +153,18 @@ export class ObservationScope {
   /**
    * Initialize an ObservationScope.
    *
-   * @param client - The Honcho client instance
+   * @param http - The HTTP client instance
    * @param workspaceId - The workspace ID
    * @param observer - The observer peer ID
    * @param observed - The observed peer ID
    */
   constructor(
-    client: HonchoCore,
+    http: HttpClient,
     workspaceId: string,
     observer: string,
     observed: string
   ) {
-    this._client = client
+    this._http = http
     this.workspaceId = workspaceId
     this.observer = observer
     this.observed = observed
@@ -184,18 +196,18 @@ export class ObservationScope {
       filters.session_id = resolvedSessionId
     }
 
-    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
-    const response = await (this._client.workspaces as any).observations.list(
-      this.workspaceId,
-      {
+    const response = await this._http.request<{
+      items: ObservationResponse[]
+    }>('POST', `/v2/workspaces/${this.workspaceId}/observations/list`, {
+      json: {
         filters,
         page,
         size,
-      }
-    )
+      },
+    })
 
-    return (response.items ?? []).map((item: unknown) =>
-      Observation.fromApiResponse(item as Record<string, unknown>)
+    return (response.items ?? []).map((item) =>
+      Observation.fromApiResponse(item)
     )
   }
 
@@ -217,20 +229,20 @@ export class ObservationScope {
       observed: this.observed,
     }
 
-    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
-    const response = await (this._client.workspaces as any).observations.query(
-      this.workspaceId,
+    const response = await this._http.request<ObservationResponse[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/observations/query`,
       {
-        query,
-        top_k: topK,
-        distance,
-        filters,
+        json: {
+          query,
+          top_k: topK,
+          distance,
+          filters,
+        },
       }
     )
 
-    return (response ?? []).map((item: unknown) =>
-      Observation.fromApiResponse(item as Record<string, unknown>)
-    )
+    return (response ?? []).map((item) => Observation.fromApiResponse(item))
   }
 
   /**
@@ -239,10 +251,9 @@ export class ObservationScope {
    * @param observationId - The ID of the observation to delete
    */
   async delete(observationId: string): Promise<void> {
-    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
-    await (this._client.workspaces as any).observations.delete(
-      this.workspaceId,
-      observationId
+    await this._http.request<void>(
+      'DELETE',
+      `/v2/workspaces/${this.workspaceId}/observations/${observationId}`
     )
   }
 
@@ -283,15 +294,15 @@ export class ObservationScope {
       observed_id: this.observed,
     }))
 
-    // biome-ignore lint/suspicious/noExplicitAny: SDK workspaces type doesn't include observations
-    const response = await (this._client.workspaces as any).observations.create(
-      this.workspaceId,
-      { observations: requestObservations }
+    const response = await this._http.request<ObservationResponse[]>(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/observations`,
+      {
+        json: { observations: requestObservations },
+      }
     )
 
-    return (response ?? []).map((item: unknown) =>
-      Observation.fromApiResponse(item as Record<string, unknown>)
-    )
+    return (response ?? []).map((item) => Observation.fromApiResponse(item))
   }
 
   /**
@@ -306,16 +317,20 @@ export class ObservationScope {
   async getRepresentation(
     options?: RepresentationOptions
   ): Promise<Representation> {
-    const response = await this._client.workspaces.peers.workingRepresentation(
-      this.workspaceId,
-      this.observer,
+    const response = await this._http.request<
+      RepresentationData | { representation?: RepresentationData | null }
+    >(
+      'POST',
+      `/v2/workspaces/${this.workspaceId}/peers/${this.observer}/representation`,
       {
-        target: this.observed,
-        search_query: options?.searchQuery,
-        search_top_k: options?.searchTopK,
-        search_max_distance: options?.searchMaxDistance,
-        include_most_derived: options?.includeMostDerived,
-        max_observations: options?.maxObservations,
+        json: {
+          target: this.observed,
+          search_query: options?.searchQuery,
+          search_top_k: options?.searchTopK,
+          search_max_distance: options?.searchMaxDistance,
+          include_most_derived: options?.includeMostDerived,
+          max_observations: options?.maxObservations,
+        },
       }
     )
 
