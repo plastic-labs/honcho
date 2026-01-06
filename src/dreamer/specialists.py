@@ -19,6 +19,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import prometheus
 from src.config import settings
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
@@ -135,6 +136,17 @@ class BaseSpecialist(ABC):
         )
         accumulate_metric(task_name, "input_tokens", response.input_tokens, "count")
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "count")
+
+        if prometheus.METRICS_ENABLED:
+            prometheus.DREAMER_TOKENS_PROCESSED.labels(
+                specialist_name=self.name,
+                token_type=prometheus.TokenTypes.INPUT.value,
+            ).inc(response.input_tokens)
+
+            prometheus.DREAMER_TOKENS_PROCESSED.labels(
+                specialist_name=self.name,
+                token_type=prometheus.TokenTypes.OUTPUT.value,
+            ).inc(response.output_tokens)
 
         logger.info(
             f"{self.name}: Completed in {duration_ms:.0f}ms, "

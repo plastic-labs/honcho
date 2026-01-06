@@ -136,7 +136,7 @@ async def process_representation_tasks_batch(
 
     prometheus.DERIVER_TOKENS_PROCESSED.labels(
         task_type=prometheus.DeriverTaskTypes.INGESTION.value,
-        token_type=prometheus.DeriverTokenTypes.OUTPUT.value,
+        token_type=prometheus.TokenTypes.OUTPUT.value,
         component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
     ).inc(response.output_tokens)
 

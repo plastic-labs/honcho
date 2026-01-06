@@ -407,7 +407,7 @@ async def _create_and_save_summary(
         # Track output tokens
         prometheus.DERIVER_TOKENS_PROCESSED.labels(
             task_type=prometheus.DeriverTaskTypes.SUMMARY.value,
-            token_type=prometheus.DeriverTokenTypes.OUTPUT.value,
+            token_type=prometheus.TokenTypes.OUTPUT.value,
             component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
         ).inc(new_summary["token_count"])
 

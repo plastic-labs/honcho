@@ -31,6 +31,6 @@ def track_deriver_input_tokens(
     for component, token_count in components.items():
         prometheus.DERIVER_TOKENS_PROCESSED.labels(
             task_type=task_type.value,
-            token_type=prometheus.DeriverTokenTypes.INPUT.value,
+            token_type=prometheus.TokenTypes.INPUT.value,
             component=component.value,
         ).inc(token_count)

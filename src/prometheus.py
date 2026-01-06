@@ -96,6 +96,12 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
     ["namespace", "workspace_name", "task_type"],
 )
 
+
+class TokenTypes(Enum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
 # Tracks the total number of input and output tokens processed by the deriver.
 #
 # Incremented in: src/deriver/deriver.py after the critical analysis call is made
@@ -118,11 +124,6 @@ DERIVER_TOKENS_PROCESSED = NamespacedCounter(
 class DeriverTaskTypes(Enum):
     INGESTION = "ingestion"
     SUMMARY = "summary"
-
-
-class DeriverTokenTypes(Enum):
-    INPUT = "input"
-    OUTPUT = "output"
 
 
 class DeriverComponents(Enum):
@@ -151,13 +152,25 @@ DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
 )
 
 
-class DialecticTokenTypes(Enum):
-    INPUT = "input"
-    OUTPUT = "output"
-
-
 class DialecticComponents(Enum):
     TOTAL = "total"
+
+
+# Tracks the total number of input and output tokens processed by the dreamer.
+#
+# Incremented in: src/dreamer/specialists.py after the specialist LLM call is made
+# Labels:
+#   - specialist_name: The name of the specialist ("deduction" or "induction")
+#   - token_type: The type of tokens ("input" or "output")
+DREAMER_TOKENS_PROCESSED = NamespacedCounter(
+    "dreamer_tokens_processed_total",
+    "Total tokens processed by the dreamer",
+    [
+        "namespace",
+        "specialist_name",
+        "token_type",
+    ],
+)
 
 
 async def metrics() -> StarletteResponse:
