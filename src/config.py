@@ -291,12 +291,20 @@ REASONING_LEVELS: list[ReasoningLevel] = [
 class DialecticLevelSettings(BaseModel):
     """Settings for a specific reasoning level in the dialectic."""
 
-    PROVIDER: SupportedProviders
-    MODEL: str
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(ge=0, le=100_000)]
-    MAX_TOOL_ITERATIONS: Annotated[int, Field(ge=0, le=50)]
+    model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
+
+    PROVIDER: Annotated[SupportedProviders, Field(validation_alias="provider")]
+    MODEL: Annotated[str, Field(validation_alias="model")]
+    BACKUP_PROVIDER: Annotated[
+        SupportedProviders | None, Field(validation_alias="backup_provider")
+    ] = None
+    BACKUP_MODEL: Annotated[str | None, Field(validation_alias="backup_model")] = None
+    THINKING_BUDGET_TOKENS: Annotated[
+        int, Field(ge=0, le=100_000, validation_alias="thinking_budget_tokens")
+    ]
+    MAX_TOOL_ITERATIONS: Annotated[
+        int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
+    ]
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self) -> "DialecticLevelSettings":

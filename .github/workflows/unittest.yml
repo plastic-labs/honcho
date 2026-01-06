@@ -107,14 +107,24 @@ jobs:
           DERIVER_MODEL: test
           DIALECTIC_LEVELS__minimal__PROVIDER: openai
           DIALECTIC_LEVELS__minimal__MODEL: test
+          DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS: 2
           DIALECTIC_LEVELS__low__PROVIDER: openai
           DIALECTIC_LEVELS__low__MODEL: test
+          DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__low__MAX_TOOL_ITERATIONS: 5
           DIALECTIC_LEVELS__medium__PROVIDER: openai
           DIALECTIC_LEVELS__medium__MODEL: test
+          DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__medium__MAX_TOOL_ITERATIONS: 4
           DIALECTIC_LEVELS__high__PROVIDER: openai
           DIALECTIC_LEVELS__high__MODEL: test
+          DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__high__MAX_TOOL_ITERATIONS: 4
           DIALECTIC_LEVELS__extra-high__PROVIDER: openai
           DIALECTIC_LEVELS__extra-high__MODEL: test
+          DIALECTIC_LEVELS__extra-high__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__extra-high__MAX_TOOL_ITERATIONS: 10
           DIALECTIC_QUERY_GENERATION_PROVIDER: openai
           DIALECTIC_QUERY_GENERATION_MODEL: test
           SUMMARY_PROVIDER: openai
