@@ -277,6 +277,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_seq_in_session,
                     SummaryType.LONG,
                     message_public_id,
                     configuration,
@@ -295,6 +296,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_seq_in_session,
                     SummaryType.SHORT,
                     message_public_id,
                     configuration,
@@ -320,6 +322,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_seq_in_session,
                     SummaryType.LONG,
                     message_public_id,
                     configuration,
@@ -336,6 +339,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_seq_in_session,
                     SummaryType.SHORT,
                     message_public_id,
                     configuration,
@@ -353,6 +357,7 @@ async def _create_and_save_summary(
     workspace_name: str,
     session_name: str,
     message_id: int,
+    message_seq_in_session: int,
     summary_type: SummaryType,
     message_public_id: str,
     configuration: schemas.ResolvedConfiguration,
@@ -373,20 +378,21 @@ async def _create_and_save_summary(
 
     previous_summary_text = latest_summary["content"] if latest_summary else None
 
-    # Check if we have any new messages to summarize. This can happen if queue items
-    # are processed out of order and the summary is already ahead of this message_id.
-    start_id: int = (
-        max(message_id - configuration.summary.messages_per_long_summary, 0)
+    # Calculate the sequence range for messages to summarize
+    # We want to get the last N messages where N is the configured summary interval
+    messages_per_summary = (
+        configuration.summary.messages_per_long_summary
         if summary_type == SummaryType.LONG
-        else max(message_id - configuration.summary.messages_per_short_summary, 0)
+        else configuration.summary.messages_per_short_summary
     )
+    start_seq = max(message_seq_in_session - messages_per_summary + 1, 1)
 
-    messages: list[Message] = await crud.get_messages_id_range(
+    messages: list[Message] = await crud.get_messages_by_seq_range(
         db,
         workspace_name,
         session_name,
-        start_id=start_id,
-        end_id=message_id,
+        start_seq=start_seq,
+        end_seq=message_seq_in_session,
     )
 
     messages_tokens = sum([message.token_count for message in messages])
