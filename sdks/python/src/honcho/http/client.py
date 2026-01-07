@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
@@ -27,12 +28,12 @@ class HttpClient:
         max_retries: int = 2,
         default_headers: dict[str, str] | None = None,
     ):
-        self._base_url = base_url.rstrip("/")
-        self._api_key = api_key
-        self._timeout = timeout
-        self._max_retries = max_retries
-        self._default_headers = default_headers or {}
-        self._client = httpx.Client(timeout=timeout)
+        self._base_url: str = base_url.rstrip("/")
+        self._api_key: str | None = api_key
+        self._timeout: float = timeout
+        self._max_retries: int = max_retries
+        self._default_headers: dict[str, str] = default_headers or {}
+        self._client: httpx.Client = httpx.Client(timeout=timeout)
 
     @property
     def base_url(self) -> str:

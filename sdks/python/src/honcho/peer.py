@@ -464,7 +464,8 @@ class Peer(PeerBase):
             f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/search",
             json={"query": query, "filters": filters, "limit": limit},
         )
-        return [Message.model_validate(m) for m in (response or [])]
+        messages_raw = cast(list[Any], response or [])
+        return [Message.model_validate(m) for m in messages_raw]
 
     def card(
         self,

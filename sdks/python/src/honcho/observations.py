@@ -172,9 +172,15 @@ class ObservationScope:
             json={"filters": filters, "page": page, "size": size},
         )
 
-        items = response.get("items", []) if response else []
+        response_data = cast(dict[str, Any], response or {})
+        items_raw = response_data.get("items", [])
+        items = cast(list[object], items_raw) if isinstance(items_raw, list) else []
         return [
-            Observation.from_api_response(_convert_observation(item)) for item in items
+            Observation.from_api_response(
+                _convert_observation(cast(dict[str, Any], item))
+            )
+            for item in items
+            if isinstance(item, dict)
         ]
 
     def query(
@@ -210,9 +216,13 @@ class ObservationScope:
             },
         )
 
+        results = cast(list[object], response) if isinstance(response, list) else []
         return [
-            Observation.from_api_response(_convert_observation(item))
-            for item in (response or [])
+            Observation.from_api_response(
+                _convert_observation(cast(dict[str, Any], item))
+            )
+            for item in results
+            if isinstance(item, dict)
         ]
 
     def delete(self, observation_id: str) -> None:
@@ -278,9 +288,13 @@ class ObservationScope:
             json={"observations": request_observations},
         )
 
+        results = cast(list[object], response) if isinstance(response, list) else []
         return [
-            Observation.from_api_response(_convert_observation(item))
-            for item in (response or [])
+            Observation.from_api_response(
+                _convert_observation(cast(dict[str, Any], item))
+            )
+            for item in results
+            if isinstance(item, dict)
         ]
 
     def get_representation(
@@ -424,9 +438,15 @@ class AsyncObservationScope:
             json={"filters": filters, "page": page, "size": size},
         )
 
-        items = response.get("items", []) if response else []
+        response_data = cast(dict[str, Any], response or {})
+        items_raw = response_data.get("items", [])
+        items = cast(list[object], items_raw) if isinstance(items_raw, list) else []
         return [
-            Observation.from_api_response(_convert_observation(item)) for item in items
+            Observation.from_api_response(
+                _convert_observation(cast(dict[str, Any], item))
+            )
+            for item in items
+            if isinstance(item, dict)
         ]
 
     async def query(
@@ -462,9 +482,13 @@ class AsyncObservationScope:
             },
         )
 
+        results = cast(list[object], response) if isinstance(response, list) else []
         return [
-            Observation.from_api_response(_convert_observation(item))
-            for item in (response or [])
+            Observation.from_api_response(
+                _convert_observation(cast(dict[str, Any], item))
+            )
+            for item in results
+            if isinstance(item, dict)
         ]
 
     async def delete(self, observation_id: str) -> None:
@@ -530,9 +554,13 @@ class AsyncObservationScope:
             json={"observations": request_observations},
         )
 
+        results = cast(list[object], response) if isinstance(response, list) else []
         return [
-            Observation.from_api_response(_convert_observation(item))
-            for item in (response or [])
+            Observation.from_api_response(
+                _convert_observation(cast(dict[str, Any], item))
+            )
+            for item in results
+            if isinstance(item, dict)
         ]
 
     async def get_representation(

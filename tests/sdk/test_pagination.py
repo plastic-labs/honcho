@@ -31,7 +31,7 @@ async def test_page_get_next_page(
         assert len(first_page.items) > 0
 
         # If there's a next page, test get_next_page()
-        if first_page.has_next_page():
+        if first_page.has_next_page:
             second_page = await first_page.get_next_page()
             assert second_page is not None
             assert isinstance(second_page, AsyncPage)
@@ -50,7 +50,7 @@ async def test_page_get_next_page(
         assert len(first_page.items) > 0
 
         # If there's a next page, test get_next_page()
-        if first_page.has_next_page():
+        if first_page.has_next_page:
             second_page = first_page.get_next_page()
             assert second_page is not None
             assert isinstance(second_page, SyncPage)
@@ -83,7 +83,7 @@ async def test_page_transform_preserved_across_pages(
             assert isinstance(item, AsyncPeer)
 
         # Get next page and verify transformation is preserved
-        if first_page.has_next_page():
+        if first_page.has_next_page:
             second_page = await first_page.get_next_page()
             assert second_page is not None
             for item in second_page.items:
@@ -105,7 +105,7 @@ async def test_page_transform_preserved_across_pages(
             assert isinstance(item, Peer)
 
         # Get next page and verify transformation is preserved
-        if first_page.has_next_page():
+        if first_page.has_next_page:
             second_page = first_page.get_next_page()
             assert second_page is not None
             for item in second_page.items:
@@ -134,7 +134,7 @@ async def test_page_get_next_page_throws_exception_on_last_page(
         assert isinstance(first_page, AsyncPage)
 
         # Should be on last page (or only page)
-        if not first_page.has_next_page():
+        if not first_page.has_next_page:
             # get_next_page should throw runtime error
             try:
                 await first_page.get_next_page()
@@ -153,7 +153,7 @@ async def test_page_get_next_page_throws_exception_on_last_page(
         assert isinstance(first_page, SyncPage)
 
         # Should be on last page (or only page)
-        if not first_page.has_next_page():
+        if not first_page.has_next_page:
             # get_next_page should throw runtime error
             try:
                 first_page.get_next_page()
@@ -187,7 +187,7 @@ async def test_page_manual_pagination(
             page_count += 1
             manual_items.extend(manual_page.items)  # pyright: ignore
 
-            if not manual_page.has_next_page():
+            if not manual_page.has_next_page:
                 break
 
             manual_page = await manual_page.get_next_page()
@@ -213,7 +213,7 @@ async def test_page_manual_pagination(
             page_count += 1
             manual_items.extend(manual_page.items)  # pyright: ignore
 
-            if not manual_page.has_next_page():
+            if not manual_page.has_next_page:
                 break
 
             manual_page = manual_page.get_next_page()

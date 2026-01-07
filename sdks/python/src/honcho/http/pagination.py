@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Generic, Iterator, TypeVar
-
-if TYPE_CHECKING:
-    pass
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from typing import Generic, TypeVar, cast, overload
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -21,6 +19,30 @@ class SyncPage(Generic[T, U]):
         U: The transformed item type (defaults to T if no transform)
     """
 
+    @overload
+    def __init__(
+        self,
+        items: list[T],
+        total: int | None,
+        page: int,
+        size: int,
+        pages: int | None,
+        transform_func: None = None,
+        fetch_next: Callable[[], "SyncPage[T, T]"] | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        items: list[T],
+        total: int | None,
+        page: int,
+        size: int,
+        pages: int | None,
+        transform_func: Callable[[T], U],
+        fetch_next: Callable[[], "SyncPage[T, U]"] | None = None,
+    ) -> None: ...
+
     def __init__(
         self,
         items: list[T],
@@ -30,21 +52,21 @@ class SyncPage(Generic[T, U]):
         pages: int | None,
         transform_func: Callable[[T], U] | None = None,
         fetch_next: Callable[[], "SyncPage[T, U]"] | None = None,
-    ):
-        self._items = items
-        self._total = total
-        self._page = page
-        self._size = size
-        self._pages = pages
-        self._transform_func = transform_func
-        self._fetch_next = fetch_next
+    ) -> None:
+        self._items: list[T] = items
+        self._total: int | None = total
+        self._page: int = page
+        self._size: int = size
+        self._pages: int | None = pages
+        self._transform_func: Callable[[T], U] | None = transform_func
+        self._fetch_next: Callable[[], SyncPage[T, U]] | None = fetch_next
 
     @property
     def items(self) -> list[U]:
         """Get transformed items on the current page."""
         if self._transform_func:
             return [self._transform_func(item) for item in self._items]
-        return self._items  # type: ignore
+        return cast(list[U], self._items)
 
     @property
     def total(self) -> int | None:
@@ -75,7 +97,7 @@ class SyncPage(Generic[T, U]):
         item = self._items[index]
         if self._transform_func:
             return self._transform_func(item)
-        return item  # type: ignore
+        return cast(U, item)
 
     @property
     def has_next_page(self) -> bool:
@@ -95,11 +117,13 @@ class SyncPage(Generic[T, U]):
         """Iterate over all items across all pages."""
         current: SyncPage[T, U] | None = self
         while current is not None:
-            for item in current._items:
-                if self._transform_func:
-                    yield self._transform_func(item)
-                else:
-                    yield item  # type: ignore
+            transform = current._transform_func
+            if transform is None:
+                for item in current._items:
+                    yield cast(U, item)
+            else:
+                for item in current._items:
+                    yield transform(item)
             current = current.get_next_page()
 
 
@@ -113,6 +137,30 @@ class AsyncPage(Generic[T, U]):
         U: The transformed item type (defaults to T if no transform)
     """
 
+    @overload
+    def __init__(
+        self,
+        items: list[T],
+        total: int | None,
+        page: int,
+        size: int,
+        pages: int | None,
+        transform_func: None = None,
+        fetch_next: Callable[[], Awaitable["AsyncPage[T, T]"]] | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        items: list[T],
+        total: int | None,
+        page: int,
+        size: int,
+        pages: int | None,
+        transform_func: Callable[[T], U],
+        fetch_next: Callable[[], Awaitable["AsyncPage[T, U]"]] | None = None,
+    ) -> None: ...
+
     def __init__(
         self,
         items: list[T],
@@ -122,21 +170,21 @@ class AsyncPage(Generic[T, U]):
         pages: int | None,
         transform_func: Callable[[T], U] | None = None,
         fetch_next: Callable[[], Awaitable["AsyncPage[T, U]"]] | None = None,
-    ):
-        self._items = items
-        self._total = total
-        self._page = page
-        self._size = size
-        self._pages = pages
-        self._transform_func = transform_func
-        self._fetch_next = fetch_next
+    ) -> None:
+        self._items: list[T] = items
+        self._total: int | None = total
+        self._page: int = page
+        self._size: int = size
+        self._pages: int | None = pages
+        self._transform_func: Callable[[T], U] | None = transform_func
+        self._fetch_next: Callable[[], Awaitable[AsyncPage[T, U]]] | None = fetch_next
 
     @property
     def items(self) -> list[U]:
         """Get transformed items on the current page."""
         if self._transform_func:
             return [self._transform_func(item) for item in self._items]
-        return self._items  # type: ignore
+        return cast(list[U], self._items)
 
     @property
     def total(self) -> int | None:
@@ -167,7 +215,7 @@ class AsyncPage(Generic[T, U]):
         item = self._items[index]
         if self._transform_func:
             return self._transform_func(item)
-        return item  # type: ignore
+        return cast(U, item)
 
     @property
     def has_next_page(self) -> bool:
@@ -187,9 +235,11 @@ class AsyncPage(Generic[T, U]):
         """Async iterate over all items across all pages."""
         current: AsyncPage[T, U] | None = self
         while current is not None:
-            for item in current._items:
-                if self._transform_func:
-                    yield self._transform_func(item)
-                else:
-                    yield item  # type: ignore
+            transform = current._transform_func
+            if transform is None:
+                for item in current._items:
+                    yield cast(U, item)
+            else:
+                for item in current._items:
+                    yield transform(item)
             current = await current.get_next_page()

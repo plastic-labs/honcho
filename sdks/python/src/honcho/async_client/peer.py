@@ -234,6 +234,15 @@ class AsyncPeer(PeerBase):
         self._configuration = peer.configuration or {}
         return self._configuration
 
+    async def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`get_config` instead.
+        """
+        return await self.get_config()
+
     @validate_call
     async def set_config(self, config: dict[str, object] = Field(...)) -> None:
         """Set the configuration for this peer."""
@@ -243,6 +252,16 @@ class AsyncPeer(PeerBase):
             json={"configuration": config},
         )
         self._configuration = config
+
+    @validate_call
+    async def set_peer_config(self, config: dict[str, object] = Field(...)) -> None:
+        """
+        Set the configuration for this peer.
+
+        .. deprecated::
+            Use :meth:`set_config` instead.
+        """
+        await self.set_config(config)
 
     async def refresh(self) -> None:
         """Refresh cached metadata and configuration."""
@@ -268,7 +287,8 @@ class AsyncPeer(PeerBase):
             f"/v2/workspaces/{self.workspace_id}/peers/{self.id}/search",
             json={"query": query, "filters": filters, "limit": limit},
         )
-        return [Message.model_validate(m) for m in (response or [])]
+        messages_raw = cast(list[Any], response or [])
+        return [Message.model_validate(m) for m in messages_raw]
 
     async def card(self, target: str | PeerBase | None = None) -> str:
         """Get the peer card for this peer."""

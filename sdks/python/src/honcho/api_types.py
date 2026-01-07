@@ -5,7 +5,8 @@ These types replace the honcho_core imports with local definitions.
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -34,43 +35,43 @@ omit = _Omit()
 class Workspace(BaseModel):
     """Workspace response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id: str
     metadata: dict[str, Any]
     configuration: dict[str, Any]
-    created_at: str
+    created_at: datetime
 
 
 class PeerCore(BaseModel):
     """Peer response from the API (raw API type)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id: str
     workspace_id: str
     metadata: dict[str, Any] | None = None
     configuration: dict[str, Any] | None = None
-    created_at: str
+    created_at: datetime
 
 
 class SessionCore(BaseModel):
     """Session response from the API (raw API type)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id: str
     workspace_id: str
     is_active: bool
     metadata: dict[str, Any] | None = None
     configuration: dict[str, Any] | None = None
-    created_at: str
+    created_at: datetime
 
 
 class Message(BaseModel):
     """Message from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id: str
     content: str
@@ -79,13 +80,13 @@ class Message(BaseModel):
     workspace_id: str
     token_count: int
     metadata: dict[str, Any] | None = None
-    created_at: str
+    created_at: datetime
 
 
 class MessageCreateParam(BaseModel):
     """Parameters for creating a message."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     peer_id: str
     content: str
@@ -97,7 +98,7 @@ class MessageCreateParam(BaseModel):
 class Configuration(BaseModel):
     """Message configuration."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     deriver: dict[str, Any] | None = None
 
@@ -105,7 +106,7 @@ class Configuration(BaseModel):
 class SessionDeriverStatus(BaseModel):
     """Deriver status for a specific session."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     session_id: str | None = None
     total_work_units: int
@@ -117,7 +118,7 @@ class SessionDeriverStatus(BaseModel):
 class DeriverStatus(BaseModel):
     """Deriver status response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     total_work_units: int
     completed_work_units: int
@@ -129,7 +130,7 @@ class DeriverStatus(BaseModel):
 class PeerCardResponse(BaseModel):
     """Peer card response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     peer_card: list[str] | None = None
 
@@ -137,7 +138,7 @@ class PeerCardResponse(BaseModel):
 class PeerWorkingRepresentationResponse(BaseModel):
     """Peer working representation response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     explicit: list[str] | None = None
     deductive: list[str] | None = None
@@ -146,7 +147,7 @@ class PeerWorkingRepresentationResponse(BaseModel):
 class DialecticResponse(BaseModel):
     """Dialectic response from the API (non-streaming)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     content: str | None = None
 
@@ -154,7 +155,7 @@ class DialecticResponse(BaseModel):
 class PageResponse(BaseModel):
     """Generic page response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     items: list[Any]
     total: int | None = None
@@ -166,7 +167,7 @@ class PageResponse(BaseModel):
 class SummaryData(BaseModel):
     """Summary data from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     content: str
     message_id: str
@@ -178,7 +179,7 @@ class SummaryData(BaseModel):
 class SessionSummariesResponse(BaseModel):
     """Session summaries response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id: str
     short_summary: SummaryData | None = None
@@ -188,7 +189,7 @@ class SessionSummariesResponse(BaseModel):
 class SessionContextResponse(BaseModel):
     """Session context response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     session_id: str
     messages: list[Message]
@@ -200,7 +201,7 @@ class SessionContextResponse(BaseModel):
 class PeerContextResponse(BaseModel):
     """Peer context response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     peer_card: list[str] | None = None
     representation: str | None = None
@@ -209,7 +210,7 @@ class PeerContextResponse(BaseModel):
 class ObservationResponse(BaseModel):
     """Observation response from the API."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id: str
     content: str

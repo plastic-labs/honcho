@@ -4,8 +4,9 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -299,8 +300,17 @@ class AsyncSession(SessionBase):
             f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/peers/list",
             json={},
         )
-        items = response.get("items", []) if response else []
-        return [AsyncPeer(peer["id"], self.workspace_id, self._http) for peer in items]
+        response_data = cast(dict[str, Any], response or {})
+        items_raw = response_data.get("items", [])
+        items = (
+            cast(list[dict[str, Any]], items_raw) if isinstance(items_raw, list) else []
+        )
+        peers: list[AsyncPeer] = []
+        for peer in items:
+            peer_id = peer.get("id")
+            if isinstance(peer_id, str):
+                peers.append(AsyncPeer(peer_id, self.workspace_id, self._http))
+        return peers
 
     async def get_peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
@@ -340,7 +350,7 @@ class AsyncSession(SessionBase):
         self,
         messages: MessageCreateParam
         | dict[str, Any]
-        | list[MessageCreateParam | dict[str, Any]] = Field(
+        | Sequence[MessageCreateParam | dict[str, Any]] = Field(
             ..., description="Messages to add to the session"
         ),
     ) -> list[Message]:
@@ -356,12 +366,15 @@ class AsyncSession(SessionBase):
                       - MessageCreateParam: Single MessageCreateParam object
                       - List[MessageCreateParam]: List of MessageCreateParam objects
         """
-        if not isinstance(messages, list):
-            messages = [messages]
+        messages_list: list[MessageCreateParam | dict[str, Any]]
+        if isinstance(messages, (MessageCreateParam, dict)):
+            messages_list = [messages]
+        else:
+            messages_list = list(messages)
 
         # Convert to dicts for the API
-        message_dicts = []
-        for msg in messages:
+        message_dicts: list[dict[str, Any]] = []
+        for msg in messages_list:
             if isinstance(msg, MessageCreateParam):
                 message_dicts.append(msg.model_dump(exclude_none=True))
             else:
@@ -372,7 +385,8 @@ class AsyncSession(SessionBase):
             f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/messages",
             json={"messages": message_dicts},
         )
-        return [Message.model_validate(m) for m in (response or [])]
+        messages_raw = cast(list[Any], response or [])
+        return [Message.model_validate(m) for m in messages_raw]
 
     @validate_call
     async def get_messages(
@@ -731,7 +745,7 @@ class AsyncSession(SessionBase):
 
         messages = [
             Message.model_validate(m)
-            for m in (context.get("messages", []) if context else [])
+            for m in cast(list[Any], context.get("messages", []) if context else [])
         ]
 
         return SessionContext(
@@ -828,7 +842,8 @@ class AsyncSession(SessionBase):
             f"/v2/workspaces/{self.workspace_id}/sessions/{self.id}/search",
             json={"query": query, "filters": filters, "limit": limit},
         )
-        return [Message.model_validate(m) for m in (response or [])]
+        messages_raw = cast(list[Any], response or [])
+        return [Message.model_validate(m) for m in messages_raw]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def upload_file(
@@ -917,7 +932,8 @@ class AsyncSession(SessionBase):
             json=data,
         )
 
-        return [Message.model_validate(msg) for msg in (response or [])]
+        messages_raw = cast(list[Any], response or [])
+        return [Message.model_validate(m) for m in messages_raw]
 
     async def working_rep(
         self,

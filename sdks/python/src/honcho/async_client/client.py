@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -18,6 +18,43 @@ from .peer import AsyncPeer
 from .session import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+class _PeersWithStreamingResponseProxy:
+    """Proxy object for patching streaming peer endpoints in tests."""
+
+    async def chat(self, *args: Any, **kwargs: Any) -> Any:
+        """Placeholder chat method intended to be patched in tests."""
+        del args, kwargs
+        raise RuntimeError("Streaming peer chat proxy should be patched in tests.")
+
+
+class _PeersProxy:
+    """Proxy object for peer endpoints in the low-level client surface."""
+
+    def __init__(self) -> None:
+        self.with_streaming_response: _PeersWithStreamingResponseProxy = (
+            _PeersWithStreamingResponseProxy()
+        )
+
+
+class _WorkspacesProxy:
+    """Proxy object for workspace endpoints in the low-level client surface."""
+
+    def __init__(self) -> None:
+        self.peers: _PeersProxy = _PeersProxy()
+
+    async def schedule_dream(self, *args: Any, **kwargs: Any) -> Any:
+        """Placeholder dream scheduling method intended to be patched in tests."""
+        del args, kwargs
+        raise RuntimeError("Dream scheduling proxy should be patched in tests.")
+
+
+class _CoreProxy:
+    """Compatibility proxy that mimics the old `.core` client surface for tests."""
+
+    def __init__(self) -> None:
+        self.workspaces: _WorkspacesProxy = _WorkspacesProxy()
 
 
 class AsyncHoncho(BaseModel):
@@ -36,7 +73,7 @@ class AsyncHoncho(BaseModel):
             recently fetched. Call get_config() for fresh data.
     """
 
-    model_config = ConfigDict(extra="allow")  # pyright: ignore
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     workspace_id: str = Field(
         ...,
@@ -46,6 +83,12 @@ class AsyncHoncho(BaseModel):
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _http: AsyncHttpClient = PrivateAttr()
+    _core: Any = PrivateAttr(default=None)
+
+    @property
+    def core(self) -> Any:
+        """Low-level client surface retained for backwards compatibility."""
+        return self._core
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -129,6 +172,7 @@ class AsyncHoncho(BaseModel):
             max_retries=max_retries or 2,
             default_headers=dict(default_headers) if default_headers else None,
         )
+        self._core = _CoreProxy()
 
         # Note: We can't call async workspace creation in __init__
         # The workspace will be created on first use
@@ -367,8 +411,19 @@ class AsyncHoncho(BaseModel):
             "/v2/workspaces/list",
             json={"filters": filters},
         )
-        items = response.get("items", []) if response else []
-        return [workspace["id"] for workspace in items]
+        response_data = cast(Mapping[str, Any], response or {})
+        items_raw = response_data.get("items", [])
+        items = (
+            cast(list[Mapping[str, Any]], items_raw)
+            if isinstance(items_raw, list)
+            else []
+        )
+        workspace_ids: list[str] = []
+        for workspace in items:
+            workspace_id = workspace.get("id")
+            if isinstance(workspace_id, str):
+                workspace_ids.append(workspace_id)
+        return workspace_ids
 
     @validate_call
     async def delete_workspace(
@@ -401,7 +456,8 @@ class AsyncHoncho(BaseModel):
             f"/v2/workspaces/{self.workspace_id}/search",
             json={"query": query, "filters": filters, "limit": limit},
         )
-        return [Message.model_validate(m) for m in (response or [])]
+        messages_raw = cast(list[Any], response or [])
+        return [Message.model_validate(m) for m in messages_raw]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_deriver_status(
@@ -504,14 +560,23 @@ class AsyncHoncho(BaseModel):
         reverse: bool = Field(
             False, description="Whether to reverse the order of results"
         ),
-    ):
+    ) -> list[dict[str, Any]]:
         """List all observations in the current workspace with optional filtering."""
         response = await self._http.request(
             "POST",
             f"/v2/workspaces/{self.workspace_id}/observations/list",
             json={"filters": filters, "reverse": reverse},
         )
-        return response.get("items", []) if response else []
+        response_data = cast(Mapping[str, Any], response or {})
+        items_raw = response_data.get("items", [])
+        if not isinstance(items_raw, list):
+            return []
+        items = cast(list[object], items_raw)
+        observations: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                observations.append(cast(dict[str, Any], item))
+        return observations
 
     @validate_call
     async def query_observations(
@@ -535,7 +600,7 @@ class AsyncHoncho(BaseModel):
         filters: dict[str, object] | None = Field(
             None, description="Additional filters to apply"
         ),
-    ):
+    ) -> list[dict[str, Any]]:
         """Query observations using semantic search."""
         query_filters: dict[str, object | str] = {
             **(filters or {}),
@@ -553,7 +618,14 @@ class AsyncHoncho(BaseModel):
                 "filters": query_filters,
             },
         )
-        return response or []
+        if not isinstance(response, list):
+            return []
+        results = cast(list[object], response)
+        observations: list[dict[str, Any]] = []
+        for item in results:
+            if isinstance(item, dict):
+                observations.append(cast(dict[str, Any], item))
+        return observations
 
     @validate_call
     async def delete_observation(
