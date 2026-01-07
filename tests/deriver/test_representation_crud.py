@@ -89,7 +89,7 @@ def test_prompt_representation_conversion():
         # because the Deriver only produces explicit observations
         # deductive=[
         #     DeductiveObservationBase(
-        #         conclusion="C", premises=["P1"], premise_ids=["id1"]
+        #         conclusion="C", premises=["P1"], source_ids=["id1"]
         #     )
         # ],
     )

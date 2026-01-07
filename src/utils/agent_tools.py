@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
+from src.models import Document
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
@@ -165,27 +166,19 @@ TOOLS: dict[str, dict[str, Any]] = {
                                     "explicit",
                                     "deductive",
                                     "inductive",
-                                    "vignette",
                                     "contradiction",
                                 ],
-                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'vignette' for narrative snapshots, 'contradiction' for conflicting statements",
+                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'contradiction' for conflicting statements",
                             },
-                            # Tree linkage for deductive observations
-                            "premise_ids": {
+                            "source_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "(For deductive) Document IDs of premise observations - REQUIRED for deductive",
+                                "description": "(For deductive/inductive/contradiction) Document IDs of source/premise observations - REQUIRED",
                             },
                             "premises": {
                                 "type": "array",
                                 "items": {"type": "string"},
                                 "description": "(For deductive) Human-readable premise text for display",
-                            },
-                            # Tree linkage for inductive/contradiction observations
-                            "source_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "(For inductive/contradiction) Document IDs of source observations - REQUIRED",
                             },
                             "sources": {
                                 "type": "array",
@@ -513,20 +506,6 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["observation_id"],
         },
     },
-    "create_vignette": {
-        "name": "create_vignette",
-        "description": "Create a vignette that consolidates multiple explicit observations into a single coherent narrative. The vignette should contain ALL the explicit facts from the source observations.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The vignette content - a coherent narrative containing ALL explicit facts from the source observations",
-                },
-            },
-            "required": ["content"],
-        },
-    },
 }
 
 # Tools for the deriver agent (ingestion) - explicit-only, simplified schema
@@ -654,13 +633,12 @@ async def create_observations(
         metadata = schemas.DocumentMetadata(
             message_ids=message_ids,
             message_created_at=message_created_at,
-            # Deductive-specific (tree linkage + human-readable)
-            premise_ids=obs.get("premise_ids") if level == "deductive" else None,
-            premises=obs.get("premises") if level == "deductive" else None,
-            # Inductive/Contradiction-specific (tree linkage + human-readable)
             source_ids=obs.get("source_ids")
-            if level in ("inductive", "contradiction")
+            if level in ("deductive", "inductive", "contradiction")
             else None,
+            # Deductive-specific (human-readable premises)
+            premises=obs.get("premises") if level == "deductive" else None,
+            # Inductive/Contradiction-specific (human-readable sources)
             sources=obs.get("sources")
             if level in ("inductive", "contradiction")
             else None,
@@ -677,10 +655,8 @@ async def create_observations(
             level=level,
             metadata=metadata,
             embedding=embedding,
-            # Tree linkage columns
-            premise_ids=obs.get("premise_ids") if level == "deductive" else None,
             source_ids=obs.get("source_ids")
-            if level in ("inductive", "contradiction")
+            if level in ("deductive", "inductive", "contradiction")
             else None,
         )
         documents.append(doc)
@@ -801,7 +777,7 @@ async def search_memory(
         query: Search query text
         limit: Maximum number of results
         levels: Optional list of observation levels to filter by
-                (e.g., ["explicit"], ["deductive", "inductive", "contradiction", "vignette"])
+                (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
 
     Returns:
         Representation object containing relevant observations
@@ -1256,8 +1232,6 @@ class ToolContext:
     # This lock is obtained from the module-level registry to ensure all concurrent
     # tool executors for the same data share the same lock.
     db_lock: asyncio.Lock
-    # For consolidation specialist - source IDs to delete after creating vignette
-    vignette_source_ids: list[str] | None = None
 
 
 async def _handle_create_observations(
@@ -1269,7 +1243,7 @@ async def _handle_create_observations(
     if not observations:
         return "ERROR: observations list is empty"
 
-    valid_levels = ["explicit", "deductive", "inductive", "vignette", "contradiction"]
+    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
     valid_pattern_types = [
         "preference",
         "behavior",
@@ -1311,12 +1285,12 @@ async def _handle_create_observations(
 
             # Validate deductive-specific fields (tree linkage required)
             if obs["level"] == "deductive":
-                if not obs.get("premise_ids"):
-                    return f"ERROR: deductive observation {i} requires 'premise_ids' field with document IDs of premises"
-                # Validate premise_ids are strings
-                for pid in obs.get("premise_ids", []):
-                    if not isinstance(pid, str):
-                        return f"ERROR: observation {i} premise_ids must be strings, got {type(pid)}"
+                if not obs.get("source_ids"):
+                    return f"ERROR: deductive observation {i} requires 'source_ids' field with document IDs of premises"
+                # Validate source_ids are strings
+                for sid in obs.get("source_ids", []):
+                    if not isinstance(sid, str):
+                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
 
             # Validate inductive-specific fields (tree linkage required)
             if obs["level"] == "inductive":
@@ -1781,78 +1755,6 @@ def _format_message_snippets(
     return _truncate_tool_output(output)
 
 
-async def _handle_create_vignette(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
-    """Handle create_vignette tool - create vignette and delete source observations from context."""
-    content = tool_input.get("content")
-
-    if not content:
-        return "ERROR: 'content' is required"
-
-    # Get source_ids from context (set by consolidation specialist)
-    source_ids = ctx.vignette_source_ids
-    if not source_ids:
-        return "ERROR: No source_ids in context - this tool must be used via consolidation specialist"
-
-    if not ctx.session_name:
-        return "ERROR: Cannot create vignette without a session context"
-
-    async with ctx.db_lock:
-        # Create the vignette observation
-        embedding = await embedding_client.embed(content)
-
-        # Build metadata
-        metadata = schemas.DocumentMetadata(
-            message_ids=[],
-            message_created_at=utc_now_iso(),
-            source_ids=source_ids,
-            sources=[f"Consolidated from {len(source_ids)} observations"],
-        )
-
-        doc = schemas.DocumentCreate(
-            content=content,
-            session_name=ctx.session_name,
-            level="vignette",
-            metadata=metadata,
-            embedding=embedding,
-            source_ids=source_ids,
-        )
-
-        # Get or create collection
-        await crud.get_or_create_collection(
-            ctx.db,
-            ctx.workspace_name,
-            observer=ctx.observer,
-            observed=ctx.observed,
-        )
-
-        # Create the vignette document
-        await crud.create_documents(
-            ctx.db,
-            documents=[doc],
-            workspace_name=ctx.workspace_name,
-            observer=ctx.observer,
-            observed=ctx.observed,
-            deduplicate=False,  # Don't dedupe vignettes
-        )
-
-        # Delete the source observations
-        deleted_count = 0
-        for obs_id in source_ids:
-            try:
-                await crud.delete_document(
-                    ctx.db,
-                    workspace_name=ctx.workspace_name,
-                    document_id=obs_id,
-                    observer=ctx.observer,
-                    observed=ctx.observed,
-                )
-                deleted_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to delete source observation {obs_id}: {e}")
-
-    return f"Created vignette consolidating {len(source_ids)} observations, deleted {deleted_count} source observations"
-
-
 async def _handle_get_reasoning_chain(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
@@ -1866,9 +1768,11 @@ async def _handle_get_reasoning_chain(
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
     # Get the observation itself
-    doc = await crud.get_document_by_id(ctx.db, ctx.workspace_name, observation_id)
-    if not doc:
+    docs = await crud.get_documents_by_ids(ctx.db, ctx.workspace_name, [observation_id])
+    if not docs or not docs[0]:
         return f"ERROR: Observation '{observation_id}' not found"
+
+    doc: Document = docs[0]
 
     output_parts: list[str] = []
 
@@ -1878,9 +1782,9 @@ async def _handle_get_reasoning_chain(
 
     # Get premises/sources if requested
     if direction in ("premises", "both"):
-        if level == "deductive" and doc.premise_ids:
+        if level == "deductive" and doc.source_ids:
             premises = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.premise_ids
+                ctx.db, ctx.workspace_name, doc.source_ids
             )
             if premises:
                 premise_lines: list[Any] = []
@@ -1892,7 +1796,7 @@ async def _handle_get_reasoning_chain(
                 )
             else:
                 output_parts.append(
-                    f"\n**Premises:** Referenced {len(doc.premise_ids)} premise IDs but none found in database"
+                    f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
                 )
         elif level == "inductive" and doc.source_ids:
             sources = await crud.get_documents_by_ids(
@@ -1960,7 +1864,6 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "finish_consolidation": _handle_finish_consolidation,
     "extract_preferences": _handle_extract_preferences,
     "get_reasoning_chain": _handle_get_reasoning_chain,
-    "create_vignette": _handle_create_vignette,
 }
 
 
@@ -1973,7 +1876,6 @@ async def create_tool_executor(
     current_messages: list[models.Message] | None = None,
     include_observation_ids: bool = False,
     history_token_limit: int = 8192,
-    vignette_source_ids: list[str] | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1990,7 +1892,6 @@ async def create_tool_executor(
         current_messages: List of current messages being processed (optional, for deriver)
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
         history_token_limit: Maximum tokens for get_recent_history (default: 8192)
-        vignette_source_ids: For consolidation specialist - IDs of observations to delete after vignette creation
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2009,7 +1910,6 @@ async def create_tool_executor(
         include_observation_ids=include_observation_ids,
         history_token_limit=history_token_limit,
         db_lock=shared_lock,
-        vignette_source_ids=vignette_source_ids,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

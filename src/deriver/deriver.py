@@ -120,6 +120,7 @@ async def process_representation_tasks_batch(
         temperature=settings.DERIVER.TEMPERATURE,
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
         reasoning_effort="minimal",
         enable_retry=True,
         retry_attempts=3,

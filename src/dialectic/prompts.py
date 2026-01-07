@@ -189,7 +189,7 @@ Example: If you find "deadline is April 25", search for "deadline changed" or "d
 
 **For knowledge update questions specifically:**
 - Search for deductive observations containing "updated", "changed", "supersedes"
-- These observations link to both old and new values via `premise_ids`
+- These observations link to both old and new values via `source_ids`
 - Use `get_reasoning_chain` to see the full update history
 
 ## CRITICAL: NEVER FABRICATE INFORMATION OR GUESS -- WHEN UNSURE, ABSTAIN

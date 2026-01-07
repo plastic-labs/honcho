@@ -139,8 +139,8 @@ class DialecticAgent:
         tool calls, improving response quality and speed.
 
         Performs two separate searches to prevent retrieval dilution:
-        - 25 explicit observations (direct facts from messages)
-        - 25 derived observations (deductive, inductive, contradiction, vignette)
+        - 25 explicit observations (produced by deriver)
+        - 25 higher-level observations (produced in dreaming/background/chat)
 
         Args:
             query: The user's query
@@ -168,7 +168,7 @@ class DialecticAgent:
                 observed=self.observed,
                 query=query,
                 limit=25,
-                levels=["deductive", "inductive", "contradiction", "vignette"],
+                levels=["deductive", "inductive", "contradiction"],
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
@@ -408,6 +408,7 @@ class DialecticAgent:
                 track_name="Dialectic Agent Stream",
                 thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                trace_name="dialectic_chat",
             ),
         )
 

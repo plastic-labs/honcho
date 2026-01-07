@@ -495,19 +495,14 @@ class DocumentMetadata(BaseModel):
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
-    # Deductive observation fields
-    premise_ids: list[str] | None = Field(
+    source_ids: list[str] | None = Field(
         default=None,
-        description="Document IDs of premise observations for tree traversal -- required for deductive observations",
+        description="Document IDs of source observations for tree traversal -- required for deductive and inductive observations",
     )
+    # Deductive observation fields
     premises: list[str] | None = Field(
         default=None,
         description="Human-readable premise text for display -- only applicable for deductive observations",
-    )
-    # Inductive observation fields
-    source_ids: list[str] | None = Field(
-        default=None,
-        description="Document IDs of source observations for tree traversal -- required for inductive observations",
     )
     sources: list[str] | None = Field(
         default=None,
@@ -530,7 +525,7 @@ class DocumentCreate(DocumentBase):
     )
     level: DocumentLevel = Field(
         default="explicit",
-        description="The level of the document (explicit, deductive, inductive, vignette, or contradiction)",
+        description="The level of the document (explicit, deductive, inductive, or contradiction)",
     )
     times_derived: int = Field(
         default=1,
@@ -539,14 +534,10 @@ class DocumentCreate(DocumentBase):
     )
     metadata: DocumentMetadata = Field()
     embedding: list[float] = Field()
-    # Tree linkage fields (also stored in metadata for backward compatibility)
-    premise_ids: list[str] | None = Field(
-        default=None,
-        description="Document IDs of premise observations -- for deductive observations",
-    )
+    # Tree linkage field
     source_ids: list[str] | None = Field(
         default=None,
-        description="Document IDs of source observations -- for inductive observations",
+        description="Document IDs of source/premise observations -- for deductive and inductive observations",
     )
 
 

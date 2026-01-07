@@ -108,13 +108,13 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
-      # # TypeScript type checking with bun
-      # - id: typescript-typecheck
-      #   name: TypeScript type check
-      #   entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run typecheck; fi'
-      #   language: system
-      #   files: ^sdks/typescript/.*\.(ts|tsx)$
-      #   pass_filenames: false
+      # TypeScript type checking with bun
+      - id: typescript-typecheck
+        name: TypeScript type check
+        entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run typecheck; fi'
+        language: system
+        files: ^sdks/typescript/.*\.(ts|tsx)$
+        pass_filenames: false
 
   # Documentation linting
   - repo: https://github.com/igorshubovych/markdownlint-cli

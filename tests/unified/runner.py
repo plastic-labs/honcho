@@ -5,9 +5,11 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 from anthropic import AsyncAnthropic
 from honcho.async_client.session import AsyncSession
 from honcho.session_context import SessionContext
@@ -43,9 +45,11 @@ from tests.unified.schema import (
     WaitAction,
 )
 
-# Configure logging
+# Override log level with UNIFIED_TEST_LOG_LEVEL env var if needed (e.g., INFO, DEBUG)
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(
+        logging, os.getenv("UNIFIED_TEST_LOG_LEVEL", "WARNING").upper(), logging.WARNING
+    ),
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
@@ -64,6 +68,100 @@ JUDGE_MODEL: str = "claude-haiku-4-5"
 
 class TestExecutionError(Exception):
     pass
+
+
+async def send_discord_message(webhook_url: str, message: str) -> None:
+    """Send a message to Discord via webhook."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(webhook_url, json={"content": message})
+            response.raise_for_status()
+            logger.info("Discord notification sent successfully")
+    except Exception:
+        logger.exception("Failed to send Discord notification")
+
+
+async def save_results_to_s3(
+    results: dict[str, tuple[str, float]],
+    failed_count: int,
+    total_count: int,
+    execution_time: float,
+) -> str | None:
+    """Save comprehensive test results to S3."""
+    try:
+        import boto3
+
+        s3_bucket = "honcho-unified-tests"
+        s3_prefix = "unified-test-results"
+        aws_region = "us-east-1"
+
+        # AWS credentials are configured via OIDC in GitHub Actions
+        # Check if boto3 can access credentials (either from environment or OIDC)
+        try:
+            session = boto3.Session()
+            credentials = session.get_credentials()  # pyright: ignore
+            if not credentials:
+                logger.warning("No AWS credentials available, skipping S3 upload")
+                return
+        except Exception as e:
+            logger.warning(f"Could not verify AWS credentials: {e}, skipping S3 upload")
+            return
+
+        # Create comprehensive results object
+        timestamp = datetime.now(timezone.utc).isoformat()
+        github_run_id = os.getenv("GITHUB_RUN_ID", "local")
+        github_sha = os.getenv("GITHUB_SHA", "unknown")
+        github_ref = os.getenv("GITHUB_REF_NAME", "unknown")
+
+        comprehensive_results = {
+            "timestamp": timestamp,
+            "summary": {
+                "total": total_count,
+                "passed": total_count - failed_count,
+                "failed": failed_count,
+                "execution_time": execution_time,
+            },
+            "metadata": {
+                "github_run_id": github_run_id,
+                "github_sha": github_sha,
+                "github_ref": github_ref,
+            },
+            "tests": [
+                {
+                    "name": name,
+                    "status": status,
+                    "duration": duration,
+                }
+                for name, (status, duration) in results.items()
+            ],
+        }
+
+        # Upload to S3
+        s3_client = boto3.client("s3", region_name=aws_region)  # pyright: ignore
+        key = f"{s3_prefix}/{github_run_id}-{timestamp}.json"
+
+        s3_client.put_object(  # pyright: ignore
+            Bucket=s3_bucket,
+            Key=key,
+            Body=json.dumps(comprehensive_results, indent=2).encode("utf-8"),
+            ContentType="application/json",
+        )
+
+        try:
+            url: str = s3_client.generate_presigned_url(  # pyright: ignore
+                "get_object",
+                Params={"Bucket": s3_bucket, "Key": key},
+                ExpiresIn=259200,  # 3 days
+            )
+            logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
+            return url  # pyright: ignore
+        except Exception as e:
+            logger.warning(f"Could not generate S3 presigned URL: {e}")
+            logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Failed to save results to S3: {e}", exc_info=True)
 
 
 class UnifiedTestExecutor:
@@ -511,8 +609,33 @@ class UnifiedTestRunner:
             print(f"Total execution time: {total_suite_time:.2f}s")
             print("=" * 60)
 
+            # 5. Save results and send notifications
+            # Always attempt S3 upload - save_results_to_s3 will check for credentials
+            url: str | None = await save_results_to_s3(
+                results, failed_count, total_count, total_suite_time
+            )
+
+            # 6. Send Discord notification
+            discord_webhook_url = os.getenv("TEST_DISCORD_WEBHOOK_URL")
+            if discord_webhook_url:
+                passed_count = total_count - failed_count
+                status_emoji = "✅" if failed_count == 0 else "⚠️"
+                github_run_id = os.getenv("GITHUB_RUN_ID", "local")
+
+                message_lines = [
+                    f"{status_emoji} **Unified Test Results**",
+                    f"Results: {passed_count}/{total_count} passed, {failed_count}/{total_count} failed",
+                    f"Execution time: {total_suite_time:.2f}s",
+                    f"Run ID: {github_run_id}",
+                ]
+                if url:
+                    message_lines.append(f"[View Complete Results]({url})")
+                message = "\n".join(message_lines)
+
+                await send_discord_message(discord_webhook_url, message)
+
         finally:
-            # 5. Cleanup
+            # 7. Cleanup
             logger.info("Cleaning up harness...")
             await self.harness.cleanup()
 
