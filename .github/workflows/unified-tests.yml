@@ -39,6 +39,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsS3Role
           aws-region: us-east-1
+          role-duration-seconds: 43200 # 12 hours
 
       - name: Fetch secrets from AWS Secrets Manager
         uses: aws-actions/aws-secretsmanager-get-secrets@v2
