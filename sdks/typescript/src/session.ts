@@ -9,8 +9,6 @@ import { Page } from './pagination'
 import { Peer } from './peer'
 import type { RepresentationOptions } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
-// Disabled: conclusions not ready for release
-// import type { Conclusion, ConclusionQueryParams } from './types'
 import {
   ContextParamsSchema,
   FileUploadSchema,
@@ -20,7 +18,6 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
-  // ConclusionQueryParamsSchema,  // Disabled: conclusions not ready for release
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -797,91 +794,6 @@ export class Session {
       }
     )
   }
-
-  /**
-   * List all conclusions for this session.
-   *
-   * Conclusions are theory-of-mind data (documents) that peers have formed about each other.
-   * Returns paginated results that can be filtered by observer_id and observed_id.
-   *
-   * @param filters - Optional filters to scope the conclusions: see [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-   * @returns A paginated list of Conclusion objects.
-   *
-   * @example
-   * ```typescript
-   * const conclusions = await session.listConclusions()
-   * for await (const conclusion of conclusions) {
-   *   console.log(`${conclusion.observer_id} observed: ${conclusion.content}`)
-   * }
-   * ```
-   */
-  // Disabled: conclusions not ready for release
-  // async listConclusions(filters?: Filters): Promise<Page<Conclusion>> {
-  //   const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
-  //   const response = await this._client.workspaces.sessions.conclusions.list(
-  //     this.workspaceId,
-  //     this.id,
-  //     { filters: validatedFilters }
-  //   )
-  //   return new Page(response)
-  // }
-
-  /**
-   * Query conclusions using semantic search.
-   *
-   * Performs vector similarity search on conclusions to find semantically relevant results.
-   * Use this to find conclusions related to a specific topic or concept.
-   *
-   * @param params - Query parameters
-   * @param params.query - The semantic search query
-   * @param params.top_k - Number of results to return (1-100, default: 10)
-   * @param params.distance - Maximum cosine distance threshold for results (0.0-1.0)
-   * @param params.filters - Optional filters to scope the query
-   * @returns A list of Conclusion objects matching the query
-   *
-   * @example
-   * ```typescript
-   * const conclusions = await session.queryConclusions({
-   *   query: "user preferences about music",
-   *   top_k: 5,
-   *   distance: 0.8
-   * })
-   * ```
-   */
-  // Disabled: conclusions not ready for release
-  // async queryConclusions(
-  //   params: ConclusionQueryParams
-  // ): Promise<Conclusion[]> {
-  //   const validated = ConclusionQueryParamsSchema.parse(params)
-  //   return await this._client.workspaces.sessions.conclusions.query(
-  //     this.workspaceId,
-  //     this.id,
-  //     validated
-  //   )
-  // }
-
-  /**
-   * Delete a specific conclusion by ID.
-   *
-   * This permanently deletes the conclusion (document) from the theory-of-mind system.
-   * This action cannot be undone.
-   *
-   * @param conclusionId - The ID of the conclusion to delete
-   * @returns A promise that resolves when the conclusion is deleted
-   *
-   * @example
-   * ```typescript
-   * await session.deleteConclusion('obs_123abc')
-   * ```
-   */
-  // Disabled: conclusions not ready for release
-  // async deleteConclusion(conclusionId: string): Promise<void> {
-  //   await this._client.workspaces.sessions.conclusions.delete(
-  //     this.workspaceId,
-  //     this.id,
-  //     conclusionId
-  //   )
-  // }
 
   /**
    * Get the queue processing status for this session, optionally scoped to an observer or sender.

@@ -865,7 +865,7 @@ class AsyncSession(SessionBase):
 
         return [Message.model_validate(msg) for msg in response]
 
-    async def working_rep(
+    async def get_representation(
         self,
         peer: str | PeerBase,
         *,
@@ -877,10 +877,10 @@ class AsyncSession(SessionBase):
         max_conclusions: int | None = None,
     ) -> str:
         """
-        Get the current working representation of the peer in this session.
+        Get a subset of the representation of the peer in this session.
 
         Args:
-            peer: Peer to get the working representation of.
+            peer: Peer to get the representation of.
             target: Optional target peer to get the representation of. If provided,
             queries what `peer` knows about the `target`.
             search_query: Semantic search query to filter relevant conclusions
@@ -895,14 +895,14 @@ class AsyncSession(SessionBase):
         Example:
             ```python
             # Get peer's representation in this session
-            rep = await session.working_rep('user123')
+            rep = await session.get_representation('user123')
             print(rep)
 
             # Get what user123 knows about assistant in this session
-            local_rep = await session.working_rep('user123', target='assistant')
+            local_rep = await session.get_representation('user123', target='assistant')
 
             # Get representation with semantic search
-            searched_rep = await session.working_rep(
+            searched_rep = await session.get_representation(
                 'user123',
                 search_query='preferences',
                 search_top_k=10

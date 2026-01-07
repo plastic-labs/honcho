@@ -292,11 +292,11 @@ async def test_peer_chat_non_streaming(
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_no_params(
+async def test_peer_get_representation_no_params(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with no parameters (default behavior).
+    Tests peer.get_representation() with no parameters (default behavior).
     """
     honcho_client, client_type = client_fixture
 
@@ -309,7 +309,7 @@ async def test_peer_working_rep_no_params(
         await session.add_messages([peer.message("I enjoy hiking and nature")])
 
         # Get working representation with no parameters
-        result = await peer.working_rep()
+        result = await peer.get_representation()
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -320,16 +320,16 @@ async def test_peer_working_rep_no_params(
         session.add_messages([peer.message("I enjoy hiking and nature")])
 
         # Get working representation with no parameters
-        result = peer.working_rep()
+        result = peer.get_representation()
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_session_string(
+async def test_peer_get_representation_with_session_string(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with session parameter as string.
+    Tests peer.get_representation() with session parameter as string.
     """
     honcho_client, client_type = client_fixture
 
@@ -342,7 +342,7 @@ async def test_peer_working_rep_with_session_string(
         await session.add_messages([peer.message("I like reading books")])
 
         # Get working representation scoped to session (as string)
-        result = await peer.working_rep(session=session.id)
+        result = await peer.get_representation(session=session.id)
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -353,16 +353,16 @@ async def test_peer_working_rep_with_session_string(
         session.add_messages([peer.message("I like reading books")])
 
         # Get working representation scoped to session (as string)
-        result = peer.working_rep(session=session.id)
+        result = peer.get_representation(session=session.id)
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_session_object(
+async def test_peer_get_representation_with_session_object(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with session parameter as Session object.
+    Tests peer.get_representation() with session parameter as Session object.
     """
     honcho_client, client_type = client_fixture
 
@@ -378,7 +378,7 @@ async def test_peer_working_rep_with_session_object(
         await session.add_messages([peer.message("I prefer tea over coffee")])
 
         # Get working representation scoped to session (as Session object)
-        result = await peer.working_rep(session=session)
+        result = await peer.get_representation(session=session)
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -392,16 +392,16 @@ async def test_peer_working_rep_with_session_object(
         session.add_messages([peer.message("I prefer tea over coffee")])
 
         # Get working representation scoped to session (as Session object)
-        result = peer.working_rep(session=session)
+        result = peer.get_representation(session=session)
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_target_string(
+async def test_peer_get_representation_with_target_string(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with target parameter as string.
+    Tests peer.get_representation() with target parameter as string.
     """
     honcho_client, client_type = client_fixture
 
@@ -420,7 +420,7 @@ async def test_peer_working_rep_with_target_string(
         )
 
         # Get working representation of target from observer's perspective (as string)
-        result = await observer.working_rep(target=target.id)
+        result = await observer.get_representation(target=target.id)
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -437,16 +437,16 @@ async def test_peer_working_rep_with_target_string(
         )
 
         # Get working representation of target from observer's perspective (as string)
-        result = observer.working_rep(target=target.id)
+        result = observer.get_representation(target=target.id)
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_target_object(
+async def test_peer_get_representation_with_target_object(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with target parameter as Peer object.
+    Tests peer.get_representation() with target parameter as Peer object.
     """
     honcho_client, client_type = client_fixture
 
@@ -468,7 +468,7 @@ async def test_peer_working_rep_with_target_object(
         )
 
         # Get working representation of target from observer's perspective (as Peer object)
-        result = await observer.working_rep(target=target)
+        result = await observer.get_representation(target=target)
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -488,16 +488,16 @@ async def test_peer_working_rep_with_target_object(
         )
 
         # Get working representation of target from observer's perspective (as Peer object)
-        result = observer.working_rep(target=target)
+        result = observer.get_representation(target=target)
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_search_query(
+async def test_peer_get_representation_with_search_query(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with search_query parameter.
+    Tests peer.get_representation() with search_query parameter.
     """
     honcho_client, client_type = client_fixture
 
@@ -515,7 +515,7 @@ async def test_peer_working_rep_with_search_query(
         )
 
         # Get working representation with search query
-        result = await peer.working_rep(search_query="programming")
+        result = await peer.get_representation(search_query="programming")
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -531,16 +531,16 @@ async def test_peer_working_rep_with_search_query(
         )
 
         # Get working representation with search query
-        result = peer.working_rep(search_query="programming")
+        result = peer.get_representation(search_query="programming")
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_size(
+async def test_peer_get_representation_with_size(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with size parameter.
+    Tests peer.get_representation() with size parameter.
     """
     honcho_client, client_type = client_fixture
 
@@ -555,14 +555,14 @@ async def test_peer_working_rep_with_size(
         )
 
         # Get working representation with custom max_conclusions
-        result = await peer.working_rep(max_conclusions=5)
+        result = await peer.get_representation(max_conclusions=5)
         assert isinstance(result, str)
 
         # Test with different max_conclusions values
-        result = await peer.working_rep(max_conclusions=1)
+        result = await peer.get_representation(max_conclusions=1)
         assert isinstance(result, str)
 
-        result = await peer.working_rep(max_conclusions=100)
+        result = await peer.get_representation(max_conclusions=100)
         assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
@@ -573,23 +573,23 @@ async def test_peer_working_rep_with_size(
         session.add_messages([peer.message(f"Message number {i}") for i in range(10)])
 
         # Get working representation with custom size
-        result = peer.working_rep(max_conclusions=5)
+        result = peer.get_representation(max_conclusions=5)
         assert isinstance(result, str)
 
         # Test with different max_conclusions values
-        result = peer.working_rep(max_conclusions=1)
+        result = peer.get_representation(max_conclusions=1)
         assert isinstance(result, str)
 
-        result = peer.working_rep(max_conclusions=100)
+        result = peer.get_representation(max_conclusions=100)
         assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_peer_working_rep_with_all_params(
+async def test_peer_get_representation_with_all_params(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests peer.working_rep() with all parameters combined.
+    Tests peer.get_representation() with all parameters combined.
     """
     honcho_client, client_type = client_fixture
 
@@ -610,13 +610,13 @@ async def test_peer_working_rep_with_all_params(
         )
 
         # Get working representation with all parameters
-        result = await observer.working_rep(
+        result = await observer.get_representation(
             session=session, target=target, search_query="Python", max_conclusions=10
         )
         assert isinstance(result, str)
 
         # Test with session as string and target as string
-        result = await observer.working_rep(
+        result = await observer.get_representation(
             session=session.id,
             target=target.id,
             search_query="machine learning",
@@ -640,13 +640,13 @@ async def test_peer_working_rep_with_all_params(
         )
 
         # Get working representation with all parameters
-        result = observer.working_rep(
+        result = observer.get_representation(
             session=session, target=target, search_query="Python", max_conclusions=10
         )
         assert isinstance(result, str)
 
         # Test with session as string and target as string
-        result = observer.working_rep(
+        result = observer.get_representation(
             session=session.id,
             target=target.id,
             search_query="machine learning",

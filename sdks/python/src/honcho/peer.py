@@ -475,7 +475,7 @@ class Peer(PeerBase):
 
         return "\n".join(items)
 
-    def working_rep(
+    def get_representation(
         self,
         session: str | SessionBase | None = None,
         target: str | PeerBase | None = None,
@@ -486,7 +486,7 @@ class Peer(PeerBase):
         max_conclusions: int | None = None,
     ) -> str:
         """
-        Get a working representation for this peer.
+        Get a subset of the representation of the peer.
 
         Args:
             session: Optional session to scope the representation to.
@@ -504,14 +504,14 @@ class Peer(PeerBase):
         Example:
             ```python
             # Get global representation
-            rep = peer.working_rep()
+            rep = peer.get_representation()
             print(rep)
 
             # Get representation scoped to a session
-            session_rep = peer.working_rep(session='session-123')
+            session_rep = peer.get_representation(session='session-123')
 
             # Get representation with semantic search
-            searched_rep = peer.working_rep(
+            searched_rep = peer.get_representation(
                 search_query='preferences',
                 search_top_k=10,
                 max_conclusions=50
