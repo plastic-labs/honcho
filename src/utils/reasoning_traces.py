@@ -16,14 +16,14 @@ from pydantic import BaseModel
 from src.config import LLMComponentSettings, settings
 
 
-def get_finetuning_traces_file_path() -> Path | None:
+def get_reasoning_traces_file_path() -> Path | None:
     """Get the fine-tuning traces file path from settings."""
-    if settings.FINETUNING_TRACES_FILE:
-        return Path(settings.FINETUNING_TRACES_FILE)
+    if settings.REASONING_TRACES_FILE:
+        return Path(settings.REASONING_TRACES_FILE)
     return None
 
 
-def log_finetuning_trace(
+def log_reasoning_trace(
     task_type: str,
     llm_settings: LLMComponentSettings,
     prompt: str,
@@ -51,7 +51,7 @@ def log_finetuning_trace(
         stop_seqs: Stop sequences used (if any)
         messages: Full conversation history for multi-turn/agentic calls
     """
-    traces_file = get_finetuning_traces_file_path()
+    traces_file = get_reasoning_traces_file_path()
     if not traces_file:
         return
 

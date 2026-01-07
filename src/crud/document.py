@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -279,8 +279,7 @@ async def create_documents(
                     internal_metadata=metadata_dict,
                     embedding=doc.embedding,
                     session_name=doc.session_name,
-                    # Tree linkage columns
-                    premise_ids=doc.premise_ids,
+                    # Tree linkage column
                     source_ids=doc.source_ids,
                 )
             )
@@ -539,30 +538,6 @@ async def is_rejected_duplicate(
 # =============================================================================
 
 
-async def get_document_by_id(
-    db: AsyncSession,
-    workspace_name: str,
-    document_id: str,
-) -> models.Document | None:
-    """
-    Get a single document by ID.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        document_id: The document ID to retrieve
-
-    Returns:
-        Document if found, None otherwise
-    """
-    stmt = select(models.Document).where(
-        models.Document.workspace_name == workspace_name,
-        models.Document.id == document_id,
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
 async def get_documents_by_ids(
     db: AsyncSession,
     workspace_name: str,
@@ -598,10 +573,10 @@ async def get_child_observations(
     observed: str | None = None,
 ) -> Sequence[models.Document]:
     """
-    Get all observations that have this document as a premise or source.
+    Get all observations that have this document as a source/premise.
 
-    Useful for traversing the reasoning tree upward (premise -> conclusions).
-    Uses GIN indexes on premise_ids and source_ids for efficient lookups.
+    Useful for traversing the reasoning tree upward (source -> derived observations).
+    Uses GIN index on source_ids for efficient lookups.
 
     Args:
         db: Database session
@@ -611,15 +586,12 @@ async def get_child_observations(
         observed: Optional filter by observed
 
     Returns:
-        Sequence of documents that reference this document as a premise or source
+        Sequence of documents that reference this document as a source
     """
-    # Find documents where premise_ids or source_ids contains the parent_id
+    # Find documents where source_ids contains the parent_id
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
-        or_(
-            models.Document.premise_ids.contains([parent_id]),
-            models.Document.source_ids.contains([parent_id]),
-        ),
+        models.Document.source_ids.contains([parent_id]),
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)
@@ -636,7 +608,7 @@ async def get_premise_observations(
     document_id: str,
 ) -> Sequence[models.Document]:
     """
-    Get all premise observations for a given deductive document.
+    Get all premise/source observations for a given deductive document.
 
     Useful for traversing the reasoning tree downward (conclusion -> premises).
 
@@ -648,10 +620,10 @@ async def get_premise_observations(
     Returns:
         Sequence of premise documents, empty if document not found or has no premises
     """
-    doc = await get_document_by_id(db, workspace_name, document_id)
-    if not doc or not doc.premise_ids:
+    doc = await get_documents_by_ids(db, workspace_name, [document_id])
+    if not doc or not doc[0].source_ids:
         return []
-    return await get_documents_by_ids(db, workspace_name, doc.premise_ids)
+    return await get_documents_by_ids(db, workspace_name, doc[0].source_ids)
 
 
 async def get_source_observations(
@@ -672,7 +644,7 @@ async def get_source_observations(
     Returns:
         Sequence of source documents, empty if document not found or has no sources
     """
-    doc = await get_document_by_id(db, workspace_name, document_id)
-    if not doc or not doc.source_ids:
+    doc = await get_documents_by_ids(db, workspace_name, [document_id])
+    if not doc or not doc[0].source_ids:
         return []
-    return await get_documents_by_ids(db, workspace_name, doc.source_ids)
+    return await get_documents_by_ids(db, workspace_name, doc[0].source_ids)

@@ -232,7 +232,7 @@ Examples:
   "observations": [{{
     "content": "[Topic] updated: [old value] → [new value]. Current: [new value]",
     "level": "deductive",
-    "premise_ids": ["old_obs_id", "new_obs_id"],
+    "source_ids": ["old_obs_id", "new_obs_id"],
     "premises": ["Original: [old fact]", "Update: [new fact]"]
   }}]
 }}
@@ -284,7 +284,7 @@ Create deductions that make implicit information explicit:
   "observations": [{{
     "content": "The logical conclusion",
     "level": "deductive",
-    "premise_ids": ["id1", "id2"],
+    "source_ids": ["id1", "id2"],
     "premises": ["premise 1 text", "premise 2 text"]
   }}]
 }}

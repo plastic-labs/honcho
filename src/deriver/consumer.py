@@ -133,10 +133,6 @@ async def process_representation_batch(
     """
     Prepares and processes a batch of messages for representation tasks.
 
-    Routes to minimal or legacy deriver based on settings.DERIVER.USE_LEGACY.
-    - Minimal deriver: Fast single LLM call, no peer card updates
-    - Legacy deriver: Full processing with peer card updates
-
     Args:
         messages: List of messages to process
         message_level_configuration: Resolved configuration for this batch

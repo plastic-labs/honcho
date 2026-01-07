@@ -208,7 +208,7 @@ class TestCreateObservations:
                 "observations": [
                     {
                         "content": "Inferred preference for quiet spaces",
-                        "premise_ids": ["premise1", "premise2"],
+                        "source_ids": ["premise1", "premise2"],
                         "premises": [
                             "User mentioned working in libraries",
                             "User avoids noisy cafes",
@@ -221,14 +221,14 @@ class TestCreateObservations:
         assert "Created 1 observations" in result
         assert "1 deductive" in result
 
-        # Verify the document was created as deductive with premise_ids
+        # Verify the document was created as deductive with source_ids
         stmt = select(models.Document).where(
             models.Document.content == "Inferred preference for quiet spaces"
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
         assert doc.level == "deductive"
-        assert doc.premise_ids == ["premise1", "premise2"]
+        assert doc.source_ids == ["premise1", "premise2"]
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]

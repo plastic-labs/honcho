@@ -22,9 +22,9 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
-from src.utils.finetuning_traces import log_finetuning_trace
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.logging import conditional_observe
+from src.utils.reasoning_traces import log_reasoning_trace
 from src.utils.representation import PromptRepresentation
 from src.utils.tokens import estimate_tokens
 from src.utils.types import SupportedProviders
@@ -1396,7 +1396,7 @@ async def honcho_llm_call(
     if not tools or not tool_executor:
         result = await decorated()
         if trace_name:
-            log_finetuning_trace(
+            log_reasoning_trace(
                 task_type=trace_name,
                 llm_settings=llm_settings,
                 prompt=prompt,
@@ -1445,7 +1445,7 @@ async def honcho_llm_call(
         stream_final=stream_final_only,
     )
     if trace_name:
-        log_finetuning_trace(
+        log_reasoning_trace(
             task_type=trace_name,
             llm_settings=llm_settings,
             prompt=prompt,

@@ -270,6 +270,14 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         Field(default=4096, ge=128, le=16_384),
     ] = 4096
 
+    @model_validator(mode="after")
+    def validate_batch_tokens_vs_context_limit(self):
+        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+            raise ValueError(
+                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+            )
+        return self
+
 
 class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
@@ -437,7 +445,7 @@ class CacheSettings(HonchoSettings):
 class SurprisalSettings(BaseModel):
     """Settings for tree-based surprisal sampling during dreams."""
 
-    ENABLED: bool = True  # Enabled by default
+    ENABLED: bool = False  # Enabled by default
 
     # Tree configuration
     TREE_TYPE: Literal[
@@ -535,9 +543,7 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
-    FINETUNING_TRACES_FILE: str | None = (
-        None  # Path to JSONL file for fine-tuning traces
-    )
+    REASONING_TRACES_FILE: str | None = None  # Path to JSONL file for reasoning traces
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 
