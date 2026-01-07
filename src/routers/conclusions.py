@@ -69,23 +69,19 @@ async def list_conclusions(
     """
     List conclusions using custom filters, ordered by recency unless `reverse` is true.
     """
-    try:
-        filters = None
-        if options and hasattr(options, "filters"):
-            filters = options.filters
-            if filters == {}:
-                filters = None
+    filters = None
+    if options and hasattr(options, "filters"):
+        filters = options.filters
+        if filters == {}:
+            filters = None
 
-        stmt = crud.get_documents_with_filters(
-            workspace_name=workspace_id,
-            filters=filters,
-            reverse=reverse or False,
-        )
+    stmt = crud.get_documents_with_filters(
+        workspace_name=workspace_id,
+        filters=filters,
+        reverse=reverse or False,
+    )
 
-        return await apaginate(db, stmt)
-    except ValueError as e:
-        logger.warning(f"Failed to list conclusions: {str(e)}")
-        raise ResourceNotFoundException("Session not found") from e
+    return await apaginate(db, stmt)
 
 
 @router.post(

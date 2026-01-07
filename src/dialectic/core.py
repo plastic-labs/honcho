@@ -408,6 +408,7 @@ class DialecticAgent:
                 track_name="Dialectic Agent Stream",
                 thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                trace_name="dialectic_chat",
             ),
         )
 

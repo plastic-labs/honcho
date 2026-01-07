@@ -125,19 +125,16 @@ async def query_documents_recent(
     Returns:
         Sequence of documents ordered by created_at descending
     """
-    stmt = (
-        select(models.Document)
-        .where(
-            models.Document.workspace_name == workspace_name,
-            models.Document.observer == observer,
-            models.Document.observed == observed,
-        )
-        .order_by(models.Document.created_at.desc())
-        .limit(limit)
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
     )
 
     if session_name is not None:
         stmt = stmt.where(models.Document.session_name == session_name)
+
+    stmt = stmt.order_by(models.Document.created_at.desc()).limit(limit)
 
     result = await db.execute(stmt)
     return result.scalars().all()
