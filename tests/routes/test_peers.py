@@ -594,12 +594,6 @@ def test_get_peer_representation_structure(
     assert "representation" in data
     assert isinstance(data["representation"], str)
 
-    # Representation should have expected keys based on Representation type
-    representation = data["representation"]
-    # The exact keys depend on the Representation implementation,
-    # but we can verify it's a dict
-    assert isinstance(representation, dict)
-
 
 def test_get_peer_representation_boundary_values(
     client: TestClient, sample_data: tuple[Workspace, Peer]

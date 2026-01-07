@@ -510,7 +510,7 @@ async def get_session_context(
     *,
     last_message: str | None = Query(
         None,
-        description="The most recent message, used to fetch semantically relevant observations",
+        description="The most recent message, used to fetch semantically relevant conclusions",
     ),
     include_summary: bool = Query(
         default=True,
@@ -533,23 +533,23 @@ async def get_session_context(
         None,
         ge=1,
         le=100,
-        description="Only used if `last_message` is provided. The number of semantic-search-retrieved observations to include in the representation",
+        description="Only used if `last_message` is provided. The number of semantic-search-retrieved conclusions to include in the representation",
     ),
     search_max_distance: float | None = Query(
         None,
         ge=0.0,
         le=1.0,
-        description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant observations",
+        description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant conclusions",
     ),
     include_most_derived: bool = Query(
         default=False,
-        description="Only used if `last_message` is provided. Whether to include the most derived observations in the representation",
+        description="Only used if `last_message` is provided. Whether to include the most derived conclusions in the representation",
     ),
-    max_observations: int | None = Query(
+    max_conclusions: int | None = Query(
         None,
         ge=1,
         le=100,
-        description="Only used if `last_message` is provided. The maximum number of observations to include in the representation",
+        description="Only used if `last_message` is provided. The maximum number of conclusions to include in the representation",
     ),
 ):
     """
@@ -592,7 +592,7 @@ async def get_session_context(
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_derived,
-        max_observations=max_observations,
+        max_observations=max_conclusions,
     )
     card = await _get_peer_card_task(workspace_id, observer=observer, observed=observed)
 

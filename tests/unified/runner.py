@@ -13,7 +13,7 @@ import httpx
 from anthropic import AsyncAnthropic
 from honcho.async_client.session import AsyncSession
 from honcho.session_context import SessionContext
-from honcho_core.types.deriver_status import DeriverStatus
+from honcho_core.types.workspaces import QueueGetStatusResponse
 from pydantic import ValidationError
 
 # Adjust path to allow imports from tests.bench
@@ -268,6 +268,7 @@ class UnifiedTestExecutor:
             # Use the core SDK to trigger a dream
             await self.client.core.workspaces.schedule_dream(
                 workspace_id=self.client.workspace_id,
+                session_id=step.session_id,
                 observer=step.observer,
                 observed=step.observed,
                 dream_type=step.dream_type.value,
@@ -284,7 +285,7 @@ class UnifiedTestExecutor:
         await asyncio.sleep(1)
         start = time.time()
         while time.time() - start < timeout:
-            status: DeriverStatus = await self.client.get_deriver_status()
+            status: QueueGetStatusResponse = await self.client.get_queue_status()
             # status structure from schema: DeriverStatus with pending_work_units, in_progress_work_units
             if status.pending_work_units == 0 and status.in_progress_work_units == 0:
                 return

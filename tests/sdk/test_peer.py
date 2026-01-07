@@ -6,7 +6,7 @@ from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.peer import AsyncPeer
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.peer import Peer
-from sdks.python.src.honcho.types import DialecticStreamResponse, Representation
+from sdks.python.src.honcho.types import DialecticStreamResponse
 
 
 @pytest.mark.asyncio
@@ -310,9 +310,7 @@ async def test_peer_working_rep_no_params(
 
         # Get working representation with no parameters
         result = await peer.working_rep()
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         peer = honcho_client.peer(id="test-working-rep-no-params")
@@ -323,9 +321,7 @@ async def test_peer_working_rep_no_params(
 
         # Get working representation with no parameters
         result = peer.working_rep()
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -347,9 +343,7 @@ async def test_peer_working_rep_with_session_string(
 
         # Get working representation scoped to session (as string)
         result = await peer.working_rep(session=session.id)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         peer = honcho_client.peer(id="test-working-rep-session-str")
@@ -360,9 +354,7 @@ async def test_peer_working_rep_with_session_string(
 
         # Get working representation scoped to session (as string)
         result = peer.working_rep(session=session.id)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -387,9 +379,7 @@ async def test_peer_working_rep_with_session_object(
 
         # Get working representation scoped to session (as Session object)
         result = await peer.working_rep(session=session)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         peer = honcho_client.peer(id="test-working-rep-session-obj")
@@ -403,9 +393,7 @@ async def test_peer_working_rep_with_session_object(
 
         # Get working representation scoped to session (as Session object)
         result = peer.working_rep(session=session)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -433,9 +421,7 @@ async def test_peer_working_rep_with_target_string(
 
         # Get working representation of target from observer's perspective (as string)
         result = await observer.working_rep(target=target.id)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         observer = honcho_client.peer(id="test-working-rep-target-str-observer")
@@ -452,9 +438,7 @@ async def test_peer_working_rep_with_target_string(
 
         # Get working representation of target from observer's perspective (as string)
         result = observer.working_rep(target=target.id)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -485,9 +469,7 @@ async def test_peer_working_rep_with_target_object(
 
         # Get working representation of target from observer's perspective (as Peer object)
         result = await observer.working_rep(target=target)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         observer = honcho_client.peer(id="test-working-rep-target-obj-observer")
@@ -507,9 +489,7 @@ async def test_peer_working_rep_with_target_object(
 
         # Get working representation of target from observer's perspective (as Peer object)
         result = observer.working_rep(target=target)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -536,9 +516,7 @@ async def test_peer_working_rep_with_search_query(
 
         # Get working representation with search query
         result = await peer.working_rep(search_query="programming")
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         peer = honcho_client.peer(id="test-working-rep-search-query")
@@ -554,9 +532,7 @@ async def test_peer_working_rep_with_search_query(
 
         # Get working representation with search query
         result = peer.working_rep(search_query="programming")
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -578,22 +554,16 @@ async def test_peer_working_rep_with_size(
             [peer.message(f"Message number {i}") for i in range(10)]
         )
 
-        # Get working representation with custom max_observations
-        result = await peer.working_rep(max_observations=5)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        # Get working representation with custom max_conclusions
+        result = await peer.working_rep(max_conclusions=5)
+        assert isinstance(result, str)
 
-        # Test with different max_observations values
-        result = await peer.working_rep(max_observations=1)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        # Test with different max_conclusions values
+        result = await peer.working_rep(max_conclusions=1)
+        assert isinstance(result, str)
 
-        result = await peer.working_rep(max_observations=100)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        result = await peer.working_rep(max_conclusions=100)
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         peer = honcho_client.peer(id="test-working-rep-size")
@@ -603,21 +573,15 @@ async def test_peer_working_rep_with_size(
         session.add_messages([peer.message(f"Message number {i}") for i in range(10)])
 
         # Get working representation with custom size
-        result = peer.working_rep(max_observations=5)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        result = peer.working_rep(max_conclusions=5)
+        assert isinstance(result, str)
 
-        # Test with different max_observations values
-        result = peer.working_rep(max_observations=1)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        # Test with different max_conclusions values
+        result = peer.working_rep(max_conclusions=1)
+        assert isinstance(result, str)
 
-        result = peer.working_rep(max_observations=100)
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        result = peer.working_rep(max_conclusions=100)
+        assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -647,22 +611,18 @@ async def test_peer_working_rep_with_all_params(
 
         # Get working representation with all parameters
         result = await observer.working_rep(
-            session=session, target=target, search_query="Python", max_observations=10
+            session=session, target=target, search_query="Python", max_conclusions=10
         )
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
         # Test with session as string and target as string
         result = await observer.working_rep(
             session=session.id,
             target=target.id,
             search_query="machine learning",
-            max_observations=5,
+            max_conclusions=5,
         )
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
     else:
         assert isinstance(honcho_client, Honcho)
         observer = honcho_client.peer(id="test-working-rep-all-observer")
@@ -681,19 +641,15 @@ async def test_peer_working_rep_with_all_params(
 
         # Get working representation with all parameters
         result = observer.working_rep(
-            session=session, target=target, search_query="Python", max_observations=10
+            session=session, target=target, search_query="Python", max_conclusions=10
         )
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)
 
         # Test with session as string and target as string
         result = observer.working_rep(
             session=session.id,
             target=target.id,
             search_query="machine learning",
-            max_observations=5,
+            max_conclusions=5,
         )
-        assert isinstance(result, Representation)
-        assert hasattr(result, "explicit")
-        assert hasattr(result, "deductive")
+        assert isinstance(result, str)

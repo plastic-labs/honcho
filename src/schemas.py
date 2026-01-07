@@ -280,24 +280,28 @@ class PeerRepresentationGet(BaseModel):
         None,
         ge=1,
         le=100,
-        description="Only used if `search_query` is provided. Number of semantic-search-retrieved observations to include in the representation",
+        description="Only used if `search_query` is provided. Number of semantic-search-retrieved conclusions to include in the representation",
     )
     search_max_distance: float | None = Field(
         None,
         ge=0.0,
         le=1.0,
-        description="Only used if `search_query` is provided. Maximum distance to search for semantically relevant observations",
+        description="Only used if `search_query` is provided. Maximum distance to search for semantically relevant conclusions",
     )
     include_most_derived: bool | None = Field(
         default=None,
-        description="Only used if `search_query` is provided. Whether to include the most derived observations in the representation",
+        description="Only used if `search_query` is provided. Whether to include the most derived conclusions in the representation",
     )
-    max_observations: int | None = Field(
+    max_conclusions: int | None = Field(
         default=25,
         ge=1,
         le=100,
-        description="Only used if `search_query` is provided. Maximum number of observations to include in the representation",
+        description="Only used if `search_query` is provided. Maximum number of conclusions to include in the representation",
     )
+
+
+class RepresentationResponse(BaseModel):
+    representation: str
 
 
 class PeerCardResponse(BaseModel):
@@ -497,24 +501,23 @@ class DocumentMetadata(BaseModel):
     )
     source_ids: list[str] | None = Field(
         default=None,
-        description="Document IDs of source observations for tree traversal -- required for deductive and inductive observations",
+        description="Document IDs of source documents for tree traversal -- required for deductive and inductive documents",
     )
-    # Deductive observation fields
     premises: list[str] | None = Field(
         default=None,
-        description="Human-readable premise text for display -- only applicable for deductive observations",
+        description="Human-readable premise text for display -- only applicable for deductive documents",
     )
     sources: list[str] | None = Field(
         default=None,
-        description="Human-readable source text for display -- only applicable for inductive observations",
+        description="Human-readable source text for display -- only applicable for inductive documents",
     )
     pattern_type: str | None = Field(
         default=None,
-        description="Type of pattern identified (preference, behavior, personality, tendency, correlation) -- only applicable for inductive observations",
+        description="Type of pattern identified (preference, behavior, personality, tendency, correlation) -- only applicable for inductive documents",
     )
     confidence: str | None = Field(
         default=None,
-        description="Confidence level (high, medium, low) -- only applicable for inductive observations",
+        description="Confidence level (high, medium, low) -- only applicable for inductive documents",
     )
 
 
@@ -537,7 +540,7 @@ class DocumentCreate(DocumentBase):
     # Tree linkage field
     source_ids: list[str] | None = Field(
         default=None,
-        description="Document IDs of source/premise observations -- for deductive and inductive observations",
+        description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
 
 
@@ -625,26 +628,6 @@ class ConclusionBatchCreate(BaseModel):
         max_length=100,
         validation_alias=AliasChoices("conclusions", "observations"),
     )
-
-
-class ObservationGet(ConclusionGet):
-    """Deprecated: use ConclusionGet."""
-
-
-class Observation(Conclusion):
-    """Deprecated: use Conclusion."""
-
-
-class ObservationQuery(ConclusionQuery):
-    """Deprecated: use ConclusionQuery."""
-
-
-class ObservationCreate(ConclusionCreate):
-    """Deprecated: use ConclusionCreate."""
-
-
-class ObservationBatchCreate(ConclusionBatchCreate):
-    """Deprecated: use ConclusionBatchCreate."""
 
 
 class MessageSearchOptions(BaseModel):
@@ -787,7 +770,7 @@ class ScheduleDreamRequest(BaseModel):
             None,
             description="Optional focus mode to bias the dream toward specific reasoning: "
             + "'deduction' prioritizes logical inferences from explicit facts, "
-            + "'induction' prioritizes pattern recognition across observations, "
+            + "'induction' prioritizes pattern recognition across conclusions, "
             + "'knowledge_update' detects when facts have changed over time",
         )
     )

@@ -1092,7 +1092,7 @@ def test_get_session_context_with_peer_target(
     assert "peer_card" in data
     # Representation should be present
     assert data["peer_representation"] is not None
-    assert isinstance(data["peer_representation"], dict)
+    assert isinstance(data["peer_representation"], str)
 
 
 def test_get_session_context_with_peer_perspective(
@@ -1331,7 +1331,7 @@ def test_get_session_context_with_all_representation_params(
     assert "peer_representation" in data
     assert "peer_card" in data
     # Validate representation structure
-    assert isinstance(data["peer_representation"], dict)
+    assert isinstance(data["peer_representation"], str)
 
 
 def test_get_session_context_response_structure(

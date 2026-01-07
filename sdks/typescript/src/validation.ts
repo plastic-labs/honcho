@@ -14,7 +14,7 @@ import { z } from 'zod'
 export const HonchoConfigSchema = z.object({
   apiKey: z.string().optional(),
   environment: z.enum(['local', 'production']).optional(),
-  baseURL: z.string().url('Base URL must be a valid URL').optional(),
+  baseURL: z.url('Base URL must be a valid URL').optional(),
   workspaceId: z
     .string()
     .min(1, 'Workspace ID must be a non-empty string')
@@ -174,11 +174,11 @@ export const RepresentationOptionsSchema = z.object({
     .max(1.0, 'searchMaxDistance must be at most 1.0')
     .optional(),
   includeMostDerived: z.boolean().optional(),
-  maxObservations: z
+  maxConclusions: z
     .number()
     .int()
-    .min(1, 'maxObservations must be at least 1')
-    .max(100, 'maxObservations must be at most 100')
+    .min(1, 'maxConclusions must be at least 1')
+    .max(100, 'maxConclusions must be at most 100')
     .optional(),
 })
 
@@ -224,7 +224,7 @@ export const ContextParamsSchema = z
 /**
  * Schema for deriver status options.
  */
-export const DeriverStatusOptionsSchema = z.object({
+export const QueueStatusOptionsSchema = z.object({
   observer: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   sender: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
@@ -269,9 +269,9 @@ export const FileUploadSchema = z.object({
 })
 
 /**
- * Schema for working representation parameters.
+ * Schema for get representation parameters.
  */
-export const WorkingRepParamsSchema = z.object({
+export const GetRepresentationParamsSchema = z.object({
   peer: z.union([z.string(), z.object({ id: z.string() })]),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   options: RepresentationOptionsSchema.extend({
@@ -280,9 +280,9 @@ export const WorkingRepParamsSchema = z.object({
 })
 
 /**
- * Schema for peer working representation parameters.
+ * Schema for peer get representation parameters.
  */
-export const PeerWorkingRepParamsSchema = z.object({
+export const PeerGetRepresentationParamsSchema = z.object({
   session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   options: RepresentationOptionsSchema.extend({
@@ -349,9 +349,9 @@ export const LimitSchema = z
   .max(100, 'Limit must be less than or equal to 100')
 
 /**
- * Schema for observation query parameters.
+ * Schema for conclusion query parameters.
  */
-export const ObservationQueryParamsSchema = z.object({
+export const ConclusionQueryParamsSchema = z.object({
   query: SearchQuerySchema,
   top_k: z
     .number()
@@ -380,16 +380,18 @@ export type MessageCreate = z.infer<typeof MessageCreateSchema>
 export type Filters = z.infer<typeof FilterSchema>
 export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>
-export type DeriverStatusOptions = z.infer<typeof DeriverStatusOptionsSchema>
+export type QueueStatusOptions = z.infer<typeof QueueStatusOptionsSchema>
 export type FileUpload = z.infer<typeof FileUploadSchema>
-export type WorkingRepParams = z.infer<typeof WorkingRepParamsSchema>
-export type PeerWorkingRepParams = z.infer<typeof PeerWorkingRepParamsSchema>
+export type GetRepresentationParams = z.infer<
+  typeof GetRepresentationParamsSchema
+>
+export type PeerGetRepresentationParams = z.infer<
+  typeof PeerGetRepresentationParamsSchema
+>
 export type PeerAddition = z.infer<typeof PeerAdditionSchema>
 export type PeerRemoval = z.infer<typeof PeerRemovalSchema>
 export type MessageAddition = z.infer<typeof MessageAdditionSchema>
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export type Limit = z.infer<typeof LimitSchema>
-export type ObservationQueryParams = z.infer<
-  typeof ObservationQueryParamsSchema
->
+export type ConclusionQueryParams = z.infer<typeof ConclusionQueryParamsSchema>

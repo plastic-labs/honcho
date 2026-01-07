@@ -5,9 +5,9 @@ import type { Session } from './session'
  */
 
 /**
- * Observation - external view of a document (theory-of-mind data).
+ * Conclusion - external view of a document (theory-of-mind data).
  */
-export interface Observation {
+export interface Conclusion {
   id: string
   content: string
   observer_id: string
@@ -17,19 +17,19 @@ export interface Observation {
 }
 
 /**
- * Parameters for creating an observation.
+ * Parameters for creating an conclusion.
  */
-export interface ObservationCreateParam {
-  /** The observation content/text */
+export interface ConclusionCreateParam {
+  /** The conclusion content/text */
   content: string
-  /** The session this observation relates to (ID string or Session object) */
+  /** The session this conclusion relates to (ID string or Session object) */
   sessionId: string | Session
 }
 
 /**
- * Parameters for semantic search of observations.
+ * Parameters for semantic search of conclusions.
  */
-export interface ObservationQueryParams {
+export interface ConclusionQueryParams {
   query: string
   top_k?: number
   distance?: number
@@ -41,10 +41,6 @@ export interface ObservationQueryParams {
  */
 export interface DialecticStreamDelta {
   content?: string
-  // Future fields can be added here:
-  // premises?: string[]
-  // tokens?: number
-  // analytics?: Record<string, unknown>
 }
 
 /**

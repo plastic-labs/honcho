@@ -225,7 +225,7 @@ async def chat(
 
 @router.post(
     "/{peer_id}/representation",
-    response_model=dict[str, object],
+    response_model=schemas.RepresentationResponse,
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
@@ -258,11 +258,13 @@ async def get_representation(
             include_most_derived=options.include_most_derived
             if options.include_most_derived is not None
             else False,
-            max_observations=options.max_observations
-            if options.max_observations is not None
+            max_observations=options.max_conclusions
+            if options.max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
         )
-        return {"representation": representation.format_as_markdown()}
+        return schemas.RepresentationResponse(
+            representation=representation.format_as_markdown()
+        )
     except ValueError as e:
         logger.warning(f"Failed to get representation for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer or session not found") from e
@@ -362,23 +364,23 @@ async def get_peer_context(
         None,
         ge=1,
         le=100,
-        description="Only used if `search_query` is provided. Number of semantic-search-retrieved observations to include",
+        description="Only used if `search_query` is provided. Number of semantic-search-retrieved conclusions to include",
     ),
     search_max_distance: float | None = Query(
         None,
         ge=0.0,
         le=1.0,
-        description="Only used if `search_query` is provided. Maximum distance for semantically relevant observations",
+        description="Only used if `search_query` is provided. Maximum distance for semantically relevant conclusions",
     ),
     include_most_derived: bool = Query(
         default=True,
-        description="Whether to include the most derived observations in the representation",
+        description="Whether to include the most derived conclusions in the representation",
     ),
-    max_observations: int | None = Query(
+    max_conclusions: int | None = Query(
         None,
         ge=1,
         le=100,
-        description="Maximum number of observations to include in the representation",
+        description="Maximum number of conclusions to include in the representation",
     ),
     db: AsyncSession = db,
 ):
@@ -407,8 +409,8 @@ async def get_peer_context(
             semantic_search_top_k=search_top_k,
             semantic_search_max_distance=search_max_distance,
             include_most_derived=include_most_derived,
-            max_observations=max_observations
-            if max_observations is not None
+            max_observations=max_conclusions
+            if max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
         )
 

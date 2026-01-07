@@ -83,6 +83,7 @@ class ScheduleDreamAction(TestStep):
     observed: str | None = Field(
         None, description="Observed peer name (defaults to observer if not specified)"
     )
+    session_id: str = Field(..., description="Session ID to scope the dream to")
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
 
 
