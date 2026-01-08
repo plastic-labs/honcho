@@ -91,7 +91,8 @@
                 "pages": [
                   "v2/integrations/crewai",
                   "v2/integrations/langgraph",
-                  "v2/integrations/mcp"
+                  "v2/integrations/mcp",
+                  "v2/integrations/n8n"
                 ]
               },
               {

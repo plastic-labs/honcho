@@ -1,0 +1,520 @@
+---
+title: "n8n"
+icon: 'share-nodes'
+description: "Connect Honcho to your n8n workflows to build intelligent automation workflows and agents that leverage persistent memory across sessions."
+sidebarTitle: 'n8n'
+---
+
+## Quick Start
+
+### Prerequisites
+
+- n8n instance (self-hosted or cloud)
+- Honcho API key ([get one here](https://app.honcho.dev))
+- Basic understanding of n8n workflows
+- Basic understanding of [Honcho architecture](https://docs.honcho.dev/v2/documentation/core-concepts/architecture). Specifically **workspaces**, **sessions**, **peers**, and **messages**.
+
+### Setting Up the HTTP Request Node
+
+The Honcho integration in n8n uses the HTTP Request node to interact with the Honcho API. Here's how to configure it:
+
+1. Add an **HTTP Request** node to your workflow (Core > HTTP Request)
+
+   ![Screenshot: Adding HTTP Request node from Core nodes]
+
+2. Set the **Method** based on your operation (typically `POST` for creating resources, `GET` for retrieving)
+
+3. Set the **URL** to the appropriate Honcho API endpoint. For example, create workspace is `https://api.honcho.dev/v2/workspaces`
+
+4. For authentication, select **Generic Credential Type** and then **Bearer Auth**
+
+5. Click **Create New Credential** and paste your Honcho API key in the Bearer Token field
+
+   ![Screenshot: Bearer Auth credential setup in n8n]
+
+6. Check **Send Body** and select **JSON** as the Body Content Type when creating resources
+
+<Tip>
+**Why can't I use n8n's memory node?**
+
+When n8n refers to "memory" in AI nodes, they typically mean vector databases for RAG-style retrieval. Honcho is more then a database. It offers richer context and reasoning than similarity search alone. Read more about our approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning).
+
+**Why can't I import Honcho as an n8n node?**
+
+The HTTP Request nodes get the job done, but we know they're clunky. If there's demand, we'd love to build a native integration. [Reach out](https://discord.gg/honcho) and let us know!
+</Tip>
+---
+
+## Step-by-Step Tutorial
+
+We'll build a workflow that ingests Gmail emails into Honcho, then uses that memory to power a conversational AI chatbot.
+
+The workflow has two parts:
+
+1. **Data Ingestion**: Manual trigger → Workspace → Session → Gmail → Extract Peers → Create Peers → Add to Session → Create Messages
+
+2. **AI Chat Interface**: Chat Trigger → Agent (with LLM and Honcho tools)
+
+The Agent uses Honcho's `get_context()` and `chat()` endpoints to retrieve relevant information about email participants, enabling contextual conversations about your email data.
+
+![Screenshot: Complete workflow overview showing both data ingestion and chat sections]
+
+
+<Note>
+**Tutorial Scope:** This loads a single Gmail message for instructional purposes. See [Next Steps](#next-steps) for handling multiple messages or real-time ingestion.
+</Note>
+
+### Part 1: Loading Email Data into Honcho
+
+These nodes handle the initial setup and data ingestion:
+
+<Tip>
+**Pro Tip: Copy from API Playground**
+
+The fastest way to configure any Honcho endpoint is to copy the curl command directly from the [app.honcho.dev](https://app.honcho.dev) API playground:
+
+1. Navigate to the endpoint you want to use in the API playground
+2. Fill in your parameters, verify the results and click **Copy as cURL**
+3. Then in n8n use the **import cURL** button to directly import the request (be sure to verify the bearer token imported correctly)
+
+![screenshot of button]
+</Tip>
+
+#### Step 1: Manual Trigger
+
+Start with a **Manual Trigger** node to execute the workflow on demand. This is useful for initial setup and testing before automating with a Gmail trigger.
+
+#### Step 2: Get or Create Workspace
+
+1. Add an **HTTP Request** node
+2. **Method**: `POST`
+3. **URL**: `https://api.honcho.dev/v2/workspaces`
+4. **Body** (JSON): `{ "id": "email-test", "metadata": {} }`
+
+<Tip>
+**Verify Your Data in Honcho**
+As you build the data ingestion workflow, verify everything is created correctly in your [Honcho instance](app.honcho.dev/).
+</Tip>
+
+#### Step 3: Get or Create Session
+
+1. Add another **HTTP Request** node
+2. **Method**: `POST`
+3. **URL**: `https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions`
+4. **Body** (JSON): `{ "id": "new_session" }`
+
+#### Step 4: Get Gmail Message
+
+1. Add a **Gmail** node
+2. **Operation**: Get
+3. **Message ID**: Your target message ID (a string of letters & numbers)
+4. Configure your Gmail OAuth2 credentials
+
+<Note>
+**Finding the Gmail Message ID**
+The easiest way to find a Gmail message ID is to use n8n's Gmail Get Many operation. Temporarily add it, set the limit to 1, and execute. Use the message ID in the output for the message ID field.
+
+In this tutorial, we load in only a single message to demonstrate the workflow. See "Next Steps" for handling multiple messages.
+</Note>
+
+![Screenshot: Gmail node configuration]
+
+#### Step 5: Extract Peers from Email
+
+1. Add a **Code** node (Python)
+2. This extracts all participants (From, To, Cc, Bcc) as peers:
+
+```python
+from_field = _items[0]["json"].get("From", "")
+to_field = _items[0]["json"].get("To", "")
+cc_field = _items[0]["json"].get("Cc", "")
+bcc_field = _items[0]["json"].get("Bcc", "")
+
+all_entries = []
+
+if from_field:
+    all_entries.append(from_field)
+if to_field:
+    all_entries.extend([s.strip() for s in to_field.split(",")])
+if cc_field:
+    all_entries.extend([s.strip() for s in cc_field.split(",")])
+if bcc_field:
+    all_entries.extend([s.strip() for s in bcc_field.split(",")])
+
+names = [entry.split("<")[0].strip().replace(" ", "_") for entry in all_entries if entry]
+
+return [{"json": {"name": name}} for name in names]
+```
+
+#### Step 6: Get or Create Peer
+
+1. Add an **HTTP Request** node
+2. **Method**: `POST`
+3. **URL**: `https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/peers`
+4. **Body**: `{ "id": "{{ $json.name }}" }`
+
+This creates a peer for each email participant, allowing Honcho to build understanding of each person.
+
+#### Step 7: Add Peers to Session
+
+1. Add an **HTTP Request** node
+2. **Method**: `POST`
+3. **URL**: `https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $json.id }}/peers`
+4. **Body**: `{ "{{ $json.id }}": {} }`
+
+#### Step 8: Limit Node
+
+Add a **Limit** node to control the flow so the message is only added once to the sesson.
+
+#### Step 9: Create Message for Session
+
+1. Add an **HTTP Request** node
+2. **Method**: `POST`
+3. **URL**: `https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/`
+4. **Body** (JSON): `{ "messages": [{ "content": "{{ $('Get a message').item.json.snippet }}", "peer_id": "{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/\\s+/g, '_') }}" }] }`
+
+![Screenshot: Data ingestion section of workflow with all nodes connected]
+
+### Part 2: Building a Stateful AI Chatbot
+
+Now that data is loaded into Honcho, create a chat interface that leverages this memory:
+
+#### Step 1: Chat Trigger
+
+Add a **When chat message received** node (from LangChain nodes) to create an interactive chat interface.
+
+#### Step 2: AI Agent
+
+1. Add an **Agent** node (LangChain)
+2. Configure the system message (replacing peer name with the individual who sent the email):
+```
+You are a helpful assistant that will get data context from the tool.
+
+If the user asks about [peer name], just execute the tools available to you to learn more.
+
+Today's date is this if user asks for dated or latest data: {{ $now }}
+```
+
+<Warning>
+**Current Limitation: Hardcoded Peer Names**
+The system prompt above references a specific peer name as an example. This is a simplified approach for demonstration purposes. The workflow as provided has hardcoded peer names in both the system prompt and the tool URLs.
+To make this production-ready, you'll need to:
+
+**Dynamic tool URLs**: Modify the HTTP Request Tool nodes to accept the peer name as a parameter rather than hardcoding the peer in the URL
+
+**Better prompting**: Update the system prompt to instruct the agent to identify peer names from user queries and pass them to tools dynamically
+
+**Tool descriptions**: Add clear descriptions to your tools explaining what parameters they accept
+
+**Add more data**: Honcho needs more data to infer from any of the peers in a workspace.
+
+</Warning>
+
+#### Step 3: Connect LLM
+
+Add an **OpenAI Chat Model** node (or your preferred LLM) and connect it to the Agent.
+
+#### Step 4: Add Honcho Tools
+
+Create HTTP Request Tool nodes for Honcho's key capabilities:
+
+**Get Context Tool:**
+- **Method**: `GET`
+- **URL**: `https://api.honcho.dev/v2/workspaces/{workspace}/peers/{peer_id}/context`
+- Returns comprehensive context about a peer based on all their interactions
+
+**Chat Tool:**
+- **Method**: `POST`
+- **URL**: `https://api.honcho.dev/v2/workspaces/{workspace}peers/{peer_id}/chat`
+- **Body**: `{ "query": "What do I know about [peer]?", "stream": "false" }`
+- Enables natural language queries about peers
+
+Connect both tools to the Agent node.
+
+![Screenshot: AI Agent section with LLM and Honcho tools connected]
+
+---
+
+## Import the Workflow
+
+Want to skip the manual setup? Import this workflow directly into n8n:
+
+1. In n8n, go to **Workflows** → **Import from File** (or **Import from URL**)
+2. Paste the JSON below or upload the file
+
+<Accordion title="Click to expand workflow JSON">
+```json
+{
+  "name": "Honcho Empowered Email AI Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "options": {}
+      },
+      "id": "c6abb6a2-bc2a-4b2c-98c8-4de628c2776d",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [2336, 240],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a helpful assistant that will get data context from the tool.\n\nIf the user asks about [peer], just execute the tools available to you to learn more. \n\nToday date is this if user ask for dated or latest data: {{ $now }}"
+        }
+      },
+      "id": "99153412-5aa8-4ab0-918e-172802fc8590",
+      "name": "New RAG Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [2464, 16],
+      "typeVersion": 1.7
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e569097d-79b8-4648-86d5-67298c2a25d6",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "position": [2176, 16],
+      "webhookId": "c91764c2-0b51-4025-ad74-d5f44127aa5a",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/peers",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{ "name": "id", "value": "={{ $json.name }}" }]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3072, -464],
+      "id": "006cb877-3d32-4b0e-b302-608de9944738",
+      "name": "Get or Create Peer"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "19b8fee837985953"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [2704, -464],
+      "id": "d9e1c9b7-91e8-40a7-aff9-0259f5e1c00e",
+      "name": "Get a message",
+      "webhookId": "4ab02540-af03-405d-a6eb-dfcaa76477fc"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{ "name": "id", "value": "=new_session" }]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2544, -464],
+      "id": "7c0f354a-29a9-4ccd-8dcc-74e973f7dfbc",
+      "name": "Get or Create Session"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [2144, -464],
+      "id": "60620b7b-4d13-42f8-bd58-3f5ca7adf0ab",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.honcho.dev/v2/workspaces",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"id\": \"email-test\",\n  \"metadata\": {}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2336, -464],
+      "id": "96dd4f2c-32dd-4045-8a8e-0ae210a615d2",
+      "name": "Get or Create Workspace"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"messages\": [\n    {\n      \"content\": \"{{ $('Get a message').item.json.snippet }}\",\n      \"peer_id\": \"{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/\\s+/g, '_') }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3632, -464],
+      "id": "c576892b-3873-4695-924d-f2454a174f0b",
+      "name": "Create Message for Session"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $json.id }}/peers",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"{{ $json.id }}\": {}\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3264, -464],
+      "id": "95643b6a-5131-4794-bc35-fa05aaf5c9d8",
+      "name": "Add Peers to Session"
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "from_field = _items[0][\"json\"].get(\"From\", \"\")\nto_field = _items[0][\"json\"].get(\"To\", \"\")\ncc_field = _items[0][\"json\"].get(\"Cc\", \"\")\nbcc_field = _items[0][\"json\"].get(\"Bcc\", \"\")\n\nall_entries = []\n\nif from_field:\n    all_entries.append(from_field)\nif to_field:\n    all_entries.extend([s.strip() for s in to_field.split(\",\")])\nif cc_field:\n    all_entries.extend([s.strip() for s in cc_field.split(\",\")])\nif bcc_field:\n    all_entries.extend([s.strip() for s in bcc_field.split(\",\")])\n\nnames = [entry.split(\"<\")[0].strip().replace(\" \", \"_\") for entry in all_entries if entry]\n\nreturn [{\"json\": {\"name\": name}} for name in names]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, -464],
+      "id": "3872cf41-b7c0-458e-be26-6813a030e9e7",
+      "name": "Pull the peers from the Email"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [3440, -464],
+      "id": "156d17b1-ee83-4b2f-b0bb-21b591d77512",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.honcho.dev/v2/workspaces/(workspace)peers/{peer}/context",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [2752, 224],
+      "id": "0796e6a3-6035-4160-b6a4-9df5ba13ada6",
+      "name": "Get_Context"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.honcho.dev/v2/workspaces/{workspace}/peers/{peer}/chat",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "query", "value": "What do I know about [peer]?" },
+            { "name": "stream", "value": "false" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [2624, 224],
+      "id": "9d41c1a3-c37a-4ac5-b840-931043becfa8",
+      "name": ".chat()"
+    }
+  ],
+  "connections": {
+    "New RAG Agent": { "main": [[]] },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [[{ "node": "New RAG Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "When chat message received": {
+      "main": [[{ "node": "New RAG Agent", "type": "main", "index": 0 }]]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [[{ "node": "Get or Create Workspace", "type": "main", "index": 0 }]]
+    },
+    "Get or Create Workspace": {
+      "main": [[{ "node": "Get or Create Session", "type": "main", "index": 0 }]]
+    },
+    "Get a message": {
+      "main": [[{ "node": "Pull the peers from the Email", "type": "main", "index": 0 }]]
+    },
+    "Get or Create Session": {
+      "main": [[{ "node": "Get a message", "type": "main", "index": 0 }]]
+    },
+    "Get or Create Peer": {
+      "main": [[{ "node": "Add Peers to Session", "type": "main", "index": 0 }]]
+    },
+    "Add Peers to Session": {
+      "main": [[{ "node": "Limit", "type": "main", "index": 0 }]]
+    },
+    "Pull the peers from the Email": {
+      "main": [[{ "node": "Get or Create Peer", "type": "main", "index": 0 }]]
+    },
+    "Limit": {
+      "main": [[{ "node": "Create Message for Session", "type": "main", "index": 0 }]]
+    },
+    "Get_Context": {
+      "ai_tool": [[{ "node": "New RAG Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    ".chat()": {
+      "ai_tool": [[{ "node": "New RAG Agent", "type": "ai_tool", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
+```
+
+</Accordion>
+
+<Note>
+**Important:** After importing, you'll need to :
+- Add your Honcho API key to the Bearer Auth credential
+- Connect your Gmail OAuth2 credential
+- Add your OpenAI API key (or swap for your preferred LLM)
+- Fix the AI Agent paths and prompts (see [Step 2](#step-2%3A-ai-agent))
+
+</Note>
+
+---
+
+## Next Steps
+
+Once you have the basic workflow running, consider these enhancements:
+
+- **Load more messages**: Use Gmail's "Get All" operation to load entire conversation threads, mapping each to a Honcho session for better reasoning
+- **Make it real-time**: Add a **Gmail Trigger** node to automatically ingest new emails as they arrive
+Dynamic peer lookups: Replace hardcoded peer names in tool URLs with expressions that extract names from user queries
+- **Add error handling**: Connect an **Error Trigger** node with notifications (Email, Slack) and retry logic
+- **Expand to other data sources**: Honcho works with Slack messages, CRM interactions, support tickets, meeting notes, and more
+
+---
+
+## Related Resources
+
+- [Honcho Architecture](https://docs.honcho.dev/v2/documentation/core-concepts/architecture) - Understand workspaces, sessions, peers, and messages
+- [Get Context](https://docs.honcho.dev/v2/documentation/core-concepts/features/get-context) - Learn about retrieving formatted conversation context
+- [Dialectic API](https://docs.honcho.dev/v2/documentation/core-concepts/features/dialectic) - Query peer representations for deeper understanding
+- [API Reference](https://docs.honcho.dev/v2/api-reference) - Complete API documentation
+
+---
