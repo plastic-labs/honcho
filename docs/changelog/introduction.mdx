@@ -27,7 +27,13 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v2.5.0 (Current)">
+        <Update label="v2.5.1 (Current)">
+        ### Fixed
+
+        - Backwards compatibility for `message_ids` field in documents to handle legacy tuple format
+        </Update>
+
+        <Update label="v2.5.0">
         ### Added
 
         - Message level configurations
@@ -408,6 +414,10 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
             - Peer level get_context method
             - `ObservationScope` object to perform CRUD operations on observations
             - Representation object for WorkingRepresentations
+
+            ### Changed
+
+            - methods that take IDs, can all optionally take an object of the same type
         </Update>
         <Update label="v1.5.0">
         ### Added
@@ -491,6 +501,10 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
             - Peer level get_context method
             - `ObservationScope` object to perform CRUD operations on observations
             - Representation object for WorkingRepresentations
+
+            ### Changed
+
+            - methods that take IDs, can all optionally take an object of the same type
         </Update>
         <Update label="v1.5.0">
         ### Added

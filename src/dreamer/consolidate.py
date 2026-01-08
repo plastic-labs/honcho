@@ -15,6 +15,7 @@ from src.utils.queue_payload import DreamPayload
 from src.utils.representation import (
     ExplicitObservation,
     Representation,
+    flatten_message_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -202,7 +203,7 @@ async def _consolidate_cluster(
         # NOTE: other kinds of observations here in the future
 
         metadata = schemas.DocumentMetadata(
-            message_ids=obs.message_ids,
+            message_ids=flatten_message_ids(obs.message_ids),
             message_created_at=format_datetime_utc(obs.created_at),
             premises=premises,
         )

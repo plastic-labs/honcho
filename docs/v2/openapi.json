@@ -9,14 +9,17 @@
       "url": "https://honcho.dev/",
       "email": "hello@plasticlabs.ai"
     },
-    "version": "2.5.0"
+    "version": "2.5.1"
   },
   "servers": [
     {
       "url": "http://localhost:8000",
       "description": "Local Development Server"
     },
-    { "url": "https://demo.honcho.dev", "description": "Demo Server" },
+    {
+      "url": "https://demo.honcho.dev",
+      "description": "Demo Server"
+    },
     {
       "url": "https://api.honcho.dev",
       "description": "Production SaaS Platform"
@@ -25,7 +28,9 @@
   "paths": {
     "/v2/workspaces": {
       "post": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Get Or Create Workspace",
         "description": "Get a Workspace by ID.\n\nIf workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the workspace_id from the JWT.",
         "operationId": "get_or_create_workspace_v2_workspaces_post",
@@ -45,7 +50,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Workspace" }
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
               }
             }
           },
@@ -53,21 +60,33 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         },
-        "security": [{ "HTTPBearer": [] }]
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/v2/workspaces/list": {
       "post": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Get All Workspaces",
         "description": "Get all Workspaces",
         "operationId": "get_all_workspaces_v2_workspaces_list_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "page",
@@ -102,8 +121,12 @@
             "application/json": {
               "schema": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/WorkspaceGet" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/WorkspaceGet"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
                 "description": "Filtering and pagination options for the workspaces list",
                 "title": "Options"
@@ -116,7 +139,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Workspace_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Workspace_"
+                }
               }
             }
           },
@@ -124,7 +149,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -133,11 +160,17 @@
     },
     "/v2/workspaces/{workspace_id}": {
       "put": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Update Workspace",
         "description": "Update a Workspace",
         "operationId": "update_workspace_v2_workspaces__workspace_id__put",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -167,7 +200,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Workspace" }
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
               }
             }
           },
@@ -175,18 +210,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "delete": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Delete Workspace",
         "description": "Delete a Workspace",
         "operationId": "delete_workspace_v2_workspaces__workspace_id__delete",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -205,7 +248,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Workspace" }
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
               }
             }
           },
@@ -213,7 +258,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -222,11 +269,17 @@
     },
     "/v2/workspaces/{workspace_id}/search": {
       "post": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Search Workspace",
         "description": "Search a Workspace",
         "operationId": "search_workspace_v2_workspaces__workspace_id__search_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -258,7 +311,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Message" },
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
                   "title": "Response Search Workspace V2 Workspaces  Workspace Id  Search Post"
                 }
               }
@@ -268,7 +323,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -277,11 +334,17 @@
     },
     "/v2/workspaces/{workspace_id}/deriver/status": {
       "get": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Get Deriver Status",
         "description": "Get the deriver processing status, optionally scoped to an observer, sender, and/or session",
         "operationId": "get_deriver_status_v2_workspaces__workspace_id__deriver_status_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -299,7 +362,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Optional observer ID to filter by",
               "title": "Observer Id"
             },
@@ -310,7 +380,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Optional sender ID to filter by",
               "title": "Sender Id"
             },
@@ -321,7 +398,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Optional session ID to filter by",
               "title": "Session Id"
             },
@@ -333,7 +417,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/DeriverStatus" }
+                "schema": {
+                  "$ref": "#/components/schemas/DeriverStatus"
+                }
               }
             }
           },
@@ -341,7 +427,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -350,11 +438,17 @@
     },
     "/v2/workspaces/{workspace_id}/trigger_dream": {
       "post": {
-        "tags": ["workspaces"],
+        "tags": [
+          "workspaces"
+        ],
         "summary": "Trigger Dream",
         "description": "Manually trigger a dream task immediately for a specific collection.\n\nThis endpoint bypasses all automatic dream conditions (document threshold,\nminimum hours between dreams) and executes the dream task immediately without delay.",
         "operationId": "trigger_dream_v2_workspaces__workspace_id__trigger_dream_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -380,12 +474,16 @@
           }
         },
         "responses": {
-          "204": { "description": "Successful Response" },
+          "204": {
+            "description": "Successful Response"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -394,11 +492,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/list": {
       "post": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Get Peers",
         "description": "Get All Peers for a Workspace",
         "operationId": "get_peers_v2_workspaces__workspace_id__peers_list_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -444,8 +548,12 @@
             "application/json": {
               "schema": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/PeerGet" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/PeerGet"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
                 "description": "Filtering options for the peers list",
                 "title": "Options"
@@ -458,7 +566,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Peer_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Peer_"
+                }
               }
             }
           },
@@ -466,7 +576,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -475,11 +587,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers": {
       "post": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Get Or Create Peer",
         "description": "Get a Peer by ID\n\nIf peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the peer_id from the JWT.",
         "operationId": "get_or_create_peer_v2_workspaces__workspace_id__peers_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -509,7 +627,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Peer" }
+                "schema": {
+                  "$ref": "#/components/schemas/Peer"
+                }
               }
             }
           },
@@ -517,7 +637,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -526,11 +648,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}": {
       "put": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Update Peer",
         "description": "Update a Peer's name and/or metadata",
         "operationId": "update_peer_v2_workspaces__workspace_id__peers__peer_id__put",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -571,7 +699,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Peer" }
+                "schema": {
+                  "$ref": "#/components/schemas/Peer"
+                }
               }
             }
           },
@@ -579,7 +709,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -588,11 +720,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/sessions": {
       "post": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Get Sessions For Peer",
         "description": "Get All Sessions for a Peer",
         "operationId": "get_sessions_for_peer_v2_workspaces__workspace_id__peers__peer_id__sessions_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -649,8 +787,12 @@
             "application/json": {
               "schema": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/SessionGet" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/SessionGet"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
                 "description": "Filtering options for the sessions list",
                 "title": "Options"
@@ -663,7 +805,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Session_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Session_"
+                }
               }
             }
           },
@@ -671,7 +815,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -680,10 +826,16 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/chat": {
       "post": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Chat",
         "operationId": "chat_v2_workspaces__workspace_id__peers__peer_id__chat_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -726,9 +878,14 @@
               "application/json": {
                 "schema": {
                   "properties": {
-                    "content": { "title": "Content", "type": "string" }
+                    "content": {
+                      "title": "Content",
+                      "type": "string"
+                    }
                   },
-                  "required": ["content"],
+                  "required": [
+                    "content"
+                  ],
                   "title": "DialecticResponse",
                   "type": "object"
                 }
@@ -740,7 +897,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -749,11 +908,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/representation": {
       "post": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Get Working Representation",
         "description": "Get a peer's working representation for a session.\n\nIf a session_id is provided in the body, we get the working representation of the peer in that session.\nIf a target is provided, we get the representation of the target from the perspective of the peer.\nIf no target is provided, we get the omniscient Honcho representation of the peer.",
         "operationId": "get_working_representation_v2_workspaces__workspace_id__peers__peer_id__representation_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -806,7 +971,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -815,11 +982,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/card": {
       "get": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Get Peer Card",
         "description": "Get a peer card for a specific peer relationship.\n\nReturns the peer card that the observer peer has for the target peer if it exists.\nIf no target is specified, returns the observer's own peer card.",
         "operationId": "get_peer_card_v2_workspaces__workspace_id__peers__peer_id__card_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -848,7 +1021,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "The peer whose card to retrieve. If not provided, returns the observer's own card",
               "title": "Target"
             },
@@ -860,7 +1040,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PeerCardResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/PeerCardResponse"
+                }
               }
             }
           },
@@ -868,18 +1050,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "put": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Set Peer Card",
         "description": "Set a peer card for a specific peer relationship.\n\nSets the peer card that the observer peer has for the target peer.\nIf no target is specified, sets the observer's own peer card.",
         "operationId": "set_peer_card_v2_workspaces__workspace_id__peers__peer_id__card_put",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -908,7 +1098,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "The peer whose card to set. If not provided, sets the observer's own card",
               "title": "Target"
             },
@@ -931,7 +1128,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PeerCardResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/PeerCardResponse"
+                }
               }
             }
           },
@@ -939,7 +1138,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -948,11 +1149,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/context": {
       "get": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Get Peer Context",
         "description": "Get context for a peer, including their representation and peer card.\n\nThis endpoint returns the working representation and peer card for a peer.\nIf a target is specified, returns the context for the target from the\nobserver peer's perspective. If no target is specified, returns the\npeer's own context (self-observation).\n\nThis is useful for getting all the context needed about a peer without\nmaking multiple API calls.",
         "operationId": "get_peer_context_v2_workspaces__workspace_id__peers__peer_id__context_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -981,7 +1188,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "The target peer to get context for. If not provided, returns the peer's own context (self-observation)",
               "title": "Target"
             },
@@ -992,7 +1206,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Optional query to curate the representation around semantic search results",
               "title": "Search Query"
             },
@@ -1004,8 +1225,14 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "integer", "maximum": 100, "minimum": 1 },
-                { "type": "null" }
+                {
+                  "type": "integer",
+                  "maximum": 100,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Only used if `search_query` is provided. Number of semantic-search-retrieved observations to include",
               "title": "Search Top K"
@@ -1018,8 +1245,14 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "number", "maximum": 1.0, "minimum": 0.0 },
-                { "type": "null" }
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Only used if `search_query` is provided. Maximum distance for semantically relevant observations",
               "title": "Search Max Distance"
@@ -1044,8 +1277,14 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "integer", "maximum": 100, "minimum": 1 },
-                { "type": "null" }
+                {
+                  "type": "integer",
+                  "maximum": 100,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Maximum number of observations to include in the representation",
               "title": "Max Observations"
@@ -1058,7 +1297,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PeerContext" }
+                "schema": {
+                  "$ref": "#/components/schemas/PeerContext"
+                }
               }
             }
           },
@@ -1066,7 +1307,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1075,11 +1318,17 @@
     },
     "/v2/workspaces/{workspace_id}/peers/{peer_id}/search": {
       "post": {
-        "tags": ["peers"],
+        "tags": [
+          "peers"
+        ],
         "summary": "Search Peer",
         "description": "Search a Peer",
         "operationId": "search_peer_v2_workspaces__workspace_id__peers__peer_id__search_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1122,7 +1371,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Message" },
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
                   "title": "Response Search Peer V2 Workspaces  Workspace Id  Peers  Peer Id  Search Post"
                 }
               }
@@ -1132,7 +1383,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1141,11 +1394,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions": {
       "post": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Get Or Create Session",
         "description": "Get a specific session in a workspace.\n\nIf session_id is provided as a query parameter, it verifies the session is in the workspace.\nOtherwise, it uses the session_id from the JWT for verification.",
         "operationId": "get_or_create_session_v2_workspaces__workspace_id__sessions_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1175,7 +1434,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
               }
             }
           },
@@ -1183,7 +1444,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1192,11 +1455,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/list": {
       "post": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Get Sessions",
         "description": "Get All Sessions in a Workspace",
         "operationId": "get_sessions_v2_workspaces__workspace_id__sessions_list_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1242,8 +1511,12 @@
             "application/json": {
               "schema": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/SessionGet" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/SessionGet"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
                 "description": "Filtering and pagination options for the sessions list",
                 "title": "Options"
@@ -1256,7 +1529,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Session_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Session_"
+                }
               }
             }
           },
@@ -1264,7 +1539,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1273,11 +1550,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}": {
       "put": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Update Session",
         "description": "Update the metadata of a Session",
         "operationId": "update_session_v2_workspaces__workspace_id__sessions__session_id__put",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1318,7 +1601,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
               }
             }
           },
@@ -1326,18 +1611,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "delete": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Delete Session",
         "description": "Delete a session and all associated data.\n\nThe session is marked as inactive immediately and returns 202 Accepted. The actual\ndeletion of all related data (messages, embeddings, documents, etc.) happens\nasynchronously via the queue with retry support.\n\nThis action cannot be undone.",
         "operationId": "delete_session_v2_workspaces__workspace_id__sessions__session_id__delete",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1365,13 +1658,19 @@
         "responses": {
           "202": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1380,11 +1679,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/clone": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Clone Session",
         "description": "Clone a session, optionally up to a specific message",
         "operationId": "clone_session_v2_workspaces__workspace_id__sessions__session_id__clone_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1413,7 +1718,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Message ID to cut off the clone at",
               "title": "Message Id"
             },
@@ -1425,7 +1737,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
               }
             }
           },
@@ -1433,7 +1747,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1442,11 +1758,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/peers": {
       "post": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Add Peers To Session",
         "description": "Add peers to a session",
         "operationId": "add_peers_to_session_v2_workspaces__workspace_id__sessions__session_id__peers_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1491,7 +1813,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
               }
             }
           },
@@ -1499,18 +1823,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "put": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Set Session Peers",
         "description": "Set the peers in a session",
         "operationId": "set_session_peers_v2_workspaces__workspace_id__sessions__session_id__peers_put",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1555,7 +1887,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
               }
             }
           },
@@ -1563,18 +1897,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "delete": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Remove Peers From Session",
         "description": "Remove peers from a session",
         "operationId": "remove_peers_from_session_v2_workspaces__workspace_id__sessions__session_id__peers_delete",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1605,7 +1947,9 @@
             "application/json": {
               "schema": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "List of peer IDs to remove from the session",
                 "title": "Peers"
               }
@@ -1617,7 +1961,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
               }
             }
           },
@@ -1625,18 +1971,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Get Session Peers",
         "description": "Get peers from a session",
         "operationId": "get_session_peers_v2_workspaces__workspace_id__sessions__session_id__peers_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1693,7 +2047,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Peer_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Peer_"
+                }
               }
             }
           },
@@ -1701,7 +2057,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1710,11 +2068,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Get Peer Config",
         "description": "Get the configuration for a peer in a session",
         "operationId": "get_peer_config_v2_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1755,7 +2119,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SessionPeerConfig" }
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPeerConfig"
+                }
               }
             }
           },
@@ -1763,18 +2129,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "post": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Set Peer Config",
         "description": "Set the configuration for a peer in a session",
         "operationId": "set_peer_config_v2_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1824,13 +2198,19 @@
         "responses": {
           "200": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1839,11 +2219,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/context": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Get Session Context",
         "description": "Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.\nIf not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit\nto the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than\nthis. If the caller does not want a summary, we allocate all the tokens to recent messages.",
         "operationId": "get_session_context_v2_workspaces__workspace_id__sessions__session_id__context_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -1873,8 +2259,13 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "integer", "maximum": 100000 },
-                { "type": "null" }
+                {
+                  "type": "integer",
+                  "maximum": 100000
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within 100000 tokens)",
               "title": "Tokens"
@@ -1886,7 +2277,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "The most recent message, used to fetch semantically relevant observations",
               "title": "Last Message"
             },
@@ -1909,7 +2307,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.",
               "title": "Peer Target"
             },
@@ -1920,7 +2325,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
               "title": "Peer Perspective"
             },
@@ -1944,8 +2356,14 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "integer", "maximum": 100, "minimum": 1 },
-                { "type": "null" }
+                {
+                  "type": "integer",
+                  "maximum": 100,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Only used if `last_message` is provided. The number of semantic-search-retrieved observations to include in the representation",
               "title": "Search Top K"
@@ -1958,8 +2376,14 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "number", "maximum": 1.0, "minimum": 0.0 },
-                { "type": "null" }
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Only used if `last_message` is provided. The maximum distance to search for semantically relevant observations",
               "title": "Search Max Distance"
@@ -1984,8 +2408,14 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "integer", "maximum": 100, "minimum": 1 },
-                { "type": "null" }
+                {
+                  "type": "integer",
+                  "maximum": 100,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
               ],
               "description": "Only used if `last_message` is provided. The maximum number of observations to include in the representation",
               "title": "Max Observations"
@@ -1998,7 +2428,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SessionContext" }
+                "schema": {
+                  "$ref": "#/components/schemas/SessionContext"
+                }
               }
             }
           },
@@ -2006,7 +2438,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2015,11 +2449,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/summaries": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Get Session Summaries",
         "description": "Get available summaries for a session.\n\nReturns both short and long summaries if available, including metadata like\nthe message ID they cover up to, creation timestamp, and token count.",
         "operationId": "get_session_summaries_v2_workspaces__workspace_id__sessions__session_id__summaries_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2049,7 +2489,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SessionSummaries" }
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummaries"
+                }
               }
             }
           },
@@ -2057,7 +2499,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2066,11 +2510,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/search": {
       "post": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Search Session",
         "description": "Search a Session",
         "operationId": "search_session_v2_workspaces__workspace_id__sessions__session_id__search_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2113,7 +2563,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Message" },
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
                   "title": "Response Search Session V2 Workspaces  Workspace Id  Sessions  Session Id  Search Post"
                 }
               }
@@ -2123,7 +2575,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2132,30 +2586,44 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/": {
       "post": {
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "summary": "Create Messages For Session",
         "description": "Add new message(s) to a session.",
         "operationId": "create_messages_for_session_v2_workspaces__workspace_id__sessions__session_id__messages__post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Workspace Id" }
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MessageBatchCreate" }
+              "schema": {
+                "$ref": "#/components/schemas/MessageBatchCreate"
+              }
             }
           }
         },
@@ -2166,7 +2634,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Message" },
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
                   "title": "Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id  Messages  Post"
                 }
               }
@@ -2176,7 +2646,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2185,23 +2657,35 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/upload": {
       "post": {
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "summary": "Create Messages With File",
         "description": "Create messages from uploaded files. Files are converted to text and split into multiple messages.",
         "operationId": "create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Workspace Id" }
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
           }
         ],
         "requestBody": {
@@ -2221,7 +2705,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Message" },
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  },
                   "title": "Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id  Messages Upload Post"
                 }
               }
@@ -2231,7 +2717,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2240,11 +2728,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/list": {
       "post": {
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "summary": "Get Messages",
         "description": "Get all messages for a session",
         "operationId": "get_messages_v2_workspaces__workspace_id__sessions__session_id__messages_list_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2273,7 +2767,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
@@ -2313,8 +2814,12 @@
             "application/json": {
               "schema": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/MessageGet" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/MessageGet"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
                 "description": "Filtering options for the messages list",
                 "title": "Options"
@@ -2327,7 +2832,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Message_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Message_"
+                }
               }
             }
           },
@@ -2335,7 +2842,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2344,11 +2853,17 @@
     },
     "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}": {
       "get": {
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "summary": "Get Message",
         "description": "Get a Message by ID",
         "operationId": "get_message_v2_workspaces__workspace_id__sessions__session_id__messages__message_id__get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2389,7 +2904,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Message" }
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
               }
             }
           },
@@ -2397,18 +2914,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "put": {
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "summary": "Update Message",
         "description": "Update the metadata of a Message",
         "operationId": "update_message_v2_workspaces__workspace_id__sessions__session_id__messages__message_id__put",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2460,7 +2985,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Message" }
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
               }
             }
           },
@@ -2468,7 +2995,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2477,11 +3006,17 @@
     },
     "/v2/workspaces/{workspace_id}/observations": {
       "post": {
-        "tags": ["observations"],
+        "tags": [
+          "observations"
+        ],
         "summary": "Create Observations",
         "description": "Create one or more observations.\n\nCreates observations (theory-of-mind facts) for the specified observer/observed peer pairs.\nEach observation must reference existing peers and a session within the workspace.\nEmbeddings are automatically generated for semantic search.\n\nMaximum of 100 observations per request.",
         "operationId": "create_observations_v2_workspaces__workspace_id__observations_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2513,7 +3048,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Observation" },
+                  "items": {
+                    "$ref": "#/components/schemas/Observation"
+                  },
                   "title": "Response Create Observations V2 Workspaces  Workspace Id  Observations Post"
                 }
               }
@@ -2523,7 +3060,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2532,11 +3071,17 @@
     },
     "/v2/workspaces/{workspace_id}/observations/list": {
       "post": {
-        "tags": ["observations"],
+        "tags": [
+          "observations"
+        ],
         "summary": "List Observations",
         "description": "List all observations using custom filters. Observations are listed by recency unless `reverse` is set to `true`.\n\nObservations can be filtered by session_id, observer_id and observed_id using the filters parameter.",
         "operationId": "list_observations_v2_workspaces__workspace_id__observations_list_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2554,7 +3099,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
@@ -2594,8 +3146,12 @@
             "application/json": {
               "schema": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/ObservationGet" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/ObservationGet"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
                 "description": "Filtering options for the observations list",
                 "title": "Options"
@@ -2608,7 +3164,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Observation_" }
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Observation_"
+                }
               }
             }
           },
@@ -2616,7 +3174,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2625,11 +3185,17 @@
     },
     "/v2/workspaces/{workspace_id}/observations/query": {
       "post": {
-        "tags": ["observations"],
+        "tags": [
+          "observations"
+        ],
         "summary": "Query Observations",
         "description": "Query observations using semantic search.\n\nPerforms vector similarity search on observations to find semantically relevant results.\nObserver and observed are required for semantic search and must be provided in filters.",
         "operationId": "query_observations_v2_workspaces__workspace_id__observations_query_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2661,7 +3227,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Observation" },
+                  "items": {
+                    "$ref": "#/components/schemas/Observation"
+                  },
                   "title": "Response Query Observations V2 Workspaces  Workspace Id  Observations Query Post"
                 }
               }
@@ -2671,7 +3239,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2680,11 +3250,17 @@
     },
     "/v2/workspaces/{workspace_id}/observations/{observation_id}": {
       "delete": {
-        "tags": ["observations"],
+        "tags": [
+          "observations"
+        ],
         "summary": "Delete Observation",
         "description": "Delete a specific observation.\n\nThis permanently deletes the observation (document) from the theory-of-mind system.\nThis action cannot be undone.",
         "operationId": "delete_observation_v2_workspaces__workspace_id__observations__observation_id__delete",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2712,13 +3288,19 @@
         "responses": {
           "200": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2727,18 +3309,31 @@
     },
     "/v2/keys": {
       "post": {
-        "tags": ["keys"],
+        "tags": [
+          "keys"
+        ],
         "summary": "Create Key",
         "description": "Create a new Key",
         "operationId": "create_key_v2_keys_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "ID of the workspace to scope the key to",
               "title": "Workspace Id"
             },
@@ -2749,7 +3344,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "ID of the peer to scope the key to",
               "title": "Peer Id"
             },
@@ -2760,7 +3362,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "ID of the session to scope the key to",
               "title": "Session Id"
             },
@@ -2772,8 +3381,13 @@
             "required": false,
             "schema": {
               "anyOf": [
-                { "type": "string", "format": "date-time" },
-                { "type": "null" }
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
               ],
               "title": "Expires At"
             }
@@ -2782,13 +3396,19 @@
         "responses": {
           "200": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2797,11 +3417,17 @@
     },
     "/v2/workspaces/{workspace_id}/webhooks": {
       "post": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Get Or Create Webhook Endpoint",
         "description": "Get or create a webhook endpoint URL.",
         "operationId": "get_or_create_webhook_endpoint_v2_workspaces__workspace_id__webhooks_post",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2831,7 +3457,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/WebhookEndpoint" }
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
               }
             }
           },
@@ -2839,18 +3467,26 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
         }
       },
       "get": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "List Webhook Endpoints",
         "description": "List all webhook endpoints, optionally filtered by workspace.",
         "operationId": "list_webhook_endpoints_v2_workspaces__workspace_id__webhooks_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2906,7 +3542,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2915,11 +3553,17 @@
     },
     "/v2/workspaces/{workspace_id}/webhooks/{endpoint_id}": {
       "delete": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Delete Webhook Endpoint",
         "description": "Delete a specific webhook endpoint.",
         "operationId": "delete_webhook_endpoint_v2_workspaces__workspace_id__webhooks__endpoint_id__delete",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2947,13 +3591,19 @@
         "responses": {
           "200": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2962,11 +3612,17 @@
     },
     "/v2/workspaces/{workspace_id}/webhooks/test": {
       "get": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Test Emit",
         "description": "Test publishing a webhook event.",
         "operationId": "test_emit_v2_workspaces__workspace_id__webhooks_test_get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
@@ -2983,13 +3639,19 @@
         "responses": {
           "200": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -3004,7 +3666,11 @@
         "responses": {
           "200": {
             "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           }
         }
       }
@@ -3014,23 +3680,54 @@
     "schemas": {
       "Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post": {
         "properties": {
-          "file": { "type": "string", "format": "binary", "title": "File" },
-          "peer_id": { "type": "string", "title": "Peer Id" },
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          },
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
           "metadata": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metadata"
           },
           "configuration": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Configuration"
           },
           "created_at": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Created At"
           }
         },
         "type": "object",
-        "required": ["file", "peer_id"],
+        "required": [
+          "file",
+          "peer_id"
+        ],
         "title": "Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post"
       },
       "DeductiveObservation": {
@@ -3041,13 +3738,20 @@
             "title": "Created At"
           },
           "message_ids": {
-            "items": { "type": "integer" },
+            "items": {
+              "type": "integer"
+            },
             "type": "array",
             "title": "Message Ids"
           },
-          "session_name": { "type": "string", "title": "Session Name" },
+          "session_name": {
+            "type": "string",
+            "title": "Session Name"
+          },
           "premises": {
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "type": "array",
             "title": "Premises",
             "description": "Supporting premises or evidence for this conclusion"
@@ -3059,19 +3763,38 @@
           }
         },
         "type": "object",
-        "required": ["created_at", "message_ids", "session_name", "conclusion"],
+        "required": [
+          "created_at",
+          "message_ids",
+          "session_name",
+          "conclusion"
+        ],
         "title": "DeductiveObservation",
         "description": "Deductive observation with multiple premises and one conclusion, plus metadata."
       },
       "DeriverConfiguration": {
         "properties": {
           "enabled": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Enabled",
             "description": "Whether to enable deriver functionality."
           },
           "custom_instructions": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Custom Instructions",
             "description": "TODO: currently unused. Custom instructions to use for the deriver on this workspace/session/message."
           }
@@ -3109,7 +3832,9 @@
                 },
                 "type": "object"
               },
-              { "type": "null" }
+              {
+                "type": "null"
+              }
             ],
             "title": "Sessions",
             "description": "Per-session status when not filtered by session"
@@ -3127,12 +3852,26 @@
       "DialecticOptions": {
         "properties": {
           "session_id": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Session Id",
             "description": "ID of the session to scope the representation to"
           },
           "target": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Target",
             "description": "Optional peer to get the representation for, from the perspective of this peer"
           },
@@ -3143,16 +3882,29 @@
             "title": "Query",
             "description": "Dialectic API Prompt"
           },
-          "stream": { "type": "boolean", "title": "Stream", "default": false }
+          "stream": {
+            "type": "boolean",
+            "title": "Stream",
+            "default": false
+          }
         },
         "type": "object",
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "title": "DialecticOptions"
       },
       "DreamConfiguration": {
         "properties": {
           "enabled": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Enabled",
             "description": "Whether to enable dream functionality. If deriver is disabled, dreams will also be disabled and this setting will be ignored."
           }
@@ -3162,7 +3914,10 @@
       },
       "DreamType": {
         "type": "string",
-        "enum": ["consolidate", "agent"],
+        "enum": [
+          "consolidate",
+          "agent"
+        ],
         "title": "DreamType",
         "description": "Types of dreams that can be triggered."
       },
@@ -3174,11 +3929,16 @@
             "title": "Created At"
           },
           "message_ids": {
-            "items": { "type": "integer" },
+            "items": {
+              "type": "integer"
+            },
             "type": "array",
             "title": "Message Ids"
           },
-          "session_name": { "type": "string", "title": "Session Name" },
+          "session_name": {
+            "type": "string",
+            "title": "Session Name"
+          },
           "content": {
             "type": "string",
             "title": "Content",
@@ -3186,14 +3946,21 @@
           }
         },
         "type": "object",
-        "required": ["created_at", "message_ids", "session_name", "content"],
+        "required": [
+          "created_at",
+          "message_ids",
+          "session_name",
+          "content"
+        ],
         "title": "ExplicitObservation",
         "description": "Explicit observation with content and metadata."
       },
       "HTTPValidationError": {
         "properties": {
           "detail": {
-            "items": { "$ref": "#/components/schemas/ValidationError" },
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
             "type": "array",
             "title": "Detail"
           }
@@ -3203,10 +3970,22 @@
       },
       "Message": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
-          "content": { "type": "string", "title": "Content" },
-          "peer_id": { "type": "string", "title": "Peer Id" },
-          "session_id": { "type": "string", "title": "Session Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
           "metadata": {
             "additionalProperties": true,
             "type": "object",
@@ -3217,8 +3996,14 @@
             "format": "date-time",
             "title": "Created At"
           },
-          "workspace_id": { "type": "string", "title": "Workspace Id" },
-          "token_count": { "type": "integer", "title": "Token Count" }
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count"
+          }
         },
         "type": "object",
         "required": [
@@ -3235,7 +4020,9 @@
       "MessageBatchCreate": {
         "properties": {
           "messages": {
-            "items": { "$ref": "#/components/schemas/MessageCreate" },
+            "items": {
+              "$ref": "#/components/schemas/MessageCreate"
+            },
             "type": "array",
             "maxItems": 100,
             "minItems": 1,
@@ -3243,7 +4030,9 @@
           }
         },
         "type": "object",
-        "required": ["messages"],
+        "required": [
+          "messages"
+        ],
         "title": "MessageBatchCreate",
         "description": "Schema for batch message creation with a max of 100 messages"
       },
@@ -3251,15 +4040,23 @@
         "properties": {
           "deriver": {
             "anyOf": [
-              { "$ref": "#/components/schemas/DeriverConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/DeriverConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for deriver functionality."
           },
           "peer_card": {
             "anyOf": [
-              { "$ref": "#/components/schemas/PeerCardConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/PeerCardConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored."
           }
@@ -3276,38 +4073,63 @@
             "minLength": 0,
             "title": "Content"
           },
-          "peer_id": { "type": "string", "title": "Peer Id" },
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           },
           "configuration": {
             "anyOf": [
-              { "$ref": "#/components/schemas/MessageConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/MessageConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "created_at": {
             "anyOf": [
-              { "type": "string", "format": "date-time" },
-              { "type": "null" }
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Created At"
           }
         },
         "type": "object",
-        "required": ["content", "peer_id"],
+        "required": [
+          "content",
+          "peer_id"
+        ],
         "title": "MessageCreate"
       },
       "MessageGet": {
         "properties": {
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters"
           }
@@ -3324,8 +4146,13 @@
           },
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters",
             "description": "Filters to scope the search"
@@ -3340,15 +4167,22 @@
           }
         },
         "type": "object",
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "title": "MessageSearchOptions"
       },
       "MessageUpdate": {
         "properties": {
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           }
@@ -3358,8 +4192,14 @@
       },
       "Observation": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
-          "content": { "type": "string", "title": "Content" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
           "observer_id": {
             "type": "string",
             "title": "Observer Id",
@@ -3370,7 +4210,10 @@
             "title": "Observed Id",
             "description": "The peer being observed"
           },
-          "session_id": { "type": "string", "title": "Session Id" },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3392,7 +4235,9 @@
       "ObservationBatchCreate": {
         "properties": {
           "observations": {
-            "items": { "$ref": "#/components/schemas/ObservationCreate" },
+            "items": {
+              "$ref": "#/components/schemas/ObservationCreate"
+            },
             "type": "array",
             "maxItems": 100,
             "minItems": 1,
@@ -3400,7 +4245,9 @@
           }
         },
         "type": "object",
-        "required": ["observations"],
+        "required": [
+          "observations"
+        ],
         "title": "ObservationBatchCreate",
         "description": "Schema for batch observation creation with a max of 100 observations"
       },
@@ -3429,7 +4276,12 @@
           }
         },
         "type": "object",
-        "required": ["content", "observer_id", "observed_id", "session_id"],
+        "required": [
+          "content",
+          "observer_id",
+          "observed_id",
+          "session_id"
+        ],
         "title": "ObservationCreate",
         "description": "Schema for creating a single observation"
       },
@@ -3437,8 +4289,13 @@
         "properties": {
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters"
           }
@@ -3464,270 +4321,445 @@
           },
           "distance": {
             "anyOf": [
-              { "type": "number", "maximum": 1.0, "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Distance",
             "description": "Maximum cosine distance threshold for results"
           },
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters",
             "description": "Additional filters to apply"
           }
         },
         "type": "object",
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "title": "ObservationQuery",
         "description": "Query parameters for semantic search of observations"
       },
       "Page_Message_": {
         "properties": {
           "items": {
-            "items": { "$ref": "#/components/schemas/Message" },
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
             "type": "array",
             "title": "Items"
           },
           "total": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total"
           },
           "page": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Page"
           },
           "size": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Size"
           },
           "pages": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Pages"
           }
         },
         "type": "object",
-        "required": ["items", "page", "size"],
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
         "title": "Page[Message]"
       },
       "Page_Observation_": {
         "properties": {
           "items": {
-            "items": { "$ref": "#/components/schemas/Observation" },
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            },
             "type": "array",
             "title": "Items"
           },
           "total": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total"
           },
           "page": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Page"
           },
           "size": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Size"
           },
           "pages": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Pages"
           }
         },
         "type": "object",
-        "required": ["items", "page", "size"],
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
         "title": "Page[Observation]"
       },
       "Page_Peer_": {
         "properties": {
           "items": {
-            "items": { "$ref": "#/components/schemas/Peer" },
+            "items": {
+              "$ref": "#/components/schemas/Peer"
+            },
             "type": "array",
             "title": "Items"
           },
           "total": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total"
           },
           "page": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Page"
           },
           "size": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Size"
           },
           "pages": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Pages"
           }
         },
         "type": "object",
-        "required": ["items", "page", "size"],
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
         "title": "Page[Peer]"
       },
       "Page_Session_": {
         "properties": {
           "items": {
-            "items": { "$ref": "#/components/schemas/Session" },
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
             "type": "array",
             "title": "Items"
           },
           "total": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total"
           },
           "page": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Page"
           },
           "size": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Size"
           },
           "pages": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Pages"
           }
         },
         "type": "object",
-        "required": ["items", "page", "size"],
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
         "title": "Page[Session]"
       },
       "Page_WebhookEndpoint_": {
         "properties": {
           "items": {
-            "items": { "$ref": "#/components/schemas/WebhookEndpoint" },
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            },
             "type": "array",
             "title": "Items"
           },
           "total": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total"
           },
           "page": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Page"
           },
           "size": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Size"
           },
           "pages": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Pages"
           }
         },
         "type": "object",
-        "required": ["items", "page", "size"],
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
         "title": "Page[WebhookEndpoint]"
       },
       "Page_Workspace_": {
         "properties": {
           "items": {
-            "items": { "$ref": "#/components/schemas/Workspace" },
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
             "type": "array",
             "title": "Items"
           },
           "total": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total"
           },
           "page": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Page"
           },
           "size": {
             "anyOf": [
-              { "type": "integer", "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Size"
           },
           "pages": {
             "anyOf": [
-              { "type": "integer", "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Pages"
           }
         },
         "type": "object",
-        "required": ["items", "page", "size"],
+        "required": [
+          "items",
+          "page",
+          "size"
+        ],
         "title": "Page[Workspace]"
       },
       "Peer": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
-          "workspace_id": { "type": "string", "title": "Workspace Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3745,18 +4777,36 @@
           }
         },
         "type": "object",
-        "required": ["id", "workspace_id", "created_at"],
+        "required": [
+          "id",
+          "workspace_id",
+          "created_at"
+        ],
         "title": "Peer"
       },
       "PeerCardConfiguration": {
         "properties": {
           "use": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Use",
             "description": "Whether to use peer card related to this peer during deriver process."
           },
           "create": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Create",
             "description": "Whether to generate peer card based on content."
           }
@@ -3768,8 +4818,15 @@
         "properties": {
           "peer_card": {
             "anyOf": [
-              { "items": { "type": "string" }, "type": "array" },
-              { "type": "null" }
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Peer Card",
             "description": "The peer card content, or None if not found"
@@ -3781,14 +4838,18 @@
       "PeerCardSet": {
         "properties": {
           "peer_card": {
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "type": "array",
             "title": "Peer Card",
             "description": "The peer card content to set"
           }
         },
         "type": "object",
-        "required": ["peer_card"],
+        "required": [
+          "peer_card"
+        ],
         "title": "PeerCardSet"
       },
       "PeerContext": {
@@ -3805,22 +4866,36 @@
           },
           "representation": {
             "anyOf": [
-              { "$ref": "#/components/schemas/Representation" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/Representation"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "The working representation of the target peer from the observer's perspective"
           },
           "peer_card": {
             "anyOf": [
-              { "items": { "type": "string" }, "type": "array" },
-              { "type": "null" }
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Peer Card",
             "description": "The peer card for the target peer from the observer's perspective"
           }
         },
         "type": "object",
-        "required": ["peer_id", "target_id"],
+        "required": [
+          "peer_id",
+          "target_id"
+        ],
         "title": "PeerContext",
         "description": "Context for a peer, including representation and peer card."
       },
@@ -3835,29 +4910,46 @@
           },
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           },
           "configuration": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Configuration"
           }
         },
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "title": "PeerCreate"
       },
       "PeerGet": {
         "properties": {
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters"
           }
@@ -3868,45 +4960,91 @@
       "PeerRepresentationGet": {
         "properties": {
           "session_id": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Session Id",
             "description": "Get the working representation within this session"
           },
           "target": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Target",
             "description": "Optional peer ID to get the representation for, from the perspective of this peer"
           },
           "search_query": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Search Query",
             "description": "Optional input to curate the representation around semantic search results"
           },
           "search_top_k": {
             "anyOf": [
-              { "type": "integer", "maximum": 100.0, "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Search Top K",
             "description": "Only used if `search_query` is provided. Number of semantic-search-retrieved observations to include in the representation"
           },
           "search_max_distance": {
             "anyOf": [
-              { "type": "number", "maximum": 1.0, "minimum": 0.0 },
-              { "type": "null" }
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Search Max Distance",
             "description": "Only used if `search_query` is provided. Maximum distance to search for semantically relevant observations"
           },
           "include_most_derived": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Include Most Derived",
             "description": "Only used if `search_query` is provided. Whether to include the most derived observations in the representation"
           },
           "max_observations": {
             "anyOf": [
-              { "type": "integer", "maximum": 100.0, "minimum": 1.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Max Observations",
             "description": "Only used if `search_query` is provided. Maximum number of observations to include in the representation",
@@ -3920,15 +5058,25 @@
         "properties": {
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           },
           "configuration": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Configuration"
           }
@@ -3939,13 +5087,17 @@
       "Representation": {
         "properties": {
           "explicit": {
-            "items": { "$ref": "#/components/schemas/ExplicitObservation" },
+            "items": {
+              "$ref": "#/components/schemas/ExplicitObservation"
+            },
             "type": "array",
             "title": "Explicit",
             "description": "Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']"
           },
           "deductive": {
-            "items": { "$ref": "#/components/schemas/DeductiveObservation" },
+            "items": {
+              "$ref": "#/components/schemas/DeductiveObservation"
+            },
             "type": "array",
             "title": "Deductive",
             "description": "Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion."
@@ -3957,9 +5109,18 @@
       },
       "Session": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
-          "is_active": { "type": "boolean", "title": "Is Active" },
-          "workspace_id": { "type": "string", "title": "Workspace Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
           "metadata": {
             "additionalProperties": true,
             "type": "object",
@@ -3977,36 +5138,57 @@
           }
         },
         "type": "object",
-        "required": ["id", "is_active", "workspace_id", "created_at"],
+        "required": [
+          "id",
+          "is_active",
+          "workspace_id",
+          "created_at"
+        ],
         "title": "Session"
       },
       "SessionConfiguration": {
         "properties": {
           "deriver": {
             "anyOf": [
-              { "$ref": "#/components/schemas/DeriverConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/DeriverConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for deriver functionality."
           },
           "peer_card": {
             "anyOf": [
-              { "$ref": "#/components/schemas/PeerCardConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/PeerCardConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored."
           },
           "summary": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SummaryConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SummaryConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for summary functionality."
           },
           "dream": {
             "anyOf": [
-              { "$ref": "#/components/schemas/DreamConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/DreamConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for dream functionality. If deriver is disabled, dreams will also be disabled and these settings will be ignored."
           }
@@ -4018,37 +5200,60 @@
       },
       "SessionContext": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "messages": {
-            "items": { "$ref": "#/components/schemas/Message" },
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
             "type": "array",
             "title": "Messages"
           },
           "summary": {
             "anyOf": [
-              { "$ref": "#/components/schemas/Summary" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "The summary if available"
           },
           "peer_representation": {
             "anyOf": [
-              { "$ref": "#/components/schemas/Representation" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/Representation"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "The peer representation, if context is requested from a specific perspective"
           },
           "peer_card": {
             "anyOf": [
-              { "items": { "type": "string" }, "type": "array" },
-              { "type": "null" }
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Peer Card",
             "description": "The peer card, if context is requested from a specific perspective"
           }
         },
         "type": "object",
-        "required": ["id", "messages"],
+        "required": [
+          "id",
+          "messages"
+        ],
         "title": "SessionContext"
       },
       "SessionCreate": {
@@ -4062,8 +5267,13 @@
           },
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           },
@@ -4075,25 +5285,40 @@
                 },
                 "type": "object"
               },
-              { "type": "null" }
+              {
+                "type": "null"
+              }
             ],
             "title": "Peers"
           },
           "configuration": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SessionConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SessionConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "title": "SessionCreate"
       },
       "SessionDeriverStatus": {
         "properties": {
           "session_id": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Session Id",
             "description": "Session ID if filtered by session"
           },
@@ -4131,8 +5356,13 @@
         "properties": {
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters"
           }
@@ -4143,12 +5373,26 @@
       "SessionPeerConfig": {
         "properties": {
           "observe_me": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Observe Me",
             "description": "Whether honcho should form a global theory-of-mind representation of this peer"
           },
           "observe_others": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Observe Others",
             "description": "Whether this peer should form a session-level theory-of-mind representation of other peers in the session"
           }
@@ -4158,39 +5402,61 @@
       },
       "SessionSummaries": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "short_summary": {
             "anyOf": [
-              { "$ref": "#/components/schemas/Summary" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "The short summary if available"
           },
           "long_summary": {
             "anyOf": [
-              { "$ref": "#/components/schemas/Summary" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "The long summary if available"
           }
         },
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "title": "SessionSummaries"
       },
       "SessionUpdate": {
         "properties": {
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           },
           "configuration": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SessionConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SessionConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
@@ -4238,22 +5504,39 @@
       "SummaryConfiguration": {
         "properties": {
           "enabled": {
-            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Enabled",
             "description": "Whether to enable summary functionality."
           },
           "messages_per_short_summary": {
             "anyOf": [
-              { "type": "integer", "minimum": 10.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 10.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Messages Per Short Summary",
             "description": "Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary."
           },
           "messages_per_long_summary": {
             "anyOf": [
-              { "type": "integer", "minimum": 20.0 },
-              { "type": "null" }
+              {
+                "type": "integer",
+                "minimum": 20.0
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Messages Per Long Summary",
             "description": "Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary."
@@ -4270,7 +5553,14 @@
             "description": "Observer peer name"
           },
           "observed": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Observed",
             "description": "Observed peer name (defaults to observer if not specified)"
           },
@@ -4280,31 +5570,66 @@
           }
         },
         "type": "object",
-        "required": ["observer", "dream_type"],
+        "required": [
+          "observer",
+          "dream_type"
+        ],
         "title": "TriggerDreamRequest"
       },
       "ValidationError": {
         "properties": {
           "loc": {
-            "items": { "anyOf": [{ "type": "string" }, { "type": "integer" }] },
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
             "type": "array",
             "title": "Location"
           },
-          "msg": { "type": "string", "title": "Message" },
-          "type": { "type": "string", "title": "Error Type" }
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
         },
         "type": "object",
-        "required": ["loc", "msg", "type"],
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
         "title": "ValidationError"
       },
       "WebhookEndpoint": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "workspace_id": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Workspace Id"
           },
-          "url": { "type": "string", "title": "Url" },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4312,18 +5637,33 @@
           }
         },
         "type": "object",
-        "required": ["id", "workspace_id", "url", "created_at"],
+        "required": [
+          "id",
+          "workspace_id",
+          "url",
+          "created_at"
+        ],
         "title": "WebhookEndpoint"
       },
       "WebhookEndpointCreate": {
-        "properties": { "url": { "type": "string", "title": "Url" } },
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
         "type": "object",
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "title": "WebhookEndpointCreate"
       },
       "Workspace": {
         "properties": {
-          "id": { "type": "string", "title": "Id" },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "metadata": {
             "additionalProperties": true,
             "type": "object",
@@ -4341,36 +5681,55 @@
           }
         },
         "type": "object",
-        "required": ["id", "created_at"],
+        "required": [
+          "id",
+          "created_at"
+        ],
         "title": "Workspace"
       },
       "WorkspaceConfiguration": {
         "properties": {
           "deriver": {
             "anyOf": [
-              { "$ref": "#/components/schemas/DeriverConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/DeriverConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for deriver functionality."
           },
           "peer_card": {
             "anyOf": [
-              { "$ref": "#/components/schemas/PeerCardConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/PeerCardConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for peer card functionality. If deriver is disabled, peer cards will also be disabled and these settings will be ignored."
           },
           "summary": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SummaryConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SummaryConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for summary functionality."
           },
           "dream": {
             "anyOf": [
-              { "$ref": "#/components/schemas/DreamConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/DreamConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Configuration for dream functionality. If deriver is disabled, dreams will also be disabled and these settings will be ignored."
           }
@@ -4400,15 +5759,22 @@
           }
         },
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "title": "WorkspaceCreate"
       },
       "WorkspaceGet": {
         "properties": {
           "filters": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Filters"
           }
@@ -4420,15 +5786,24 @@
         "properties": {
           "metadata": {
             "anyOf": [
-              { "additionalProperties": true, "type": "object" },
-              { "type": "null" }
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Metadata"
           },
           "configuration": {
             "anyOf": [
-              { "$ref": "#/components/schemas/WorkspaceConfiguration" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/WorkspaceConfiguration"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
@@ -4436,6 +5811,11 @@
         "title": "WorkspaceUpdate"
       }
     },
-    "securitySchemes": { "HTTPBearer": { "type": "http", "scheme": "bearer" } }
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
   }
 }

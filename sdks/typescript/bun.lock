@@ -4,7 +4,7 @@
     "": {
       "name": "@honcho-ai/sdk",
       "dependencies": {
-        "@honcho-ai/core": "^1.6.1",
+        "@honcho-ai/core": "^1.8.0",
         "@types/node": "^24.0.1",
         "zod": "4.0.0",
       },
@@ -106,7 +106,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.3.8", "", { "os": "win32", "cpu": "x64" }, "sha512-RguzimPoZWtBapfKhKjcWXBVI91tiSprqdBYu7tWhgN8pKRZhw24rFeNZTNf6UiBfjCYCi9eFQs/JzJZIhuK4w=="],
 
-    "@honcho-ai/core": ["@honcho-ai/core@1.6.1", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-sfKIqAIybP/yj6iXGQLFgrqlX1dA7OuAK86p8sy8XiT64ZpEYpEz6viifAsm65LRZMgb0HPTFeBGodseUSoqVQ=="],
+    "@honcho-ai/core": ["@honcho-ai/core@1.8.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-qxBNoXLezH8yx4iBoz4Bsxkm9zp4Gm1fNwuP8gHRdSelxhR0dXpvLffx8B5V0XFWsx+SfPaJFyaKw0X2sYMwLA=="],
 
     "@istanbuljs/load-nyc-config": ["@istanbuljs/load-nyc-config@1.1.0", "", { "dependencies": { "camelcase": "^5.3.1", "find-up": "^4.1.0", "get-package-type": "^0.1.0", "js-yaml": "^3.13.1", "resolve-from": "^5.0.0" } }, "sha512-VjeHSlIzpv/NyD3N0YuHfXOPDIixcA1q2ZV98wsMqcYlPmv2n3Yb2lYP9XMElnaFVXg5A7YLTeLu6V84uQDjmQ=="],
 

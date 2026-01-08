@@ -423,6 +423,56 @@ async def get_messages_id_range(
     return list(result.scalars().all())
 
 
+async def get_messages_by_seq_range(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    start_seq: int = 1,
+    end_seq: int | None = None,
+) -> list[models.Message]:
+    """
+    Get messages from a session by seq_in_session range.
+
+    This is useful for getting the last N messages in a session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        start_seq: Sequence number of the first message to return (inclusive)
+        end_seq: Sequence number of the last message to return (inclusive)
+
+    Returns:
+        List of messages ordered by seq_in_session
+    """
+    if start_seq < 1 or (end_seq is not None and start_seq > end_seq):
+        return []
+
+    base_conditions = [
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == session_name,
+    ]
+
+    if end_seq is not None:
+        base_conditions.append(
+            and_(
+                models.Message.seq_in_session >= start_seq,
+                models.Message.seq_in_session <= end_seq,
+            )
+        )
+    else:
+        base_conditions.append(models.Message.seq_in_session >= start_seq)
+
+    stmt = (
+        select(models.Message)
+        .where(*base_conditions)
+        .order_by(models.Message.seq_in_session.asc())
+    )
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def get_message_seq_in_session(
     db: AsyncSession,
     workspace_name: str,

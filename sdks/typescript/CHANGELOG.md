@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `ObservationScope` object to perform CRUD operations on observations
 - Representation object for WorkingRepresentations
 
+### Changed
+
+- methods that take IDs, can all optionally take an object of the same type
+
 ## [1.5.0] - 2025-10-09
 
 ### Added
