@@ -326,7 +326,7 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         vector_store = get_vector_store()
 
         # Delete message embeddings namespace for this workspace
-        message_namespace = vector_store.get_message_namespace(workspace_name)
+        message_namespace = vector_store.get_vector_namespace("message", workspace_name)
         try:
             await vector_store.delete_namespace(message_namespace)
             logger.debug(
@@ -343,8 +343,11 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
 
         # Delete document embeddings namespaces for each collection
         for collection in collections:
-            doc_namespace = vector_store.get_document_namespace(
-                workspace_name, collection.observer, collection.observed
+            doc_namespace = vector_store.get_vector_namespace(
+                "document",
+                workspace_name,
+                collection.observer,
+                collection.observed,
             )
             try:
                 await vector_store.delete_namespace(doc_namespace)

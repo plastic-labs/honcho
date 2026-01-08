@@ -4,6 +4,7 @@ from typing import Any, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -20,11 +21,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
-from src.utils.types import DocumentLevel, TaskType
+from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
 
@@ -271,21 +272,13 @@ class Message(Base):
 
 @final
 class MessageEmbedding(Base):
-    """
-    Stores metadata for message embeddings.
-
-    Note: The actual embedding vectors are stored in the external vector store
-    (Turbopuffer or LanceDB), not in PostgreSQL. This table maintains the
-    relationship between messages and their embeddings, along with metadata
-    needed for filtering and lookups.
-    """
-
     __tablename__: str = "message_embeddings"
 
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -297,8 +290,16 @@ class MessageEmbedding(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
-    # Chunk index for messages that are split into multiple embeddings
-    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Vector sync state tracking
+    sync_state: Mapped[VectorSyncState] = mapped_column(
+        TEXT, nullable=False, server_default="pending", index=True
+    )
+    last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
     __table_args__ = (
         # Compound foreign key constraints
@@ -309,6 +310,14 @@ class MessageEmbedding(Base):
         ForeignKeyConstraint(
             ["peer_name", "workspace_name"],
             ["peers.name", "peers.workspace_name"],
+        ),
+        # HNSW index on embedding column for efficient similarity search
+        Index(
+            "ix_message_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
 
@@ -359,14 +368,6 @@ class Collection(Base):
 
 @final
 class Document(Base):
-    """
-    Stores document metadata and content.
-
-    Note: The actual embedding vectors are stored in the external vector store
-    (Turbopuffer or LanceDB), not in PostgreSQL. The vector ID is the document's
-    primary key (id field).
-    """
-
     __tablename__: str = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -379,6 +380,7 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -392,6 +394,18 @@ class Document(Base):
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True, default=None
     )
+
+    # Vector sync state tracking
+    sync_state: Mapped[VectorSyncState] = mapped_column(
+        TEXT, nullable=False, server_default="pending", index=True
+    )
+    last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
@@ -421,6 +435,16 @@ class Document(Base):
         ForeignKeyConstraint(
             ["session_name", "workspace_name"],
             ["sessions.name", "sessions.workspace_name"],
+        ),
+        # HNSW index on embedding column
+        Index(
+            "ix_documents_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",  # HNSW index type
+            postgresql_with={"m": 16, "ef_construction": 64},  # HNSW parameters
+            postgresql_ops={
+                "embedding": "vector_cosine_ops"
+            },  # Cosine distance operator
         ),
     )
 

@@ -424,9 +424,7 @@ async def delete_session(
         # Delete message vectors from vector store before deleting DB records
         # Fetch all MessageEmbedding records to build vector IDs
         embedding_result = await db.execute(
-            select(
-                models.MessageEmbedding.message_id, models.MessageEmbedding.chunk_index
-            ).where(
+            select(models.MessageEmbedding.id).where(
                 models.MessageEmbedding.session_name == session_name,
                 models.MessageEmbedding.workspace_name == workspace_name,
             )
@@ -435,12 +433,11 @@ async def delete_session(
         vector_store = get_vector_store()
 
         if embeddings:
-            # Build vector IDs: {message_id}_{chunk_index}
-            vector_ids = [f"{e.message_id}_{e.chunk_index}" for e in embeddings]
+            vector_ids = [str(e.id) for e in embeddings]
 
             # Try to delete from vector store (best effort)
             try:
-                namespace = vector_store.get_message_namespace(workspace_name)
+                namespace = vector_store.get_vector_namespace("message", workspace_name)
                 await vector_store.delete_many(namespace, vector_ids)
                 logger.debug(
                     f"Deleted {len(vector_ids)} message vectors for session {session_name}"
@@ -480,8 +477,11 @@ async def delete_session(
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
-                namespace = vector_store.get_document_namespace(
-                    workspace_name, doc.observer, doc.observed
+                namespace = vector_store.get_vector_namespace(
+                    "document",
+                    workspace_name,
+                    doc.observer,
+                    doc.observed,
                 )
                 docs_by_namespace.setdefault(namespace, []).append(doc.id)
 

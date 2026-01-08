@@ -381,34 +381,32 @@ def mock_vector_store():
     """Mock vector store operations for testing"""
     from unittest.mock import AsyncMock, MagicMock
 
-    from src.vector_store import QueryResult, VectorRecord
+    from src.vector_store import VectorQueryResult, VectorRecord, VectorUpsertResult
 
     # Create a mock vector store that stores vectors in memory
     vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
 
-    async def mock_upsert(namespace: str, vector: VectorRecord) -> None:
-        if namespace not in vector_storage:
-            vector_storage[namespace] = {}
-        vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
-
-    async def mock_upsert_many(namespace: str, vectors: list[VectorRecord]) -> None:
+    async def mock_upsert_many(
+        namespace: str, vectors: list[VectorRecord]
+    ) -> VectorUpsertResult:
         if namespace not in vector_storage:
             vector_storage[namespace] = {}
         for vector in vectors:
             vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
+        return VectorUpsertResult(primary_ok=True)
 
     async def mock_query(
         namespace: str, embedding: list[float], **kwargs: Any
-    ) -> list[QueryResult]:
+    ) -> list[VectorQueryResult]:
         _ = embedding  # unused in mock
         if namespace not in vector_storage:
             return []
 
         # Simple mock: return all vectors in the namespace as results
-        results: list[QueryResult] = []
+        results: list[VectorQueryResult] = []
         for vec_id, (_vec_embedding, metadata) in vector_storage[namespace].items():
             results.append(
-                QueryResult(
+                VectorQueryResult(
                     id=vec_id,
                     score=0.1,  # Mock score
                     metadata=metadata,
@@ -425,23 +423,50 @@ def mock_vector_store():
     async def mock_delete_namespace(namespace: str) -> None:
         vector_storage.pop(namespace, None)
 
+    # Clear the cache on get_vector_store before patching
+    from src.vector_store import get_vector_store
+
+    get_vector_store.cache_clear()  # type: ignore
+
+    # Create the mock vector store
+    mock_vs = MagicMock()
+    mock_vs.upsert_many = AsyncMock(side_effect=mock_upsert_many)
+    mock_vs.query = AsyncMock(side_effect=mock_query)
+    mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
+    mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
+
+    def mock_get_vector_namespace(
+        namespace_type: str,
+        workspace_name: str,
+        observer: str | None = None,
+        observed: str | None = None,
+    ) -> str:
+        if namespace_type == "document":
+            if observer is None or observed is None:
+                raise ValueError(
+                    "observer and observed are required for document namespaces"
+                )
+            return f"honcho2345.{workspace_name}.{observer}.{observed}"
+        if namespace_type == "message":
+            return f"honcho2345.{workspace_name}.messages"
+        raise ValueError(f"Unknown namespace type: {namespace_type}")
+
+    mock_vs.get_vector_namespace = mock_get_vector_namespace
+
     with (
-        patch("src.vector_store.get_vector_store") as mock_get_vs,
+        patch("src.crud.document.get_vector_store", return_value=mock_vs),
+        patch("src.crud.workspace.get_vector_store", return_value=mock_vs),
+        patch("src.crud.session.get_vector_store", return_value=mock_vs),
+        patch("src.crud.message.get_vector_store", return_value=mock_vs),
+        patch(
+            "src.deriver.vector_reconciliation.get_vector_store", return_value=mock_vs
+        ),
+        patch("src.utils.search.get_vector_store", return_value=mock_vs),
     ):
-        mock_vs = MagicMock()
-        mock_vs.upsert = AsyncMock(side_effect=mock_upsert)
-        mock_vs.upsert_many = AsyncMock(side_effect=mock_upsert_many)
-        mock_vs.query = AsyncMock(side_effect=mock_query)
-        mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
-        mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
-        mock_vs.get_document_namespace = (
-            lambda ws, obs, obd: f"honcho:{ws}:{obs}:{obd}"  # pyright: ignore[reportUnknownLambdaType]
-        )
-        mock_vs.get_message_namespace = lambda ws: f"honcho:{ws}:messages"  # pyright: ignore[reportUnknownLambdaType]
-
-        mock_get_vs.return_value = mock_vs
-
         yield mock_vs
+
+        # Clear cache after test as well for cleanliness
+        get_vector_store.cache_clear()  # type: ignore
 
 
 @pytest.fixture(autouse=True)

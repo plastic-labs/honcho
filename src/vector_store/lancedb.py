@@ -5,6 +5,7 @@ This module provides a LanceDB-based implementation of the VectorStore interface
 for use in self-hosted deployments of Honcho.
 """
 
+import asyncio
 import logging
 from typing import Any, cast
 
@@ -14,14 +15,13 @@ from lancedb import AsyncConnection, AsyncTable
 
 from src.config import settings
 
-from . import QueryResult, VectorRecord, VectorStore
+from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
 
 logger = logging.getLogger(__name__)
 
 # Schema for LanceDB tables
 # id: string, vector: fixed_size_list of float32 (1536 dimensions for OpenAI embeddings)
 # Additional metadata columns are added dynamically
-VECTOR_DIMENSION = 1536
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownParameterType=false
 
@@ -36,17 +36,24 @@ class LanceDBVectorStore(VectorStore):
 
     _db: AsyncConnection | None = None
     _db_path: str
+    _db_lock: asyncio.Lock
 
     def __init__(self) -> None:
         """Initialize the LanceDB vector store."""
         super().__init__()
         self._db_path = settings.VECTOR_STORE.LANCEDB_PATH
         self._db = None
+        self._db_lock = asyncio.Lock()
 
     async def _get_db(self) -> AsyncConnection:
-        """Get or create the async database connection."""
-        if self._db is None:
-            self._db = await lancedb.connect_async(self._db_path)
+        """Get or create the async database connection (asyncio-safe)."""
+        if self._db is not None:
+            return self._db
+
+        async with self._db_lock:
+            # Double-check after acquiring lock
+            if self._db is None:
+                self._db = await lancedb.connect_async(self._db_path)
         return self._db
 
     async def _get_table(self, namespace: str) -> AsyncTable | None:
@@ -78,7 +85,9 @@ class LanceDBVectorStore(VectorStore):
         # Create empty table with base schema
         fields: list[pa.Field] = [
             pa.field("id", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSION)),
+            pa.field(
+                "vector", pa.list_(pa.float32(), settings.VECTOR_STORE.DIMENSIONS)
+            ),
         ]
         fields.extend(self._metadata_fields_for_namespace(namespace))
         schema = pa.schema(fields)
@@ -102,7 +111,6 @@ class LanceDBVectorStore(VectorStore):
                 pa.field("message_id", pa.string(), nullable=True),
                 pa.field("session_name", pa.string(), nullable=True),
                 pa.field("peer_name", pa.string(), nullable=True),
-                pa.field("chunk_index", pa.int64(), nullable=True),
             ]
 
         if len(parts) == 4:
@@ -130,42 +138,11 @@ class LanceDBVectorStore(VectorStore):
                     row[key] = vector.metadata[key]
         return row
 
-    async def upsert(
-        self,
-        namespace: str,
-        vector: VectorRecord,
-    ) -> None:
-        """
-        Upsert a single vector into LanceDB.
-
-        Args:
-            namespace: The namespace (table) to store the vector in
-            vector: VectorRecord containing id, embedding, and metadata
-        """
-        try:
-            row = self._row_to_dict(vector)
-            table = await self._get_or_create_table(namespace)
-
-            # Use merge_insert for upsert behavior
-            await (
-                table.merge_insert("id")
-                .when_matched_update_all()
-                .when_not_matched_insert_all()
-                .execute([row])
-            )
-
-            logger.debug(f"Upserted vector {vector.id} to namespace {namespace}")
-        except Exception:
-            logger.exception(
-                f"Failed to upsert vector {vector.id} to namespace {namespace}"
-            )
-            raise
-
     async def upsert_many(
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> None:
+    ) -> VectorUpsertResult:
         """
         Upsert multiple vectors into LanceDB.
 
@@ -174,7 +151,7 @@ class LanceDBVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return
+            return VectorUpsertResult(primary_ok=True)
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
@@ -189,6 +166,7 @@ class LanceDBVectorStore(VectorStore):
             )
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
+            return VectorUpsertResult(primary_ok=True)
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
@@ -203,7 +181,7 @@ class LanceDBVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
-    ) -> list[QueryResult]:
+    ) -> list[VectorQueryResult]:
         """
         Query for similar vectors in LanceDB.
 
@@ -215,7 +193,7 @@ class LanceDBVectorStore(VectorStore):
             max_distance: Optional maximum distance threshold (cosine distance)
 
         Returns:
-            List of QueryResult objects, ordered by similarity (most similar first)
+            List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
         table = await self._get_table(namespace)
         if table is None:
@@ -236,8 +214,8 @@ class LanceDBVectorStore(VectorStore):
             # LanceDB async API returns list of dicts with incomplete type annotations
             results = cast(list[dict[str, Any]], await query.to_list())
 
-            # Convert to QueryResult objects
-            query_results: list[QueryResult] = []
+            # Convert to VectorQueryResult objects
+            query_results: list[VectorQueryResult] = []
             for row in results:
                 dist = float(row.get("_distance", 0.0))
 
@@ -253,7 +231,7 @@ class LanceDBVectorStore(VectorStore):
                 }
 
                 query_results.append(
-                    QueryResult(
+                    VectorQueryResult(
                         id=str(row["id"]),
                         score=dist,
                         metadata=metadata,
@@ -343,3 +321,11 @@ class LanceDBVectorStore(VectorStore):
         except Exception:
             logger.exception(f"Failed to delete namespace {namespace}")
             raise
+
+    async def close(self) -> None:
+        """Close the LanceDB connection and release resources."""
+        if self._db is not None:
+            # LanceDB AsyncConnection doesn't have an explicit close method,
+            # but we clear the reference to allow garbage collection
+            self._db = None
+            logger.debug("LanceDB connection closed")

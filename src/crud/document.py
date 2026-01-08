@@ -8,7 +8,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.functions import func
-from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    retry_if_result,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src import models, schemas
 from src.config import settings
@@ -149,7 +155,9 @@ async def query_documents(
 
     # Get vector store and namespace for this collection
     vector_store = get_vector_store()
-    namespace = vector_store.get_document_namespace(workspace_name, observer, observed)
+    namespace = vector_store.get_vector_namespace(
+        "document", workspace_name, observer, observed
+    )
 
     # Build vector store filters
     # Convert filter dict to vector store format (handles level, session_name, etc.)
@@ -241,16 +249,42 @@ async def create_documents(
                     continue
 
             metadata_dict = doc.metadata.model_dump(exclude_none=True)
-            new_doc = models.Document(
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                content=doc.content,
-                level=doc.level,
-                times_derived=doc.times_derived,
-                internal_metadata=metadata_dict,
-                session_name=doc.session_name,
+
+            # Check if pgvector is being used (primary or secondary)
+            # If so, write embeddings to ORM since pgvector relies on postgres
+            pgvector_in_use = (
+                settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+                or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
             )
+
+            if pgvector_in_use and doc.embedding:
+                # pgvector in use: write embedding to ORM (postgres)
+                new_doc = models.Document(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    content=doc.content,
+                    level=doc.level,
+                    times_derived=doc.times_derived,
+                    internal_metadata=metadata_dict,
+                    session_name=doc.session_name,
+                    embedding=doc.embedding,
+                )
+            else:
+                # pgvector not in use or no embedding: don't write embedding to postgres
+                new_doc = models.Document(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    content=doc.content,
+                    level=doc.level,
+                    times_derived=doc.times_derived,
+                    internal_metadata=metadata_dict,
+                    session_name=doc.session_name,
+                )
+
+            if doc.embedding:
+                new_doc.sync_state = "pending"
             honcho_documents.append(new_doc)
 
             # Track embedding for vector store (ID will be available after commit)
@@ -270,13 +304,18 @@ async def create_documents(
         # Store embeddings in vector store after documents are committed (IDs now available)
         if docs_with_embeddings:
             vector_store = get_vector_store()
-            namespace = vector_store.get_document_namespace(
-                workspace_name, observer, observed
+            namespace = vector_store.get_vector_namespace(
+                "document",
+                workspace_name,
+                observer,
+                observed,
             )
 
             # Build vector records with metadata for filtering
             vector_records: list[VectorRecord] = []
+            doc_ids: list[str] = []
             for doc, embedding in docs_with_embeddings:
+                doc_ids.append(doc.id)
                 vector_records.append(
                     VectorRecord(
                         id=doc.id,
@@ -291,19 +330,64 @@ async def create_documents(
                     )
                 )
 
-            # Retry vector upsert with exponential backoff
+            # Retry vector upsert with exponential backoff (3 attempts)
             try:
+                result = None
                 async for attempt in AsyncRetrying(
                     stop=stop_after_attempt(3),
                     wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+                    retry=retry_if_exception_type(Exception)
+                    | retry_if_result(
+                        lambda res: res is not None and res.secondary_ok is False
+                    ),
                     reraise=True,
                 ):
                     with attempt:
-                        await vector_store.upsert_many(namespace, vector_records)
+                        result = await vector_store.upsert_many(
+                            namespace, vector_records
+                        )
+
+                if result is not None and result.secondary_ok is False:
+                    # Partial success: primary has data but secondary doesn't
+                    # Keep as "pending" for reconciliation to sync secondary
+                    logger.warning(
+                        f"Partial sync for namespace {namespace}: {result.secondary_error}"
+                    )
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+                else:
+                    # Success: both primary and secondary stores have the data
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_state="synced",
+                            last_sync_at=func.now(),
+                            sync_attempts=0,
+                        )
+                    )
+                    await db.commit()
+
             except Exception as e:
-                # Final attempt failed - log but don't raise
-                # Documents exist in DB, vectors can be added manually later
-                logger.error(f"Failed to upsert vectors after retries: {e}")
+                # Total failure: primary write failed
+                # Keep as "pending" for reconciliation to retry
+                logger.error(f"Failed to upsert vectors after 3 retries: {e}")
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_attempts=models.Document.sync_attempts + 1,
+                        last_sync_at=func.now(),
+                    )
+                )
+                await db.commit()
 
     except IntegrityError as e:
         await db.rollback()
@@ -364,7 +448,9 @@ async def delete_document(
 
     # Try to delete from vector store first
     vector_store = get_vector_store()
-    namespace = vector_store.get_document_namespace(workspace_name, observer, observed)
+    namespace = vector_store.get_vector_namespace(
+        "document", workspace_name, observer, observed
+    )
     vector_deleted = False
 
     try:
@@ -425,8 +511,11 @@ async def delete_document_by_id(
 
     # Try to delete from vector store first
     vector_store = get_vector_store()
-    namespace = vector_store.get_document_namespace(
-        workspace_name, doc.observer, doc.observed
+    namespace = vector_store.get_vector_namespace(
+        "document",
+        workspace_name,
+        doc.observer,
+        doc.observed,
     )
     vector_deleted = False
 
@@ -517,17 +606,40 @@ async def create_observations(
         tuple[str, str], list[tuple[models.Document, list[float]]]
     ] = {}
 
+    # Check if pgvector is being used (primary or secondary)
+    # If so, write embeddings to ORM since pgvector relies on postgres
+    pgvector_in_use = (
+        settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+        or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
+    )
+
     for obs, embedding in zip(observations, embeddings, strict=True):
-        doc = models.Document(
-            workspace_name=workspace_name,
-            observer=obs.observer_id,
-            observed=obs.observed_id,
-            content=obs.content,
-            level="explicit",  # Manually created observations are always explicit
-            times_derived=1,
-            internal_metadata={},  # No message_ids since not derived from messages
-            session_name=obs.session_id,
-        )
+        if pgvector_in_use:
+            # pgvector in use: write embedding to ORM (postgres)
+            doc = models.Document(
+                workspace_name=workspace_name,
+                observer=obs.observer_id,
+                observed=obs.observed_id,
+                content=obs.content,
+                level="explicit",  # Manually created observations are always explicit
+                times_derived=1,
+                internal_metadata={},  # No message_ids since not derived from messages
+                session_name=obs.session_id,
+                embedding=embedding,
+            )
+        else:
+            # pgvector not in use: don't write embedding to postgres
+            doc = models.Document(
+                workspace_name=workspace_name,
+                observer=obs.observer_id,
+                observed=obs.observed_id,
+                content=obs.content,
+                level="explicit",  # Manually created observations are always explicit
+                times_derived=1,
+                internal_metadata={},  # No message_ids since not derived from messages
+                session_name=obs.session_id,
+            )
+        doc.sync_state = "pending"
         honcho_documents.append(doc)
 
         # Track embedding for vector store (grouped by collection)
@@ -546,13 +658,18 @@ async def create_observations(
         # Store embeddings in vector store after documents are committed (IDs now available)
         vector_store = get_vector_store()
         for (observer, observed), docs_with_embeddings in collection_embeddings.items():
-            namespace = vector_store.get_document_namespace(
-                workspace_name, observer, observed
+            namespace = vector_store.get_vector_namespace(
+                "document",
+                workspace_name,
+                observer,
+                observed,
             )
 
             # Build vector records with metadata for filtering
             vector_records: list[VectorRecord] = []
+            doc_ids: list[str] = []
             for doc, embedding in docs_with_embeddings:
+                doc_ids.append(doc.id)
                 vector_records.append(
                     VectorRecord(
                         id=doc.id,
@@ -567,21 +684,66 @@ async def create_observations(
                     )
                 )
 
-            # Retry vector upsert with exponential backoff
+            # Retry vector upsert with exponential backoff (3 attempts)
             try:
+                result = None
                 async for attempt in AsyncRetrying(
                     stop=stop_after_attempt(3),
                     wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+                    retry=retry_if_exception_type(Exception)
+                    | retry_if_result(
+                        lambda res: res is not None and res.secondary_ok is False
+                    ),
                     reraise=True,
                 ):
                     with attempt:
-                        await vector_store.upsert_many(namespace, vector_records)
+                        result = await vector_store.upsert_many(
+                            namespace, vector_records
+                        )
+
+                if result is not None and result.secondary_ok is False:
+                    # Partial success: primary has data but secondary doesn't
+                    # Keep as "pending" for reconciliation to sync secondary
+                    logger.warning(
+                        f"Partial sync for namespace {namespace}: {result.secondary_error}"
+                    )
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+                else:
+                    # Success: both primary and secondary stores have the data
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_state="synced",
+                            last_sync_at=func.now(),
+                            sync_attempts=0,
+                        )
+                    )
+                    await db.commit()
+
             except Exception as e:
-                # Final attempt failed - log but don't raise
-                # Documents exist in DB, vectors can be added manually later
+                # Total failure: primary write failed
+                # Keep as "pending" for reconciliation to retry
                 logger.error(
-                    f"Failed to upsert vectors for {namespace} after retries: {e}"
+                    f"Failed to upsert vectors for {namespace} after 3 retries: {e}"
                 )
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_attempts=models.Document.sync_attempts + 1,
+                        last_sync_at=func.now(),
+                    )
+                )
+                await db.commit()
 
     except IntegrityError as e:
         await db.rollback()
@@ -652,8 +814,11 @@ async def is_rejected_duplicate(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
         vector_store = get_vector_store()
-        namespace = vector_store.get_document_namespace(
-            workspace_name, observer, observed
+        namespace = vector_store.get_vector_namespace(
+            "document",
+            workspace_name,
+            observer,
+            observed,
         )
         vector_deleted = False
         try:
@@ -684,9 +849,6 @@ async def cleanup_soft_deleted_documents(
 ) -> int:
     """
     Clean up soft-deleted documents by deleting from vector store and hard deleting from DB.
-
-    This function is designed to be called periodically (e.g., every 5 minutes) to reconcile
-    any documents that were soft-deleted when the vector store was unavailable.
 
     Steps:
     1. Find documents with deleted_at older than threshold
@@ -729,8 +891,11 @@ async def cleanup_soft_deleted_documents(
     # Group by namespace for batch vector deletion
     by_namespace: dict[str, list[str]] = {}
     for doc in documents:
-        namespace = vector_store.get_document_namespace(
-            doc.workspace_name, doc.observer, doc.observed
+        namespace = vector_store.get_vector_namespace(
+            "document",
+            doc.workspace_name,
+            doc.observer,
+            doc.observed,
         )
         by_namespace.setdefault(namespace, []).append(doc.id)
 

@@ -358,18 +358,32 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
 
 
 class VectorStoreSettings(HonchoSettings):
-    """Settings for external vector store (Turbopuffer or LanceDB)."""
+    """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
-    # Vector store type: "turbopuffer" or "lancedb"
-    TYPE: Literal["turbopuffer", "lancedb"] = "lancedb"
+    # Primary vector store type
+    PRIMARY_TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+
+    # Secondary vector store type (optional)
+    # When set, enables:
+    # - Dual-write: writes go to both primary and secondary
+    # - Fallback read: reads try primary first, fall back to secondary if empty
+    SECONDARY_TYPE: Literal["pgvector", "turbopuffer", "lancedb"] | None = None
 
     # Global namespace prefix for all vector namespaces
     # Namespaces follow the pattern:
-    # - Documents: {NAMESPACE}-{workspace}-{observer}-{observed}
-    # - Messages: {NAMESPACE}-{workspace}-messages
+    # - Documents: {NAMESPACE}.{workspace}.{observer}.{observed}
+    # - Messages: {NAMESPACE}.{workspace}.messages
     NAMESPACE: str = "honcho"
+
+    DIMENSIONS: Annotated[
+        int,
+        Field(
+            default=1536,
+            gt=0,
+        ),
+    ] = 1536
 
     # Turbopuffer-specific settings
     TURBOPUFFER_API_KEY: str | None = None
@@ -380,11 +394,29 @@ class VectorStoreSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
-        if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
+        if self.PRIMARY_TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
-                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
+                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when PRIMARY_TYPE is 'turbopuffer'"
+            )
+        if self.SECONDARY_TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
+            raise ValueError(
+                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when SECONDARY_TYPE is 'turbopuffer'"
             )
         return self
+
+    @property
+    def should_run_reconciliation(self) -> bool:
+        """
+        Determine if vector reconciliation should run.
+
+        Reconciliation syncs embeddings from postgres (used by pgvector) to
+        external vector stores. It only runs when:
+        1. A secondary store is configured AND
+        2. pgvector is involved as either primary or secondary
+        """
+        return self.SECONDARY_TYPE is not None and (
+            self.PRIMARY_TYPE == "pgvector" or self.SECONDARY_TYPE == "pgvector"
+        )
 
 
 class AppSettings(HonchoSettings):
@@ -445,13 +477,11 @@ class AppSettings(HonchoSettings):
         VECTOR_STORE.NAMESPACE are guaranteed to exist. Explicitly provided
         nested namespaces are preserved.
         """
-        if self.CACHE.NAMESPACE is None:
+        if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
-        if self.METRICS.NAMESPACE is None:
+        if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
-
-        vector_namespace_explicit = "NAMESPACE" in self.VECTOR_STORE.model_fields_set
-        if not vector_namespace_explicit:
+        if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
 
         return self

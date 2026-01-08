@@ -93,7 +93,7 @@ async def _semantic_search(
 
     # Get vector store and namespace for this workspace's messages
     vector_store = get_vector_store()
-    namespace = vector_store.get_message_namespace(workspace_name)
+    namespace = vector_store.get_vector_namespace("message", workspace_name)
 
     # Build vector store filters from the provided filters
     vector_filters: dict[str, Any] = {}
@@ -116,17 +116,14 @@ async def _semantic_search(
     if not vector_results:
         return []
 
-    # Extract message IDs from vector results (vector ID format: {message_public_id}_{chunk_index})
+    # Extract message IDs from vector metadata
     # Use dict to deduplicate while preserving order (dict keys maintain insertion order in Python 3.7+)
     seen_message_ids: dict[str, None] = {}
 
     for result in vector_results:
-        # Vector ID format: {message_public_id}_{chunk_index}
-        parts = result.id.rsplit("_", 1)
-        if len(parts) >= 1:
-            message_id = parts[0]
-            if message_id not in seen_message_ids:
-                seen_message_ids[message_id] = None
+        message_id = result.metadata.get("message_id")
+        if message_id and message_id not in seen_message_ids:
+            seen_message_ids[message_id] = None
 
     message_ids = list(seen_message_ids.keys())
 

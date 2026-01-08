@@ -329,5 +329,3 @@ async def test_message_chunking_creates_multiple_embeddings(
         assert embedding_record.workspace_name == test_workspace.name
         assert embedding_record.session_name == test_session.name
         assert embedding_record.peer_name == test_peer.name
-        # chunk_index should be set for each chunk
-        assert embedding_record.chunk_index is not None

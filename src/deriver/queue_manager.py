@@ -23,6 +23,7 @@ from src.deriver.consumer import (
     process_item,
     process_representation_batch,
 )
+from src.deriver.vector_reconciliation import run_vector_reconciliation_cycle
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
@@ -49,8 +50,8 @@ class WorkerOwnership(NamedTuple):
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
 
 
-VECTOR_CLEANUP_INTERVAL_SECONDS = 300  # 5 minutes
 QUEUE_CLEANUP_INTERVAL_SECONDS = 43200  # 12 hours
+RECONCILIATION_INTERVAL_SECONDS = 300  # 5 minutes
 
 
 class QueueManager:
@@ -350,28 +351,21 @@ class QueueManager:
         """
         Run periodic maintenance tasks.
 
-        - Vector cleanup: every 5 minutes (clean up soft-deleted documents)
         - Queue cleanup: every 12 hours (remove old processed/errored queue items)
+        - Reconciliation: every 5 minutes (sync vectors + clean up soft deletes)
+          Only runs when pgvector is involved in a dual-store configuration
         """
         # Track when each task should next run
-        next_vector_cleanup = datetime.now(timezone.utc)
         next_queue_cleanup = datetime.now(timezone.utc)
+        next_vector_reconciliation = (
+            datetime.now(timezone.utc)
+            if settings.VECTOR_STORE.should_run_reconciliation
+            else None
+        )
 
         try:
             while not self.shutdown_event.is_set():
                 now = datetime.now(timezone.utc)
-
-                # Run vector cleanup if due
-                if now >= next_vector_cleanup:
-                    try:
-                        await self._run_vector_cleanup()
-                    except Exception:
-                        logger.exception("Error during vector cleanup")
-                        if settings.SENTRY.ENABLED:
-                            sentry_sdk.capture_exception()
-                    next_vector_cleanup = now + timedelta(
-                        seconds=VECTOR_CLEANUP_INTERVAL_SECONDS
-                    )
 
                 # Run queue cleanup if due
                 if now >= next_queue_cleanup:
@@ -385,8 +379,28 @@ class QueueManager:
                         seconds=QUEUE_CLEANUP_INTERVAL_SECONDS
                     )
 
+                # Run vector store reconciliation if enabled and due
+                if (
+                    next_vector_reconciliation is not None
+                    and now >= next_vector_reconciliation
+                ):
+                    try:
+                        logger.info("Running vector reconciliation cycle")
+                        await self._run_reconciliation()
+                    except Exception:
+                        logger.exception("Error during vector reconciliation")
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception()
+                    next_vector_reconciliation = now + timedelta(
+                        seconds=RECONCILIATION_INTERVAL_SECONDS
+                    )
+
                 # Sleep until next task is due or shutdown
-                next_task_time = min(next_vector_cleanup, next_queue_cleanup)
+                # Filter out None values when computing next task time
+                task_times = [next_queue_cleanup]
+                if next_vector_reconciliation is not None:
+                    task_times.append(next_vector_reconciliation)
+                next_task_time = min(task_times)
                 sleep_seconds = max(
                     0, (next_task_time - datetime.now(timezone.utc)).total_seconds()
                 )
@@ -405,26 +419,24 @@ class QueueManager:
             logger.debug("Maintenance loop cancelled")
             raise
 
-    async def _run_vector_cleanup(self) -> None:
-        """Run vector store cleanup for soft-deleted documents."""
-        from src.crud.document import cleanup_soft_deleted_documents
-        from src.vector_store import get_vector_store
+    async def _run_reconciliation(self) -> None:
+        """Run vector store reconciliation for sync + cleanup."""
 
-        async with tracked_db("vector_cleanup") as db:
-            vector_store = get_vector_store()
-            total_cleaned = 0
+        metrics = await run_vector_reconciliation_cycle()
 
-            # Process in batches until no more soft-deleted documents
-            while True:
-                cleaned = await cleanup_soft_deleted_documents(db, vector_store)
-                total_cleaned += cleaned
-                if cleaned == 0:
-                    break
-
-            if total_cleaned > 0:
-                logger.info(
-                    f"Vector cleanup: removed {total_cleaned} soft-deleted documents"
-                )
+        if (
+            metrics.total_synced > 0
+            or metrics.total_failed > 0
+            or metrics.total_cleaned > 0
+        ):
+            logger.info(
+                "Reconciliation: synced %s docs, %s message embeddings; failed %s docs, %s message embeddings; cleaned %s docs",
+                metrics.documents_synced,
+                metrics.message_embeddings_synced,
+                metrics.documents_failed,
+                metrics.message_embeddings_failed,
+                metrics.documents_cleaned,
+            )
 
     async def _handle_processing_error(
         self,
@@ -854,6 +866,21 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
+
+    # Log reconciliation status
+    if settings.VECTOR_STORE.should_run_reconciliation:
+        logger.info(
+            "Vector reconciliation: ENABLED (primary=%s, secondary=%s)",
+            settings.VECTOR_STORE.PRIMARY_TYPE,
+            settings.VECTOR_STORE.SECONDARY_TYPE,
+        )
+    else:
+        logger.info(
+            "Vector reconciliation: DISABLED (primary=%s, secondary=%s)",
+            settings.VECTOR_STORE.PRIMARY_TYPE,
+            settings.VECTOR_STORE.SECONDARY_TYPE or "None",
+        )
+
     try:
         await init_cache()
     except Exception as e:

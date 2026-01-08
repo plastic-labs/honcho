@@ -2,9 +2,15 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, select, text
+from sqlalchemy import ColumnElement, Select, and_, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    retry_if_result,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src import models, schemas
 from src.config import settings
@@ -140,60 +146,155 @@ async def create_messages(
 
             # Get vector store and namespace for this workspace's messages
             vector_store = get_vector_store()
-            namespace = vector_store.get_message_namespace(workspace_name)
+            namespace = vector_store.get_vector_namespace("message", workspace_name)
 
-            # Create MessageEmbedding entries and vector records
+            # Create MessageEmbedding entries
             embedding_objects: list[models.MessageEmbedding] = []
-            vector_records: list[VectorRecord] = []
+
+            # Check if pgvector is being used (primary or secondary)
+            # If so, write embeddings to ORM since pgvector relies on postgres
+            # Otherwise, store in memory for vector store upsert only
+            pgvector_in_use = (
+                settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+                or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
+            )
 
             for message_obj in message_objects:
                 embeddings = embedding_dict.get(message_obj.public_id, [])
-                for chunk_index, embedding in enumerate(embeddings):
-                    # Create MessageEmbedding record for metadata tracking
-                    embedding_obj = models.MessageEmbedding(
-                        content=message_obj.content,
-                        message_id=message_obj.public_id,
-                        workspace_name=workspace_name,
-                        session_name=session_name,
-                        peer_name=message_obj.peer_name,
-                        chunk_index=chunk_index,
-                    )
-                    embedding_objects.append(embedding_obj)
-
-                    # Create vector record for external vector store
-                    vector_id = f"{message_obj.public_id}_{chunk_index}"
-                    vector_records.append(
-                        VectorRecord(
-                            id=vector_id,
+                for embedding in embeddings:
+                    # Create MessageEmbedding record
+                    if pgvector_in_use:
+                        # pgvector in use: write embedding to ORM (postgres)
+                        embedding_obj = models.MessageEmbedding(
+                            content=message_obj.content,
                             embedding=embedding,
-                            metadata={
-                                "message_id": message_obj.public_id,
-                                "session_name": session_name,
-                                "peer_name": message_obj.peer_name,
-                                "chunk_index": chunk_index,
-                            },
+                            message_id=message_obj.public_id,
+                            workspace_name=workspace_name,
+                            session_name=session_name,
+                            peer_name=message_obj.peer_name,
                         )
-                    )
+                    else:
+                        # pgvector not in use: don't write embedding to postgres
+                        embedding_obj = models.MessageEmbedding(
+                            content=message_obj.content,
+                            message_id=message_obj.public_id,
+                            workspace_name=workspace_name,
+                            session_name=session_name,
+                            peer_name=message_obj.peer_name,
+                        )
+                        # Store embedding in memory for vector store upsert
+                        embedding_obj._pending_embedding = embedding
+                    embedding_obj.sync_state = "pending"
+                    embedding_objects.append(embedding_obj)
 
             # Add all embedding metadata objects to the session
             if embedding_objects:
                 db.add_all(embedding_objects)
+                await db.flush()
+
+                # Track embedding IDs for sync state updates
+                embedding_ids = [emb.id for emb in embedding_objects]
+
+                # Build vector records - source depends on whether pgvector is in use
+                vector_records: list[VectorRecord] = []
+                for emb in embedding_objects:
+                    if pgvector_in_use:
+                        # pgvector in use: embedding is on ORM object (numpy array)
+                        if emb.embedding is not None:
+                            vector_records.append(
+                                VectorRecord(
+                                    id=str(emb.id),
+                                    embedding=[float(x) for x in emb.embedding],
+                                    metadata={
+                                        "message_id": emb.message_id,
+                                        "session_name": emb.session_name,
+                                        "peer_name": emb.peer_name,
+                                    },
+                                )
+                            )
+                    else:
+                        # pgvector not in use: embedding is in _pending_embedding
+                        if (
+                            hasattr(emb, "_pending_embedding")
+                            and emb._pending_embedding is not None
+                        ):
+                            vector_records.append(
+                                VectorRecord(
+                                    id=str(emb.id),
+                                    embedding=list(emb._pending_embedding),
+                                    metadata={
+                                        "message_id": emb.message_id,
+                                        "session_name": emb.session_name,
+                                        "peer_name": emb.peer_name,
+                                    },
+                                )
+                            )
                 await db.commit()
 
-            # Upsert vectors to external vector store with retry
-            if vector_records:
-                try:
-                    async for attempt in AsyncRetrying(
-                        stop=stop_after_attempt(3),
-                        wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-                        reraise=True,
-                    ):
-                        with attempt:
-                            await vector_store.upsert_many(namespace, vector_records)
-                except Exception:
-                    # Final attempt failed - log but don't raise
-                    # MessageEmbedding records exist in DB, vectors can be added later
-                    logger.exception("Failed to upsert message vectors after retries")
+                # Retry vector upsert with exponential backoff (3 attempts)
+                if vector_records:
+                    try:
+                        result = None
+                        async for attempt in AsyncRetrying(
+                            stop=stop_after_attempt(3),
+                            wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+                            retry=retry_if_exception_type(Exception)
+                            | retry_if_result(
+                                lambda res: res is not None
+                                and res.secondary_ok is False
+                            ),
+                            reraise=True,
+                        ):
+                            with attempt:
+                                result = await vector_store.upsert_many(
+                                    namespace, vector_records
+                                )
+
+                        if result is not None and result.secondary_ok is False:
+                            # Partial success: primary has data but secondary doesn't
+                            # Keep as "pending" for reconciliation to sync secondary
+                            logger.warning(
+                                "Partial sync for message embeddings: %s",
+                                result.secondary_error,
+                            )
+                            await db.execute(
+                                update(models.MessageEmbedding)
+                                .where(models.MessageEmbedding.id.in_(embedding_ids))
+                                .values(
+                                    sync_attempts=models.MessageEmbedding.sync_attempts
+                                    + 1,
+                                    last_sync_at=func.now(),
+                                )
+                            )
+                            await db.commit()
+                        else:
+                            # Success: both primary and secondary stores have the data
+                            await db.execute(
+                                update(models.MessageEmbedding)
+                                .where(models.MessageEmbedding.id.in_(embedding_ids))
+                                .values(
+                                    sync_state="synced",
+                                    last_sync_at=func.now(),
+                                    sync_attempts=0,
+                                )
+                            )
+                            await db.commit()
+
+                    except Exception as e:
+                        # Total failure: primary write failed
+                        # Keep as "pending" for reconciliation to retry
+                        logger.error(
+                            f"Failed to upsert message vectors after 3 retries: {e}"
+                        )
+                        await db.execute(
+                            update(models.MessageEmbedding)
+                            .where(models.MessageEmbedding.id.in_(embedding_ids))
+                            .values(
+                                sync_attempts=models.MessageEmbedding.sync_attempts + 1,
+                                last_sync_at=func.now(),
+                            )
+                        )
+                        await db.commit()
 
     except Exception:
         logger.exception(

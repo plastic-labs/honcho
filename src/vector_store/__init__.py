@@ -3,28 +3,46 @@ Vector store abstraction layer for Honcho.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any
+from functools import cache
+from typing import Any, ClassVar, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
 
 
-@dataclass
-class VectorRecord:
+class VectorRecord(BaseModel):
     """A single vector record to be stored in the vector store."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     id: str
     embedding: list[float]
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class QueryResult:
+class VectorQueryResult(BaseModel):
     """A single result from a vector query."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     id: str
     score: float  # Distance/similarity score (lower = more similar for cosine distance)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VectorUpsertResult(BaseModel):
+    """Result for a vector upsert operation."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        arbitrary_types_allowed=True,
+    )
+
+    primary_ok: bool
+    secondary_ok: bool | None = None
+    secondary_error: Exception | None = None
 
 
 class VectorStore(ABC):
@@ -49,62 +67,52 @@ class VectorStore(ABC):
         self.namespace_prefix = settings.VECTOR_STORE.NAMESPACE
 
     # === Namespace helpers ===
-    def get_document_namespace(
-        self, workspace_name: str, observer: str, observed: str
+    def get_vector_namespace(
+        self,
+        namespace_type: Literal["document", "message"],
+        workspace_name: str,
+        observer: str | None = None,
+        observed: str | None = None,
     ) -> str:
         """
-        Get the namespace for document embeddings (per collection).
+        Get the namespace for document or message embeddings.
 
         Args:
+            namespace_type: "document" or "message"
             workspace_name: Name of the workspace
-            observer: Name of the observing peer
-            observed: Name of the observed peer
+            observer: Name of the observing peer (document only)
+            observed: Name of the observed peer (document only)
 
         Returns:
-            Namespace string in format: {prefix}.{workspace}.{observer}.{observed}
+            Namespace string in format:
+            - document: {prefix}.{workspace}.{observer}.{observed}
+            - message: {prefix}.{workspace}.messages
         """
-        return f"{self.namespace_prefix}.{workspace_name}.{observer}.{observed}"
-
-    def get_message_namespace(self, workspace_name: str) -> str:
-        """
-        Get the namespace for message embeddings (per workspace).
-
-        Args:
-            workspace_name: Name of the workspace
-
-        Returns:
-            Namespace string in format: {prefix}.{workspace}.messages
-        """
-        return f"{self.namespace_prefix}.{workspace_name}.messages"
+        if namespace_type == "document":
+            if observer is None or observed is None:
+                raise ValueError(
+                    "observer and observed are required for document namespaces"
+                )
+            return f"{self.namespace_prefix}.{workspace_name}.{observer}.{observed}"
+        if namespace_type == "message":
+            return f"{self.namespace_prefix}.{workspace_name}.messages"
 
     # === Core operations ===
-    @abstractmethod
-    async def upsert(
-        self,
-        namespace: str,
-        vector: VectorRecord,
-    ) -> None:
-        """
-        Upsert a single vector into the store.
-
-        Args:
-            namespace: The namespace to store the vector in
-            vector: VectorRecord containing id, embedding, and optional metadata
-        """
-        ...
-
     @abstractmethod
     async def upsert_many(
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> None:
+    ) -> VectorUpsertResult:
         """
         Upsert multiple vectors into the store.
 
         Args:
             namespace: The namespace to store the vectors in
             vectors: List of VectorRecord objects to upsert
+
+        Returns:
+            Result describing primary/secondary outcomes.
         """
         ...
 
@@ -117,7 +125,7 @@ class VectorStore(ABC):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
-    ) -> list[QueryResult]:
+    ) -> list[VectorQueryResult]:
         """
         Query for similar vectors.
 
@@ -129,7 +137,7 @@ class VectorStore(ABC):
             max_distance: Optional maximum distance threshold (cosine distance)
 
         Returns:
-            List of QueryResult objects, ordered by similarity (most similar first)
+            List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
         ...
 
@@ -154,43 +162,65 @@ class VectorStore(ABC):
         """
         ...
 
+    @abstractmethod
+    async def close(self) -> None:
+        """
+        Close any open connections and release resources.
 
-# Singleton instance
-_vector_store_instance: VectorStore | None = None
+        Subclasses should override this if they maintain persistent connections.
+        """
+        ...
+
+
+# Import implementations after base classes are defined to avoid circular imports
+from src.vector_store.composite import CompositeVectorStore  # noqa: E402
+from src.vector_store.lancedb import LanceDBVectorStore  # noqa: E402
+from src.vector_store.pgvector import PgVectorStore  # noqa: E402
+from src.vector_store.turbopuffer import TurbopufferVectorStore  # noqa: E402
+
+
+def _create_store_by_type(store_type: str) -> VectorStore:
+    """Create a vector store instance by type name."""
+    if store_type == "turbopuffer":
+        return TurbopufferVectorStore()
+    elif store_type == "lancedb":
+        return LanceDBVectorStore()
+    elif store_type == "pgvector":
+        return PgVectorStore()
+    else:
+        raise ValueError(f"Unknown vector store type: {store_type}")
 
 
 def _create_vector_store() -> VectorStore:
     """
     Create a new vector store instance based on configuration.
 
+    If SECONDARY_TYPE is set, returns a CompositeVectorStore that:
+    - Writes to both primary and secondary stores
+    - Reads from primary only, falls back to secondary on failure
+
     Returns:
         The vector store instance based on configuration.
 
     Raises:
         ValueError: If the configured vector store type is invalid.
     """
-    store_type = settings.VECTOR_STORE.TYPE
+    primary = _create_store_by_type(settings.VECTOR_STORE.PRIMARY_TYPE)
 
-    if store_type == "turbopuffer":
-        from src.vector_store.turbopuffer import TurbopufferVectorStore
+    if settings.VECTOR_STORE.SECONDARY_TYPE:
+        secondary = _create_store_by_type(settings.VECTOR_STORE.SECONDARY_TYPE)
+        return CompositeVectorStore(primary=primary, secondary=secondary)
 
-        return TurbopufferVectorStore()
-    elif store_type == "lancedb":
-        from src.vector_store.lancedb import LanceDBVectorStore
-
-        return LanceDBVectorStore()
-    else:
-        raise ValueError(f"Unknown vector store type: {store_type}")
+    return primary
 
 
+@cache
 def get_vector_store() -> VectorStore:
     """
-    FastAPI dependency that provides the configured vector store instance (singleton).
+    Get the configured vector store instance (singleton).
 
-    This function is designed to be used as a FastAPI dependency:
-        vector_store: VectorStore = Depends(get_vector_store)
-
-    It can also be called directly for non-request contexts (e.g., background tasks).
+    Uses functools.cache to ensure only one instance is created per process.
+    This is asyncio-safe since there are no await points in the creation path.
 
     Returns:
         The vector store instance based on configuration.
@@ -198,28 +228,32 @@ def get_vector_store() -> VectorStore:
     Raises:
         ValueError: If the configured vector store type is invalid.
     """
-    global _vector_store_instance
-
-    if _vector_store_instance is None:
-        _vector_store_instance = _create_vector_store()
-
-    return _vector_store_instance
+    return _create_vector_store()
 
 
-def reset_vector_store() -> None:
+async def close_vector_store() -> None:
     """
-    Reset the vector store singleton instance.
+    Close the vector store and release resources.
 
-    This is primarily useful for testing to ensure a fresh instance is created.
+    Call this during application shutdown to cleanly close connections.
+    After calling this, you must call get_vector_store.cache_clear() if you
+    want to create a new instance.
     """
-    global _vector_store_instance
-    _vector_store_instance = None
+    # Check if an instance was ever created
+    if (
+        get_vector_store.cache_info().hits > 0
+        or get_vector_store.cache_info().misses > 0
+    ):
+        store = get_vector_store()
+        await store.close()
+        get_vector_store.cache_clear()
 
 
 __all__ = [
     "VectorStore",
     "VectorRecord",
-    "QueryResult",
+    "VectorQueryResult",
+    "VectorUpsertResult",
     "get_vector_store",
-    "reset_vector_store",
+    "close_vector_store",
 ]

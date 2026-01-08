@@ -15,7 +15,7 @@ from turbopuffer.types import Filter
 
 from src.config import settings
 
-from . import QueryResult, VectorRecord, VectorStore
+from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
 
 logger = logging.getLogger(__name__)
 
@@ -60,44 +60,11 @@ class TurbopufferVectorStore(VectorStore):
         """Get a Turbopuffer namespace object."""
         return self.tpuf.namespace(namespace)
 
-    async def upsert(
-        self,
-        namespace: str,
-        vector: VectorRecord,
-    ) -> None:
-        """
-        Upsert a single vector into Turbopuffer.
-
-        Args:
-            namespace: The namespace to store the vector in
-            vector: VectorRecord containing id, embedding, and optional metadata
-        """
-        ns = self._get_namespace(namespace)
-        attributes = vector.metadata or {}
-
-        try:
-            # Build row data
-            row: dict[str, Any] = {
-                "id": vector.id,
-                "vector": vector.embedding,
-                **attributes,
-            }
-
-            await ns.write(
-                upsert_rows=[row],
-                distance_metric=DISTANCE_METRIC,
-            )
-        except Exception:
-            logger.exception(
-                f"Failed to upsert vector {vector.id} to namespace {namespace}"
-            )
-            raise
-
     async def upsert_many(
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> None:
+    ) -> VectorUpsertResult:
         """
         Upsert multiple vectors into Turbopuffer.
 
@@ -106,7 +73,7 @@ class TurbopufferVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return
+            return VectorUpsertResult(primary_ok=True)
 
         ns = self._get_namespace(namespace)
 
@@ -124,6 +91,7 @@ class TurbopufferVectorStore(VectorStore):
                 upsert_rows=rows,
                 distance_metric=DISTANCE_METRIC,
             )
+            return VectorUpsertResult(primary_ok=True)
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
@@ -138,7 +106,7 @@ class TurbopufferVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
-    ) -> list[QueryResult]:
+    ) -> list[VectorQueryResult]:
         """
         Query for similar vectors in Turbopuffer.
 
@@ -150,7 +118,7 @@ class TurbopufferVectorStore(VectorStore):
             max_distance: Optional maximum distance threshold (cosine distance)
 
         Returns:
-            List of QueryResult objects, ordered by similarity (most similar first)
+            List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
         ns = self._get_namespace(namespace)
 
@@ -178,7 +146,7 @@ class TurbopufferVectorStore(VectorStore):
 
             response = await ns.query(**query_kwargs)
 
-            query_results: list[QueryResult] = []
+            query_results: list[VectorQueryResult] = []
             for row in response.rows or []:
                 # Distance is accessed via row["$dist"]
                 dist: float = float(row["$dist"]) if "$dist" in row else 0.0
@@ -197,7 +165,7 @@ class TurbopufferVectorStore(VectorStore):
                     }
 
                 query_results.append(
-                    QueryResult(
+                    VectorQueryResult(
                         id=str(row.id),
                         score=dist,
                         metadata=row_metadata,
@@ -295,3 +263,8 @@ class TurbopufferVectorStore(VectorStore):
         except Exception:
             logger.exception(f"Failed to delete namespace {namespace}")
             raise
+
+    async def close(self) -> None:
+        """Close the Turbopuffer client and release resources."""
+        await self.tpuf.close()
+        logger.debug("Turbopuffer client closed")

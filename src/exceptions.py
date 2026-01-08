@@ -109,6 +109,26 @@ class FileProcessingError(HonchoException):
     detail = "File processing error"
 
 
+@final
+class PartialVectorSyncException(HonchoException):
+    """
+    Exception raised when vector upsert partially succeeds.
+
+    This indicates the primary store succeeded but secondary store failed.
+    The data is queryable but not fully replicated.
+    """
+
+    status_code = 500
+    detail = "Vector partially synced to primary store only"
+
+    def __init__(self, primary_success: bool, secondary_error: Exception):
+        self.primary_success = primary_success
+        self.secondary_error = secondary_error
+        super().__init__(
+            f"Partial sync: primary={'succeeded' if primary_success else 'failed'}, secondary failed with: {secondary_error}"
+        )
+
+
 class LLMError(Exception):
     """Exception raised when an LLM call fails.
 
