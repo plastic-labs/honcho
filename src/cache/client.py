@@ -41,12 +41,12 @@ async def init_cache() -> None:
         if not is_cache_enabled():
             # Use in-memory cache when caching is disabled
             logger.info("Cache disabled, using in-memory cache")
-            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)  # pyright: ignore[reportUnknownMemberType]
+            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
             return
 
         # Setup cache with Redis backend
         try:
-            cache.setup(  # pyright: ignore[reportUnknownMemberType]
+            cache.setup(
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
             )
@@ -60,7 +60,7 @@ async def init_cache() -> None:
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(setup_err)
             # Fallback to in-memory cache
-            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)  # pyright: ignore[reportUnknownMemberType]
+            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
             return
 
         cache.enable()
@@ -98,7 +98,7 @@ async def init_cache() -> None:
                 sentry_sdk.capture_exception(e)
             # Fallback to in-memory cache
             await cache.close()
-            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)  # pyright: ignore[reportUnknownMemberType]
+            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
         except Exception as e:
             logger.warning(
                 "Unexpected cache error at %s: %s. Falling back to in-memory cache",
@@ -109,7 +109,7 @@ async def init_cache() -> None:
                 sentry_sdk.capture_exception(e)
             # Fallback to in-memory cache
             await cache.close()
-            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)  # pyright: ignore[reportUnknownMemberType]
+            cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
 
 
 async def close_cache() -> None:
