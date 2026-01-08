@@ -86,8 +86,12 @@ async def save_results_to_s3(
     failed_count: int,
     total_count: int,
     execution_time: float,
-) -> str | None:
-    """Save comprehensive test results to S3."""
+) -> tuple[str | None, str | None]:
+    """Save comprehensive test results to S3.
+
+    Returns:
+        Tuple of (presigned_url, s3_key). Either or both may be None if upload/URL generation fails.
+    """
     try:
         import boto3
 
@@ -102,10 +106,10 @@ async def save_results_to_s3(
             credentials = session.get_credentials()  # pyright: ignore
             if not credentials:
                 logger.warning("No AWS credentials available, skipping S3 upload")
-                return
+                return None, None
         except Exception as e:
             logger.warning(f"Could not verify AWS credentials: {e}, skipping S3 upload")
-            return
+            return None, None
 
         # Create comprehensive results object
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -136,10 +140,12 @@ async def save_results_to_s3(
             ],
         }
 
-        # Upload to S3
-        s3_client = boto3.client("s3", region_name=aws_region)  # pyright: ignore
-        key = f"{s3_prefix}/{github_run_id}-{timestamp}.json"
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        sha_short = github_sha[:7] if github_sha != "unknown" else "unknown"
+        ref_name = github_ref if github_ref != "unknown" else "unknown"
+        key = f"{s3_prefix}/{date_str}-{ref_name}-{sha_short}.json"
 
+        s3_client = boto3.client("s3", region_name=aws_region)  # pyright: ignore
         s3_client.put_object(  # pyright: ignore
             Bucket=s3_bucket,
             Key=key,
@@ -154,14 +160,15 @@ async def save_results_to_s3(
                 ExpiresIn=259200,  # 3 days
             )
             logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
-            return url  # pyright: ignore
+            return url, key  # pyright: ignore
         except Exception as e:
             logger.warning(f"Could not generate S3 presigned URL: {e}")
             logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
-            return None
+            return None, key
 
     except Exception as e:
         logger.error(f"Failed to save results to S3: {e}", exc_info=True)
+        return None, None
 
 
 class UnifiedTestExecutor:
@@ -612,7 +619,9 @@ class UnifiedTestRunner:
 
             # 5. Save results and send notifications
             # Always attempt S3 upload - save_results_to_s3 will check for credentials
-            url: str | None = await save_results_to_s3(
+            url: str | None
+            s3_key: str | None
+            url, s3_key = await save_results_to_s3(
                 results, failed_count, total_count, total_suite_time
             )
 
@@ -621,14 +630,14 @@ class UnifiedTestRunner:
             if discord_webhook_url:
                 passed_count = total_count - failed_count
                 status_emoji = "✅" if failed_count == 0 else "⚠️"
-                github_run_id = os.getenv("GITHUB_RUN_ID", "local")
 
                 message_lines = [
                     f"{status_emoji} **Unified Test Results**",
                     f"Results: {passed_count}/{total_count} passed, {failed_count}/{total_count} failed",
                     f"Execution time: {total_suite_time:.2f}s",
-                    f"Run ID: {github_run_id}",
                 ]
+                if s3_key:
+                    message_lines.append(f"File: `{s3_key}`")
                 if url:
                     message_lines.append(f"[View Complete Results]({url})")
                 message = "\n".join(message_lines)
