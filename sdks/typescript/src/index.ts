@@ -3,7 +3,7 @@
 
 export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 export { Honcho } from './client'
-export { Observation, ObservationScope } from './observations'
+export { Conclusion, ConclusionScope } from './conclusions'
 export { Page } from './pagination'
 export { Peer, PeerContext } from './peer'
 export { Session, SessionPeerConfig } from './session'
@@ -14,30 +14,31 @@ export {
   type SummaryData,
 } from './session_context'
 export {
+  type Conclusion as ConclusionData,
+  type ConclusionQueryParams,
   type DialecticStreamChunk,
   type DialecticStreamDelta,
   DialecticStreamResponse,
-  type Observation as ObservationData,
-  type ObservationQueryParams,
 } from './types'
 
 // Export validation types for advanced usage
 export type {
   ChatQuery,
   ContextParams,
-  DeriverStatusOptions,
   FileUpload,
   Filters,
+  GetRepresentationParams,
   HonchoConfig,
   MessageAddition,
   MessageCreate,
   PeerAddition,
   PeerConfig,
+  PeerGetRepresentationParams,
   PeerMetadata,
   PeerRemoval,
+  QueueStatusOptions,
   SessionConfig,
   SessionMetadata,
-  WorkingRepParams,
   WorkspaceConfig,
   WorkspaceMetadata,
 } from './validation'

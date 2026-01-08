@@ -77,13 +77,14 @@ class WaitAction(TestStep):
 # --- Dream Actions ---
 
 
-class TriggerDreamAction(TestStep):
-    step_type: Literal["trigger_dream"] = "trigger_dream"
+class ScheduleDreamAction(TestStep):
+    step_type: Literal["schedule_dream"] = "schedule_dream"
     observer: str = Field(..., description="Observer peer name")
     observed: str | None = Field(
         None, description="Observed peer name (defaults to observer if not specified)"
     )
-    dream_type: DreamType = Field(..., description="Type of dream to trigger")
+    session_id: str = Field(..., description="Session ID to scope the dream to")
+    dream_type: DreamType = Field(..., description="Type of dream to schedule")
 
 
 # --- Assertions ---
@@ -163,7 +164,7 @@ class TestDefinition(BaseModel):
             | AddMessageAction
             | AddMessagesAction
             | WaitAction
-            | TriggerDreamAction
+            | ScheduleDreamAction
             | QueryAction,
             Field(discriminator="step_type"),
         ]

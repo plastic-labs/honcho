@@ -7,6 +7,7 @@ from src import models, schemas
 from src.config import settings
 from src.crud.workspace import get_workspace
 from src.exceptions import ResourceNotFoundException
+from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
@@ -15,7 +16,7 @@ async def get_or_create_webhook_endpoint(
     db: AsyncSession,
     workspace_name: str,
     webhook: schemas.WebhookEndpointCreate,
-) -> schemas.WebhookEndpoint:
+) -> GetOrCreateResult[schemas.WebhookEndpoint]:
     """
     Get or create a webhook endpoint, optionally for a workspace.
 
@@ -24,7 +25,7 @@ async def get_or_create_webhook_endpoint(
         webhook: Webhook endpoint creation schema
 
     Returns:
-        The webhook endpoint
+        GetOrCreateResult containing the webhook endpoint and whether it was created
 
     Raises:
         ResourceNotFoundException: If the workspace is specified and does not exist
@@ -47,7 +48,9 @@ async def get_or_create_webhook_endpoint(
     # Check if webhook already exists for this workspace
     for endpoint in endpoints:
         if endpoint.url == webhook.url:
-            return schemas.WebhookEndpoint.model_validate(endpoint)
+            return GetOrCreateResult(
+                schemas.WebhookEndpoint.model_validate(endpoint), created=False
+            )
 
     # Create new webhook endpoint
     webhook_endpoint = models.WebhookEndpoint(
@@ -59,7 +62,9 @@ async def get_or_create_webhook_endpoint(
     await db.refresh(webhook_endpoint)
 
     logger.debug("Webhook endpoint created: %s", webhook.url)
-    return schemas.WebhookEndpoint.model_validate(webhook_endpoint)
+    return GetOrCreateResult(
+        schemas.WebhookEndpoint.model_validate(webhook_endpoint), created=True
+    )
 
 
 async def list_webhook_endpoints(

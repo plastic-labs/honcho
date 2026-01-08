@@ -35,7 +35,7 @@ async def test_create_message(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     message = data[0]
@@ -77,7 +77,7 @@ async def test_create_batch_messages_with_metadata(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 2
 
@@ -115,7 +115,7 @@ async def test_create_batch_messages_without_metadata(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     assert data[0]["content"] == "Message without metadata"
@@ -148,7 +148,7 @@ async def test_create_batch_messages_with_null_metadata(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     assert data[0]["content"] == "Message with null metadata"
@@ -732,8 +732,8 @@ async def test_create_messages_for_nonexistent_session(
             ]
         },
     )
-    # Should create the session and return 200 with the created message
-    assert response.status_code == 200
+    # Should create the session and return 201 with the created message
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     assert data[0]["content"] == "Test message"
@@ -807,7 +807,7 @@ async def test_create_batch_messages_max_limit(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
         json={"messages": messages},
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 100
     assert data[0]["content"] == "Message 0"
@@ -973,7 +973,7 @@ async def test_create_message_with_timestamp(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     message = data[0]
@@ -1020,7 +1020,7 @@ async def test_create_message_without_timestamp_uses_default(
     # Record time after request
     after_request = datetime.datetime.now(datetime.timezone.utc)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     message = data[0]
@@ -1083,7 +1083,7 @@ async def test_create_batch_messages_with_mixed_timestamps(
 
     after_request = datetime.datetime.now(datetime.timezone.utc)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 3
 
@@ -1143,7 +1143,7 @@ async def test_create_message_with_null_timestamp(
 
     after_request = datetime.datetime.now(datetime.timezone.utc)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
     message = data[0]

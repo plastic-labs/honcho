@@ -94,11 +94,13 @@ async def handle_session(
     Returns:
         List of queue records to insert
     """
-    session = await crud.get_or_create_session(
-        db_session,
-        session=schemas.SessionCreate(name=session_name),
-        workspace_name=workspace_name,
-    )
+    session = (
+        await crud.get_or_create_session(
+            db_session,
+            session=schemas.SessionCreate(name=session_name),
+            workspace_name=workspace_name,
+        )
+    ).resource
 
     # Fetch workspace for configuration resolution
     workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
@@ -337,7 +339,7 @@ async def generate_queue_records(
     # Check if the sender should be observed based on peer configuration
     should_observe = get_effective_observe_me(observed, peers_with_configuration)
 
-    if not conf.deriver.enabled:
+    if not conf.reasoning.enabled:
         return records
 
     if should_observe:

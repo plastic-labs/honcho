@@ -174,7 +174,7 @@ async def test_comparison_operators_filters(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Create messages with numeric metadata for comparison tests
     message_configs = [
@@ -203,7 +203,7 @@ async def test_comparison_operators_filters(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={"messages": message_configs},
     )
-    assert messages_response.status_code == 200
+    assert messages_response.status_code == 201
 
     # Test the filter configuration
     response = client.post(
@@ -870,7 +870,7 @@ async def test_all_message_columns_filtering(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Create messages with various data
     messages_response = client.post(
@@ -895,7 +895,7 @@ async def test_all_message_columns_filtering(
             ]
         },
     )
-    assert messages_response.status_code == 200
+    assert messages_response.status_code == 201
 
     # Test filtering by session_id (maps to session_name internally)
     response = client.post(
@@ -2090,13 +2090,13 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Create workspace
     response = client.post("/v2/workspaces", json={"name": workspace_name})
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     # Create peer
     response = client.post(
         f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     # Create messages with problematic floating point values using correct endpoint
     messages_response = client.post(
@@ -2160,9 +2160,9 @@ async def test_float_precision_edge_cases(client: TestClient):
             ]
         },
     )
-    assert messages_response.status_code == 200
+    assert messages_response.status_code == 201
 
-    # Test exact equality - this may or may not work due to floating point precision
+    # Test exact equality
     response = client.post(
         f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"value": 0.3}}},
@@ -2255,13 +2255,13 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Create workspace
     response = client.post("/v2/workspaces", json={"name": workspace_name})
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     # Create peer
     response = client.post(
         f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     # Create messages with mixed data types for the same logical field
     messages_response = client.post(
@@ -2331,7 +2331,7 @@ async def test_mixed_type_comparisons(client: TestClient):
             ]
         },
     )
-    assert messages_response.status_code == 200
+    assert messages_response.status_code == 201
 
     # Test string vs numeric equality
     response = client.post(

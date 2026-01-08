@@ -14,7 +14,7 @@ export default class MockHonchoCore {
       getOrCreate: jest.fn(),
       update: jest.fn(),
       search: jest.fn(),
-      workingRepresentation: jest.fn(),
+      getRepresentation: jest.fn(),
     },
     sessions: {
       list: jest.fn(),

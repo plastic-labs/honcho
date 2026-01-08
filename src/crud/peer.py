@@ -13,6 +13,7 @@ from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.models import Peer
 from src.utils.filter import apply_filter
+from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
@@ -38,7 +39,7 @@ async def get_or_create_peers(
     peers: list[schemas.PeerCreate],
     *,
     _retry: bool = False,
-) -> list[models.Peer]:
+) -> GetOrCreateResult[list[models.Peer]]:
     """
     Get an existing list of peers or create new peers if they don't exist.
     Updates existing peers with metadata and configuration if provided.
@@ -50,7 +51,7 @@ async def get_or_create_peers(
         _retry: Whether to retry the operation
 
     Returns:
-        List of peers if found or created
+        GetOrCreateResult containing the list of peers and whether any were created
 
     Raises:
         ConflictException: If we fail to get or create the peers
@@ -132,7 +133,8 @@ async def get_or_create_peers(
         )
 
     # Return combined list of existing and new peers
-    return existing_peers + new_peers
+    # created=True if any new peers were created
+    return GetOrCreateResult(existing_peers + new_peers, created=len(new_peers) > 0)
 
 
 @cache(
@@ -224,7 +226,7 @@ async def update_peer(
         await get_or_create_peers(
             db, workspace_name, [schemas.PeerCreate(name=peer_name)]
         )
-    )[0]
+    ).resource[0]
 
     needs_update = False
 

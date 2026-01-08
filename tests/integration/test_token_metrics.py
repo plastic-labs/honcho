@@ -21,9 +21,9 @@ from src import crud, models, schemas
 from src.models import Peer, Workspace
 from src.schemas import (
     ResolvedConfiguration,
-    ResolvedDeriverConfiguration,
     ResolvedDreamConfiguration,
     ResolvedPeerCardConfiguration,
+    ResolvedReasoningConfiguration,
     ResolvedSummaryConfiguration,
 )
 from src.utils.clients import HonchoLLMCallResponse
@@ -97,14 +97,16 @@ async def create_test_session_with_peer(
     peer: Peer,
 ) -> models.Session:
     """Create a session with a peer configured for observation."""
-    session = await crud.get_or_create_session(
-        db_session,
-        schemas.SessionCreate(
-            name=str(generate_nanoid()),
-            peers={peer.name: schemas.SessionPeerConfig(observe_me=True)},
-        ),
-        workspace.name,
-    )
+    session = (
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=str(generate_nanoid()),
+                peers={peer.name: schemas.SessionPeerConfig(observe_me=True)},
+            ),
+            workspace.name,
+        )
+    ).resource
     await db_session.commit()
     return session
 
@@ -142,7 +144,7 @@ async def create_test_messages(
 def create_test_configuration() -> ResolvedConfiguration:
     """Create a test configuration to avoid DB lookups in tests."""
     return ResolvedConfiguration(
-        deriver=ResolvedDeriverConfiguration(enabled=True),
+        reasoning=ResolvedReasoningConfiguration(enabled=True),
         peer_card=ResolvedPeerCardConfiguration(use=False, create=False),
         summary=ResolvedSummaryConfiguration(
             enabled=True, messages_per_short_summary=20, messages_per_long_summary=60

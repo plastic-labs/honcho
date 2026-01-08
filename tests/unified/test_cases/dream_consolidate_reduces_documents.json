@@ -108,9 +108,10 @@
       ]
     },
     {
-      "step_type": "trigger_dream",
+      "step_type": "schedule_dream",
       "observer": "user",
-      "dream_type": "consolidate"
+      "dream_type": "consolidate",
+      "session_id": "session_dream_test"
     },
     {
       "step_type": "wait",

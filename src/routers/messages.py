@@ -79,7 +79,7 @@ async def parse_upload_form(
     )
 
 
-@router.post("/", response_model=list[schemas.Message])
+@router.post("", response_model=list[schemas.Message], status_code=201)
 async def create_messages_for_session(
     background_tasks: BackgroundTasks,
     messages: schemas.MessageBatchCreate,
@@ -127,7 +127,7 @@ async def create_messages_for_session(
         raise
 
 
-@router.post("/upload", response_model=list[schemas.Message])
+@router.post("/upload", response_model=list[schemas.Message], status_code=201)
 async def create_messages_with_file(
     background_tasks: BackgroundTasks,
     workspace_id: str = Path(...),
@@ -200,17 +200,17 @@ async def create_messages_with_file(
 
 @router.post("/list", response_model=Page[schemas.Message])
 async def get_messages(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     options: schemas.MessageGet | None = Body(
-        None, description="Filtering options for the messages list"
+        None, description="Filtering options for the message list"
     ),
     reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
     db: AsyncSession = db,
 ):
-    """Get all messages for a session"""
+    """Get all messages for a Session with optional filters. Results are paginated."""
     try:
         filters = None
         if options and hasattr(options, "filters"):
@@ -233,12 +233,12 @@ async def get_messages(
 
 @router.get("/{message_id}", response_model=schemas.Message)
 async def get_message(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
-    message_id: str = Path(..., description="ID of the message to retrieve"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    message_id: str = Path(...),
     db: AsyncSession = db,
 ):
-    """Get a Message by ID"""
+    """Get a single message by ID from a Session."""
     honcho_message = await crud.get_message(
         db, workspace_name=workspace_id, session_name=session_id, message_id=message_id
     )
@@ -250,15 +250,19 @@ async def get_message(
 
 @router.put("/{message_id}", response_model=schemas.Message)
 async def update_message(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
-    message_id: str = Path(..., description="ID of the message to update"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    message_id: str = Path(...),
     message: schemas.MessageUpdate = Body(
         ..., description="Updated message parameters"
     ),
     db: AsyncSession = db,
 ):
-    """Update the metadata of a Message"""
+    """
+    Update the metadata of a message.
+
+    This will overwrite any existing metadata for the message.
+    """
     try:
         updated_message = await crud.update_message(
             db,

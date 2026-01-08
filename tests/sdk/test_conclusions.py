@@ -1,13 +1,14 @@
 """Tests for observation SDK methods."""
 
 import pytest
+from honcho_core.types.workspaces.conclusion import Conclusion
 
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.client import Honcho
-from sdks.python.src.honcho.observations import (
-    AsyncObservationScope,
-    Observation,
-    ObservationScope,
+from sdks.python.src.honcho.conclusions import (
+    AsyncConclusionScope,
+    ConclusionCreateParams,
+    ConclusionScope,
 )
 
 
@@ -35,16 +36,21 @@ async def test_observation_create_single(
         )
 
         # Get observation scope for observer -> target
-        obs_scope = observer.observations_of(target)
-        assert isinstance(obs_scope, AsyncObservationScope)
+        obs_scope = observer.conclusions_of(target)
+        assert isinstance(obs_scope, AsyncConclusionScope)
 
         # Create a single observation
         created = await obs_scope.create(
-            {"content": "User prefers dark mode", "session_id": session.id}
+            [
+                ConclusionCreateParams(
+                    content="User prefers dark mode",
+                    session_id=session.id,
+                )
+            ]
         )
 
         assert len(created) == 1
-        assert isinstance(created[0], Observation)
+        assert isinstance(created[0], Conclusion)
         assert created[0].content == "User prefers dark mode"
         assert created[0].observer_id == observer.id
         assert created[0].observed_id == target.id
@@ -65,16 +71,21 @@ async def test_observation_create_single(
         )
 
         # Get observation scope for observer -> target
-        obs_scope = observer.observations_of(target)
-        assert isinstance(obs_scope, ObservationScope)
+        obs_scope = observer.conclusions_of(target)
+        assert isinstance(obs_scope, ConclusionScope)
 
         # Create a single observation
         created = obs_scope.create(
-            {"content": "User prefers dark mode", "session_id": session.id}
+            [
+                ConclusionCreateParams(
+                    content="User prefers dark mode",
+                    session_id=session.id,
+                )
+            ]
         )
 
         assert len(created) == 1
-        assert isinstance(created[0], Observation)
+        assert isinstance(created[0], Conclusion)
         assert created[0].content == "User prefers dark mode"
         assert created[0].observer_id == observer.id
         assert created[0].observed_id == target.id
@@ -106,14 +117,23 @@ async def test_observation_create_batch(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create multiple observations
         created = await obs_scope.create(
             [
-                {"content": "User prefers dark mode", "session_id": session.id},
-                {"content": "User works late at night", "session_id": session.id},
-                {"content": "User enjoys programming", "session_id": session.id},
+                ConclusionCreateParams(
+                    content="User prefers dark mode",
+                    session_id=session.id,
+                ),
+                ConclusionCreateParams(
+                    content="User works late at night",
+                    session_id=session.id,
+                ),
+                ConclusionCreateParams(
+                    content="User enjoys programming",
+                    session_id=session.id,
+                ),
             ]
         )
 
@@ -143,7 +163,7 @@ async def test_observation_create_batch(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create multiple observations
         created = obs_scope.create(
@@ -191,7 +211,7 @@ async def test_observation_create_then_list(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observations
         created = await obs_scope.create(
@@ -206,8 +226,12 @@ async def test_observation_create_then_list(
         # List observations
         listed = await obs_scope.list()
 
+        listed_all: list[Conclusion] = [
+            Conclusion.model_validate(item) for item in listed.items
+        ]
+
         # The created observation should be in the list
-        listed_ids = {obs.id for obs in listed}
+        listed_ids = {obs.id for obs in listed_all}
         assert created[0].id in listed_ids
     else:
         assert isinstance(honcho_client, Honcho)
@@ -224,7 +248,7 @@ async def test_observation_create_then_list(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observations
         created = obs_scope.create(
@@ -268,7 +292,7 @@ async def test_observation_create_then_query(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observation with specific content
         await obs_scope.create(
@@ -302,7 +326,7 @@ async def test_observation_create_then_query(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observation with specific content
         obs_scope.create(
@@ -347,7 +371,7 @@ async def test_observation_create_then_delete(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observations
         created = await obs_scope.create(
@@ -363,7 +387,10 @@ async def test_observation_create_then_delete(
 
         # List observations - should not contain deleted one
         listed = await obs_scope.list()
-        listed_ids = {obs.id for obs in listed}
+        listed_all: list[Conclusion] = [
+            Conclusion.model_validate(item) for item in listed.items
+        ]
+        listed_ids = {obs.id for obs in listed_all}
         assert observation_id not in listed_ids
     else:
         assert isinstance(honcho_client, Honcho)
@@ -380,7 +407,7 @@ async def test_observation_create_then_delete(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observations
         created = obs_scope.create(
@@ -418,14 +445,14 @@ async def test_self_observation_create(
         await session.add_messages([peer.message("Hello")])
 
         # Get self-observation scope
-        obs_scope = peer.observations
-        assert isinstance(obs_scope, AsyncObservationScope)
+        obs_scope = peer.conclusions
+        assert isinstance(obs_scope, AsyncConclusionScope)
         assert obs_scope.observer == peer.id
         assert obs_scope.observed == peer.id
 
         # Create a self-observation
         created = await obs_scope.create(
-            {"content": "I prefer morning workouts", "session_id": session.id}
+            [{"content": "I prefer morning workouts", "session_id": session.id}]
         )
 
         assert len(created) == 1
@@ -440,14 +467,14 @@ async def test_self_observation_create(
         session.add_messages([peer.message("Hello")])
 
         # Get self-observation scope
-        obs_scope = peer.observations
-        assert isinstance(obs_scope, ObservationScope)
+        obs_scope = peer.conclusions
+        assert isinstance(obs_scope, ConclusionScope)
         assert obs_scope.observer == peer.id
         assert obs_scope.observed == peer.id
 
         # Create a self-observation
         created = obs_scope.create(
-            {"content": "I prefer morning workouts", "session_id": session.id}
+            [{"content": "I prefer morning workouts", "session_id": session.id}]
         )
 
         assert len(created) == 1
@@ -486,7 +513,7 @@ async def test_observation_create_with_session_filter(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observations in different sessions
         await obs_scope.create(
@@ -502,13 +529,19 @@ async def test_observation_create_with_session_filter(
 
         # List filtered by session1
         s1_obs = await obs_scope.list(session=session1)
-        s1_contents = [obs.content for obs in s1_obs]
+        s1_obs_all: list[Conclusion] = [
+            Conclusion.model_validate(item) for item in s1_obs.items
+        ]
+        s1_contents = [obs.content for obs in s1_obs_all]
         assert "Session 1 observation" in s1_contents
         assert "Session 2 observation" not in s1_contents
 
         # List filtered by session2
         s2_obs = await obs_scope.list(session=session2)
-        s2_contents = [obs.content for obs in s2_obs]
+        s2_obs_all: list[Conclusion] = [
+            Conclusion.model_validate(item) for item in s2_obs.items
+        ]
+        s2_contents = [obs.content for obs in s2_obs_all]
         assert "Session 2 observation" in s2_contents
         assert "Session 1 observation" not in s2_contents
     else:
@@ -533,7 +566,7 @@ async def test_observation_create_with_session_filter(
         )
 
         # Get observation scope
-        obs_scope = observer.observations_of(target)
+        obs_scope = observer.conclusions_of(target)
 
         # Create observations in different sessions
         obs_scope.create(
@@ -565,7 +598,7 @@ async def test_observation_scope_via_peer_string(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
 ):
     """
-    Tests creating observations via observations_of(string).
+    Tests creating observations via conclusions_of(string).
     """
     honcho_client, client_type = client_fixture
 
@@ -584,12 +617,12 @@ async def test_observation_scope_via_peer_string(
         )
 
         # Get observation scope using string ID
-        obs_scope = observer.observations_of(target.id)
+        obs_scope = observer.conclusions_of(target.id)
         assert obs_scope.observed == target.id
 
         # Create observation
         created = await obs_scope.create(
-            {"content": "Created via string target", "session_id": session.id}
+            [{"content": "Created via string target", "session_id": session.id}]
         )
 
         assert len(created) == 1
@@ -609,12 +642,12 @@ async def test_observation_scope_via_peer_string(
         )
 
         # Get observation scope using string ID
-        obs_scope = observer.observations_of(target.id)
+        obs_scope = observer.conclusions_of(target.id)
         assert obs_scope.observed == target.id
 
         # Create observation
         created = obs_scope.create(
-            {"content": "Created via string target", "session_id": session.id}
+            [{"content": "Created via string target", "session_id": session.id}]
         )
 
         assert len(created) == 1

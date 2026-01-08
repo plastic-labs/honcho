@@ -17,7 +17,7 @@ def test_create_workspace_with_auth(auth_client: AuthClient):
         assert response.status_code == 401
         return
 
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
 
 def test_auth_response_time(auth_client: AuthClient):
@@ -42,7 +42,7 @@ def test_auth_response_time(auth_client: AuthClient):
         assert response.status_code == 401
         return
 
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
 
 def test_get_or_create_workspace_with_auth(auth_client: AuthClient):
@@ -56,7 +56,7 @@ def test_get_or_create_workspace_with_auth(auth_client: AuthClient):
         assert response.status_code == 401
         return
 
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
 
 def test_get_workspace_with_auth(
@@ -74,7 +74,7 @@ def test_get_workspace_with_auth(
 
     # Admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
     else:
         assert response.status_code == 401
 
@@ -149,7 +149,7 @@ def test_create_peer_with_auth(
 
     # Only admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
     else:
         assert response.status_code == 401
 
@@ -188,7 +188,7 @@ def test_get_peer_by_name_with_auth(
             f"/v2/workspaces/{test_workspace.name}/peers", json={"name": test_peer.name}
         )
 
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
 
 
 def test_update_peer_with_auth(
@@ -250,7 +250,7 @@ def test_create_session_with_auth(
 
     # Only admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
     else:
         assert response.status_code == 401
 
@@ -266,7 +266,7 @@ def test_create_session_with_auth(
             json={"name": session_name2, "peer_names": {test_peer.name: {}}},
         )
 
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
 
 
 def test_get_session_by_name_with_auth(
@@ -290,13 +290,13 @@ def test_get_session_by_name_with_auth(
         assert create_response.status_code == 401
         return
 
-    assert create_response.status_code == 200
+    assert create_response.status_code in [200, 201]
 
     # Test with workspace scoped JWT - get the same session
     response = auth_client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions", json={"name": session_name}
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     if auth_client.auth_type == "empty":
         # Test with session-scoped JWT
@@ -308,7 +308,7 @@ def test_get_session_by_name_with_auth(
             f"/v2/workspaces/{test_workspace.name}/sessions",
             json={"name": session_name},
         )
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
 
         # Test with wrong session_name (should be 401 since we have a session-scoped JWT)
         assert (
@@ -324,26 +324,20 @@ def test_get_session_by_name_with_auth(
             f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
         )
 
-        assert (
-            auth_client.post(
-                f"/v2/workspaces/{test_workspace.name}/sessions",
-                json={"name": session_name},
-            ).status_code
-            == 200
-        )
+        assert auth_client.post(
+            f"/v2/workspaces/{test_workspace.name}/sessions",
+            json={"name": session_name},
+        ).status_code in [200, 201]
 
         # Test with workspace-scoped JWT
         auth_client.headers["Authorization"] = (
             f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
-        assert (
-            auth_client.post(
-                f"/v2/workspaces/{test_workspace.name}/sessions",
-                json={"name": session_name},
-            ).status_code
-            == 200
-        )
+        assert auth_client.post(
+            f"/v2/workspaces/{test_workspace.name}/sessions",
+            json={"name": session_name},
+        ).status_code in [200, 201]
 
         # Test with wrong session_name using DELETE endpoint (should be 404 since session doesn't exist)
         wrong_session_name = generate_nanoid()

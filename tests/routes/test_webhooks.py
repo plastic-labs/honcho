@@ -18,7 +18,7 @@ async def test_create_webhook_endpoint(
             "url": "http://example.com/webhook",
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     response_json = response.json()
     assert response_json["url"] == "http://example.com/webhook"
     assert "id" in response_json
@@ -71,7 +71,7 @@ async def test_list_webhook_endpoints_with_data(
             "url": "http://example1.com/webhook",
         },
     )
-    assert response1.status_code == 200
+    assert response1.status_code in [200, 201]
 
     # Create second endpoint
     response2 = client.post(
@@ -80,7 +80,7 @@ async def test_list_webhook_endpoints_with_data(
             "url": "http://example2.com/webhook",
         },
     )
-    assert response2.status_code == 200
+    assert response2.status_code in [200, 201]
 
     # List endpoints
     list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
@@ -108,7 +108,7 @@ async def test_delete_webhook_endpoint(
             "url": "http://example.com/webhook",
         },
     )
-    assert create_response.status_code == 200
+    assert create_response.status_code in [200, 201]
     endpoint = create_response.json()
     endpoint_id = endpoint["id"]
 
@@ -116,7 +116,7 @@ async def test_delete_webhook_endpoint(
     delete_response = client.delete(
         f"/v2/workspaces/{test_workspace.name}/webhooks/{endpoint_id}"
     )
-    assert delete_response.status_code == 200
+    assert delete_response.status_code == 204
 
     # Verify endpoint is deleted
     list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
@@ -160,7 +160,7 @@ async def test_multiple_endpoints_per_workspace(
             f"/v2/workspaces/{test_workspace.name}/webhooks",
             json={"url": url},
         )
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
         created_endpoints.append(response.json())
 
     # List all endpoints
@@ -179,7 +179,7 @@ async def test_multiple_endpoints_per_workspace(
     delete_response = client.delete(
         f"/v2/workspaces/{test_workspace.name}/webhooks/{created_endpoints[0]['id']}"
     )
-    assert delete_response.status_code == 200
+    assert delete_response.status_code == 204
 
     # Verify only 2 endpoints remain
     list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
@@ -201,14 +201,14 @@ async def test_create_duplicate_webhook_endpoint(
         f"/v2/workspaces/{test_workspace.name}/webhooks",
         json={"url": url},
     )
-    assert response1.status_code == 200
+    assert response1.status_code in [200, 201]
 
     # Try to create it again
     response2 = client.post(
         f"/v2/workspaces/{test_workspace.name}/webhooks",
         json={"url": url},
     )
-    assert response2.status_code == 200
+    assert response2.status_code in [200, 201]
     assert response1.json() == response2.json()
 
     # Verify only one endpoint exists
@@ -235,7 +235,7 @@ async def test_max_webhook_endpoints_per_workspace(
                 "url": f"http://example{i}.com/webhook",
             },
         )
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
 
     # Try to create one more
     response = client.post(
@@ -253,7 +253,7 @@ async def test_same_endpoint_in_different_workspaces(
 ):
     ws1, _ = sample_data
     ws2_response = client.post("/v2/workspaces", json={"name": "workspace-2"})
-    assert ws2_response.status_code == 200
+    assert ws2_response.status_code in [200, 201]
     ws2 = ws2_response.json()
 
     url = "http://example.com/shared"
@@ -263,14 +263,14 @@ async def test_same_endpoint_in_different_workspaces(
         f"/v2/workspaces/{ws1.name}/webhooks",
         json={"url": url},
     )
-    assert response1.status_code == 200
+    assert response1.status_code in [200, 201]
 
     # Create same endpoint in workspace 2
     response2 = client.post(
         f"/v2/workspaces/{ws2['id']}/webhooks",
         json={"url": url},
     )
-    assert response2.status_code == 200
+    assert response2.status_code in [200, 201]
 
     # Verify they are different resources
     assert response1.json()["id"] != response2.json()["id"]

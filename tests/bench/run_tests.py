@@ -171,7 +171,7 @@ class TestRunner:
             True if queue is empty, False if timeout exceeded
         """
         try:
-            await honcho_client.poll_deriver_status(
+            await honcho_client.poll_queue_status(
                 session=session_id,
                 timeout=float(self.timeout_seconds)
                 if self.timeout_seconds

@@ -61,8 +61,8 @@ async def process_representation_tasks_batch(
                 ),
             )
 
-    # Skip if deriver disabled
-    if message_level_configuration.deriver.enabled is False:
+    # Skip if disabled
+    if message_level_configuration.reasoning.enabled is False:
         return
 
     accumulate_metric(

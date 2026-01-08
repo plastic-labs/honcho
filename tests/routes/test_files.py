@@ -57,7 +57,7 @@ async def test_create_messages_with_text_file(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1  # Should be 1 message since text is short
 
@@ -90,7 +90,7 @@ async def test_create_messages_with_large_file_chunking(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) > 1  # Should be multiple messages due to chunking
 
@@ -124,7 +124,7 @@ async def test_create_messages_with_json_file(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
 
@@ -206,7 +206,7 @@ async def test_create_messages_with_empty_file(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     # Should create one message with empty content
     assert len(data) == 1
@@ -233,7 +233,7 @@ async def test_file_metadata_stored_in_internal_metadata(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     message_id = data[0]["id"]
 
@@ -298,7 +298,7 @@ async def test_pdf_file_processing(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) >= 1  # PDF should create at least one message
 
@@ -364,7 +364,7 @@ async def test_file_upload_with_metadata(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
 
@@ -405,7 +405,7 @@ async def test_file_upload_with_configuration(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
 
@@ -449,7 +449,7 @@ async def test_file_upload_with_created_at(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
 
@@ -500,7 +500,7 @@ async def test_file_upload_with_all_parameters(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) == 1
 
@@ -543,7 +543,7 @@ async def test_file_upload_with_invalid_metadata_json(
     response = client.post(url, files=files, data=form_data)
 
     # Should still succeed but metadata will be None (backend handles gracefully)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     # Metadata parsing failure is logged but doesn't fail the request
     assert len(data) == 1
@@ -577,7 +577,7 @@ async def test_large_file_upload_with_metadata(
     url = _get_upload_url(test_workspace.name, session_name)
     response = client.post(url, files=files, data=form_data)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert len(data) > 1  # Should be multiple messages due to chunking
 

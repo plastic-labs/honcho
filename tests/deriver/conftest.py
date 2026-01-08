@@ -32,18 +32,20 @@ async def sample_session_with_peers(
     await db_session.flush()
 
     # Create session with peer configurations
-    session = await crud.get_or_create_session(
-        db_session,
-        schemas.SessionCreate(
-            name=str(generate_nanoid()),
-            peers={
-                peer1.name: schemas.SessionPeerConfig(observe_me=True),
-                peer2.name: schemas.SessionPeerConfig(observe_others=True),
-                peer3.name: schemas.SessionPeerConfig(),  # No special observation settings
-            },
-        ),
-        workspace.name,
-    )
+    session = (
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=str(generate_nanoid()),
+                peers={
+                    peer1.name: schemas.SessionPeerConfig(observe_me=True),
+                    peer2.name: schemas.SessionPeerConfig(observe_others=True),
+                    peer3.name: schemas.SessionPeerConfig(),  # No special observation settings
+                },
+            ),
+            workspace.name,
+        )
+    ).resource
     await db_session.commit()
 
     return session, [peer1, peer2, peer3]
@@ -124,7 +126,7 @@ def create_queue_payload() -> Callable[..., Any]:
         }
 
         configuration = schemas.ResolvedConfiguration(
-            deriver=schemas.ResolvedDeriverConfiguration(enabled=True),
+            reasoning=schemas.ResolvedReasoningConfiguration(enabled=True),
             peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
             summary=schemas.ResolvedSummaryConfiguration(
                 enabled=True,

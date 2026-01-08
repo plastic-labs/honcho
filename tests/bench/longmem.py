@@ -270,7 +270,7 @@ class LongMemEvalRunner:
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_deriver_status(session=session_id)
+                status = await honcho_client.get_queue_status(session=session_id)
             except Exception as _e:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -310,7 +310,7 @@ class LongMemEvalRunner:
         observed = observed or observer
         honcho_url = self.get_honcho_url_for_index(0)
 
-        url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
+        url = f"{honcho_url}/v2/workspaces/{workspace_id}/schedule_dream"
         payload: dict[str, Any] = {
             "observer": observer,
             "observed": observed,
