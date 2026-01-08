@@ -209,7 +209,7 @@ async def fake_cache_session():
         # Setup cache for tests that don't use TestClient (direct CRUD tests)
         # For TestClient tests, the app's lifespan handler will also call cache.setup()
         # The ContextVar patch above handles any context issues
-        cache.setup(  # pyright: ignore[reportUnknownMemberType]
+        cache.setup(
             "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
         )
 
