@@ -1,8 +1,7 @@
 """
 LanceDB vector store implementation.
 
-This module provides a LanceDB-based implementation of the VectorStore interface
-for use in self-hosted deployments of Honcho.
+This module provides a LanceDB-based implementation of the VectorStore interface.
 """
 
 import asyncio

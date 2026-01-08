@@ -394,13 +394,11 @@ class VectorStoreSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
-        if self.PRIMARY_TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
+        if (
+            self.PRIMARY_TYPE == "turbopuffer" or self.SECONDARY_TYPE == "turbopuffer"
+        ) and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
-                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when PRIMARY_TYPE is 'turbopuffer'"
-            )
-        if self.SECONDARY_TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
-            raise ValueError(
-                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when SECONDARY_TYPE is 'turbopuffer'"
+                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when PRIMARY_TYPE or SECONDARY_TYPE is 'turbopuffer'"
             )
         return self
 

@@ -143,8 +143,11 @@ DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5
 
 # Vector store settings
-# VECTOR_STORE_TYPE = "lancedb"
-# VECTOR_STORE_NAMESPACE = "honcho"
-# VECTOR_STORE_TURBOPUFFER_API_KEY =
-# VECTOR_STORE_TURBOPUFFER_REGION =
-# VECTOR_STORE_LANCEDB_PATH = "./lancedb_data"
+[vector_store]
+PRIMARY_TYPE = "pgvector"
+# SECONDARY_TYPE = "lancedb"
+NAMESPACE = "honcho"
+DIMENSIONS = 1536
+# TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
+# TURBOPUFFER_REGION = "us-east-1"
+LANCEDB_PATH = "./lancedb_data"

@@ -1,8 +1,7 @@
 """
 Turbopuffer vector store implementation.
 
-This module provides a Turbopuffer-based implementation of the VectorStore interface
-for use in managed deployments of Honcho.
+This module provides a Turbopuffer-based implementation of the VectorStore interface.
 """
 
 import logging
@@ -30,7 +29,6 @@ class TurbopufferVectorStore(VectorStore):
     """
     Turbopuffer implementation of the VectorStore interface.
 
-    Uses Turbopuffer's async Python SDK for vector operations.
     Each namespace corresponds to either:
     - A document collection: {prefix}.{workspace}.{observer}.{observed}
     - A workspace's message embeddings: {prefix}.{workspace}.messages

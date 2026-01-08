@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
 
-from migrations.utils import column_exists, get_schema
+from migrations.utils import column_exists, get_schema, index_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "f1a2b3c4d5e6"
@@ -115,19 +115,13 @@ def upgrade() -> None:
 
     # Add composite index for efficient reconciliation queries after both columns exist
     # Reconciliation orders by: WHERE sync_state='pending' ORDER BY last_sync_at
-    if column_exists("documents", "sync_state", inspector) and column_exists(
-        "documents", "last_sync_at", inspector
-    ):
-        # Check if index already exists
-        indexes = inspector.get_indexes("documents", schema=schema)
-        index_names = [idx["name"] for idx in indexes]
-        if "ix_documents_sync_state_last_sync_at" not in index_names:
-            op.create_index(
-                "ix_documents_sync_state_last_sync_at",
-                "documents",
-                ["sync_state", "last_sync_at"],
-                schema=schema,
-            )
+    if not index_exists("documents", "ix_documents_sync_state_last_sync_at", inspector):
+        op.create_index(
+            "ix_documents_sync_state_last_sync_at",
+            "documents",
+            ["sync_state", "last_sync_at"],
+            schema=schema,
+        )
 
     # Add sync state columns to message_embeddings table
     if not column_exists("message_embeddings", "sync_state", inspector):
@@ -173,19 +167,15 @@ def upgrade() -> None:
 
     # Add composite index for efficient reconciliation queries after both columns exist
     # Reconciliation orders by: WHERE sync_state='pending' ORDER BY last_sync_at
-    if column_exists("message_embeddings", "sync_state", inspector) and column_exists(
-        "message_embeddings", "last_sync_at", inspector
+    if not index_exists(
+        "message_embeddings", "ix_message_embeddings_sync_state_last_sync_at", inspector
     ):
-        # Check if index already exists
-        indexes = inspector.get_indexes("message_embeddings", schema=schema)
-        index_names = [idx["name"] for idx in indexes]
-        if "ix_message_embeddings_sync_state_last_sync_at" not in index_names:
-            op.create_index(
-                "ix_message_embeddings_sync_state_last_sync_at",
-                "message_embeddings",
-                ["sync_state", "last_sync_at"],
-                schema=schema,
-            )
+        op.create_index(
+            "ix_message_embeddings_sync_state_last_sync_at",
+            "message_embeddings",
+            ["sync_state", "last_sync_at"],
+            schema=schema,
+        )
 
 
 def downgrade() -> None:
