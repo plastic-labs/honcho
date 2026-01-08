@@ -118,32 +118,6 @@ def _extract_pattern_snippet(
 
 
 TOOLS: dict[str, dict[str, Any]] = {
-    # Simplified tool for Deriver - explicit observations only, no level field needed
-    "create_observations_explicit": {
-        "name": "create_observations",
-        "description": "Create explicit observations - atomic facts directly stated in messages about the peer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "observations": {
-                    "type": "array",
-                    "description": "List of explicit facts to record",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string",
-                                "description": "The explicit fact - must be directly stated in message",
-                            },
-                        },
-                        "required": ["content"],
-                    },
-                },
-            },
-            "required": ["observations"],
-        },
-    },
-    # Full tool for Dreamer - supports all levels with tree linkage
     "create_observations": {
         "name": "create_observations",
         "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). Use this to record facts, logical inferences, patterns, or note when the user has said contradictory things.",
@@ -507,12 +481,6 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
     },
 }
-
-# Tools for the deriver agent (ingestion) - explicit-only, simplified schema
-DERIVER_TOOLS: list[dict[str, Any]] = [
-    TOOLS["create_observations_explicit"],  # Simplified schema enforces explicit-only
-    TOOLS["update_peer_card"],
-]
 
 # Tools for the dialectic agent (analysis)
 DIALECTIC_TOOLS: list[dict[str, Any]] = [

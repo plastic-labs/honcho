@@ -1,8 +1,7 @@
 """
-Utility for logging fine-tuning traces from LLM calls.
+Utility for logging traces from LLM calls.
 
-This module provides structured JSONL logging of LLM inputs/outputs
-for use in fine-tuning datasets.
+This module provides structured JSONL logging of LLM inputs/outputs.
 """
 
 import fcntl
@@ -17,7 +16,7 @@ from src.config import LLMComponentSettings, settings
 
 
 def get_reasoning_traces_file_path() -> Path | None:
-    """Get the fine-tuning traces file path from settings."""
+    """Get the traces file path from settings."""
     if settings.REASONING_TRACES_FILE:
         return Path(settings.REASONING_TRACES_FILE)
     return None
@@ -37,7 +36,7 @@ def log_reasoning_trace(
     messages: list[dict[str, Any]] | None = None,
 ) -> None:
     """
-    Log a fine-tuning trace to the configured JSONL file.
+    Log a trace to the configured JSONL file.
 
     Args:
         task_type: Type of task (e.g., "minimal_deriver", "dialectic_chat")

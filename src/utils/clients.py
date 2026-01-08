@@ -1249,9 +1249,9 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> (
-        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
-    ):
+    def _get_provider_and_model() -> tuple[
+        SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType
+    ]:
         """
         Get the provider and model to use based on current attempt.
 
@@ -1394,8 +1394,10 @@ async def honcho_llm_call(
 
     # If no tools or no tool_executor, just call once and return
     if not tools or not tool_executor:
-        result = await decorated()
-        if trace_name:
+        result: (
+            HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+        ) = await decorated()
+        if trace_name and isinstance(result, HonchoLLMCallResponse):
             log_reasoning_trace(
                 task_type=trace_name,
                 llm_settings=llm_settings,
@@ -1444,7 +1446,7 @@ async def honcho_llm_call(
         before_retry_callback=before_retry_callback,
         stream_final=stream_final_only,
     )
-    if trace_name:
+    if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
             task_type=trace_name,
             llm_settings=llm_settings,

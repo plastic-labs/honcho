@@ -106,6 +106,7 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
+    # validation on settings means max_tokens will always be > 0
     max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
 
     # Single LLM call

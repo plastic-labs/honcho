@@ -445,7 +445,7 @@ class CacheSettings(HonchoSettings):
 class SurprisalSettings(BaseModel):
     """Settings for tree-based surprisal sampling during dreams."""
 
-    ENABLED: bool = False  # Enabled by default
+    ENABLED: bool = False
 
     # Tree configuration
     TREE_TYPE: Literal[
