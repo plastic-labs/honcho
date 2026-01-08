@@ -299,6 +299,10 @@ async def create_documents(
 
     try:
         db.add_all(honcho_documents)
+        # NOTE
+        # If the process crashes after this commit but before vector upsert completes,
+        # documents will be left in sync_state='pending' with NULL embeddings.
+        # The reconciliation job will automatically re-embed and sync these documents,
         await db.commit()
 
         # Store embeddings in vector store after documents are committed (IDs now available)
@@ -848,25 +852,20 @@ async def cleanup_soft_deleted_documents(
     older_than_minutes: int = 5,
 ) -> int:
     """
-    Clean up soft-deleted documents by deleting from vector store and hard deleting from DB.
+    Cleanup soft-deleted documents by removing their vectors and database records.
 
-    Steps:
-    1. Find documents with deleted_at older than threshold
-    2. Group by namespace (workspace/observer/observed)
-    3. Delete from vector store (per namespace)
-    4. Hard delete from DB only for documents where vector deletion succeeded
-
-    If vector deletion fails for a namespace, those documents remain soft-deleted
-    and will be retried on the next cleanup run.
+    This function implements a two-phase cleanup process for documents that have been
+    soft-deleted (deleted_at is not NULL)
 
     Args:
-        db: Database session
-        vector_store: Vector store instance
-        batch_size: Maximum number of documents to process per call
-        older_than_minutes: Only process documents soft-deleted more than this many minutes ago
+        db: Database session for executing queries
+        vector_store: Vector store instance for deleting vectors
+        batch_size: Maximum number of documents to process per call (default 100)
+        older_than_minutes: Only process documents soft-deleted more than this many
+            minutes ago (default 5).
 
     Returns:
-        Count of documents cleaned up (only those where vector deletion succeeded)
+        Count of documents cleaned up (only those where vector deletion succeeded).
     """
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
         minutes=older_than_minutes

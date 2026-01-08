@@ -81,9 +81,9 @@ class CompositeVectorStore(VectorStore):
         )
 
         # Wait for both, gathering exceptions
-        results = await asyncio.gather(
-            primary_task, secondary_task, return_exceptions=True
-        )
+        results: tuple[
+            VectorUpsertResult | BaseException, VectorUpsertResult | BaseException
+        ] = await asyncio.gather(primary_task, secondary_task, return_exceptions=True)
 
         primary_result, secondary_result = results
 
@@ -198,9 +198,9 @@ class CompositeVectorStore(VectorStore):
         primary_task = asyncio.create_task(self.primary.delete_many(namespace, ids))
         secondary_task = asyncio.create_task(self.secondary.delete_many(namespace, ids))
 
-        results = await asyncio.gather(
-            primary_task, secondary_task, return_exceptions=True
-        )
+        results: tuple[
+            None | BaseException, None | BaseException
+        ] = await asyncio.gather(primary_task, secondary_task, return_exceptions=True)
 
         primary_result, secondary_result = results
 
@@ -231,9 +231,9 @@ class CompositeVectorStore(VectorStore):
         primary_task = asyncio.create_task(self.primary.delete_namespace(namespace))
         secondary_task = asyncio.create_task(self.secondary.delete_namespace(namespace))
 
-        results = await asyncio.gather(
-            primary_task, secondary_task, return_exceptions=True
-        )
+        results: tuple[
+            None | BaseException, None | BaseException
+        ] = await asyncio.gather(primary_task, secondary_task, return_exceptions=True)
 
         primary_result, secondary_result = results
 

@@ -23,7 +23,9 @@ from src.vector_store import VectorRecord, VectorStore, get_vector_store
 logger = logging.getLogger(__name__)
 
 # Constants
-RECONCILIATION_BATCH_SIZE = 100
+RECONCILIATION_BATCH_SIZE = (
+    30  # Keep batch size small to avoid exceeding embedding API limits
+)
 RECONCILIATION_TIME_BUDGET_SECONDS = 240  # Leave headroom for other maintenance work
 MAX_SYNC_ATTEMPTS = 5  # After this many failures, mark as permanently_failed
 
@@ -166,8 +168,10 @@ async def _sync_documents(
 
     if missing_docs:
         try:
+            # Re-embed all missing documents in one batch
             contents = [doc.content for doc in missing_docs]
             embeddings = await embedding_client.simple_batch_embed(contents)
+
             if len(embeddings) != len(missing_docs):
                 logger.warning(
                     "Re-embedded %s/%s documents; remaining will be retried",
@@ -178,6 +182,7 @@ async def _sync_documents(
             for doc, embedding in zip(missing_docs, embeddings, strict=False):
                 reembedded_by_id[doc.id] = embedding
 
+            # Write re-embedded vectors to postgres if pgvector is in use
             if pgvector_in_use and reembedded_by_id:
                 for doc_id, embedding in reembedded_by_id.items():
                     await db.execute(
