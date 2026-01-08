@@ -8,13 +8,16 @@ embeddings to the vector store on a rolling basis, healing any missed writes.
 import logging
 import time
 from dataclasses import dataclass
+from typing import cast
 
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.functions import func
 
 from src import models
+from src.config import settings
 from src.dependencies import tracked_db
+from src.embedding_client import embedding_client
 from src.vector_store import VectorRecord, VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
@@ -57,8 +60,8 @@ async def _get_documents_needing_sync(
 
     Finds documents where:
     - not soft-deleted (deleted_at is NULL)
-    - has an embedding stored in the database
     - sync_state is "pending" (never synced or retry needed)
+    - embedding may be NULL (will be re-embedded during reconciliation)
     - Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
 
     Uses FOR UPDATE SKIP LOCKED to prevent concurrent processing.
@@ -68,7 +71,6 @@ async def _get_documents_needing_sync(
         .where(
             and_(
                 models.Document.deleted_at.is_(None),
-                models.Document.embedding.isnot(None),  # Must have embedding to sync
                 models.Document.sync_state == "pending",  # Only pending items
             )
         )
@@ -114,6 +116,27 @@ async def _get_message_embeddings_needing_sync(
     return list(result.scalars().all())
 
 
+async def _bump_document_sync_attempts(
+    db: AsyncSession,
+    documents: list[models.Document],
+) -> None:
+    if not documents:
+        return
+
+    for doc in documents:
+        new_attempts = doc.sync_attempts + 1
+        new_state = "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
+        await db.execute(
+            update(models.Document)
+            .where(models.Document.id == doc.id)
+            .values(
+                sync_state=new_state,
+                sync_attempts=new_attempts,
+                last_sync_at=func.now(),
+            )
+        )
+
+
 async def _sync_documents(
     db: AsyncSession,
     documents: list[models.Document],
@@ -130,6 +153,56 @@ async def _sync_documents(
     synced_count = 0
     failed_count = 0
 
+    pgvector_in_use = (
+        settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+        or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
+    )
+
+    missing_docs: list[models.Document] = []
+    for doc in documents:
+        if cast(list[float] | None, doc.embedding) is None:
+            missing_docs.append(doc)
+    reembedded_by_id: dict[str, list[float]] = {}
+
+    if missing_docs:
+        try:
+            contents = [doc.content for doc in missing_docs]
+            embeddings = await embedding_client.simple_batch_embed(contents)
+            if len(embeddings) != len(missing_docs):
+                logger.warning(
+                    "Re-embedded %s/%s documents; remaining will be retried",
+                    len(embeddings),
+                    len(missing_docs),
+                )
+
+            for doc, embedding in zip(missing_docs, embeddings, strict=False):
+                reembedded_by_id[doc.id] = embedding
+
+            if pgvector_in_use and reembedded_by_id:
+                for doc_id, embedding in reembedded_by_id.items():
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id == doc_id)
+                        .values(embedding=embedding)
+                    )
+        except Exception as e:
+            logger.warning(
+                "Failed to re-embed %s documents for reconciliation: %s",
+                len(missing_docs),
+                e,
+            )
+
+    missing_after_embed: list[models.Document] = []
+    for doc in documents:
+        if (
+            cast(list[float] | None, doc.embedding) is None
+            and doc.id not in reembedded_by_id
+        ):
+            missing_after_embed.append(doc)
+    if missing_after_embed:
+        await _bump_document_sync_attempts(db, missing_after_embed)
+        failed_count += len(missing_after_embed)
+
     # Group documents by namespace (workspace/observer/observed)
     by_namespace: dict[str, list[models.Document]] = {}
     for doc in documents:
@@ -140,25 +213,39 @@ async def _sync_documents(
 
     # Sync each namespace batch
     for namespace, docs in by_namespace.items():
-        doc_ids = [doc.id for doc in docs]
-
+        docs_with_vectors: list[models.Document] = []
         try:
             # Build vector records
-            vector_records = [
-                VectorRecord(
-                    id=doc.id,
-                    embedding=[float(x) for x in doc.embedding],
-                    metadata={
-                        "workspace_name": doc.workspace_name,
-                        "observer": doc.observer,
-                        "observed": doc.observed,
-                        "session_name": doc.session_name,
-                        "level": doc.level,
-                    },
+            vector_records: list[VectorRecord] = []
+            for doc in docs:
+                doc_embedding = cast(list[float] | None, doc.embedding)
+                embedding = (
+                    doc_embedding
+                    if doc_embedding is not None
+                    else reembedded_by_id.get(doc.id)
                 )
-                for doc in docs
-                if doc.embedding is not None
-            ]
+                if embedding is None:
+                    continue
+
+                vector_records.append(
+                    VectorRecord(
+                        id=doc.id,
+                        embedding=[float(x) for x in embedding],
+                        metadata={
+                            "workspace_name": doc.workspace_name,
+                            "observer": doc.observer,
+                            "observed": doc.observed,
+                            "session_name": doc.session_name,
+                            "level": doc.level,
+                        },
+                    )
+                )
+                docs_with_vectors.append(doc)
+
+            if not vector_records:
+                continue
+
+            doc_ids = [doc.id for doc in docs_with_vectors]
 
             result = None
             if vector_records:
@@ -171,22 +258,8 @@ async def _sync_documents(
                     result.secondary_error,
                 )
                 # Increment attempts and mark as failed if we've hit max attempts
-                for doc in docs:
-                    new_attempts = doc.sync_attempts + 1
-                    new_state = (
-                        "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
-                    )
-
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id == doc.id)
-                        .values(
-                            sync_state=new_state,
-                            sync_attempts=new_attempts,
-                            last_sync_at=func.now(),
-                        )
-                    )
-                failed_count += len(docs)
+                await _bump_document_sync_attempts(db, docs_with_vectors)
+                failed_count += len(docs_with_vectors)
                 continue
 
             # Mark as synced
@@ -199,25 +272,13 @@ async def _sync_documents(
                     sync_attempts=0,
                 )
             )
-            synced_count += len(docs)
+            synced_count += len(docs_with_vectors)
 
         except Exception as e:
             logger.warning(f"Failed to sync documents to {namespace}: {e}")
             # Increment attempts and mark as failed if we've hit max attempts
-            for doc in docs:
-                new_attempts = doc.sync_attempts + 1
-                new_state = "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
-
-                await db.execute(
-                    update(models.Document)
-                    .where(models.Document.id == doc.id)
-                    .values(
-                        sync_state=new_state,
-                        sync_attempts=new_attempts,
-                        last_sync_at=func.now(),
-                    )
-                )
-            failed_count += len(docs)
+            await _bump_document_sync_attempts(db, docs_with_vectors)
+            failed_count += len(docs_with_vectors)
 
     return synced_count, failed_count
 

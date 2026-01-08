@@ -404,20 +404,6 @@ class VectorStoreSettings(HonchoSettings):
             )
         return self
 
-    @property
-    def should_run_reconciliation(self) -> bool:
-        """
-        Determine if vector reconciliation should run.
-
-        Reconciliation syncs embeddings from postgres (used by pgvector) to
-        external vector stores. It only runs when:
-        1. A secondary store is configured AND
-        2. pgvector is involved as either primary or secondary
-        """
-        return self.SECONDARY_TYPE is not None and (
-            self.PRIMARY_TYPE == "pgvector" or self.SECONDARY_TYPE == "pgvector"
-        )
-
 
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings

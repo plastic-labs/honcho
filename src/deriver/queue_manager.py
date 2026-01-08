@@ -51,7 +51,7 @@ class WorkerOwnership(NamedTuple):
 
 
 QUEUE_CLEANUP_INTERVAL_SECONDS = 43200  # 12 hours
-RECONCILIATION_INTERVAL_SECONDS = 300  # 5 minutes
+RECONCILIATION_INTERVAL_SECONDS = 900  # 15 minutes
 
 
 class QueueManager:
@@ -353,15 +353,11 @@ class QueueManager:
 
         - Queue cleanup: every 12 hours (remove old processed/errored queue items)
         - Reconciliation: every 5 minutes (sync vectors + clean up soft deletes)
-          Only runs when pgvector is involved in a dual-store configuration
+          Always runs to keep vector stores consistent with the DB
         """
         # Track when each task should next run
         next_queue_cleanup = datetime.now(timezone.utc)
-        next_vector_reconciliation = (
-            datetime.now(timezone.utc)
-            if settings.VECTOR_STORE.should_run_reconciliation
-            else None
-        )
+        next_vector_reconciliation = datetime.now(timezone.utc)
 
         try:
             while not self.shutdown_event.is_set():
@@ -379,11 +375,8 @@ class QueueManager:
                         seconds=QUEUE_CLEANUP_INTERVAL_SECONDS
                     )
 
-                # Run vector store reconciliation if enabled and due
-                if (
-                    next_vector_reconciliation is not None
-                    and now >= next_vector_reconciliation
-                ):
+                # Run vector store reconciliation if due
+                if now >= next_vector_reconciliation:
                     try:
                         logger.info("Running vector reconciliation cycle")
                         await self._run_reconciliation()
@@ -398,8 +391,7 @@ class QueueManager:
                 # Sleep until next task is due or shutdown
                 # Filter out None values when computing next task time
                 task_times = [next_queue_cleanup]
-                if next_vector_reconciliation is not None:
-                    task_times.append(next_vector_reconciliation)
+                task_times.append(next_vector_reconciliation)
                 next_task_time = min(task_times)
                 sleep_seconds = max(
                     0, (next_task_time - datetime.now(timezone.utc)).total_seconds()
@@ -866,20 +858,6 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
-
-    # Log reconciliation status
-    if settings.VECTOR_STORE.should_run_reconciliation:
-        logger.info(
-            "Vector reconciliation: ENABLED (primary=%s, secondary=%s)",
-            settings.VECTOR_STORE.PRIMARY_TYPE,
-            settings.VECTOR_STORE.SECONDARY_TYPE,
-        )
-    else:
-        logger.info(
-            "Vector reconciliation: DISABLED (primary=%s, secondary=%s)",
-            settings.VECTOR_STORE.PRIMARY_TYPE,
-            settings.VECTOR_STORE.SECONDARY_TYPE or "None",
-        )
 
     try:
         await init_cache()
