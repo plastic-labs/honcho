@@ -38,7 +38,7 @@ Once you add a valid payment method under the
 
 ## 2. Activate your Honcho instance
 
-With credits and a payment method on file (managed via the [Billing](https://app.honcho.dev/billing) page), your Honcho instance will be provisioned and ready to use. Monitor your machine status, and check for version upgrades on the [Instance Status](https://app.honcho.dev/status) page. 
+With credits and a payment method on file (managed via the [Billing](https://app.honcho.dev/billing) page), your Honcho instance will be provisioned and ready to use. Monitor your machine status, and check for version upgrades on the [Instance Status](https://app.honcho.dev/status) page.
 
 <Frame>
   <img src="/images/app-screenshots/status-page.png" alt="Instance Status Page" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
@@ -87,20 +87,20 @@ If you prefer, you can set up your queries in the UI and copy to cURL for help w
 
 Build a complete conversation flow without ever leaving the playground:
 
-1. **Create a Workspace**: 
-   select `POST Get or Create Workspace` and type workspace name into the request body 
+1. **Create a Workspace**:
+   select `POST Get or Create Workspace` and type workspace name into the request body
    → Returns workspace ID
 
-2. **Create new Peer(s)**: 
+2. **Create new Peer(s)**:
    select `POST Get or Create Peer,` choose your workspace from the dropdown, and type peer name into the request body. (repeat for each peer)
    → Returns peer ID
 
-3. **POST Get or Create Session** 
-   `POST /sessions` selecting your workspace from the dropdown then type session name into the request body 
+3. **POST Get or Create Session**
+   `POST /sessions` selecting your workspace from the dropdown then type session name into the request body
    → Returns session ID and adds to dropdown
 
-4. **POST Create Messages for Session** 
-   `POST /messages` selecting your workspace & session from the dropdown then type peer id(s) and message content into the request body 
+4. **POST Create Messages for Session**
+   `POST /messages` selecting your workspace & session from the dropdown then type peer id(s) and message content into the request body
    → Adds message(s) to the session
 
 ## 5. Workspaces
