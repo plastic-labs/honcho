@@ -163,28 +163,20 @@ async def create_messages(
                 embeddings = embedding_dict.get(message_obj.public_id, [])
                 for embedding in embeddings:
                     # Create MessageEmbedding record
+                    embedding_obj = models.MessageEmbedding(
+                        content=message_obj.content,
+                        message_id=message_obj.public_id,
+                        workspace_name=workspace_name,
+                        session_name=session_name,
+                        peer_name=message_obj.peer_name,
+                        sync_state="pending",
+                    )
                     if pgvector_in_use:
                         # pgvector in use: write embedding to ORM (postgres)
-                        embedding_obj = models.MessageEmbedding(
-                            content=message_obj.content,
-                            embedding=embedding,
-                            message_id=message_obj.public_id,
-                            workspace_name=workspace_name,
-                            session_name=session_name,
-                            peer_name=message_obj.peer_name,
-                        )
+                        embedding_obj.embedding = embedding
                     else:
-                        # pgvector not in use: don't write embedding to postgres
-                        embedding_obj = models.MessageEmbedding(
-                            content=message_obj.content,
-                            message_id=message_obj.public_id,
-                            workspace_name=workspace_name,
-                            session_name=session_name,
-                            peer_name=message_obj.peer_name,
-                        )
-                        # Store embedding in memory for vector store upsert
+                        # store in memory for vector store upsert only
                         embedding_obj._pending_embedding = embedding
-                    embedding_obj.sync_state = "pending"
                     embedding_objects.append(embedding_obj)
 
             # Add all embedding metadata objects to the session
@@ -231,7 +223,7 @@ async def create_messages(
                             )
                 await db.commit()
 
-                # Retry vector upsert with exponential backoff (3 attempts)
+                # Retry vector upsert with exponential backoff
                 if vector_records:
                     try:
                         result = None
@@ -268,7 +260,7 @@ async def create_messages(
                             )
                             await db.commit()
                         else:
-                            # Success: both primary and secondary stores have the data
+                            # Success: primary succeeded and (secondary succeeded or no secondary configured)
                             await db.execute(
                                 update(models.MessageEmbedding)
                                 .where(models.MessageEmbedding.id.in_(embedding_ids))
@@ -282,7 +274,6 @@ async def create_messages(
 
                     except Exception as e:
                         # Total failure: primary write failed
-                        # Keep as "pending" for reconciliation to retry
                         logger.error(
                             f"Failed to upsert message vectors after 3 retries: {e}"
                         )
