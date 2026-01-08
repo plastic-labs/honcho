@@ -6,6 +6,7 @@ message embeddings to the vector store, handling failures and retries.
 """
 
 import datetime
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,7 +19,9 @@ from src.deriver.vector_reconciliation import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]
+    _get_message_embeddings_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _sync_documents,  # pyright: ignore[reportPrivateUsage]
+    _sync_message_embeddings,  # pyright: ignore[reportPrivateUsage]
     run_vector_reconciliation_cycle,
 )
 from src.vector_store import VectorRecord, VectorStore, VectorUpsertResult
@@ -658,6 +661,122 @@ class TestMetricsTracking:
 
         assert metrics.total_synced == 8
         assert metrics.total_failed == 2
+
+
+@pytest.mark.asyncio
+class TestMessageEmbeddings:
+    """Test message embedding reconciliation paths."""
+
+    async def _create_pending_message_embedding(
+        self,
+        db_session: AsyncSession,
+        workspace: models.Workspace,
+        peer: models.Peer,
+    ) -> models.MessageEmbedding:
+        """Helper to create a pending message embedding with no stored vector."""
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        message = models.Message(
+            public_id=str(generate_nanoid()),
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            content="hello world",
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        emb = models.MessageEmbedding(
+            content=message.content,
+            message_id=message.public_id,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=peer.name,
+            sync_state="pending",
+            embedding=None,
+        )
+        db_session.add(emb)
+        await db_session.commit()
+        await db_session.refresh(emb)
+        return emb
+
+    async def test_pending_embeddings_are_selected_without_vectors(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Pending rows with NULL embeddings should still be reconciled."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        pending = await _get_message_embeddings_needing_sync(db_session)
+        assert any(emb.id == pending_emb.id for emb in pending)
+
+    async def test_missing_embeddings_reembedded_and_synced(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        mock_vector_store: VectorStore,
+    ) -> None:
+        """Reconciliation should re-embed missing payloads and mark them synced."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        synced, failed = await _sync_message_embeddings(
+            db_session, [pending_emb], mock_vector_store
+        )
+
+        await db_session.refresh(pending_emb)
+
+        assert synced == 1
+        assert failed == 0
+        assert pending_emb.sync_state == "synced"
+        assert pending_emb.sync_attempts == 0
+
+        # Ensure vector upsert was attempted with a populated embedding
+        upsert_mock: AsyncMock = cast(AsyncMock, mock_vector_store.upsert_many)
+        await_args = upsert_mock.await_args
+        assert await_args is not None
+        args = await_args.args
+        assert len(args) == 2
+        vector_records: list[VectorRecord] = args[1]
+        assert vector_records
+        assert vector_records[0].embedding
+
+    async def test_upsert_failure_marks_attempt_and_continues(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        mock_vector_store: VectorStore,
+    ) -> None:
+        """Failures during upsert should bump attempts and keep row pending/failed."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        upsert_mock: AsyncMock = cast(AsyncMock, mock_vector_store.upsert_many)
+        upsert_mock.side_effect = Exception("boom")
+
+        synced, failed = await _sync_message_embeddings(
+            db_session, [pending_emb], mock_vector_store
+        )
+
+        await db_session.refresh(pending_emb)
+
+        assert synced == 0
+        assert failed == 1
+        assert pending_emb.sync_state in {"pending", "failed"}
+        assert pending_emb.sync_attempts == 1
 
 
 @pytest.mark.asyncio

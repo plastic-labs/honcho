@@ -102,12 +102,7 @@ async def _get_message_embeddings_needing_sync(
     stmt = (
         select(models.MessageEmbedding)
         .where(
-            and_(
-                models.MessageEmbedding.embedding.isnot(
-                    None
-                ),  # Must have embedding to sync
-                models.MessageEmbedding.sync_state == "pending",  # Only pending items
-            )
+            models.MessageEmbedding.sync_state == "pending"  # Only pending items
         )
         .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
         .limit(batch_size)
@@ -131,6 +126,28 @@ async def _bump_document_sync_attempts(
         await db.execute(
             update(models.Document)
             .where(models.Document.id == doc.id)
+            .values(
+                sync_state=new_state,
+                sync_attempts=new_attempts,
+                last_sync_at=func.now(),
+            )
+        )
+
+
+async def _bump_message_embedding_sync_attempts(
+    db: AsyncSession,
+    embeddings: list[models.MessageEmbedding],
+) -> None:
+    if not embeddings:
+        return
+
+    for emb in embeddings:
+        new_attempts = emb.sync_attempts + 1
+        new_state = "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
+
+        await db.execute(
+            update(models.MessageEmbedding)
+            .where(models.MessageEmbedding.id == emb.id)
             .values(
                 sync_state=new_state,
                 sync_attempts=new_attempts,
@@ -304,6 +321,43 @@ async def _sync_message_embeddings(
     synced_count = 0
     failed_count = 0
 
+    pgvector_in_use = (
+        settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+        or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
+    )
+
+    # Re-embed missing payloads so reconciliation can heal non-pgvector writes
+    missing_embs = [emb for emb in embeddings if emb.embedding is None]
+    reembedded_by_id: dict[int, list[float]] = {}
+
+    if missing_embs:
+        try:
+            for emb in missing_embs:
+                new_embedding = await embedding_client.embed(emb.content)
+                reembedded_by_id[emb.id] = new_embedding
+
+                # Only persist embeddings to postgres when pgvector is in play
+                if pgvector_in_use:
+                    await db.execute(
+                        update(models.MessageEmbedding)
+                        .where(models.MessageEmbedding.id == emb.id)
+                        .values(embedding=new_embedding)
+                    )
+        except Exception as e:
+            logger.warning(
+                "Failed to re-embed %s message embeddings for reconciliation: %s",
+                len(missing_embs),
+                e,
+            )
+
+    missing_after_embed: list[models.MessageEmbedding] = []
+    for emb in embeddings:
+        if emb.embedding is None and emb.id not in reembedded_by_id:
+            missing_after_embed.append(emb)
+    if missing_after_embed:
+        await _bump_message_embedding_sync_attempts(db, missing_after_embed)
+        failed_count += len(missing_after_embed)
+
     # Group by namespace (workspace)
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
     for emb in embeddings:
@@ -312,23 +366,36 @@ async def _sync_message_embeddings(
 
     # Sync each namespace batch
     for namespace, embs in by_namespace.items():
-        emb_ids = [emb.id for emb in embs]
-
+        embs_with_vectors: list[models.MessageEmbedding] = []
         try:
             # Build vector records
-            vector_records = [
-                VectorRecord(
-                    id=str(emb.id),
-                    embedding=[float(x) for x in emb.embedding],
-                    metadata={
-                        "message_id": emb.message_id,
-                        "session_name": emb.session_name,
-                        "peer_name": emb.peer_name,
-                    },
+            vector_records: list[VectorRecord] = []
+            for emb in embs:
+                embedding = (
+                    emb.embedding
+                    if emb.embedding is not None
+                    else reembedded_by_id.get(emb.id)
                 )
-                for emb in embs
-                if emb.embedding is not None
-            ]
+                if embedding is None:
+                    continue
+
+                vector_records.append(
+                    VectorRecord(
+                        id=str(emb.id),
+                        embedding=[float(x) for x in embedding],
+                        metadata={
+                            "message_id": emb.message_id,
+                            "session_name": emb.session_name,
+                            "peer_name": emb.peer_name,
+                        },
+                    )
+                )
+                embs_with_vectors.append(emb)
+
+            if not vector_records:
+                continue
+
+            emb_ids = [emb.id for emb in embs_with_vectors]
 
             result = None
             if vector_records:
@@ -341,22 +408,8 @@ async def _sync_message_embeddings(
                     result.secondary_error,
                 )
                 # Increment attempts and mark as failed if we've hit max attempts
-                for emb in embs:
-                    new_attempts = emb.sync_attempts + 1
-                    new_state = (
-                        "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
-                    )
-
-                    await db.execute(
-                        update(models.MessageEmbedding)
-                        .where(models.MessageEmbedding.id == emb.id)
-                        .values(
-                            sync_state=new_state,
-                            sync_attempts=new_attempts,
-                            last_sync_at=func.now(),
-                        )
-                    )
-                failed_count += len(embs)
+                await _bump_message_embedding_sync_attempts(db, embs_with_vectors)
+                failed_count += len(embs_with_vectors)
                 continue
 
             # Mark as synced
@@ -369,25 +422,13 @@ async def _sync_message_embeddings(
                     sync_attempts=0,
                 )
             )
-            synced_count += len(embs)
+            synced_count += len(embs_with_vectors)
 
         except Exception as e:
             logger.warning(f"Failed to sync message embeddings to {namespace}: {e}")
             # Increment attempts and mark as failed if we've hit max attempts
-            for emb in embs:
-                new_attempts = emb.sync_attempts + 1
-                new_state = "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
-
-                await db.execute(
-                    update(models.MessageEmbedding)
-                    .where(models.MessageEmbedding.id == emb.id)
-                    .values(
-                        sync_state=new_state,
-                        sync_attempts=new_attempts,
-                        last_sync_at=func.now(),
-                    )
-                )
-            failed_count += len(embs)
+            await _bump_message_embedding_sync_attempts(db, embs_with_vectors)
+            failed_count += len(embs_with_vectors)
 
     return synced_count, failed_count
 
@@ -427,7 +468,19 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             # Reconcile message embeddings
             embs = await _get_message_embeddings_needing_sync(db)
             if embs:
-                synced, failed = await _sync_message_embeddings(db, embs, vector_store)
+                try:
+                    synced, failed = await _sync_message_embeddings(
+                        db, embs, vector_store
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Message embedding reconciliation failed for %s embeddings: %s",
+                        len(embs),
+                        e,
+                    )
+                    await _bump_message_embedding_sync_attempts(db, embs)
+                    synced = 0
+                    failed = len(embs)
                 metrics.message_embeddings_synced += synced
                 metrics.message_embeddings_failed += failed
                 await db.commit()
