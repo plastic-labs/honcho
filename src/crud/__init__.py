@@ -18,6 +18,7 @@ from .message import (
     get_message,
     get_message_seq_in_session,
     get_messages,
+    get_messages_by_date_range,
     get_messages_by_seq_range,
     get_messages_id_range,
     grep_messages,
@@ -85,6 +86,7 @@ __all__ = [
     # Message
     "create_messages",
     "get_messages",
+    "get_messages_by_date_range",
     "get_messages_by_seq_range",
     "get_messages_id_range",
     "get_message",

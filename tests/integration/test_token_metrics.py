@@ -411,8 +411,10 @@ class TestDeriverSummaryMetrics:
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
                 summary_type=SummaryType.SHORT,
                 message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
             )
 
         # Verify output tokens match the summary token_count
@@ -471,8 +473,10 @@ class TestDeriverSummaryMetrics:
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
                 summary_type=SummaryType.SHORT,
                 message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
             )
 
         metric_checker.assert_delta(
@@ -539,8 +543,10 @@ class TestDeriverSummaryMetrics:
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
                 summary_type=SummaryType.SHORT,
                 message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
             )
 
         # Verify messages tokens match what summarizer actually computed
@@ -601,8 +607,10 @@ class TestDeriverSummaryMetrics:
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
                 summary_type=SummaryType.SHORT,
                 message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
             )
 
         # Verify NO change in metrics when fallback

@@ -1249,9 +1249,9 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> tuple[
-        SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType
-    ]:
+    def _get_provider_and_model() -> (
+        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
+    ):
         """
         Get the provider and model to use based on current attempt.
 
