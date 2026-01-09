@@ -37,13 +37,12 @@ The Honcho integration in n8n uses the HTTP Request node to interact with the Ho
 <Tip>
 **Why can't I use n8n's memory node?**
 
-When n8n refers to "memory" in AI nodes, they typically mean vector databases for RAG-style retrieval. Honcho is more then a database. It offers richer context and reasoning than similarity search alone. Read more about our approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning).
+When n8n refers to "memory" in AI nodes, they typically mean vector databases for RAG-style retrieval. Honcho is more than a database. It offers richer context and reasoning than similarity search alone. Read more about our approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning).
 
 **Why can't I import Honcho as an n8n node?**
 
 The HTTP Request nodes get the job done, but we know they're clunky. If there's demand, we'd love to build a native integration. [Reach out](https://discord.gg/honcho) and let us know!
 </Tip>
----
 
 ## Step-by-Step Tutorial
 
@@ -93,7 +92,7 @@ Start with a **Manual Trigger** node to execute the workflow on demand. This is 
 
 <Tip>
 **Verify Your Data in Honcho**
-As you build the data ingestion workflow, verify everything is created correctly in your [Honcho instance](app.honcho.dev/).
+As you build the data ingestion workflow, verify everything is created correctly in your [Honcho instance]((https://app.honcho.dev/)).
 </Tip>
 
 #### Step 3: Get or Create Session
@@ -225,7 +224,7 @@ Create HTTP Request Tool nodes for Honcho's key capabilities:
 
 **Chat Tool:**
 - **Method**: `POST`
-- **URL**: `https://api.honcho.dev/v2/workspaces/{workspace}peers/{peer_id}/chat`
+- **URL**: `https://api.honcho.dev/v2/workspaces/{workspace}/peers/{peer_id}/chat`
 - **Body**: `{ "query": "What do I know about [peer]?", "stream": "false" }`
 - Enables natural language queries about peers
 
@@ -409,7 +408,7 @@ Want to skip the manual setup? Import this workflow directly into n8n:
     },
     {
       "parameters": {
-        "url": "=https://api.honcho.dev/v2/workspaces/(workspace)peers/{peer}/context",
+        "url": "=https://api.honcho.dev/v2/workspaces/{workspace}peers/{peer_id}/context",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpBearerAuth",
         "options": {}
@@ -423,7 +422,7 @@ Want to skip the manual setup? Import this workflow directly into n8n:
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.honcho.dev/v2/workspaces/{workspace}/peers/{peer}/chat",
+        "url": "https://api.honcho.dev/v2/workspaces/{workspace}/peers/{peer_id}/chat",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
@@ -504,7 +503,7 @@ Once you have the basic workflow running, consider these enhancements:
 
 - **Load more messages**: Use Gmail's "Get All" operation to load entire conversation threads, mapping each to a Honcho session for better reasoning
 - **Make it real-time**: Add a **Gmail Trigger** node to automatically ingest new emails as they arrive
-Dynamic peer lookups: Replace hardcoded peer names in tool URLs with expressions that extract names from user queries
+- **Dynamic peer lookups**: Replace hardcoded peer names in tool URLs with expressions that extract names from user queries
 - **Add error handling**: Connect an **Error Trigger** node with notifications (Email, Slack) and retry logic
 - **Expand to other data sources**: Honcho works with Slack messages, CRM interactions, support tickets, meeting notes, and more
 
