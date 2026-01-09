@@ -177,6 +177,7 @@ from src.vector_store.composite import CompositeVectorStore  # noqa: E402
 from src.vector_store.lancedb import LanceDBVectorStore  # noqa: E402
 from src.vector_store.pgvector import PgVectorStore  # noqa: E402
 from src.vector_store.turbopuffer import TurbopufferVectorStore  # noqa: E402
+from src.vector_store.utils import upsert_with_retry  # noqa: E402
 
 
 def _create_store_by_type(store_type: str) -> VectorStore:
@@ -256,4 +257,5 @@ __all__ = [
     "VectorUpsertResult",
     "get_vector_store",
     "close_vector_store",
+    "upsert_with_retry",
 ]

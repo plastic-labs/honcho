@@ -8,13 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.functions import func
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    retry_if_result,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from src import models, schemas
 from src.config import settings
@@ -24,7 +17,12 @@ from src.crud.session import get_session
 from src.embedding_client import embedding_client
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.utils.filter import apply_filter
-from src.vector_store import VectorRecord, VectorStore, get_vector_store
+from src.vector_store import (
+    VectorRecord,
+    VectorStore,
+    get_vector_store,
+    upsert_with_retry,
+)
 
 logger = getLogger(__name__)
 
@@ -334,26 +332,13 @@ async def create_documents(
                     )
                 )
 
-            # Retry vector upsert with exponential backoff (3 attempts)
+            # Upsert to vector store with retry and update sync state
             try:
-                result = None
-                async for attempt in AsyncRetrying(
-                    stop=stop_after_attempt(3),
-                    wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-                    retry=retry_if_exception_type(Exception)
-                    | retry_if_result(
-                        lambda res: res is not None and res.secondary_ok is False
-                    ),
-                    reraise=True,
-                ):
-                    with attempt:
-                        result = await vector_store.upsert_many(
-                            namespace, vector_records
-                        )
-
+                result = await upsert_with_retry(
+                    vector_store, namespace, vector_records
+                )
                 if result is not None and result.secondary_ok is False:
                     # Partial success: primary has data but secondary doesn't
-                    # Keep as "pending" for reconciliation to sync secondary
                     logger.warning(
                         f"Partial sync for namespace {namespace}: {result.secondary_error}"
                     )
@@ -380,9 +365,8 @@ async def create_documents(
                     await db.commit()
 
             except Exception as e:
-                # Total failure: primary write failed
-                # Keep as "pending" for reconciliation to retry
-                logger.error(f"Failed to upsert vectors after 3 retries: {e}")
+                # Total failure: primary write failed after retries
+                logger.error(f"Failed to upsert vectors after retries: {e}")
                 await db.execute(
                     update(models.Document)
                     .where(models.Document.id.in_(doc_ids))
@@ -414,9 +398,12 @@ async def delete_document(
     """
     Delete a single document by ID using hybrid sync/soft delete pattern.
 
-    Tries to delete from vector store first, then hard deletes from DB.
-    If vector store delete fails, soft deletes (sets deleted_at) and lets
-    cleanup job handle vector deletion later.
+    Soft deletes first (sets deleted_at), then tries to delete from vector store.
+    If vector store delete succeeds, hard deletes from DB.
+    If vector store delete fails, leaves soft-deleted for cleanup job.
+
+    This order ensures crash safety: if the process crashes at any point,
+    the document is either fully deleted or soft-deleted (never orphaned).
 
     Args:
         db: Database session
@@ -450,7 +437,16 @@ async def delete_document(
             f"Document {document_id} not found or does not belong to the specified collection/session"
         )
 
-    # Try to delete from vector store first
+    # Step 1: Soft delete first (crash-safe - ensures document is marked for deletion)
+    update_stmt = (
+        update(models.Document)
+        .where(models.Document.id == document_id)
+        .values(deleted_at=func.now())
+    )
+    await db.execute(update_stmt)
+    await db.commit()
+
+    # Step 2: Try to delete from vector store
     vector_store = get_vector_store()
     namespace = vector_store.get_vector_namespace(
         "document", workspace_name, observer, observed
@@ -463,20 +459,12 @@ async def delete_document(
     except Exception as e:
         logger.warning(f"Failed to delete vector for document {document_id}: {e}")
 
+    # Step 3: If vector deleted successfully, hard delete from DB
     if vector_deleted:
-        # Happy path: hard delete from DB
         delete_stmt = delete(models.Document).where(models.Document.id == document_id)
         await db.execute(delete_stmt)
-    else:
-        # Fallback: soft delete, let cleanup job handle vector
-        update_stmt = (
-            update(models.Document)
-            .where(models.Document.id == document_id)
-            .values(deleted_at=func.now())
-        )
-        await db.execute(update_stmt)
-
-    await db.commit()
+        await db.commit()
+    # If vector delete failed, document stays soft-deleted for cleanup job
 
 
 async def delete_document_by_id(
@@ -487,9 +475,12 @@ async def delete_document_by_id(
     """
     Delete a single document by ID and workspace using hybrid sync/soft delete pattern.
 
-    Tries to delete from vector store first, then hard deletes from DB.
-    If vector store delete fails, soft deletes (sets deleted_at) and lets
-    cleanup job handle vector deletion later.
+    Soft deletes first (sets deleted_at), then tries to delete from vector store.
+    If vector store delete succeeds, hard deletes from DB.
+    If vector store delete fails, leaves soft-deleted for cleanup job.
+
+    This order ensures crash safety: if the process crashes at any point,
+    the document is either fully deleted or soft-deleted (never orphaned).
 
     Args:
         db: Database session
@@ -513,7 +504,16 @@ async def delete_document_by_id(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
 
-    # Try to delete from vector store first
+    # Step 1: Soft delete first (crash-safe - ensures document is marked for deletion)
+    update_stmt = (
+        update(models.Document)
+        .where(models.Document.id == document_id)
+        .values(deleted_at=func.now())
+    )
+    await db.execute(update_stmt)
+    await db.commit()
+
+    # Step 2: Try to delete from vector store
     vector_store = get_vector_store()
     namespace = vector_store.get_vector_namespace(
         "document",
@@ -529,20 +529,12 @@ async def delete_document_by_id(
     except Exception as e:
         logger.warning(f"Failed to delete vector for document {document_id}: {e}")
 
+    # Step 3: If vector deleted successfully, hard delete from DB
     if vector_deleted:
-        # Happy path: hard delete from DB
         delete_stmt = delete(models.Document).where(models.Document.id == document_id)
         await db.execute(delete_stmt)
-    else:
-        # Fallback: soft delete, let cleanup job handle vector
-        update_stmt = (
-            update(models.Document)
-            .where(models.Document.id == document_id)
-            .values(deleted_at=func.now())
-        )
-        await db.execute(update_stmt)
-
-    await db.commit()
+        await db.commit()
+    # If vector delete failed, document stays soft-deleted for cleanup job
 
 
 async def create_observations(
@@ -688,26 +680,13 @@ async def create_observations(
                     )
                 )
 
-            # Retry vector upsert with exponential backoff (3 attempts)
+            # Upsert to vector store with retry and update sync state
             try:
-                result = None
-                async for attempt in AsyncRetrying(
-                    stop=stop_after_attempt(3),
-                    wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-                    retry=retry_if_exception_type(Exception)
-                    | retry_if_result(
-                        lambda res: res is not None and res.secondary_ok is False
-                    ),
-                    reraise=True,
-                ):
-                    with attempt:
-                        result = await vector_store.upsert_many(
-                            namespace, vector_records
-                        )
-
+                result = await upsert_with_retry(
+                    vector_store, namespace, vector_records
+                )
                 if result is not None and result.secondary_ok is False:
                     # Partial success: primary has data but secondary doesn't
-                    # Keep as "pending" for reconciliation to sync secondary
                     logger.warning(
                         f"Partial sync for namespace {namespace}: {result.secondary_error}"
                     )
@@ -734,10 +713,9 @@ async def create_observations(
                     await db.commit()
 
             except Exception as e:
-                # Total failure: primary write failed
-                # Keep as "pending" for reconciliation to retry
+                # Total failure: primary write failed after retries
                 logger.error(
-                    f"Failed to upsert vectors for {namespace} after 3 retries: {e}"
+                    f"Failed to upsert vectors for {namespace} after retries: {e}"
                 )
                 await db.execute(
                     update(models.Document)

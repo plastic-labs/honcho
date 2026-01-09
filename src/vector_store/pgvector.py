@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.db import SessionLocal
+from src.dependencies import tracked_db
 
 from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
 
@@ -71,10 +71,6 @@ class PgVectorStore(VectorStore):
         else:
             raise ValueError(f"Invalid namespace format: {namespace}")
 
-    async def _get_session(self) -> AsyncSession:
-        """Get a database session."""
-        return SessionLocal()
-
     async def upsert_many(
         self,
         namespace: str,
@@ -126,29 +122,27 @@ class PgVectorStore(VectorStore):
         """
         table_type, context = self._parse_namespace(namespace)
 
-        db = await self._get_session()
-        try:
-            if table_type == "documents":
-                results = await self._query_documents(
-                    db, context, embedding, top_k, filters, max_distance
-                )
-            elif table_type == "message_embeddings":
-                results = await self._query_message_embeddings(
-                    db, context, embedding, top_k, filters, max_distance
-                )
-            else:
-                results = []
+        async with tracked_db("pgvector_query") as db:
+            try:
+                if table_type == "documents":
+                    results = await self._query_documents(
+                        db, context, embedding, top_k, filters, max_distance
+                    )
+                elif table_type == "message_embeddings":
+                    results = await self._query_message_embeddings(
+                        db, context, embedding, top_k, filters, max_distance
+                    )
+                else:
+                    results = []
 
-            logger.debug(
-                f"Query returned {len(results)} results from namespace {namespace}"
-            )
-            return results
+                logger.debug(
+                    f"Query returned {len(results)} results from namespace {namespace}"
+                )
+                return results
 
-        except Exception:
-            logger.exception(f"Failed to query namespace {namespace}")
-            raise
-        finally:
-            await db.close()
+            except Exception:
+                logger.exception(f"Failed to query namespace {namespace}")
+                raise
 
     async def _query_documents(
         self,
@@ -297,45 +291,43 @@ class PgVectorStore(VectorStore):
 
         table_type, _ = self._parse_namespace(namespace)
 
-        db = await self._get_session()
-        try:
-            if table_type == "documents":
-                stmt = (
-                    update(models.Document)
-                    .where(models.Document.id.in_(ids))
-                    .values(embedding=None)
-                )
-                await db.execute(stmt)
-
-            elif table_type == "message_embeddings":
-                for vector_id in ids:
-                    try:
-                        embedding_id = int(vector_id)
-                    except ValueError as exc:
-                        raise ValueError(
-                            f"Invalid message vector id format: {vector_id}"
-                        ) from exc
-
+        async with tracked_db("pgvector_delete") as db:
+            try:
+                if table_type == "documents":
                     stmt = (
-                        update(models.MessageEmbedding)
-                        .where(models.MessageEmbedding.id == embedding_id)
+                        update(models.Document)
+                        .where(models.Document.id.in_(ids))
                         .values(embedding=None)
                     )
                     await db.execute(stmt)
 
-            await db.commit()
-            logger.debug(
-                f"Deleted {len(ids)} vectors from {table_type} in namespace {namespace}"
-            )
+                elif table_type == "message_embeddings":
+                    for vector_id in ids:
+                        try:
+                            embedding_id = int(vector_id)
+                        except ValueError as exc:
+                            raise ValueError(
+                                f"Invalid message vector id format: {vector_id}"
+                            ) from exc
 
-        except Exception:
-            await db.rollback()
-            logger.exception(
-                f"Failed to delete {len(ids)} vectors from namespace {namespace}"
-            )
-            raise
-        finally:
-            await db.close()
+                        stmt = (
+                            update(models.MessageEmbedding)
+                            .where(models.MessageEmbedding.id == embedding_id)
+                            .values(embedding=None)
+                        )
+                        await db.execute(stmt)
+
+                await db.commit()
+                logger.debug(
+                    f"Deleted {len(ids)} vectors from {table_type} in namespace {namespace}"
+                )
+
+            except Exception:
+                await db.rollback()
+                logger.exception(
+                    f"Failed to delete {len(ids)} vectors from namespace {namespace}"
+                )
+                raise
 
     async def delete_namespace(self, namespace: str) -> None:
         """
@@ -346,38 +338,38 @@ class PgVectorStore(VectorStore):
         """
         table_type, context = self._parse_namespace(namespace)
 
-        db = await self._get_session()
-        try:
-            if table_type == "documents":
-                stmt = (
-                    update(models.Document)
-                    .where(models.Document.workspace_name == context["workspace_name"])
-                    .where(models.Document.observer == context["observer"])
-                    .where(models.Document.observed == context["observed"])
-                    .values(embedding=None)
-                )
-                await db.execute(stmt)
-
-            elif table_type == "message_embeddings":
-                stmt = (
-                    update(models.MessageEmbedding)
-                    .where(
-                        models.MessageEmbedding.workspace_name
-                        == context["workspace_name"]
+        async with tracked_db("pgvector_delete_namespace") as db:
+            try:
+                if table_type == "documents":
+                    stmt = (
+                        update(models.Document)
+                        .where(
+                            models.Document.workspace_name == context["workspace_name"]
+                        )
+                        .where(models.Document.observer == context["observer"])
+                        .where(models.Document.observed == context["observed"])
+                        .values(embedding=None)
                     )
-                    .values(embedding=None)
-                )
-                await db.execute(stmt)
+                    await db.execute(stmt)
 
-            await db.commit()
-            logger.debug(f"Deleted all vectors from namespace {namespace}")
+                elif table_type == "message_embeddings":
+                    stmt = (
+                        update(models.MessageEmbedding)
+                        .where(
+                            models.MessageEmbedding.workspace_name
+                            == context["workspace_name"]
+                        )
+                        .values(embedding=None)
+                    )
+                    await db.execute(stmt)
 
-        except Exception:
-            await db.rollback()
-            logger.exception(f"Failed to delete namespace {namespace}")
-            raise
-        finally:
-            await db.close()
+                await db.commit()
+                logger.debug(f"Deleted all vectors from namespace {namespace}")
+
+            except Exception:
+                await db.rollback()
+                logger.exception(f"Failed to delete namespace {namespace}")
+                raise
 
     async def close(self) -> None:
         """Close the pgvector store (no-op for pgvector)"""

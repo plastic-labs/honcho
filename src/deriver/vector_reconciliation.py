@@ -23,9 +23,7 @@ from src.vector_store import VectorRecord, VectorStore, get_vector_store
 logger = logging.getLogger(__name__)
 
 # Constants
-RECONCILIATION_BATCH_SIZE = (
-    30  # Keep batch size small to avoid exceeding embedding API limits
-)
+RECONCILIATION_BATCH_SIZE = 50
 RECONCILIATION_TIME_BUDGET_SECONDS = 240  # Leave headroom for other maintenance work
 MAX_SYNC_ATTEMPTS = 5  # After this many failures, mark as permanently_failed
 

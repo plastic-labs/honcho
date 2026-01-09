@@ -4,19 +4,12 @@ from typing import Any
 from nanoid import generate as generate_nanoid
 from sqlalchemy import ColumnElement, Select, and_, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    retry_if_result,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
-from src.vector_store import VectorRecord, get_vector_store
+from src.vector_store import VectorRecord, get_vector_store, upsert_with_retry
 
 from .session import get_or_create_session
 
@@ -223,28 +216,14 @@ async def create_messages(
                             )
                 await db.commit()
 
-                # Retry vector upsert with exponential backoff
+                # Upsert to vector store with retry and update sync state
                 if vector_records:
                     try:
-                        result = None
-                        async for attempt in AsyncRetrying(
-                            stop=stop_after_attempt(3),
-                            wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-                            retry=retry_if_exception_type(Exception)
-                            | retry_if_result(
-                                lambda res: res is not None
-                                and res.secondary_ok is False
-                            ),
-                            reraise=True,
-                        ):
-                            with attempt:
-                                result = await vector_store.upsert_many(
-                                    namespace, vector_records
-                                )
-
+                        result = await upsert_with_retry(
+                            vector_store, namespace, vector_records
+                        )
                         if result is not None and result.secondary_ok is False:
                             # Partial success: primary has data but secondary doesn't
-                            # Keep as "pending" for reconciliation to sync secondary
                             logger.warning(
                                 "Partial sync for message embeddings: %s",
                                 result.secondary_error,
@@ -260,7 +239,7 @@ async def create_messages(
                             )
                             await db.commit()
                         else:
-                            # Success: primary succeeded and (secondary succeeded or no secondary configured)
+                            # Success: both primary and secondary stores have the data
                             await db.execute(
                                 update(models.MessageEmbedding)
                                 .where(models.MessageEmbedding.id.in_(embedding_ids))
@@ -273,9 +252,9 @@ async def create_messages(
                             await db.commit()
 
                     except Exception as e:
-                        # Total failure: primary write failed
+                        # Total failure: primary write failed after retries
                         logger.error(
-                            f"Failed to upsert message vectors after 3 retries: {e}"
+                            f"Failed to upsert message vectors after retries: {e}"
                         )
                         await db.execute(
                             update(models.MessageEmbedding)
