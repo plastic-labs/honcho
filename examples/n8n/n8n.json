@@ -270,7 +270,7 @@
           "nodeCredentialType": "httpBearerAuth",
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={\"messages\": [{\"content\": \"{{ $('Get a message').item.json.snippet }}\", \"peer_id\": \"{{ $('Clean Names').first().json.name }}\"}]}",
+          "jsonBody": "={\"messages\": [{\"content\": \"{{ $('Get a message').item.json.snippet }}\", \"peer_id\": \"{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/ /g, '_') }}\"}]}",
           "options": {}
         },
         "type": "n8n-nodes-base.httpRequest",

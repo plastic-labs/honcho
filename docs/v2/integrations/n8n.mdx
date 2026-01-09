@@ -92,7 +92,7 @@ Start with a **Manual Trigger** node to execute the workflow on demand. This is 
 
 <Tip>
 **Verify Your Data in Honcho**
-As you build the data ingestion workflow, verify everything is created correctly in your [Honcho instance]((https://app.honcho.dev/)).
+As you build the data ingestion workflow, verify everything is created correctly in your [Honcho instance](https://app.honcho.dev/).
 </Tip>
 
 #### Step 3: Get or Create Session
@@ -242,7 +242,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
     },
     {
       "parameters": {
-        "model": "zai-glm-4.6",
+        "model": "gpt-4o",
         "options": {}
       },
       "id": "16da7a98-5622-427a-bbab-1be39f828d0b",
@@ -479,7 +479,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"messages\": [{\"content\": \"{{ $('Get a message').item.json.snippet }}\", \"peer_id\": \"{{ $('Clean Names').first().json.name }}\"}]}",
+        "jsonBody": "={\"messages\": [{\"content\": \"{{ $('Get a message').item.json.snippet }}\", \"peer_id\": \"{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/ /g, '_') }}\"}]}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
