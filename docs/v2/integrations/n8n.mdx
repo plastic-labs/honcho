@@ -113,7 +113,7 @@ As you build the data ingestion workflow, verify everything is created correctly
 **Finding the Gmail Message ID**
 The easiest way to find a Gmail message ID is to use n8n's Gmail Get Many operation. Temporarily add it, set the limit to 1, and execute. Use the message ID in the output for the message ID field.
 
-In this tutorial, we load in only a single message to demonstrate the workflow. See "Next Steps" for handling multiple messages.
+In this tutorial, we load in only a single message to demonstrate the workflow.
 </Note>
 
 #### Step 5: Extract Peers from Email
@@ -201,10 +201,7 @@ Connect the tool to the Agent node. The URL uses the same workspace (`email-test
 
 ## Import the Workflow
 
-Want to skip the manual setup? Import this workflow directly into n8n:
-
-1. In n8n, go to **Workflows** → **Import from File** (or **Import from URL**)
-2. Paste the JSON below or upload the file
+Want to skip the manual setup? Import this workflow directly into n8n. In n8n, go to **Workflows** → **Import from File** (or **Import from URL**).
 
 [Download workflow JSON from GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/n8n/n8n.json) or expand below to copy:
 
@@ -741,20 +738,12 @@ Want to skip the manual setup? Import this workflow directly into n8n:
 
 Once you have the basic workflow running, consider these enhancements:
 
-### Making it Production-Ready
-
-The tutorial uses hardcoded workspace (`email-test`) and session (`new_session`) IDs for simplicity. For production:
-
-- **Dynamic IDs**: Use n8n variables or pass IDs through the workflow instead of hardcoding them
-- **Add Dialectic Chat**: Add another HTTP Request Tool with `POST /workspaces/{id}/dialectic/chat` to enable natural language queries about peers. See the [Dialectic API docs](https://docs.honcho.dev/v2/documentation/core-concepts/features/dialectic) for details.
-- **Multiple sessions**: Create unique session IDs per conversation thread or user
-
-### Scaling Up
-
-- **Load more messages**: Use Gmail's "Get All" operation to load entire conversation threads, mapping each to a Honcho session for better reasoning
+- **Dynamic IDs**: Use n8n variables instead of hardcoding `email-test` and `new_session`
+- **Chat with Peers**: Add an HTTP Request Tool for natural language queries about peer representations. Read more in the [docs](https://docs.honcho.dev/v2.6.0-alpha/documentation/features/chat).
+- **Load more messages**: Use Gmail's "Get All" operation to load entire conversation threads
 - **Make it real-time**: Add a **Gmail Trigger** node to automatically ingest new emails as they arrive
 - **Add error handling**: Connect an **Error Trigger** node with notifications (Email, Slack) and retry logic
-- **Expand to other data sources**: Honcho works with Slack messages, CRM interactions, support tickets, meeting notes, and more
+- **Expand to other data sources**: Honcho works with Slack messages, CRM interactions, support tickets, and more
 
 ---
 
@@ -762,7 +751,6 @@ The tutorial uses hardcoded workspace (`email-test`) and session (`new_session`)
 
 - [Honcho Architecture](https://docs.honcho.dev/v2/documentation/core-concepts/architecture) - Understand workspaces, sessions, peers, and messages
 - [Get Context](https://docs.honcho.dev/v2/documentation/core-concepts/features/get-context) - Learn about retrieving formatted conversation context
-- [Dialectic API](https://docs.honcho.dev/v2/documentation/core-concepts/features/dialectic) - Query peer representations for deeper understanding
 - [API Reference](https://docs.honcho.dev/v2/api-reference) - Complete API documentation
 
 ---
