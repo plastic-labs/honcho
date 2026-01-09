@@ -28,7 +28,11 @@ The Honcho integration in n8n uses the HTTP Request node to interact with the Ho
 
 1. Add an **HTTP Request** node to your workflow (Core > HTTP Request)
 
-   ![Screenshot: Adding HTTP Request node from Core nodes]
+<div style={{ maxWidth: "400px" }}>
+  <Frame>
+    <img src="/images/integrations/n8n/Http_request_core.png" alt="Adding HTTP Request node from Core nodes" />
+  </Frame>
+</div>
 
 2. Set the **Method** based on your operation (typically `POST` for creating resources, `GET` for retrieving)
 
@@ -38,7 +42,11 @@ The Honcho integration in n8n uses the HTTP Request node to interact with the Ho
 
 5. Click **Create New Credential** and paste your Honcho API key in the Bearer Token field
 
-   ![Screenshot: Bearer Auth credential setup in n8n]
+<div style={{ maxWidth: "400px" }}>
+  <Frame>
+    <img src="/images/integrations/n8n/Bearer_auth_cred.png" alt="Bearer Auth credential setup in n8n" />
+  </Frame>
+</div>
 
 6. Check **Send Body** and select **JSON** as the Body Content Type when creating resources
 
@@ -54,7 +62,7 @@ The workflow has two parts (separated by sticky notes in the canvas):
 
 The Agent uses Honcho's `get_context()` endpoint to retrieve relevant information about email conversations, enabling contextual conversations about your email data.
 
-![Screenshot: Complete workflow overview showing both data ingestion and chat sections]
+![Complete workflow overview showing both data ingestion and chat sections](/images/integrations/n8n/complete_workflow.png)
 
 ### Part 1: Loading Email Data into Honcho
 
@@ -69,7 +77,6 @@ The fastest way to configure any Honcho endpoint is to copy the curl command dir
 2. Fill in your parameters, verify the results and click **Copy as cURL**
 3. Then in n8n use the **import cURL** button to directly import the request (be sure to verify the bearer token imported correctly)
 
-![screenshot of button]
 </Tip>
 
 #### Step 1: Manual Trigger
@@ -108,8 +115,6 @@ The easiest way to find a Gmail message ID is to use n8n's Gmail Get Many operat
 
 In this tutorial, we load in only a single message to demonstrate the workflow. See "Next Steps" for handling multiple messages.
 </Note>
-
-![Screenshot: Gmail node configuration]
 
 #### Step 5: Extract Peers from Email
 
@@ -157,8 +162,6 @@ Add a **Limit** node to control the flow so the message is only added once to th
 3. **URL**: `https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/`
 4. **Body** (JSON): `{ "messages": [{ "content": "{{ $('Get a message').item.json.snippet }}", "peer_id": "{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/\\s+/g, '_') }}" }] }`
 
-![Screenshot: Data ingestion section of workflow with all nodes connected]
-
 ### Part 2: Building a Stateful AI Chatbot
 
 Now that data is loaded into Honcho, create a chat interface that leverages this memory:
@@ -193,8 +196,6 @@ Create an HTTP Request Tool node for Honcho's context retrieval:
 - Returns formatted context for the entire session including all messages and peer interactions
 
 Connect the tool to the Agent node. The URL uses the same workspace (`email-test`) and session (`new_session`) IDs created during data ingestion.
-
-![Screenshot: AI Agent section with LLM and Honcho tools connected]
 
 ---
 
