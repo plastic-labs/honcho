@@ -1,0 +1,509 @@
+{
+    "name": "Honcho Empowered Email AI Agent",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Data Ingestion\nLoads Gmail email into Honcho.\n\n**Run this section first** by clicking 'Execute workflow'.",
+          "height": 356,
+          "width": 2008
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -16,
+          -64
+        ],
+        "id": "53f767a8-8df9-4ad7-8a3d-37c145495627",
+        "name": "Sticky Note - Data Ingestion"
+      },
+      {
+        "parameters": {
+          "content": "## AI Chat With Honcho get_context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
+          "height": 480,
+          "width": 752
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          32,
+          464
+        ],
+        "id": "34066961-d29e-4fe8-93bf-8f7043e142b0",
+        "name": "Sticky Note - AI Chat"
+      },
+      {
+        "parameters": {
+          "model": "zai-glm-4.6",
+          "options": {}
+        },
+        "id": "16da7a98-5622-427a-bbab-1be39f828d0b",
+        "name": "OpenAI Chat Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "position": [
+          240,
+          800
+        ],
+        "typeVersion": 1,
+        "credentials": {
+          "openAiApi": {
+            "id": "qrvGphL3ydUODxQZ",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "options": {
+            "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Get_Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
+          }
+        },
+        "id": "049c3c19-756c-4755-88d9-94312857d9bb",
+        "name": "AI Agent",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "position": [
+          368,
+          576
+        ],
+        "typeVersion": 1.7
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "b9a2ef6a-0e81-45c9-a5ea-16e74a9aa77d",
+        "name": "When chat message received",
+        "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+        "position": [
+          80,
+          576
+        ],
+        "webhookId": "c91764c2-0b51-4025-ad74-d5f44127aa5a",
+        "typeVersion": 1.1
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/peers",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "id",
+                "value": "={{ $json.name }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1296,
+          96
+        ],
+        "id": "f2e81445-a866-4d9f-9a8a-b2dc8cbaea8b",
+        "name": "Get or Create Peer",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "NbrkGo1GdYWQY3OX",
+            "name": "Bearer Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "messageId": "19b8fee837985953"
+        },
+        "type": "n8n-nodes-base.gmail",
+        "typeVersion": 2.2,
+        "position": [
+          608,
+          96
+        ],
+        "id": "ee5d8cc7-876b-4096-b6e5-14f1b92084a6",
+        "name": "Get a message",
+        "webhookId": "4ab02540-af03-405d-a6eb-dfcaa76477fc",
+        "credentials": {
+          "gmailOAuth2": {
+            "id": "a2RvA5NMNjfOeHtd",
+            "name": "Gmail account 2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "id",
+                "value": "=new_session"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          448,
+          96
+        ],
+        "id": "eef01db2-3355-484d-97b8-34480c40fcf8",
+        "name": "Get or Create Session",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "NbrkGo1GdYWQY3OX",
+            "name": "Bearer Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          48,
+          96
+        ],
+        "id": "a9de9d8f-7911-444f-99bd-7d287f587eff",
+        "name": "When clicking 'Execute workflow'"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.honcho.dev/v2/workspaces",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\n  \"id\": \"email-test\",\n  \"metadata\": {}\n}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          240,
+          96
+        ],
+        "id": "49b91f82-1cd8-49aa-85a5-57a8ad7b5128",
+        "name": "Get or Create Workspace",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "NbrkGo1GdYWQY3OX",
+            "name": "Bearer Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "allEmails",
+                "name": "allEmails",
+                "type": "array",
+                "value": "={{ [$json.From, $json.To, $json.Cc, $json.Bcc].filter(Boolean).flatMap(field => field.split(',').map(e => e.trim())).filter(Boolean) }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          784,
+          96
+        ],
+        "id": "3eb4ce63-d95c-42d7-8a16-f35e2419d8c0",
+        "name": "Combine Email Fields"
+      },
+      {
+        "parameters": {
+          "fieldToSplitOut": "allEmails",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [
+          960,
+          96
+        ],
+        "id": "4702001d-40f5-4b44-b443-6fb0b94e58a9",
+        "name": "Split Out"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "name",
+                "name": "name",
+                "type": "string",
+                "value": "={{ $json.allEmails.split('<')[0].trim().replace(/ /g, '_') }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1136,
+          96
+        ],
+        "id": "93327201-bfbe-4385-bfcd-7646f0513a62",
+        "name": "Clean Names"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"messages\": [{\"content\": \"{{ $('Get a message').item.json.snippet }}\", \"peer_id\": \"{{ $('Clean Names').first().json.name }}\"}]}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1808,
+          96
+        ],
+        "id": "cb6732d0-e5a9-4d6e-98ef-8fe1c290740b",
+        "name": "Create Message for Session",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "NbrkGo1GdYWQY3OX",
+            "name": "Bearer Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/peers",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"{{ $json.id }}\": {}}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1472,
+          96
+        ],
+        "id": "3c2065b6-bd68-4698-a740-db3cd52f2267",
+        "name": "Add Peers to Session",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "NbrkGo1GdYWQY3OX",
+            "name": "Bearer Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.limit",
+        "typeVersion": 1,
+        "position": [
+          1632,
+          96
+        ],
+        "id": "d7c38f49-1a76-4a67-a540-4bec7aae1d9f",
+        "name": "Limit"
+      },
+      {
+        "parameters": {
+          "url": "https://api.honcho.dev/v2/workspaces/email-test/sessions/new_session/context",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          656,
+          784
+        ],
+        "id": "095e62d6-aae3-4eb8-9b9c-c473bfe2716d",
+        "name": "Get_Context",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "NbrkGo1GdYWQY3OX",
+            "name": "Bearer Auth account"
+          }
+        }
+      }
+    ],
+    "pinData": {},
+    "connections": {
+      "OpenAI Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When chat message received": {
+        "main": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "Get or Create Workspace",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get or Create Workspace": {
+        "main": [
+          [
+            {
+              "node": "Get or Create Session",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get a message": {
+        "main": [
+          [
+            {
+              "node": "Combine Email Fields",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get or Create Session": {
+        "main": [
+          [
+            {
+              "node": "Get a message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Combine Email Fields": {
+        "main": [
+          [
+            {
+              "node": "Split Out",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split Out": {
+        "main": [
+          [
+            {
+              "node": "Clean Names",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Clean Names": {
+        "main": [
+          [
+            {
+              "node": "Get or Create Peer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get or Create Peer": {
+        "main": [
+          [
+            {
+              "node": "Add Peers to Session",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Add Peers to Session": {
+        "main": [
+          [
+            {
+              "node": "Limit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Limit": {
+        "main": [
+          [
+            {
+              "node": "Create Message for Session",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_Context": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": false
+    },
+    "versionId": "ba0a3b77-cc19-49fd-9189-aaee65b35f99",
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "instanceId": "4e34c96e55eb26be21fa69ca62c4851a5d09b678190481f5d47c084b6b327003"
+    },
+    "id": "dKOYeEOdrZOetmFRmIAUJ",
+    "tags": []
+  }
