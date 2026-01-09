@@ -47,7 +47,6 @@ Optional arguments:
 --cleanup-workspace: Delete workspace after executing each question (default: False)
 --use-get-context: Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)
 --question-id: Run only the question with this question_id (skips all others)
---legacy-dream: Use legacy multi-pass dream system instead of orchestrated specialists (default: False)
 ```
 
 ## Other notes
@@ -1143,12 +1142,6 @@ Examples:
         "--question-id",
         type=str,
         help="Run only the question with this question_id (skips all others)",
-    )
-
-    parser.add_argument(
-        "--legacy-dream",
-        action="store_true",
-        help="Use legacy multi-pass dream system instead of orchestrated specialists (default: False)",
     )
 
     args = parser.parse_args()

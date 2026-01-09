@@ -2,11 +2,19 @@
 Random Projection Tree implementation.
 """
 
-import numpy as np
 from dataclasses import dataclass
-from typing import Union
 
-from .base import SurprisalTree, InternalNode, LeafNode
+import numpy as np
+
+from .base import InternalNode, LeafNode, SurprisalTree
+
+
+@dataclass
+class RPInternalNode(InternalNode):
+    """Internal node for Random Projection Tree with direction and threshold."""
+
+    direction: np.ndarray | None = None
+    threshold: float = 0.0
 
 
 class RPTree(SurprisalTree):
@@ -15,19 +23,23 @@ class RPTree(SurprisalTree):
     Uses random projection directions at each split.
     """
 
-    @dataclass
-    class RPInternalNode(InternalNode):
-        direction: np.ndarray = None
-        threshold: float = 0.0
+    root: LeafNode | RPInternalNode | None
+    total_points: int
 
-    def insert(self, point: np.ndarray):
+    def __init__(self, max_leaf_size: int = 10) -> None:
+        super().__init__(max_leaf_size)
+        self.root = None
+
+    def insert(self, point: np.ndarray) -> None:
         if self.root is None:
             self.root = LeafNode(points=[point], count=1)
         else:
             self.root = self._insert(self.root, point)
         self.total_points += 1
 
-    def _insert(self, node: Union[LeafNode, 'RPTree.RPInternalNode'], point: np.ndarray):
+    def _insert(
+        self, node: LeafNode | RPInternalNode, point: np.ndarray
+    ) -> LeafNode | RPInternalNode:
         node.count += 1
 
         if isinstance(node, LeafNode):
@@ -36,79 +48,79 @@ class RPTree(SurprisalTree):
                 return self._split_leaf(node)
             return node
         else:
-            # Internal node: route to appropriate child
             if self._go_left(node, point):
-                node.left = self._insert(node.left, point)
+                if node.left is not None:
+                    node.left = self._insert_child(node.left, point)
             else:
-                node.right = self._insert(node.right, point)
+                if node.right is not None:
+                    node.right = self._insert_child(node.right, point)
             return node
 
-    def _split_leaf(self, leaf: LeafNode) -> Union[LeafNode, 'RPTree.RPInternalNode']:
+    def _insert_child(
+        self, child: InternalNode | LeafNode, point: np.ndarray
+    ) -> LeafNode | RPInternalNode:
+        """Insert into a child node, handling the type narrowing."""
+        if isinstance(child, LeafNode | RPInternalNode):
+            return self._insert(child, point)
+        raise TypeError(f"Unexpected child type: {type(child)}")
+
+    def _split_leaf(self, leaf: LeafNode) -> LeafNode | RPInternalNode:
         """
         Split a leaf using random projection.
         Tries multiple random directions to find a good split.
         """
         points = np.array(leaf.points)
 
-        # Handle degenerate case: single unique point repeated
         if len(points) > 1:
             variance = np.var(points, axis=0).sum()
             if variance < 1e-10:
-                # All points are essentially identical
                 return leaf
 
-        # Try multiple random directions if needed
         max_attempts = 5
-        for attempt in range(max_attempts):
-            # Random projection direction
+        for _attempt in range(max_attempts):
             direction = np.random.randn(points.shape[1])
             norm = np.linalg.norm(direction)
             if norm < 1e-10:
-                continue  # Skip degenerate direction
+                continue
             direction /= norm
 
-            # Project and find median
             projections = points @ direction
 
-            # Check if there's any variance in projections
             if np.std(projections) < 1e-10:
-                continue  # All points project to same location, try another direction
+                continue
 
             threshold = np.median(projections)
 
-            # Use strict inequality for one side to ensure proper split
             left_mask = projections < threshold
             right_mask = ~left_mask
 
-            # If median creates empty split, try mean of min and max
             if not left_mask.any() or not right_mask.any():
                 proj_min, proj_max = projections.min(), projections.max()
                 if proj_max - proj_min < 1e-10:
-                    continue  # No spread, try another direction
+                    continue
                 threshold = (proj_min + proj_max) / 2
                 left_mask = projections < threshold
                 right_mask = ~left_mask
 
-            left_points = [p for p, m in zip(leaf.points, left_mask) if m]
-            right_points = [p for p, m in zip(leaf.points, right_mask) if m]
+            left_points = [p for p, m in zip(leaf.points, left_mask, strict=False) if m]
+            right_points = [
+                p for p, m in zip(leaf.points, right_mask, strict=False) if m
+            ]
 
-            # If we successfully split, create internal node
             if left_points and right_points:
-                return self.RPInternalNode(
+                return RPInternalNode(
                     direction=direction,
-                    threshold=threshold,
+                    threshold=float(threshold),
                     left=LeafNode(points=left_points, count=len(left_points)),
                     right=LeafNode(points=right_points, count=len(right_points)),
-                    count=leaf.count
+                    count=leaf.count,
                 )
 
-        # If all attempts fail (all points are identical or degenerate), return leaf as-is
-        # This is acceptable - leaf will just be larger than max_leaf_size
         return leaf
 
-    def _go_left(self, node: 'RPTree.RPInternalNode', point: np.ndarray) -> bool:
+    def _go_left(self, node: RPInternalNode, point: np.ndarray) -> bool:
         """Determine if point should go left. Must match split criterion."""
-        return (point @ node.direction) < node.threshold
+        return bool((point @ node.direction) < node.threshold)
 
     def surprisal(self, point: np.ndarray) -> float:
         """
@@ -116,22 +128,29 @@ class RPTree(SurprisalTree):
         S(x) = -log P(path to x) = Σ -log(n_child / n_parent)
         """
         if self.root is None:
-            return float('inf')
+            return float("inf")
 
         surprisal_value = 0.0
-        node = self.root
+        node: LeafNode | RPInternalNode = self.root
 
-        while isinstance(node, self.RPInternalNode):
+        while isinstance(node, RPInternalNode):
             parent_count = node.count
 
-            if self._go_left(node, point):
+            if self._go_left(node, point) and node.left is not None:
                 child_count = node.left.count
-                node = node.left
-            else:
+                if isinstance(node.left, LeafNode | RPInternalNode):
+                    node = node.left
+                else:
+                    break
+            elif node.right is not None:
                 child_count = node.right.count
-                node = node.right
+                if isinstance(node.right, LeafNode | RPInternalNode):
+                    node = node.right
+                else:
+                    break
+            else:
+                break
 
-            # Probability of taking this branch
             p_branch = child_count / parent_count
             surprisal_value += -np.log(p_branch + 1e-10)
 

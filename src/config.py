@@ -233,8 +233,6 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
-    AGENTIC: bool = False
-    USE_LEGACY: bool = False  # Set to True to use legacy deriver with peer card updates
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -261,12 +259,6 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
-    # Agent iteration limit - controls how many tool calling rounds the agent gets
-    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=3, gt=0, le=20)] = 3
-
-    # Token limit for recent history retrieval
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
-
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
@@ -278,6 +270,14 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         Field(default=4096, ge=128, le=16_384),
     ] = 4096
 
+    @model_validator(mode="after")
+    def validate_batch_tokens_vs_context_limit(self):
+        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+            raise ValueError(
+                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+            )
+        return self
+
 
 class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
@@ -285,19 +285,89 @@ class PeerCardSettings(HonchoSettings):
     ENABLED: bool = True
 
 
-class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
+# Reasoning levels for dialectic - defined here to avoid circular imports with schemas
+ReasoningLevel = Literal["minimal", "low", "medium", "high", "extra-high"]
+REASONING_LEVELS: list[ReasoningLevel] = [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "extra-high",
+]
 
-    PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-haiku-4-5"
+
+class DialecticLevelSettings(BaseModel):
+    """Settings for a specific reasoning level in the dialectic."""
+
+    model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
+
+    PROVIDER: Annotated[SupportedProviders, Field(validation_alias="provider")]
+    MODEL: Annotated[str, Field(validation_alias="model")]
+    BACKUP_PROVIDER: Annotated[
+        SupportedProviders | None, Field(validation_alias="backup_provider")
+    ] = None
+    BACKUP_MODEL: Annotated[str | None, Field(validation_alias="backup_model")] = None
+    THINKING_BUDGET_TOKENS: Annotated[
+        int, Field(ge=0, le=100_000, validation_alias="thinking_budget_tokens")
+    ]
+    MAX_TOOL_ITERATIONS: Annotated[
+        int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
+    ]
+
+    @model_validator(mode="after")
+    def _validate_backup_configuration(self) -> "DialecticLevelSettings":
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
+
+
+class DialecticSettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
+    )
+
+    # Per-level settings for provider, model, thinking budget, and tool iterations
+    # TODO: Fill in appropriate values for each reasoning level
+    LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
+        default_factory=lambda: {
+            "minimal": DialecticLevelSettings(
+                PROVIDER="google",
+                MODEL="gemini-2.5-flash-lite",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=2,
+            ),
+            "low": DialecticLevelSettings(
+                PROVIDER="google",
+                MODEL="gemini-3-flash",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=5,
+            ),
+            "medium": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-haiku-4-5",
+                THINKING_BUDGET_TOKENS=512,
+                MAX_TOOL_ITERATIONS=4,
+            ),
+            "high": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-opus-4-5",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=4,
+            ),
+            "extra-high": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-opus-4-5",
+                THINKING_BUDGET_TOKENS=512,
+                MAX_TOOL_ITERATIONS=10,
+            ),
+        }
+    )
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
-
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=4096, gt=0, le=10_000)] = 4096
-
-    # Agent iteration limit - controls how many tool calling rounds the agent gets
-    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
     # Token limit for get_recent_history tool within the agent
     HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
@@ -310,11 +380,20 @@ class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
-        """Ensure the output token limit exceeds the thinking budget."""
-        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
-            raise ValueError(
-                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
-            )
+        """Ensure the output token limit exceeds all thinking budgets."""
+        for level, level_settings in self.LEVELS.items():
+            if self.MAX_OUTPUT_TOKENS <= level_settings.THINKING_BUDGET_TOKENS:
+                raise ValueError(
+                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_all_levels_present(self) -> "DialecticSettings":
+        """Ensure all reasoning levels are configured."""
+        missing = set(REASONING_LEVELS) - set(self.LEVELS.keys())
+        if missing:
+            raise ValueError(f"Missing configuration for reasoning levels: {missing}")
         return self
 
 
@@ -366,7 +445,7 @@ class CacheSettings(HonchoSettings):
 class SurprisalSettings(BaseModel):
     """Settings for tree-based surprisal sampling during dreams."""
 
-    ENABLED: bool = True  # Enabled by default
+    ENABLED: bool = False
 
     # Tree configuration
     TREE_TYPE: Literal[
@@ -390,9 +469,9 @@ class SurprisalSettings(BaseModel):
 
 
 class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(
+    model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
-    )  # pyright: ignore
+    )
 
     ENABLED: bool = True
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
@@ -464,9 +543,7 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
-    FINETUNING_TRACES_FILE: str | None = (
-        None  # Path to JSONL file for fine-tuning traces
-    )
+    REASONING_TRACES_FILE: str | None = None  # Path to JSONL file for reasoning traces
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 

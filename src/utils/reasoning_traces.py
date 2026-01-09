@@ -1,8 +1,7 @@
 """
-Utility for logging fine-tuning traces from LLM calls.
+Utility for logging traces from LLM calls.
 
-This module provides structured JSONL logging of LLM inputs/outputs
-for use in fine-tuning datasets.
+This module provides structured JSONL logging of LLM inputs/outputs.
 """
 
 import fcntl
@@ -16,14 +15,14 @@ from pydantic import BaseModel
 from src.config import LLMComponentSettings, settings
 
 
-def get_finetuning_traces_file_path() -> Path | None:
-    """Get the fine-tuning traces file path from settings."""
-    if settings.FINETUNING_TRACES_FILE:
-        return Path(settings.FINETUNING_TRACES_FILE)
+def get_reasoning_traces_file_path() -> Path | None:
+    """Get the traces file path from settings."""
+    if settings.REASONING_TRACES_FILE:
+        return Path(settings.REASONING_TRACES_FILE)
     return None
 
 
-def log_finetuning_trace(
+def log_reasoning_trace(
     task_type: str,
     llm_settings: LLMComponentSettings,
     prompt: str,
@@ -34,22 +33,24 @@ def log_finetuning_trace(
     reasoning_effort: str | None = None,
     json_mode: bool = False,
     stop_seqs: list[str] | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> None:
     """
-    Log a fine-tuning trace to the configured JSONL file.
+    Log a trace to the configured JSONL file.
 
     Args:
-        task_type: Type of task (e.g., "minimal_deriver")
+        task_type: Type of task (e.g., "minimal_deriver", "dialectic_chat")
         llm_settings: LLM settings used for the call
-        prompt: The full prompt text sent to the LLM
+        prompt: The full prompt text sent to the LLM (used if messages is None)
         response: HonchoLLMCallResponse object with the LLM response
         max_tokens: Max output tokens setting
         thinking_budget_tokens: Anthropic thinking budget (if used)
         reasoning_effort: OpenAI reasoning effort (if used)
         json_mode: Whether JSON mode was enabled
         stop_seqs: Stop sequences used (if any)
+        messages: Full conversation history for multi-turn/agentic calls
     """
-    traces_file = get_finetuning_traces_file_path()
+    traces_file = get_reasoning_traces_file_path()
     if not traces_file:
         return
 
@@ -58,7 +59,7 @@ def log_finetuning_trace(
     if isinstance(content, BaseModel):
         content = content.model_dump()
 
-    trace_entry = {
+    trace_entry: dict[str, Any] = {
         "timestamp": time.time(),
         "task_type": task_type,
         "provider": llm_settings.PROVIDER,
@@ -71,7 +72,6 @@ def log_finetuning_trace(
             "stop_seqs": stop_seqs,
         },
         "input": {
-            "prompt": prompt,
             "tokens": response.input_tokens,
         },
         "output": {
@@ -81,6 +81,16 @@ def log_finetuning_trace(
             "thinking_content": response.thinking_content,
         },
     }
+
+    # Use messages for multi-turn/agentic calls, otherwise use prompt
+    if messages is not None:
+        trace_entry["input"]["messages"] = messages
+    else:
+        trace_entry["input"]["prompt"] = prompt
+
+    # Include tool calls if present
+    if hasattr(response, "tool_calls_made") and response.tool_calls_made:
+        trace_entry["output"]["tool_calls"] = response.tool_calls_made
 
     # Use file locking to handle concurrent writes from multiple processes
     with open(traces_file, "a") as f:

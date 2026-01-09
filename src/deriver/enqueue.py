@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from sqlalchemy import insert, update
+from sqlalchemy import exists, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -454,8 +454,6 @@ async def enqueue_dream(
         session_name: Name of the session to scope the dream to
         reasoning_focus: Optional focus mode for the dream ('deduction', 'induction')
     """
-    from sqlalchemy import exists, select
-
     async with tracked_db("dream_enqueue") as db_session:
         try:
             # Create the dream queue record

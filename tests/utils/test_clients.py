@@ -997,11 +997,11 @@ class TestMainLLMCallFunction:
         mock_client.messages.stream.return_value = mock_stream
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
-            settings.DIALECTIC.PROVIDER = "anthropic"
-            settings.DIALECTIC.MODEL = "claude-4-sonnet"
+            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
+            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
             chunks: list[HonchoLLMCallStreamChunk] = []
             async for chunk in await honcho_llm_call(
-                llm_settings=settings.DIALECTIC,
+                llm_settings=settings.DIALECTIC.LEVELS["medium"],
                 prompt="Hello",
                 max_tokens=100,
                 stream=True,
@@ -1025,10 +1025,10 @@ class TestMainLLMCallFunction:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
-            settings.DIALECTIC.PROVIDER = "anthropic"
-            settings.DIALECTIC.MODEL = "claude-4-sonnet"
+            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
+            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
             response = await honcho_llm_call(
-                llm_settings=settings.DIALECTIC,
+                llm_settings=settings.DIALECTIC.LEVELS["medium"],
                 prompt="Hello",
                 max_tokens=100,
                 enable_retry=False,

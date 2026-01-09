@@ -9,11 +9,10 @@ from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
-from src.utils.finetuning_traces import log_finetuning_trace
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import accumulate_metric, log_performance_metrics
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.tokens import estimate_tokens, track_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 from src.utils.tracing import with_sentry_transaction
 
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
@@ -88,11 +87,11 @@ async def process_representation_tasks_batch(
     # Track token usage
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
     messages_tokens = estimate_tokens(formatted_messages)
-    track_input_tokens(
-        task_type="minimal_representation",
+    track_deriver_input_tokens(
+        task_type=prometheus.DeriverTaskTypes.INGESTION,
         components={
-            "prompt": prompt_tokens,
-            "messages": messages_tokens,
+            prometheus.DeriverComponents.PROMPT: prompt_tokens,
+            prometheus.DeriverComponents.MESSAGES: messages_tokens,
         },
     )
 
@@ -107,6 +106,7 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
+    # validation on settings means max_tokens will always be > 0
     max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
 
     # Single LLM call
@@ -121,25 +121,13 @@ async def process_representation_tasks_batch(
         temperature=settings.DERIVER.TEMPERATURE,
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
         reasoning_effort="minimal",
         enable_retry=True,
         retry_attempts=3,
+        trace_name="minimal_deriver",
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
-
-    # Log fine-tuning trace
-    # TODO: this should really be a fixture on honcho_llm_call
-    log_finetuning_trace(
-        task_type="minimal_deriver",
-        llm_settings=settings.DERIVER,
-        prompt=prompt,
-        response=response,
-        max_tokens=max_tokens,
-        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
-        reasoning_effort="minimal",
-        json_mode=True,
-        stop_seqs=["   \n", "\n\n\n\n"],
-    )
 
     accumulate_metric(
         f"minimal_deriver_{latest_message.id}_{observer}",
@@ -148,10 +136,10 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(  # nosec B106 <- dumb false positive
-        task_type="minimal_representation",
-        token_type="output",
-        component="total",
+    prometheus.DERIVER_TOKENS_PROCESSED.labels(
+        task_type=prometheus.DeriverTaskTypes.INGESTION.value,
+        token_type=prometheus.TokenTypes.OUTPUT.value,
+        component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
     ).inc(response.output_tokens)
 
     message_ids = [m.id for m in messages if m.peer_name == observed]
@@ -164,9 +152,13 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
-    if observations.is_empty():
+    if observations.is_empty() or not message_ids:
         logger.warning(
-            f"Deriver generated zero observations for messages {earliest_message.id}:{latest_message.id} in {latest_message.workspace_name}/{latest_message.session_name}!"
+            "Deriver generated zero observations for messages %s:%s in %s/%s!",
+            earliest_message.id,
+            latest_message.id,
+            latest_message.workspace_name,
+            latest_message.session_name,
         )
     else:
         representation_manager = RepresentationManager(

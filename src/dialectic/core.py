@@ -8,16 +8,20 @@ and synthesize responses to queries about a peer.
 import logging
 import time
 import uuid
-from collections.abc import Callable
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud
-from src.config import settings
+from src import crud, prometheus
+from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
+from src.utils.clients import (
+    HonchoLLMCallResponse,
+    StreamingResponseWithMetadata,
+    honcho_llm_call,
+)
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.logging import (
     accumulate_metric,
@@ -47,6 +51,7 @@ class DialecticAgent:
         observer_peer_card: list[str] | None = None,
         observed_peer_card: list[str] | None = None,
         metric_key: str | None = None,
+        reasoning_level: ReasoningLevel = "low",
     ):
         """
         Initialize the dialectic agent.
@@ -60,6 +65,7 @@ class DialecticAgent:
             observer_peer_card: Biographical information about the observer
             observed_peer_card: Biographical information about the observed peer
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
+            reasoning_level: Level of reasoning to apply
         """
         self.db: AsyncSession = db
         self.workspace_name: str = workspace_name
@@ -69,6 +75,7 @@ class DialecticAgent:
         self.observer_peer_card: list[str] | None = observer_peer_card
         self.observed_peer_card: list[str] | None = observed_peer_card
         self.metric_key: str | None = metric_key
+        self.reasoning_level: ReasoningLevel = reasoning_level
 
         # Initialize conversation history with system prompt
         self.messages: list[dict[str, str]] = [
@@ -132,8 +139,8 @@ class DialecticAgent:
         tool calls, improving response quality and speed.
 
         Performs two separate searches to prevent retrieval dilution:
-        - 25 explicit observations (direct facts from messages)
-        - 25 derived observations (deductive, inductive, contradiction, vignette)
+        - 25 explicit observations (produced by deriver)
+        - 25 higher-level observations (produced in dreaming/background/chat)
 
         Args:
             query: The user's query
@@ -161,7 +168,7 @@ class DialecticAgent:
                 observed=self.observed,
                 query=query,
                 limit=25,
-                levels=["deductive", "inductive", "contradiction", "vignette"],
+                levels=["deductive", "inductive", "contradiction"],
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
@@ -183,6 +190,138 @@ class DialecticAgent:
             logger.warning(f"Failed to prefetch observations: {e}")
             return None
 
+    async def _prepare_query(
+        self, query: str
+    ) -> tuple[Callable[[str, dict[str, Any]], Any], str, str | None, float]:
+        """
+        Prepare common state for answering a query.
+
+        Handles session history initialization, metrics setup, observation prefetching,
+        user message construction, and tool executor creation.
+
+        Args:
+            query: The question to answer about the peer
+
+        Returns:
+            A tuple of (tool_executor, task_name, run_id, start_time)
+        """
+        await self._initialize_session_history()
+
+        run_id: str | None = None
+        if self.metric_key:
+            task_name = self.metric_key
+        else:
+            run_id = str(uuid.uuid4())[:8]
+            task_name = f"dialectic_chat_{run_id}"
+        start_time = time.perf_counter()
+
+        accumulate_metric(
+            task_name,
+            "context",
+            (
+                f"workspace: {self.workspace_name}\n"
+                f"session: {self.session_name or '(global)'}\n"
+                f"observer: {self.observer}\n"
+                f"observed: {self.observed}\n"
+                f"reasoning_level: {self.reasoning_level}"
+            ),
+            "blob",
+        )
+        accumulate_metric(task_name, "query", query, "blob")
+
+        prefetched_observations = await self._prefetch_relevant_observations(query)
+
+        if prefetched_observations:
+            user_content = (
+                f"Query: {query}\n\n"
+                f"## Relevant Observations (prefetched)\n"
+                f"The following observations were found to be semantically relevant to your query. "
+                f"Use these as primary context. You may still use tools to find additional information if needed.\n\n"
+                f"{prefetched_observations}"
+            )
+            accumulate_metric(
+                task_name, "prefetched_observations", prefetched_observations, "blob"
+            )
+        else:
+            user_content = f"Query: {query}"
+
+        self.messages.append({"role": "user", "content": user_content})
+
+        tool_executor: Callable[
+            [str, dict[str, Any]], Any
+        ] = await create_tool_executor(
+            db=self.db,
+            workspace_name=self.workspace_name,
+            session_name=self.session_name,
+            observer=self.observer,
+            observed=self.observed,
+            history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
+        )
+
+        return tool_executor, task_name, run_id, start_time
+
+    def _log_response_metrics(
+        self,
+        task_name: str,
+        run_id: str | None,
+        start_time: float,
+        response_content: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_input_tokens: int | None,
+        cache_creation_input_tokens: int | None,
+        tool_calls_count: int,
+        thinking_content: str | None,
+    ) -> None:
+        """
+        Log metrics common to both streaming and non-streaming responses.
+
+        Args:
+            task_name: Metrics task identifier
+            run_id: Run identifier (None if using caller-provided metric_key)
+            start_time: Start time from time.perf_counter()
+            response_content: The full response text
+            input_tokens: Input token count (actual from API)
+            output_tokens: Output token count (actual from API)
+            cache_read_input_tokens: Cache read tokens (if any)
+            cache_creation_input_tokens: Cache creation tokens (if any)
+            tool_calls_count: Number of tool calls made
+            thinking_content: Thinking trace content (if any)
+        """
+        accumulate_metric(task_name, "tool_calls", tool_calls_count, "count")
+
+        if thinking_content:
+            accumulate_metric(task_name, "thinking", thinking_content, "blob")
+
+        log_token_usage_metrics(
+            task_name,
+            input_tokens,
+            output_tokens,
+            cache_read_input_tokens or 0,
+            cache_creation_input_tokens or 0,
+        )
+        accumulate_metric(task_name, "response", response_content, "blob")
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(task_name, "total_duration", elapsed_ms, "ms")
+
+        if not self.metric_key and run_id is not None:
+            log_performance_metrics("dialectic_chat", run_id)
+
+        # Track prometheus metrics - actual token counts from API
+        if prometheus.METRICS_ENABLED:
+            prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+                token_type=prometheus.TokenTypes.INPUT.value,
+                component=prometheus.DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
+            ).inc(input_tokens)
+
+            prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
+                token_type=prometheus.TokenTypes.OUTPUT.value,
+                component=prometheus.DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
+            ).inc(output_tokens)
+
     async def answer(self, query: str) -> str:
         """
         Answer a query about the peer using agentic tool calling.
@@ -198,108 +337,96 @@ class DialecticAgent:
         Returns:
             The synthesized answer string
         """
-        # Initialize session history if configured
-        await self._initialize_session_history()
+        tool_executor, task_name, run_id, start_time = await self._prepare_query(query)
 
-        # Use provided metric_key or generate our own
-        run_id: str | None = None
-        if self.metric_key:
-            task_name = self.metric_key
-        else:
-            run_id = str(uuid.uuid4())[:8]
-            task_name = f"dialectic_chat_{run_id}"
-        start_time = time.perf_counter()
+        # Get level-specific settings
+        level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
-        # Log input context
-        accumulate_metric(
-            task_name,
-            "context",
-            (
-                f"workspace: {self.workspace_name}\n"
-                f"session: {self.session_name or '(global)'}\n"
-                f"observer: {self.observer}\n"
-                f"observed: {self.observed}"
-            ),
-            "blob",
-        )
-        accumulate_metric(task_name, "query", query, "blob")
-
-        # Prefetch relevant observations for the query
-        prefetched_observations = await self._prefetch_relevant_observations(query)
-
-        # Build the user message with prefetched context
-        if prefetched_observations:
-            user_content = (
-                f"Query: {query}\n\n"
-                f"## Relevant Observations (prefetched)\n"
-                f"The following observations were found to be semantically relevant to your query. "
-                f"Use these as primary context. You may still use tools to find additional information if needed.\n\n"
-                f"{prefetched_observations}"
-            )
-            accumulate_metric(
-                task_name, "prefetched_observations", prefetched_observations, "blob"
-            )
-        else:
-            user_content = f"Query: {query}"
-
-        # Add the query to conversation history
-        self.messages.append(
-            {
-                "role": "user",
-                "content": user_content,
-            }
-        )
-
-        # Create tool executor with context
-        tool_executor: Callable[[str, dict[str, Any]], Any] = create_tool_executor(
-            db=self.db,
-            workspace_name=self.workspace_name,
-            session_name=self.session_name,
-            observer=self.observer,
-            observed=self.observed,
-            history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
-        )
-
-        # Run the agent loop
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            llm_settings=settings.DIALECTIC,
+            llm_settings=level_settings,
             prompt="",  # Ignored since we pass messages
             max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
             tools=DIALECTIC_TOOLS,
             tool_choice=None,
             tool_executor=tool_executor,
-            max_tool_iterations=settings.DIALECTIC.MAX_TOOL_ITERATIONS,
+            max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
             messages=self.messages,
             track_name="Dialectic Agent",
-            thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS,
+            thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+            trace_name="dialectic_chat",
         )
 
-        # Log tool calls made with inputs and outputs
-        accumulate_metric(
-            task_name, "tool_calls", len(response.tool_calls_made), "count"
+        self._log_response_metrics(
+            task_name=task_name,
+            run_id=run_id,
+            start_time=start_time,
+            response_content=response.content,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cache_read_input_tokens=response.cache_read_input_tokens,
+            cache_creation_input_tokens=response.cache_creation_input_tokens,
+            tool_calls_count=len(response.tool_calls_made),
+            thinking_content=response.thinking_content,
         )
-
-        # Log thinking trace if present
-        if response.thinking_content:
-            accumulate_metric(task_name, "thinking", response.thinking_content, "blob")
-
-        # Log token usage with cache awareness
-        log_token_usage_metrics(
-            task_name,
-            response.input_tokens,
-            response.output_tokens,
-            response.cache_read_input_tokens,
-            response.cache_creation_input_tokens,
-        )
-        accumulate_metric(task_name, "response", response.content, "blob")
-
-        # Log timing
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        accumulate_metric(task_name, "total_duration", elapsed_ms, "ms")
-
-        # Only log metrics here if we're not using a caller-provided metric_key
-        if not self.metric_key and run_id is not None:
-            log_performance_metrics("dialectic_chat", run_id)
 
         return response.content
+
+    async def answer_stream(self, query: str) -> AsyncIterator[str]:
+        """
+        Answer a query about the peer using agentic tool calling, streaming the response.
+
+        The agent will:
+        1. Receive the query
+        2. Use tools to gather relevant context (non-streaming)
+        3. Stream the synthesized response
+
+        Args:
+            query: The question to answer about the peer
+
+        Yields:
+            Chunks of the response text as they are generated
+        """
+        tool_executor, task_name, run_id, start_time = await self._prepare_query(query)
+
+        # Get level-specific settings
+        level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
+
+        response = cast(
+            StreamingResponseWithMetadata,
+            await honcho_llm_call(
+                llm_settings=level_settings,
+                prompt="",  # Ignored since we pass messages
+                max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                stream=True,
+                stream_final_only=True,
+                tools=DIALECTIC_TOOLS,
+                tool_choice=None,
+                tool_executor=tool_executor,
+                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                messages=self.messages,
+                track_name="Dialectic Agent Stream",
+                thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
+                max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                trace_name="dialectic_chat",
+            ),
+        )
+
+        accumulated_content: list[str] = []
+        async for chunk in response:
+            if chunk.content:
+                accumulated_content.append(chunk.content)
+                yield chunk.content
+
+        self._log_response_metrics(
+            task_name=task_name,
+            run_id=run_id,
+            start_time=start_time,
+            response_content="".join(accumulated_content),
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cache_read_input_tokens=response.cache_read_input_tokens,
+            cache_creation_input_tokens=response.cache_creation_input_tokens,
+            tool_calls_count=len(response.tool_calls_made),
+            thinking_content=response.thinking_content,
+        )

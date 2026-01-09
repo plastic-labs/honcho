@@ -11,16 +11,16 @@ from src import models, schemas
 logger = getLogger(__name__)
 
 
-async def get_deriver_status(
+async def get_queue_status(
     db: AsyncSession,
     workspace_name: str,
     session_name: str | None = None,
     *,
     observer: str | None = None,
     observed: str | None = None,
-) -> schemas.DeriverStatus:
+) -> schemas.QueueStatus:
     """
-    Get the deriver processing status, optionally filtered by observer, sender, and/or session.
+    Get the processing queue status, optionally filtered by observer, sender, and/or session.
 
     Args:
         db: Database session
@@ -47,6 +47,25 @@ async def get_deriver_status(
     return _build_status_response(
         normalized_session_name,
         counts,
+    )
+
+
+async def get_deriver_status(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None = None,
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
+) -> schemas.QueueStatus:
+    """Deprecated: use get_queue_status."""
+
+    return await get_queue_status(
+        db=db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        observer=observer,
+        observed=observed,
     )
 
 
@@ -157,21 +176,21 @@ def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
 def _build_status_response(
     session_name: str | None,
     counts: schemas.QueueCounts,
-) -> schemas.DeriverStatus:
+) -> schemas.QueueStatus:
     """Build the final response object."""
 
     if session_name:
-        return schemas.DeriverStatus(
+        return schemas.QueueStatus(
             total_work_units=counts.total,
             completed_work_units=counts.completed,
             in_progress_work_units=counts.in_progress,
             pending_work_units=counts.pending,
         )
 
-    sessions: dict[str, schemas.SessionDeriverStatus] = {}
+    sessions: dict[str, schemas.SessionQueueStatus] = {}
     for session_id, data in counts.sessions.items():
         total = data.completed + data.in_progress + data.pending
-        sessions[session_id] = schemas.SessionDeriverStatus(
+        sessions[session_id] = schemas.SessionQueueStatus(
             session_id=session_id,
             total_work_units=total,
             completed_work_units=data.completed,
@@ -179,7 +198,7 @@ def _build_status_response(
             pending_work_units=data.pending,
         )
 
-    return schemas.DeriverStatus(
+    return schemas.QueueStatus(
         sessions=sessions if sessions else None,
         total_work_units=counts.total,
         completed_work_units=counts.completed,

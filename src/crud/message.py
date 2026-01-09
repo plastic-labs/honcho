@@ -10,6 +10,7 @@ from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
+from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 
 from .session import get_or_create_session
 
@@ -51,6 +52,77 @@ def _apply_token_limit(
         .join(token_subquery, models.Message.id == token_subquery.c.id)
         .where(token_subquery.c.running_token_sum <= token_limit)
     )
+
+
+async def _build_merged_snippets(
+    db: AsyncSession,
+    workspace_name: str,
+    matched_messages: list[models.Message],
+    context_window: int,
+) -> list[tuple[list[models.Message], list[models.Message]]]:
+    """
+    Group matched messages by session, merge overlapping context ranges, and fetch context.
+
+    Takes a list of matched messages and builds conversation snippets by:
+    1. Grouping matches by session name
+    2. Sorting matches within each session by sequence number
+    3. Merging overlapping context windows to avoid duplicate context
+    4. Fetching the full context for each merged range from the database
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        matched_messages: List of messages that matched a search query
+        context_window: Number of messages before/after each match to include
+
+    Returns:
+        List of tuples: (matched_messages_in_range, context_messages)
+        Each tuple represents a snippet where context_messages includes all messages
+        in the merged range (including the matched messages), ordered chronologically.
+    """
+    if not matched_messages:
+        return []
+
+    session_matches: dict[str, list[models.Message]] = {}
+    for msg in matched_messages:
+        session_matches.setdefault(msg.session_name, []).append(msg)
+
+    snippets: list[tuple[list[models.Message], list[models.Message]]] = []
+
+    for sess_name, matches in session_matches.items():
+        matches.sort(key=lambda m: m.seq_in_session)
+
+        merged_ranges: list[tuple[int, int, list[models.Message]]] = []
+
+        for match in matches:
+            start = match.seq_in_session - context_window
+            end = match.seq_in_session + context_window
+
+            if merged_ranges and start <= merged_ranges[-1][1] + 1:
+                prev_start, prev_end, prev_matches = merged_ranges[-1]
+                merged_ranges[-1] = (
+                    prev_start,
+                    max(prev_end, end),
+                    [*prev_matches, match],
+                )
+            else:
+                merged_ranges.append((start, end, [match]))
+
+        for start_seq, end_seq, range_matches in merged_ranges:
+            context_stmt = (
+                select(models.Message)
+                .where(models.Message.workspace_name == workspace_name)
+                .where(models.Message.session_name == sess_name)
+                .where(models.Message.seq_in_session.between(start_seq, end_seq))
+                .order_by(models.Message.seq_in_session.asc())
+            )
+
+            context_result = await db.execute(context_stmt)
+            context_messages = list(context_result.scalars().all())
+
+            snippets.append((range_matches, context_messages))
+
+    return snippets
 
 
 async def create_messages(
@@ -283,6 +355,56 @@ async def get_messages_id_range(
     return list(result.scalars().all())
 
 
+async def get_messages_by_seq_range(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    start_seq: int = 1,
+    end_seq: int | None = None,
+) -> list[models.Message]:
+    """
+    Get messages from a session by seq_in_session range.
+
+    This is useful for getting the last N messages in a session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        start_seq: Sequence number of the first message to return (inclusive)
+        end_seq: Sequence number of the last message to return (inclusive)
+
+    Returns:
+        List of messages ordered by seq_in_session
+    """
+    if start_seq < 1 or (end_seq is not None and start_seq > end_seq):
+        return []
+
+    base_conditions = [
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == session_name,
+    ]
+
+    if end_seq is not None:
+        base_conditions.append(
+            and_(
+                models.Message.seq_in_session >= start_seq,
+                models.Message.seq_in_session <= end_seq,
+            )
+        )
+    else:
+        base_conditions.append(models.Message.seq_in_session >= start_seq)
+
+    stmt = (
+        select(models.Message)
+        .where(*base_conditions)
+        .order_by(models.Message.seq_in_session.asc())
+    )
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def get_message_seq_in_session(
     db: AsyncSession,
     workspace_name: str,
@@ -400,59 +522,9 @@ async def search_messages(
     result = await db.execute(match_stmt)
     matched_messages = list(result.scalars().all())
 
-    if not matched_messages:
-        return []
-
-    # Group matches by session and merge overlapping ranges
-    session_matches: dict[str, list[models.Message]] = {}
-    for msg in matched_messages:
-        if msg.session_name not in session_matches:
-            session_matches[msg.session_name] = []
-        session_matches[msg.session_name].append(msg)
-
-    # Build merged snippets
-    snippets: list[tuple[list[models.Message], list[models.Message]]] = []
-
-    for sess_name, matches in session_matches.items():
-        # Sort matches by sequence number
-        matches.sort(key=lambda m: m.seq_in_session)
-
-        # Merge overlapping ranges
-        # Each range is (start_seq, end_seq, list of matched messages in this range)
-        merged_ranges: list[tuple[int, int, list[models.Message]]] = []
-
-        for match in matches:
-            start = match.seq_in_session - context_window
-            end = match.seq_in_session + context_window
-
-            if merged_ranges and start <= merged_ranges[-1][1] + 1:
-                # Overlaps with previous range - merge
-                prev_start, prev_end, prev_matches = merged_ranges[-1]
-                merged_ranges[-1] = (
-                    prev_start,
-                    max(prev_end, end),
-                    prev_matches + [match],
-                )
-            else:
-                # New range
-                merged_ranges.append((start, end, [match]))
-
-        # Fetch context for each merged range
-        for start_seq, end_seq, range_matches in merged_ranges:
-            context_stmt = (
-                select(models.Message)
-                .where(models.Message.workspace_name == workspace_name)
-                .where(models.Message.session_name == sess_name)
-                .where(models.Message.seq_in_session.between(start_seq, end_seq))
-                .order_by(models.Message.seq_in_session.asc())
-            )
-
-            context_result = await db.execute(context_stmt)
-            context_messages = list(context_result.scalars().all())
-
-            snippets.append((range_matches, context_messages))
-
-    return snippets
+    return await _build_merged_snippets(
+        db, workspace_name, matched_messages, context_window
+    )
 
 
 async def grep_messages(
@@ -482,10 +554,13 @@ async def grep_messages(
         Each snippet may contain multiple matches if they were close together.
     """
     # Build the base query with ILIKE for case-insensitive text search
+    escaped_text = escape_ilike_pattern(text)
     match_stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.content.ilike(f"%{text}%"))
+        .where(
+            models.Message.content.ilike(f"%{escaped_text}%", escape=ILIKE_ESCAPE_CHAR)
+        )
         .order_by(models.Message.created_at.desc())
         .limit(limit)
     )
@@ -496,58 +571,9 @@ async def grep_messages(
     result = await db.execute(match_stmt)
     matched_messages = list(result.scalars().all())
 
-    if not matched_messages:
-        return []
-
-    # Group matches by session and merge overlapping ranges
-    session_matches: dict[str, list[models.Message]] = {}
-    for msg in matched_messages:
-        if msg.session_name not in session_matches:
-            session_matches[msg.session_name] = []
-        session_matches[msg.session_name].append(msg)
-
-    # Build merged snippets (same logic as search_messages)
-    snippets: list[tuple[list[models.Message], list[models.Message]]] = []
-
-    for sess_name, matches in session_matches.items():
-        # Sort matches by sequence number
-        matches.sort(key=lambda m: m.seq_in_session)
-
-        # Merge overlapping ranges
-        merged_ranges: list[tuple[int, int, list[models.Message]]] = []
-
-        for match in matches:
-            start = match.seq_in_session - context_window
-            end = match.seq_in_session + context_window
-
-            if merged_ranges and start <= merged_ranges[-1][1] + 1:
-                # Overlaps with previous range - merge
-                prev_start, prev_end, prev_matches = merged_ranges[-1]
-                merged_ranges[-1] = (
-                    prev_start,
-                    max(prev_end, end),
-                    prev_matches + [match],
-                )
-            else:
-                # New range
-                merged_ranges.append((start, end, [match]))
-
-        # Fetch context for each merged range
-        for start_seq, end_seq, range_matches in merged_ranges:
-            context_stmt = (
-                select(models.Message)
-                .where(models.Message.workspace_name == workspace_name)
-                .where(models.Message.session_name == sess_name)
-                .where(models.Message.seq_in_session.between(start_seq, end_seq))
-                .order_by(models.Message.seq_in_session.asc())
-            )
-
-            context_result = await db.execute(context_stmt)
-            context_messages = list(context_result.scalars().all())
-
-            snippets.append((range_matches, context_messages))
-
-    return snippets
+    return await _build_merged_snippets(
+        db, workspace_name, matched_messages, context_window
+    )
 
 
 async def get_messages_by_date_range(
@@ -656,55 +682,6 @@ async def search_messages_temporal(
     result = await db.execute(match_stmt)
     matched_messages = list(result.scalars().all())
 
-    if not matched_messages:
-        return []
-
-    # Group matches by session and merge overlapping ranges
-    session_matches: dict[str, list[models.Message]] = {}
-    for msg in matched_messages:
-        if msg.session_name not in session_matches:
-            session_matches[msg.session_name] = []
-        session_matches[msg.session_name].append(msg)
-
-    # Build merged snippets
-    snippets: list[tuple[list[models.Message], list[models.Message]]] = []
-
-    for sess_name, matches in session_matches.items():
-        # Sort matches by sequence number
-        matches.sort(key=lambda m: m.seq_in_session)
-
-        # Merge overlapping ranges
-        merged_ranges: list[tuple[int, int, list[models.Message]]] = []
-
-        for match in matches:
-            start = match.seq_in_session - context_window
-            end = match.seq_in_session + context_window
-
-            if merged_ranges and start <= merged_ranges[-1][1] + 1:
-                # Overlaps with previous range - merge
-                prev_start, prev_end, prev_matches = merged_ranges[-1]
-                merged_ranges[-1] = (
-                    prev_start,
-                    max(prev_end, end),
-                    prev_matches + [match],
-                )
-            else:
-                # New range
-                merged_ranges.append((start, end, [match]))
-
-        # Fetch context for each merged range
-        for start_seq, end_seq, range_matches in merged_ranges:
-            context_stmt = (
-                select(models.Message)
-                .where(models.Message.workspace_name == workspace_name)
-                .where(models.Message.session_name == sess_name)
-                .where(models.Message.seq_in_session.between(start_seq, end_seq))
-                .order_by(models.Message.seq_in_session.asc())
-            )
-
-            context_result = await db.execute(context_stmt)
-            context_messages = list(context_result.scalars().all())
-
-            snippets.append((range_matches, context_messages))
-
-    return snippets
+    return await _build_merged_snippets(
+        db, workspace_name, matched_messages, context_window
+    )

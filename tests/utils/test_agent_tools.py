@@ -1,5 +1,6 @@
 """Tests for agent tools in src/utils/agent_tools.py"""
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -123,6 +124,7 @@ def make_tool_context(
 ) -> Callable[..., ToolContext]:
     """Factory fixture to create ToolContext with custom parameters."""
     workspace, peer1, peer2, session, _messages, _ = tool_test_data
+    shared_lock = asyncio.Lock()
 
     def _make_context(
         *,
@@ -140,6 +142,7 @@ def make_tool_context(
             current_messages=current_messages,
             include_observation_ids=include_observation_ids,
             history_token_limit=history_token_limit,
+            db_lock=shared_lock,
         )
 
     return _make_context
@@ -205,7 +208,7 @@ class TestCreateObservations:
                 "observations": [
                     {
                         "content": "Inferred preference for quiet spaces",
-                        "premise_ids": ["premise1", "premise2"],
+                        "source_ids": ["premise1", "premise2"],
                         "premises": [
                             "User mentioned working in libraries",
                             "User avoids noisy cafes",
@@ -218,14 +221,14 @@ class TestCreateObservations:
         assert "Created 1 observations" in result
         assert "1 deductive" in result
 
-        # Verify the document was created as deductive with premise_ids
+        # Verify the document was created as deductive with source_ids
         stmt = select(models.Document).where(
             models.Document.content == "Inferred preference for quiet spaces"
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
         assert doc.level == "deductive"
-        assert doc.premise_ids == ["premise1", "premise2"]
+        assert doc.source_ids == ["premise1", "premise2"]
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]
@@ -349,6 +352,7 @@ class TestSearchMemory:
             current_messages=None,
             include_observation_ids=False,
             history_token_limit=8192,
+            db_lock=asyncio.Lock(),
         )
 
         result = await _handle_search_memory(ctx, {"query": "anything"})
@@ -457,6 +461,7 @@ class TestGetRecentHistory:
             current_messages=None,
             include_observation_ids=False,
             history_token_limit=8192,
+            db_lock=asyncio.Lock(),
         )
 
         result = await _handle_get_recent_history(ctx, {})
@@ -627,6 +632,7 @@ class TestGetPeerCard:
             current_messages=None,
             include_observation_ids=False,
             history_token_limit=8192,
+            db_lock=asyncio.Lock(),
         )
 
         result = await _handle_get_peer_card(ctx, {})
@@ -705,7 +711,7 @@ class TestToolExecutor:
         """create_tool_executor returns an async callable."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        executor = create_tool_executor(
+        executor = await create_tool_executor(
             db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
@@ -721,7 +727,7 @@ class TestToolExecutor:
         """Executor routes tool calls to correct handlers."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        executor = create_tool_executor(
+        executor = await create_tool_executor(
             db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
@@ -741,7 +747,7 @@ class TestToolExecutor:
         """Unknown tool name returns error message."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        executor = create_tool_executor(
+        executor = await create_tool_executor(
             db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
@@ -759,7 +765,7 @@ class TestToolExecutor:
         """Executor converts exceptions to error strings instead of raising."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        executor = create_tool_executor(
+        executor = await create_tool_executor(
             db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
@@ -779,7 +785,7 @@ class TestToolExecutor:
         """Dreamer context (include_observation_ids=True) shows IDs in output."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        executor = create_tool_executor(
+        executor = await create_tool_executor(
             db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,

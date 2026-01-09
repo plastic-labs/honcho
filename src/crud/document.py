@@ -125,19 +125,16 @@ async def query_documents_recent(
     Returns:
         Sequence of documents ordered by created_at descending
     """
-    stmt = (
-        select(models.Document)
-        .limit(limit)
-        .where(
-            models.Document.workspace_name == workspace_name,
-            models.Document.observer == observer,
-            models.Document.observed == observed,
-        )
-        .order_by(models.Document.created_at.desc())
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
     )
 
     if session_name is not None:
         stmt = stmt.where(models.Document.session_name == session_name)
+
+    stmt = stmt.order_by(models.Document.created_at.desc()).limit(limit)
 
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -166,13 +163,13 @@ async def query_documents_most_derived(
     """
     stmt = (
         select(models.Document)
-        .limit(limit)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
         )
         .order_by(models.Document.times_derived.desc())
+        .limit(limit)
     )
 
     result = await db.execute(stmt)
@@ -282,8 +279,7 @@ async def create_documents(
                     internal_metadata=metadata_dict,
                     embedding=doc.embedding,
                     session_name=doc.session_name,
-                    # Tree linkage columns
-                    premise_ids=doc.premise_ids,
+                    # Tree linkage column
                     source_ids=doc.source_ids,
                 )
             )
@@ -379,7 +375,7 @@ async def delete_document_by_id(
 
 async def create_observations(
     db: AsyncSession,
-    observations: list[schemas.ObservationCreate],
+    observations: Sequence[schemas.ConclusionCreate],
     workspace_name: str,
 ) -> list[models.Document]:
     """
@@ -542,30 +538,6 @@ async def is_rejected_duplicate(
 # =============================================================================
 
 
-async def get_document_by_id(
-    db: AsyncSession,
-    workspace_name: str,
-    document_id: str,
-) -> models.Document | None:
-    """
-    Get a single document by ID.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        document_id: The document ID to retrieve
-
-    Returns:
-        Document if found, None otherwise
-    """
-    stmt = select(models.Document).where(
-        models.Document.workspace_name == workspace_name,
-        models.Document.id == document_id,
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
 async def get_documents_by_ids(
     db: AsyncSession,
     workspace_name: str,
@@ -601,10 +573,10 @@ async def get_child_observations(
     observed: str | None = None,
 ) -> Sequence[models.Document]:
     """
-    Get all observations that have this document as a premise or source.
+    Get all observations that have this document as a source/premise.
 
-    Useful for traversing the reasoning tree upward (premise -> conclusions).
-    Uses GIN indexes on premise_ids and source_ids for efficient lookups.
+    Useful for traversing the reasoning tree upward (source -> derived observations).
+    Uses GIN index on source_ids for efficient lookups.
 
     Args:
         db: Database session
@@ -614,17 +586,12 @@ async def get_child_observations(
         observed: Optional filter by observed
 
     Returns:
-        Sequence of documents that reference this document as a premise or source
+        Sequence of documents that reference this document as a source
     """
-    from sqlalchemy import or_
-
-    # Find documents where premise_ids or source_ids contains the parent_id
+    # Find documents where source_ids contains the parent_id
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
-        or_(
-            models.Document.premise_ids.contains([parent_id]),
-            models.Document.source_ids.contains([parent_id]),
-        ),
+        models.Document.source_ids.contains([parent_id]),
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)
@@ -633,51 +600,3 @@ async def get_child_observations(
 
     result = await db.execute(stmt)
     return result.scalars().all()
-
-
-async def get_premise_observations(
-    db: AsyncSession,
-    workspace_name: str,
-    document_id: str,
-) -> Sequence[models.Document]:
-    """
-    Get all premise observations for a given deductive document.
-
-    Useful for traversing the reasoning tree downward (conclusion -> premises).
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        document_id: Document ID to get premises for
-
-    Returns:
-        Sequence of premise documents, empty if document not found or has no premises
-    """
-    doc = await get_document_by_id(db, workspace_name, document_id)
-    if not doc or not doc.premise_ids:
-        return []
-    return await get_documents_by_ids(db, workspace_name, doc.premise_ids)
-
-
-async def get_source_observations(
-    db: AsyncSession,
-    workspace_name: str,
-    document_id: str,
-) -> Sequence[models.Document]:
-    """
-    Get all source observations for a given inductive document.
-
-    Useful for traversing the reasoning tree downward (induction -> sources).
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        document_id: Document ID to get sources for
-
-    Returns:
-        Sequence of source documents, empty if document not found or has no sources
-    """
-    doc = await get_document_by_id(db, workspace_name, document_id)
-    if not doc or not doc.source_ids:
-        return []
-    return await get_documents_by_ids(db, workspace_name, doc.source_ids)

@@ -61,7 +61,7 @@ class ExplicitObservationBase(BaseModel):
 
 
 class DeductiveObservationBase(BaseModel):
-    premise_ids: list[str] = Field(
+    source_ids: list[str] = Field(
         description="Document IDs of premise observations for tree traversal",
         default_factory=list,
     )
@@ -106,16 +106,6 @@ class ContradictionObservationBase(BaseModel):
         default_factory=list,
     )
     content: str = Field(description="Description of the contradiction")
-
-
-class VignetteObservationBase(BaseModel):
-    """Base model for vignette observations - consolidated narratives from multiple explicit observations."""
-
-    source_ids: list[str] = Field(
-        description="Document IDs of the explicit observations consolidated into this vignette",
-        default_factory=list,
-    )
-    content: str = Field(description="The consolidated vignette narrative")
 
 
 class PromptRepresentation(BaseModel):
@@ -287,32 +277,6 @@ class ContradictionObservation(ContradictionObservationBase, ObservationMetadata
         )
 
 
-class VignetteObservation(VignetteObservationBase, ObservationMetadata):
-    """Vignette observation - a consolidated narrative from multiple explicit observations, plus metadata."""
-
-    def __str__(self) -> str:
-        return f"[{_strip_microseconds_and_timezone(self.created_at)}] {self.content}"
-
-    def str_with_id(self) -> str:
-        """Format with ID prefix for use by agents that need to reference observations."""
-        id_prefix = f"[id:{self.id}] " if self.id else ""
-        return f"{id_prefix}[{_strip_microseconds_and_timezone(self.created_at)}] {self.content}"
-
-    def __hash__(self) -> int:
-        """Make VignetteObservation hashable for use in sets."""
-        return hash((self.content, self.created_at, self.session_name))
-
-    def __eq__(self, other: object) -> bool:
-        """Define equality for VignetteObservation objects."""
-        if not isinstance(other, VignetteObservation):
-            return False
-        return (
-            self.content == other.content
-            and self.created_at == other.created_at
-            and self.session_name == other.session_name
-        )
-
-
 class Representation(BaseModel):
     """
     A Representation is a traversable and diffable map of observations.
@@ -344,10 +308,6 @@ class Representation(BaseModel):
         description="Patterns, generalizations, and personality insights inferred from multiple observations. Higher-level reasoning created by the Dreamer agent.",
         default_factory=list,
     )
-    vignette: list[VignetteObservation] = Field(
-        description="Consolidated narratives from clusters of explicit observations. Each vignette contains all the facts from its source observations in a coherent format.",
-        default_factory=list,
-    )
     contradiction: list[ContradictionObservation] = Field(
         description="Conflicting statements made by the user that need clarification. The dialectic agent should surface these when relevant.",
         default_factory=list,
@@ -361,7 +321,6 @@ class Representation(BaseModel):
             len(self.explicit) == 0
             and len(self.deductive) == 0
             and len(self.inductive) == 0
-            and len(self.vignette) == 0
             and len(self.contradiction) == 0
         )
 
@@ -373,7 +332,6 @@ class Representation(BaseModel):
             len(self.explicit)
             + len(self.deductive)
             + len(self.inductive)
-            + len(self.vignette)
             + len(self.contradiction)
         )
 
@@ -386,7 +344,6 @@ class Representation(BaseModel):
         diff.explicit = [o for o in other.explicit if o not in self.explicit]
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
         diff.inductive = [o for o in other.inductive if o not in self.inductive]
-        diff.vignette = [o for o in other.vignette if o not in self.vignette]
         diff.contradiction = [
             o for o in other.contradiction if o not in self.contradiction
         ]
@@ -397,7 +354,7 @@ class Representation(BaseModel):
     ):
         """
         Merge another representation object into this one.
-        This will automatically deduplicate explicit, deductive, inductive, vignette, and contradiction observations.
+        This will automatically deduplicate explicit, deductive, inductive, and contradiction observations.
         This *preserves order* of observations so that they retain FIFO order.
 
         NOTE: observations with the *same* timestamp will not have order preserved.
@@ -407,20 +364,17 @@ class Representation(BaseModel):
         self.explicit = list(set(self.explicit + other.explicit))
         self.deductive = list(set(self.deductive + other.deductive))
         self.inductive = list(set(self.inductive + other.inductive))
-        self.vignette = list(set(self.vignette + other.vignette))
         self.contradiction = list(set(self.contradiction + other.contradiction))
         # sort by created_at
         self.explicit.sort(key=lambda x: x.created_at)
         self.deductive.sort(key=lambda x: x.created_at)
         self.inductive.sort(key=lambda x: x.created_at)
-        self.vignette.sort(key=lambda x: x.created_at)
         self.contradiction.sort(key=lambda x: x.created_at)
 
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
             self.inductive = self.inductive[-max_observations:]
-            self.vignette = self.vignette[-max_observations:]
             self.contradiction = self.contradiction[-max_observations:]
 
     def __str__(self) -> str:
@@ -431,8 +385,6 @@ class Representation(BaseModel):
         Returns:
             Formatted string with clear sections and bullet points including temporal metadata
             Example:
-            VIGNETTE:
-            1. [2025-01-01 12:00:00] The user has a dog named Rover who is 5 years old...
             EXPLICIT:
             1. [2025-01-01 12:00:00] The user has a dog named Rover
             2. [2025-01-01 12:01:00] The user's dog is 5 years old
@@ -445,11 +397,6 @@ class Representation(BaseModel):
         """
 
         parts: list[str] = []
-
-        parts.append("VIGNETTE:\n")
-        for i, observation in enumerate(self.vignette, 1):
-            parts.append(f"{i}. {observation}")
-        parts.append("")
 
         parts.append("EXPLICIT:\n")
         for i, observation in enumerate(self.explicit, 1):
@@ -480,8 +427,6 @@ class Representation(BaseModel):
         Returns:
             Formatted string with IDs included
             Example:
-            VIGNETTE:
-            1. [id:xyz789] [2025-01-01 12:00:00] The user has a dog named Rover who is 5 years old...
             EXPLICIT:
             1. [id:abc123] [2025-01-01 12:00:00] The user has a dog named Rover
             2. [id:def456] [2025-01-01 12:01:00] The user's dog is 5 years old
@@ -495,11 +440,6 @@ class Representation(BaseModel):
                 - id:def456
         """
         parts: list[str] = []
-
-        parts.append("VIGNETTE:\n")
-        for i, observation in enumerate(self.vignette, 1):
-            parts.append(f"{i}. {observation.str_with_id()}")
-        parts.append("")
 
         parts.append("EXPLICIT:\n")
         for i, observation in enumerate(self.explicit, 1):
@@ -530,8 +470,6 @@ class Representation(BaseModel):
         Returns:
             Formatted string with clear sections and bullet points including temporal metadata
             Example:
-            VIGNETTE:
-            1. The user has a dog named Rover who is 5 years old...
             EXPLICIT:
             1. The user has a dog named Rover
             2. The user's dog is 5 years old
@@ -547,11 +485,6 @@ class Representation(BaseModel):
 
         """
         parts: list[str] = []
-
-        parts.append("VIGNETTE:\n")
-        for i, observation in enumerate(self.vignette, 1):
-            parts.append(f"{i}. {observation.content}")
-        parts.append("")
 
         parts.append("EXPLICIT:\n")
         for i, observation in enumerate(self.explicit, 1):
@@ -588,14 +521,6 @@ class Representation(BaseModel):
         """
 
         parts: list[str] = []
-
-        # Add vignette observations (consolidated narratives)
-        if self.vignette:
-            parts.append("## Vignettes\n")
-            for obs in self.vignette:
-                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
-                parts.append(f"{id_prefix}{obs}")
-            parts.append("")
 
         # Add explicit observations
         if self.explicit:
@@ -684,7 +609,7 @@ class Representation(BaseModel):
                     ),
                     session_name=doc.session_name,
                     # Support both top-level and metadata locations for backward compatibility
-                    premise_ids=doc.premise_ids
+                    source_ids=doc.source_ids
                     or doc.internal_metadata.get("premise_ids", []),
                     premises=doc.internal_metadata.get("premises", []),
                 )
@@ -709,22 +634,6 @@ class Representation(BaseModel):
                 )
                 for doc in documents
                 if doc.level == "inductive"
-            ],
-            vignette=[
-                VignetteObservation(
-                    id=doc.id,
-                    created_at=_safe_datetime_from_metadata(
-                        doc.internal_metadata, doc.created_at
-                    ),
-                    content=doc.content,
-                    message_ids=doc.internal_metadata.get("message_ids", []),
-                    session_name=doc.session_name,
-                    # Support both top-level and metadata locations for backward compatibility
-                    source_ids=doc.source_ids
-                    or doc.internal_metadata.get("source_ids", []),
-                )
-                for doc in documents
-                if doc.level == "vignette"
             ],
             contradiction=[
                 ContradictionObservation(

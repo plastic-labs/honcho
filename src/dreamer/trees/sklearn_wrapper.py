@@ -2,7 +2,15 @@
 Wrapper for sklearn's KDTree and BallTree.
 """
 
+from typing import Any
+
 import numpy as np
+from numpy.typing import NDArray
+from sklearn.neighbors import (
+    BallTree,  # pyright: ignore[reportUnknownVariableType]
+    KDTree,  # pyright: ignore[reportUnknownVariableType]
+)
+
 from .base import SurprisalTree
 
 
@@ -12,35 +20,40 @@ class SklearnTreeWrapper(SurprisalTree):
     Uses density estimation via k-nearest neighbors.
     """
 
-    def __init__(self, tree_type='kd', k=5):
-        super().__init__()
+    tree_type: str
+    k: int
+    points: list[NDArray[np.floating[Any]]]
+    tree: KDTree | BallTree | None
+    total_points: int
+
+    def __init__(
+        self, tree_type: str = "kd", k: int = 5, max_leaf_size: int = 10
+    ) -> None:
+        super().__init__(max_leaf_size)
         self.tree_type = tree_type
         self.k = k
         self.points = []
         self.tree = None
 
-    def insert(self, point: np.ndarray):
+    def insert(self, point: np.ndarray) -> None:
         self.points.append(point)
         self.total_points += 1
-        # Rebuild tree (expensive, but sklearn trees don't support incremental building)
         self._rebuild_tree()
 
-    def batch_insert(self, points: np.ndarray):
+    def batch_insert(self, points: np.ndarray) -> None:
         """More efficient batch insertion."""
         self.points.extend(points)
         self.total_points += len(points)
         self._rebuild_tree()
 
-    def _rebuild_tree(self):
+    def _rebuild_tree(self) -> None:
         if len(self.points) == 0:
             return
 
-        from sklearn.neighbors import KDTree, BallTree
-
-        points_array = np.array(self.points)
-        if self.tree_type == 'kd':
+        points_array: NDArray[np.floating[Any]] = np.array(self.points)
+        if self.tree_type == "kd":
             self.tree = KDTree(points_array)
-        elif self.tree_type == 'ball':
+        elif self.tree_type == "ball":
             self.tree = BallTree(points_array)
         else:
             raise ValueError(f"Unknown tree type: {self.tree_type}")
@@ -50,19 +63,15 @@ class SklearnTreeWrapper(SurprisalTree):
         Compute surprisal using k-NN density estimation.
         S(e) ≈ log(V_k(e)) where V_k is the volume of k-ball
         """
-        if self.tree is None or len(self.points) < self.k:
-            return float('inf')
+        if self.tree is None or len(self.points) < self.k:  # pyright: ignore[reportUnknownMemberType]
+            return float("inf")
 
-        # Find k nearest neighbors
         k_actual = min(self.k, len(self.points))
-        distances, _ = self.tree.query([point], k=k_actual)
+        distances, _indices = self.tree.query([point], k=k_actual)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
-        # Surprisal proportional to log of average distance to k-NN
-        # (approximates log of volume)
-        avg_distance = np.mean(distances[0])
+        avg_distance: float = float(np.mean(distances[0]))  # pyright: ignore[reportUnknownArgumentType]
 
-        # Add dimension factor for volume scaling
         dim = point.shape[0]
-        surprisal_value = dim * np.log(avg_distance + 1e-10)
+        surprisal_value: float = dim * np.log(avg_distance + 1e-10)
 
         return surprisal_value

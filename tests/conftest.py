@@ -209,7 +209,7 @@ async def fake_cache_session():
         # Setup cache for tests that don't use TestClient (direct CRUD tests)
         # For TestClient tests, the app's lifespan handler will also call cache.setup()
         # The ContextVar patch above handles any context issues
-        cache.setup(  # pyright: ignore[reportUnknownMemberType]
+        cache.setup(
             "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
         )
 
@@ -558,7 +558,6 @@ def mock_tracked_db(db_session: AsyncSession):
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
         patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
         patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.agent.worker.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),

@@ -5,7 +5,14 @@ import json
 import sys
 
 
-def main():
+def main() -> None:
+    """Parse command-line arguments and convert JSONL file to JSON array.
+
+    Reads a JSONL file where each line is a valid JSON object, aggregates
+    all records into a list, and outputs as a formatted JSON array to stdout.
+
+    Exits with code 1 if arguments are invalid.
+    """
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <input.jsonl>", file=sys.stderr)
         sys.exit(1)

@@ -1,5 +1,5 @@
 from .collection import get_collection, get_or_create_collection
-from .deriver import get_deriver_status
+from .deriver import get_deriver_status, get_queue_status
 from .document import (
     create_documents,
     create_observations,
@@ -7,11 +7,8 @@ from .document import (
     delete_document_by_id,
     get_all_documents,
     get_child_observations,
-    get_document_by_id,
     get_documents_by_ids,
     get_documents_with_filters,
-    get_premise_observations,
-    get_source_observations,
     query_documents,
     query_documents_most_derived,
     query_documents_recent,
@@ -22,6 +19,7 @@ from .message import (
     get_message_seq_in_session,
     get_messages,
     get_messages_by_date_range,
+    get_messages_by_seq_range,
     get_messages_id_range,
     grep_messages,
     search_messages,
@@ -72,16 +70,14 @@ __all__ = [
     "get_or_create_collection",
     # Deriver
     "get_deriver_status",
+    "get_queue_status",
     # Document
     "create_documents",
     "create_observations",
     "get_all_documents",
     "get_child_observations",
-    "get_document_by_id",
     "get_documents_by_ids",
     "get_documents_with_filters",
-    "get_premise_observations",
-    "get_source_observations",
     "query_documents",
     "query_documents_most_derived",
     "query_documents_recent",
@@ -91,6 +87,7 @@ __all__ = [
     "create_messages",
     "get_messages",
     "get_messages_by_date_range",
+    "get_messages_by_seq_range",
     "get_messages_id_range",
     "get_message",
     "get_message_seq_in_session",

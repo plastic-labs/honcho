@@ -37,7 +37,6 @@ async def sample_observations_with_surprisal(
     workspace_name: str,
     observer: str,
     observed: str,
-    session_name: str,  # noqa: ARG001 - Keep for API consistency, not used in current implementation
 ) -> list[SurprisalScore]:
     """
     Sample observations and compute surprisal scores.
@@ -55,7 +54,6 @@ async def sample_observations_with_surprisal(
         workspace_name: Workspace identifier
         observer: Observer peer name
         observed: Observed peer name
-        session_name: Session identifier
 
     Returns:
         List of SurprisalScore objects, ranked by surprisal (highest first)
@@ -80,8 +78,7 @@ async def sample_observations_with_surprisal(
         min_observations = settings.DREAM.SURPRISAL.TREE_K * 2
         if len(observations) < min_observations:
             logger.warning(
-                f"Too few observations ({len(observations)} < {min_observations}), "
-                "skipping surprisal computation"
+                f"Too few observations ({len(observations)} < {min_observations}), skipping surprisal computation"
             )
             return []
 
@@ -99,9 +96,7 @@ async def sample_observations_with_surprisal(
 
         # Edge case: Invalid surprisal values
         valid_scores = [
-            s
-            for s in scores
-            if not np.isinf(s.surprisal) and not np.isnan(s.surprisal)
+            s for s in scores if not np.isinf(s.surprisal) and not np.isnan(s.surprisal)
         ]
         if len(valid_scores) < len(scores):
             logger.warning(
@@ -124,24 +119,22 @@ async def sample_observations_with_surprisal(
             if len(content) > 80:
                 content = content[:77] + "..."
             logger.info(
-                f"  #{i} [surprisal={score.surprisal:.3f}] "
-                f"[level={score.observation.level}] {content}"
+                f"  #{i} [surprisal={score.surprisal:.3f}] [level={score.observation.level}] {content}"
             )
 
         filtered = _filter_by_percent(normalized_scores)
 
         logger.info(
-            f"Selected: {len(filtered)}/{len(observations)} observations "
-            f"(top {percent:.0f}%)"
+            f"Selected: {len(filtered)}/{len(observations)} observations (top {percent:.0f}%)"
         )
 
         # Log summary statistics for filtered results
         if filtered:
             logger.info(
-                f"📊 Filtered statistics: "
-                f"min={filtered[-1].surprisal:.3f}, "
-                f"max={filtered[0].surprisal:.3f}, "
-                f"mean={sum(s.surprisal for s in filtered) / len(filtered):.3f}"
+                "📊 Filtered statistics: "
+                + f"min={filtered[-1].surprisal:.3f}, "
+                + f"max={filtered[0].surprisal:.3f}, "
+                + f"mean={sum(s.surprisal for s in filtered) / len(filtered):.3f}"
             )
         else:
             logger.info("No observations exceeded the surprisal threshold")
@@ -275,19 +268,17 @@ async def _fetch_random_observations(
     Returns:
         List of Document objects in random order
     """
-    stmt = (
-        select(models.Document)
-        .where(
-            models.Document.workspace_name == workspace_name,
-            models.Document.observer == observer,
-            models.Document.observed == observed,
-        )
-        .order_by(func.random())
-        .limit(limit)
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
     )
 
     if levels:
         stmt = stmt.where(models.Document.level.in_(levels))
+
+    # important: limit applied after level filter
+    stmt = stmt.order_by(func.random()).limit(limit)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -394,9 +385,9 @@ def _compute_surprisal_scores(
     Returns:
         List of SurprisalScore objects (unfiltered, unsorted)
     """
-    scores = []
+    scores: list[SurprisalScore] = []
 
-    for obs, embedding in zip(observations, embeddings):
+    for obs, embedding in zip(observations, embeddings, strict=False):
         surprisal = tree.surprisal(embedding)
 
         scores.append(
@@ -438,7 +429,7 @@ def _normalize_scores(scores: list[SurprisalScore]) -> list[SurprisalScore]:
         ]
 
     # Min-max normalization: (x - min) / (max - min)
-    normalized = []
+    normalized: list[SurprisalScore] = []
     for score in scores:
         normalized_value = (score.surprisal - min_surprisal) / (
             max_surprisal - min_surprisal

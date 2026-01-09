@@ -13,12 +13,14 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.dreamer.specialists import SPECIALISTS
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
+from src.exceptions import SpecialistExecutionError, SurprisalError
 from src.utils.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -91,12 +93,10 @@ async def run_dream(
                 workspace_name=workspace_name,
                 observer=observer,
                 observed=observed,
-                session_name=session_name,
             )
 
             logger.info(
-                f"[{run_id}] Surprisal: Found {len(high_surprisal_obs)} "
-                "high-surprisal observations"
+                f"[{run_id}] Surprisal: Found {len(high_surprisal_obs)} high-surprisal observations"
             )
             accumulate_metric(
                 task_name, "surprisal_observations", len(high_surprisal_obs), "count"
@@ -110,11 +110,11 @@ async def run_dream(
                 probing_questions = _create_queries_from_surprisal(high_surprisal_obs)
                 logger.info(
                     f"[{run_id}] ✨ SURPRISAL REPLACE MODE: Using {len(probing_questions)} "
-                    "surprisal-based queries instead of standard questions"
+                    + "surprisal-based queries instead of standard questions"
                 )
                 logger.info(
                     f"[{run_id}] Targeting observations with surprisal range: "
-                    f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
+                    + f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
                 )
             elif len(high_surprisal_obs) > 0:
                 # Supplement mode: Add to standard questions
@@ -122,19 +122,18 @@ async def run_dream(
                 probing_questions = surprisal_queries + PROBING_QUESTIONS
                 logger.info(
                     f"[{run_id}] ✨ SURPRISAL SUPPLEMENT MODE: Adding {len(surprisal_queries)} "
-                    f"surprisal queries to {len(PROBING_QUESTIONS)} standard questions"
+                    + f"surprisal queries to {len(PROBING_QUESTIONS)} standard questions"
                 )
                 logger.info(
                     f"[{run_id}] Targeting observations with surprisal range: "
-                    f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
+                    + f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
                 )
             else:
                 logger.info(
-                    f"[{run_id}] No high-surprisal observations found, "
-                    "using standard probing questions"
+                    f"[{run_id}] No high-surprisal observations found using standard probing questions"
                 )
 
-        except Exception as e:
+        except SurprisalError as e:
             logger.error(f"[{run_id}] Surprisal sampling failed: {e}", exc_info=True)
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Fall back to standard probing questions
@@ -153,7 +152,7 @@ async def run_dream(
         )
         logger.info(f"[{run_id}] Deduction completed: {deduction_result[:200]}...")
         accumulate_metric(task_name, "deduction_result", deduction_result, "blob")
-    except Exception as e:
+    except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "deduction_error", str(e), "blob")
 
@@ -171,7 +170,7 @@ async def run_dream(
         )
         logger.info(f"[{run_id}] Induction completed: {induction_result[:200]}...")
         accumulate_metric(task_name, "induction_result", induction_result, "blob")
-    except Exception as e:
+    except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "induction_error", str(e), "blob")
 
@@ -198,7 +197,7 @@ def _create_queries_from_surprisal(
     Returns:
         List of query strings (max 10)
     """
-    queries = []
+    queries: list[Any] = []
     for score in high_surprisal_obs:
         content = score.observation.content
         if len(content) > 200:

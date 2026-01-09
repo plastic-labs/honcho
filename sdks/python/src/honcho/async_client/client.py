@@ -675,10 +675,12 @@ class AsyncHoncho(BaseModel):
             ...     distance=0.8
             ... )
         """
-        # Merge observer/observed into filters
-        query_filters = filters or {}
-        query_filters["observer"] = observer
-        query_filters["observed"] = observed
+        # Merge observer/observed into filters without mutating the input
+        query_filters: dict[str, object | str] = {
+            **(filters or {}),
+            "observer": observer,
+            "observed": observed,
+        }
 
         return await self._client.workspaces.observations.query(
             workspace_id=self.workspace_id,

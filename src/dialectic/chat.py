@@ -6,8 +6,10 @@ using the DialecticAgent.
 """
 
 import logging
+from collections.abc import AsyncIterator
 
 from src import crud
+from src.config import ReasoningLevel
 from src.dependencies import tracked_db
 from src.dialectic.core import DialecticAgent
 
@@ -20,6 +22,7 @@ async def agentic_chat(
     query: str,
     observer: str,
     observed: str,
+    reasoning_level: ReasoningLevel = "low",
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -30,6 +33,7 @@ async def agentic_chat(
         query: The question to answer about the peer
         observer: The peer making the query
         observed: The peer being queried about
+        reasoning_level: Level of reasoning to apply
 
     Returns:
         The synthesized answer string
@@ -54,8 +58,58 @@ async def agentic_chat(
             observed=observed,
             observer_peer_card=observer_peer_card,
             observed_peer_card=observed_peer_card,
+            reasoning_level=reasoning_level,
         )
 
         response = await agent.answer(query)
 
     return response
+
+
+async def agentic_chat_stream(
+    workspace_name: str,
+    session_name: str | None,
+    query: str,
+    observer: str,
+    observed: str,
+    reasoning_level: ReasoningLevel = "low",
+) -> AsyncIterator[str]:
+    """
+    Stream an answer to a query about a peer using the agentic dialectic.
+
+    Args:
+        workspace_name: Workspace identifier
+        session_name: Session identifier (may be None for global queries)
+        query: The question to answer about the peer
+        observer: The peer making the query
+        observed: The peer being queried about
+        reasoning_level: Level of reasoning to apply
+
+    Yields:
+        Chunks of the response text as they are generated
+    """
+    async with tracked_db("dialectic.agentic_chat_stream") as db:
+        # Get peer cards for context
+        observer_peer_card = await crud.get_peer_card(
+            db, workspace_name, observer=observer, observed=observer
+        )
+        observed_peer_card = None
+        if observer != observed:
+            observed_peer_card = await crud.get_peer_card(
+                db, workspace_name, observer=observer, observed=observed
+            )
+
+        # Create and run the dialectic agent
+        agent = DialecticAgent(
+            db=db,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            observer=observer,
+            observed=observed,
+            observer_peer_card=observer_peer_card,
+            observed_peer_card=observed_peer_card,
+            reasoning_level=reasoning_level,
+        )
+
+        async for chunk in agent.answer_stream(query):
+            yield chunk
