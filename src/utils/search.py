@@ -91,7 +91,40 @@ async def _semantic_search(
             f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
         ) from e
 
-    # Get vector store and namespace for this workspace's messages
+    # If pgvector is primary, query Postgres directly with similarity + filters
+    # This avoids duplicate fetches from the same database
+    if settings.EMBED_MESSAGES and settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector":
+        # Join message_embeddings with messages to get full message objects
+        distance_expr = models.MessageEmbedding.embedding.cosine_distance(
+            embedding_query
+        )
+
+        stmt = (
+            select(models.Message)
+            .join(
+                models.MessageEmbedding,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            )
+            .where(models.MessageEmbedding.embedding.isnot(None))
+            .where(models.MessageEmbedding.workspace_name == workspace_name)
+        )
+
+        # Apply all additional filters using the standard filter utility
+        # filters dict uses external names (session_id, peer_id) which apply_filter will map
+        # to internal column names (session_name, peer_name)
+        if filters:
+            # Create a copy with workspace added
+            internal_filters = filters.copy()
+            internal_filters["workspace_id"] = workspace_name
+            stmt = apply_filter(stmt, models.Message, internal_filters)
+
+        # Order by cosine distance and limit
+        stmt = stmt.order_by(distance_expr).limit(limit)
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    # FALLBACK: Use vector store abstraction for external stores (Turbopuffer, LanceDB)
     vector_store = get_vector_store()
     namespace = vector_store.get_vector_namespace("message", workspace_name)
 

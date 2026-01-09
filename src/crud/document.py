@@ -151,7 +151,32 @@ async def query_documents(
                 f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
             ) from e
 
-    # Get vector store and namespace for this collection
+    # If pgvector is primary, query Postgres directly with similarity + filters
+    # This avoids duplicate fetches from the same database
+    if settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector":
+        stmt = (
+            select(models.Document)
+            .where(models.Document.workspace_name == workspace_name)
+            .where(models.Document.observer == observer)
+            .where(models.Document.observed == observed)
+            .where(models.Document.embedding.isnot(None))
+            .where(models.Document.deleted_at.is_(None))
+        )
+
+        if max_distance is not None:
+            stmt = stmt.where(
+                models.Document.embedding.cosine_distance(embedding) <= max_distance
+            )
+
+        stmt = apply_filter(stmt, models.Document, filters)
+        stmt = stmt.order_by(
+            models.Document.embedding.cosine_distance(embedding)
+        ).limit(top_k)
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    # FALLBACK: Use vector store abstraction for external stores (Turbopuffer, LanceDB)
     vector_store = get_vector_store()
     namespace = vector_store.get_vector_namespace(
         "document", workspace_name, observer, observed

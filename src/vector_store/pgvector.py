@@ -8,7 +8,7 @@ using the existing embedding columns on documents and message_embeddings tables.
 import logging
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -280,7 +280,10 @@ class PgVectorStore(VectorStore):
 
     async def delete_many(self, namespace: str, ids: list[str]) -> None:
         """
-        Delete vectors by setting embedding to NULL.
+        Delete vectors by removing the rows from the database.
+
+        For pgvector, since the vector data is stored in the same table as the entities,
+        deleting from the vector store means deleting the actual rows.
 
         Args:
             namespace: The namespace containing the vectors
@@ -294,11 +297,7 @@ class PgVectorStore(VectorStore):
         async with tracked_db("pgvector_delete") as db:
             try:
                 if table_type == "documents":
-                    stmt = (
-                        update(models.Document)
-                        .where(models.Document.id.in_(ids))
-                        .values(embedding=None)
-                    )
+                    stmt = delete(models.Document).where(models.Document.id.in_(ids))
                     await db.execute(stmt)
 
                 elif table_type == "message_embeddings":
@@ -310,28 +309,29 @@ class PgVectorStore(VectorStore):
                                 f"Invalid message vector id format: {vector_id}"
                             ) from exc
 
-                        stmt = (
-                            update(models.MessageEmbedding)
-                            .where(models.MessageEmbedding.id == embedding_id)
-                            .values(embedding=None)
+                        stmt = delete(models.MessageEmbedding).where(
+                            models.MessageEmbedding.id == embedding_id
                         )
                         await db.execute(stmt)
 
                 await db.commit()
                 logger.debug(
-                    f"Deleted {len(ids)} vectors from {table_type} in namespace {namespace}"
+                    f"Deleted {len(ids)} rows from {table_type} in namespace {namespace}"
                 )
 
             except Exception:
                 await db.rollback()
                 logger.exception(
-                    f"Failed to delete {len(ids)} vectors from namespace {namespace}"
+                    f"Failed to delete {len(ids)} rows from namespace {namespace}"
                 )
                 raise
 
     async def delete_namespace(self, namespace: str) -> None:
         """
-        Delete all vectors in a namespace by setting embedding to NULL.
+        Delete all vectors in a namespace by removing rows from the database.
+
+        For pgvector, since the vector data is stored in the same table as the entities,
+        deleting a namespace means deleting the actual rows.
 
         Args:
             namespace: The namespace to delete
@@ -342,29 +342,24 @@ class PgVectorStore(VectorStore):
             try:
                 if table_type == "documents":
                     stmt = (
-                        update(models.Document)
+                        delete(models.Document)
                         .where(
                             models.Document.workspace_name == context["workspace_name"]
                         )
                         .where(models.Document.observer == context["observer"])
                         .where(models.Document.observed == context["observed"])
-                        .values(embedding=None)
                     )
                     await db.execute(stmt)
 
                 elif table_type == "message_embeddings":
-                    stmt = (
-                        update(models.MessageEmbedding)
-                        .where(
-                            models.MessageEmbedding.workspace_name
-                            == context["workspace_name"]
-                        )
-                        .values(embedding=None)
+                    stmt = delete(models.MessageEmbedding).where(
+                        models.MessageEmbedding.workspace_name
+                        == context["workspace_name"]
                     )
                     await db.execute(stmt)
 
                 await db.commit()
-                logger.debug(f"Deleted all vectors from namespace {namespace}")
+                logger.debug(f"Deleted all rows from namespace {namespace}")
 
             except Exception:
                 await db.rollback()
