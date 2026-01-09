@@ -33,7 +33,7 @@
       },
       {
         "parameters": {
-          "model": "zai-glm-4.6",
+          "model": "gpt-4o",
           "options": {}
         },
         "id": "16da7a98-5622-427a-bbab-1be39f828d0b",

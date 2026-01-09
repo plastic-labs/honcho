@@ -12,7 +12,7 @@ sidebarTitle: 'n8n'
 - n8n instance (self-hosted or cloud)
 - Honcho API key ([get one here](https://app.honcho.dev))
 - Basic understanding of n8n workflows
-- Basic understanding of [Honcho architecture](https://docs.honcho.dev/v2/documentation/core-concepts/architecture). Specifically **workspaces**, **sessions**, **peers**, and **messages**.
+- Basic understanding of [Honcho architecture](/v2/documentation/core-concepts/architecture). Specifically **workspaces**, **sessions**, **peers**, and **messages**.
 
 ### Before You Start
 
@@ -160,7 +160,9 @@ Add a **Limit** node to control the flow so the message is only added once to th
 1. Add an **HTTP Request** node
 2. **Method**: `POST`
 3. **URL**: `https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/`
-4. **Body** (JSON): `{ "messages": [{ "content": "{{ $('Get a message').item.json.snippet }}", "peer_id": "{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/\\s+/g, '_') }}" }] }`
+4. **Body** (JSON): `{ "messages": [{ "content": "{{ $('Get a message').item.json.snippet }}", "peer_id": "{{ $('Get a message').item.json.From.split('<')[0].trim().replace(/ /g, '_') }}" }] }`
+
+The `peer_id` must exactly match a peer created in Step 6. The expression above uses the same cleaning logic as the Clean Names node (`split('<')[0].trim().replace(/ /g, '_')`).
 
 ### Part 2: Building a Stateful AI Chatbot
 
@@ -201,9 +203,9 @@ Connect the tool to the Agent node. The URL uses the same workspace (`email-test
 
 ## Import the Workflow
 
-Want to skip the manual setup? Import this workflow directly into n8n. In n8n, go to **Workflows** → **Import from File** (or **Import from URL**).
+Want to skip the manual setup? Import this workflow directly into n8n. In n8n, go to **Workflows** → **Import from URL** (use the raw JSON link below) or **Import from File**.
 
-[Download workflow JSON from GitHub](https://github.com/plastic-labs/honcho/blob/main/examples/n8n/n8n.json) or expand below to copy:
+[Import from URL (raw JSON)](https://raw.githubusercontent.com/plastic-labs/honcho/main/examples/n8n/n8n.json) or expand below to copy:
 
 <Accordion title="Click to expand workflow JSON">
 ```json
@@ -739,7 +741,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
 Once you have the basic workflow running, consider these enhancements:
 
 - **Dynamic IDs**: Use n8n variables instead of hardcoding `email-test` and `new_session`
-- **Chat with Peers**: Add an HTTP Request Tool for natural language queries about peer representations. Read more in the [docs](https://docs.honcho.dev/v2.6.0-alpha/documentation/features/chat).
+- **Chat with Peers**: Add an HTTP Request Tool for natural language queries about peer representations. Read more in the [docs](/v2/documentation/core-concepts/features/dialectic).
 - **Load more messages**: Use Gmail's "Get All" operation to load entire conversation threads
 - **Make it real-time**: Add a **Gmail Trigger** node to automatically ingest new emails as they arrive
 - **Add error handling**: Connect an **Error Trigger** node with notifications (Email, Slack) and retry logic
@@ -749,8 +751,8 @@ Once you have the basic workflow running, consider these enhancements:
 
 ## Related Resources
 
-- [Honcho Architecture](https://docs.honcho.dev/v2/documentation/core-concepts/architecture) - Understand workspaces, sessions, peers, and messages
-- [Get Context](https://docs.honcho.dev/v2/documentation/core-concepts/features/get-context) - Learn about retrieving formatted conversation context
-- [API Reference](https://docs.honcho.dev/v2/api-reference) - Complete API documentation
+- [Honcho Architecture](/v2/documentation/core-concepts/architecture) - Understand workspaces, sessions, peers, and messages
+- [Get Context](/v2/documentation/core-concepts/features/get-context) - Learn about retrieving formatted conversation context
+- [API Reference](/v2/api-reference) - Complete API documentation
 
 ---
