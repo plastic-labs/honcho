@@ -1,5 +1,5 @@
 """
-Optimized Honcho Trace Generation Tool
+Honcho Trace Generation Tool
 
 A high-throughput script for generating explicit derivations from conversation data
 at scale using the actual Honcho deriver system. Designed to handle 1M+ conversation
@@ -66,12 +66,12 @@ python -m tests.bench.harness --pool-size 4
 
 ```bash
 # Basic usage
-python -m tests.bench.trace_optimize \\
+python -m tests.bench.trace \\
   --input tests/bench/trace_data/input.jsonl \\
   --output tests/bench/trace_data/output.jsonl
 
 # High throughput with parallelization
-python -m tests.bench.trace_optimize \\
+python -m tests.bench.trace \\
   --input tests/bench/trace_data/input.jsonl \\
   --output tests/bench/trace_data/output.jsonl \\
   --concurrency 20 \\
@@ -79,7 +79,7 @@ python -m tests.bench.trace_optimize \\
   --base-api-port 8000
 
 # Process only first N conversations
-python -m tests.bench.trace_optimize \\
+python -m tests.bench.trace \\
   --input tests/bench/trace_data/input.jsonl \\
   --output tests/bench/trace_data/output.jsonl \\
   --limit 1000
@@ -300,11 +300,32 @@ class TraceGenerator:
                 # Retrieve observations for each peer
                 for peer_id, peer in peer_objects.items():
                     try:
-                        # Get observations (explicit derivations)
-                        observations = peer.observations.list(session=session_id, size=1000)
+                        # Get observations (explicit derivations) with pagination
+                        # API has max page size of 100, so we need to paginate
+                        all_observations = []
+                        page = 1
+                        page_size = 100
+
+                        while True:
+                            observations = await peer.observations.list(
+                                session=session_id,
+                                page=page,
+                                size=page_size
+                            )
+
+                            if not observations:
+                                break
+
+                            all_observations.extend(observations)
+
+                            # If we got fewer than page_size, we're done
+                            if len(observations) < page_size:
+                                break
+
+                            page += 1
 
                         # Extract observation contents (explicit derivations)
-                        explicit_derivations = [obs.content for obs in observations]
+                        explicit_derivations = [obs.content for obs in all_observations]
 
                         # For the prompt, we need to reconstruct what was sent to the deriver
                         # This mirrors the minimal_deriver_prompt from src/deriver/prompts.py
