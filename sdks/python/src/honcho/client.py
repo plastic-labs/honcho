@@ -564,6 +564,131 @@ class Honcho(BaseModel):
 
             time.sleep(sleep_time)
 
+    @validate_call
+    def list_observations(
+        self,
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the observations"
+        ),
+        reverse: bool = Field(
+            False, description="Whether to reverse the order of results"
+        ),
+    ):
+        """
+        List all observations in the current workspace with optional filtering.
+
+        Makes an API call to retrieve observations that match the specified filters.
+        Observations can be filtered by session_id, observer_id, and observed_id.
+
+        Args:
+            filters: Optional filter criteria for observations. Supported filters include:
+                    - session_id: Filter observations by session
+                    - observer_id: Filter observations by observer peer
+                    - observed_id: Filter observations by observed peer
+            reverse: Whether to reverse the order of results (default: False)
+
+        Returns:
+            A paginated list of Observation objects matching the specified criteria
+
+        Example:
+            >>> observations = client.list_observations(
+            ...     filters={"observer_id": "user123", "observed_id": "assistant"}
+            ... )
+        """
+        return self._client.workspaces.observations.list(
+            workspace_id=self.workspace_id,
+            filters=filters,
+            reverse=reverse,
+        )
+
+    @validate_call
+    def query_observations(
+        self,
+        query: str = Field(..., min_length=1, description="Semantic search query"),
+        observer: str = Field(
+            ..., min_length=1, description="Observer peer ID (required)"
+        ),
+        observed: str = Field(
+            ..., min_length=1, description="Observed peer ID (required)"
+        ),
+        top_k: int = Field(
+            default=10, ge=1, le=100, description="Number of results to return"
+        ),
+        distance: float | None = Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description="Maximum cosine distance threshold for results",
+        ),
+        filters: dict[str, object] | None = Field(
+            None, description="Additional filters to apply"
+        ),
+    ):
+        """
+        Query observations using semantic search.
+
+        Performs vector similarity search on observations to find semantically relevant results.
+        Observer and observed peer IDs are required for semantic search.
+
+        Args:
+            query: The semantic search query
+            observer: The observer peer ID (required)
+            observed: The observed peer ID (required)
+            top_k: Number of results to return (1-100, default: 10)
+            distance: Maximum cosine distance threshold for results (0.0-1.0)
+            filters: Optional filters to scope the query
+
+        Returns:
+            A list of Observation objects matching the query
+
+        Example:
+            >>> observations = client.query_observations(
+            ...     query="user preferences about music",
+            ...     observer="user123",
+            ...     observed="assistant",
+            ...     top_k=5,
+            ...     distance=0.8
+            ... )
+        """
+        # Merge observer/observed into filters without mutating the input
+        query_filters: dict[str, object | str] = {
+            **(filters or {}),
+            "observer": observer,
+            "observed": observed,
+        }
+
+        return self._client.workspaces.observations.query(
+            workspace_id=self.workspace_id,
+            query=query,
+            top_k=top_k,
+            distance=distance,
+            filters=query_filters,
+        )
+
+    @validate_call
+    def delete_observation(
+        self,
+        observation_id: str = Field(
+            ..., min_length=1, description="ID of the observation to delete"
+        ),
+    ) -> None:
+        """
+        Delete a specific observation by ID.
+
+        This permanently deletes the observation (document) from the theory-of-mind system.
+        This action cannot be undone.
+
+        Args:
+            observation_id: The ID of the observation to delete
+
+        Example:
+            >>> client.delete_observation('obs_123abc')
+        """
+        self._client.workspaces.observations.delete(
+            workspace_id=self.workspace_id,
+            observation_id=observation_id,
+        )
+
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def update_message(
         self,

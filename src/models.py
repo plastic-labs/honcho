@@ -371,6 +371,9 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
+    source_ids: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
     embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
@@ -421,6 +424,12 @@ class Document(Base):
             postgresql_ops={
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
+        ),
+        # GIN index for efficient tree traversal (finding children by source IDs)
+        Index(
+            "ix_documents_source_ids_gin",
+            "source_ids",
+            postgresql_using="gin",
         ),
     )
 

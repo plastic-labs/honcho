@@ -7,7 +7,7 @@ from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, o
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
-from .formatting import parse_datetime_iso
+from .formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern, parse_datetime_iso
 
 logger = getLogger(__name__)
 
@@ -351,7 +351,8 @@ def _build_comparison_condition(
                 f"Invalid value for 'in' operator: {op_value}. Expected an iterable (list, tuple, set), got {type(op_value).__name__}"
             )
     elif operator in ("contains", "icontains"):
-        return field_accessor.ilike(f"%{op_value}%")
+        escaped_value = escape_ilike_pattern(str(op_value))
+        return field_accessor.ilike(f"%{escaped_value}%", escape=ILIKE_ESCAPE_CHAR)
 
     return None
 
@@ -521,11 +522,13 @@ def _build_comparison_conditions(
                 # For JSONB columns, use JSONB contains
                 condition = column.contains(op_value)
             else:
-                # For text columns, use ILIKE
-                condition = column.ilike(f"%{op_value}%")
+                # For text columns, use ILIKE with escaped pattern
+                escaped_value = escape_ilike_pattern(str(op_value))
+                condition = column.ilike(f"%{escaped_value}%", escape=ILIKE_ESCAPE_CHAR)
         elif operator == "icontains":
-            # Case-insensitive contains for text columns
-            condition = column.ilike(f"%{op_value}%")
+            # Case-insensitive contains for text columns with escaped pattern
+            escaped_value = escape_ilike_pattern(str(op_value))
+            condition = column.ilike(f"%{escaped_value}%", escape=ILIKE_ESCAPE_CHAR)
 
         if condition is not None:
             conditions.append(condition)

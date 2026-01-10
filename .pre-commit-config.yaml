@@ -99,7 +99,7 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
-      # TypeScript build/test with bun
+      # # TypeScript build/test with bun
       - id: typescript-check
         name: TypeScript build and test
         entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run build && bun run test; fi'

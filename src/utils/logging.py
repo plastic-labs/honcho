@@ -165,6 +165,50 @@ def accumulate_metric(
     accumulated_metrics.setdefault(task_name, []).append((label, value, unit))
 
 
+def log_token_usage_metrics(
+    task_name: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_input_tokens: int,
+    cache_creation_input_tokens: int,
+) -> None:
+    """
+    Log cache-aware token usage metrics.
+
+    Args:
+        task_name: The task name for metric accumulation
+        input_tokens: Total input tokens (cached + uncached)
+        output_tokens: Output tokens generated
+        cache_read_input_tokens: Tokens read from cache (90% cheaper)
+        cache_creation_input_tokens: Tokens written to cache (25% more expensive)
+
+    Returns:
+        None
+    """
+    accumulate_metric(task_name, "input_tokens", input_tokens, "tokens")
+    accumulate_metric(
+        task_name,
+        "cache_read_input_tokens",
+        cache_read_input_tokens,
+        "tokens",
+    )
+    accumulate_metric(
+        task_name,
+        "cache_creation_input_tokens",
+        cache_creation_input_tokens,
+        "tokens",
+    )
+    # Total uncached tokens (what you're paying full price for)
+    # = total - cache_read (those were cheap) + cache_creation (those cost 1.25x)
+    uncached_input_tokens = (
+        input_tokens - cache_read_input_tokens + cache_creation_input_tokens
+    )
+    accumulate_metric(
+        task_name, "uncached_input_tokens", uncached_input_tokens, "tokens"
+    )
+    accumulate_metric(task_name, "output_tokens", output_tokens, "tokens")
+
+
 def log_performance_metrics(
     task_slug: str,
     task_name: str,
@@ -221,9 +265,10 @@ def log_performance_metrics(
     content_items: list[RenderableType] = [table]
 
     if blob_metrics:
-        content_items.append(Text(""))  # Empty line separator
         for metric, value, _unit in blob_metrics:
-            content_items.append(Text(f"{metric}:", style="bold cyan"))
+            content_items.append(
+                Text.assemble("    ", (f"\n{metric}:", "bold"), "     ")
+            )
             content_items.append(Text(str(value)))
 
     panel = Panel(

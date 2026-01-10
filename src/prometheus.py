@@ -5,6 +5,7 @@ This module defines all Prometheus metrics for all Honcho processes and exposes 
 """
 
 import logging
+from enum import Enum
 from typing import cast
 
 from prometheus_client import (
@@ -72,12 +73,14 @@ MESSAGES_CREATED = NamespacedCounter(
 # Incremented in: src/routers/peers.py when successful dialectic calls are made
 # Labels:
 #   - workspace_name: The workspace where the dialectic call was made
+#   - reasoning_level: The reasoning level used for the call
 DIALECTIC_CALLS = NamespacedCounter(
     "dialectic_calls_total",
     "Total dialectic calls",
     [
         "namespace",
         "workspace_name",
+        "reasoning_level",
     ],
 )
 
@@ -93,13 +96,19 @@ DERIVER_QUEUE_ITEMS_PROCESSED = NamespacedCounter(
     ["namespace", "workspace_name", "task_type"],
 )
 
+
+class TokenTypes(Enum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
 # Tracks the total number of input and output tokens processed by the deriver.
 #
 # Incremented in: src/deriver/deriver.py after the critical analysis call is made
 # Labels:
-#   - task_type: The type of task that processed the tokens (e.g., "representation", "summary")
+#   - task_type: The type of task that processed the tokens
 #   - token_type: The type of tokens ("input" or "output")
-#   - component: The component of the input (e.g., "peer_card", "working_representation", "prompt", "new_turns", "session_context")
+#   - component: The component of the input
 DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     "deriver_tokens_processed_total",
     "Total tokens processed by the deriver",
@@ -111,16 +120,54 @@ DERIVER_TOKENS_PROCESSED = NamespacedCounter(
     ],
 )
 
+
+class DeriverTaskTypes(Enum):
+    INGESTION = "ingestion"
+    SUMMARY = "summary"
+
+
+class DeriverComponents(Enum):
+    PROMPT = "prompt"  # used in ingestion and summary
+    MESSAGES = "messages"  # used in ingestion and summary
+    PREVIOUS_SUMMARY = "previous_summary"  # only used for summary
+    OUTPUT_TOTAL = "output_total"
+
+
 # Tracks the total number of input and output tokens processed by the dialectic.
 #
-# Incremented in: src/dialectic/chat.py after the dialectic call is made
+# Incremented in: src/dialectic/core.py after the dialectic call is made
 # Labels:
-#   - token_type: The type of tokens ("input" or "output")
+#   - token_type: The type of tokens
+#   - component: The component of the input
+#   - reasoning_level: The reasoning level used for the call
 DIALECTIC_TOKENS_PROCESSED = NamespacedCounter(
     "dialectic_tokens_processed_total",
     "Total tokens processed by the dialectic",
     [
         "namespace",
+        "token_type",
+        "component",
+        "reasoning_level",
+    ],
+)
+
+
+class DialecticComponents(Enum):
+    TOTAL = "total"
+
+
+# Tracks the total number of input and output tokens processed by the dreamer.
+#
+# Incremented in: src/dreamer/specialists.py after the specialist LLM call is made
+# Labels:
+#   - specialist_name: The name of the specialist ("deduction" or "induction")
+#   - token_type: The type of tokens ("input" or "output")
+DREAMER_TOKENS_PROCESSED = NamespacedCounter(
+    "dreamer_tokens_processed_total",
+    "Total tokens processed by the dreamer",
+    [
+        "namespace",
+        "specialist_name",
         "token_type",
     ],
 )

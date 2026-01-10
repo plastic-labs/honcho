@@ -552,7 +552,7 @@ Evaluate whether the actual response contains the core correct information from 
                 if session_context.summary:
                     summary_content = session_context.summary.content
 
-                tokenizer = tiktoken.get_encoding("cl100k_base")
+                tokenizer = tiktoken.get_encoding("o200k_base")
                 summary_tokens = len(tokenizer.encode(summary_content))
                 output_lines.append(f"    summary: {session_context.summary}")
 

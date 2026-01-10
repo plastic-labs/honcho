@@ -153,16 +153,16 @@ class DreamScheduler:
                     observer=observer,
                     observed=observed,
                 )
-                logger.info(f"Executed dream for {work_unit_key}")
+                logger.info("Executed dream for %s", work_unit_key)
             else:
                 logger.info(
-                    f"Skipping dream for {work_unit_key} - collection is active"
+                    "Skipping dream for %s - collection is active", work_unit_key
                 )
 
         except asyncio.CancelledError:
-            logger.info(f"Dream task cancelled for {work_unit_key}")
+            logger.debug("Dream task cancelled for %s", work_unit_key)
         except Exception as e:
-            logger.error(f"Error in delayed dream for {work_unit_key}: {str(e)}")
+            logger.error("Error in delayed dream for %s: %s", work_unit_key, e)
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
 
@@ -202,12 +202,33 @@ class DreamScheduler:
         # Import here to avoid circular dependency
         from src.deriver.enqueue import enqueue_dream
 
+        # Find the most recent session for this observer/observed pair
+        async with tracked_db("dream_session_lookup") as db:
+            stmt = (
+                select(models.Document.session_name)
+                .where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                )
+                .order_by(models.Document.created_at.desc())
+                .limit(1)
+            )
+            session_name = await db.scalar(stmt)
+
+        if not session_name:
+            logger.warning(
+                f"No documents found for {workspace_name}/{observer}/{observed}, skipping dream"
+            )
+            return
+
         await enqueue_dream(
             workspace_name,
             observer=observer,
             observed=observed,
             dream_type=dream_type,
             document_count=document_count,
+            session_name=session_name,
         )
 
     async def shutdown(self) -> None:
@@ -259,7 +280,7 @@ async def check_and_schedule_dream(
     # Calculate documents added since last dream
     documents_since_last_dream = current_document_count - last_dream_document_count
 
-    logger.info(
+    logger.debug(
         "Dream check",
         extra={
             "workspace_name": collection.workspace_name,
@@ -316,7 +337,7 @@ async def check_and_schedule_dream(
                     observer=collection.observer,
                     observed=collection.observed,
                 )
-                logger.info(
+                logger.debug(
                     "Scheduled dream",
                     extra={
                         "workspace_name": collection.workspace_name,

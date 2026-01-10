@@ -19,7 +19,7 @@ from src.models import Message
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric, conditional_observe
-from src.utils.tokens import estimate_tokens, track_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .. import crud, models
 
@@ -424,20 +424,20 @@ async def _create_and_save_summary(
         else:
             prompt_tokens = estimate_long_summary_prompt_tokens()
 
-        track_input_tokens(
-            task_type="summary",
+        track_deriver_input_tokens(
+            task_type=prometheus.DeriverTaskTypes.SUMMARY,
             components={
-                "prompt": prompt_tokens,
-                "messages": messages_tokens,
-                "previous_summary": previous_summary_tokens,
+                prometheus.DeriverComponents.PROMPT: prompt_tokens,
+                prometheus.DeriverComponents.MESSAGES: messages_tokens,
+                prometheus.DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
             },
         )
 
         # Track output tokens
         prometheus.DERIVER_TOKENS_PROCESSED.labels(
-            task_type="summary",
-            token_type="output",  # nosec B106
-            component="total",
+            task_type=prometheus.DeriverTaskTypes.SUMMARY.value,
+            token_type=prometheus.TokenTypes.OUTPUT.value,
+            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
         ).inc(new_summary["token_count"])
 
         # Save summary to database

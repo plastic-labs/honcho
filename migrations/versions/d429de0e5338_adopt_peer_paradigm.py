@@ -1165,7 +1165,7 @@ def backfill_token_counts(schema: str) -> None:
     # Initialize tokenizer once outside the loop for performance
     tokenizer = None
     with suppress(Exception):
-        tokenizer = tiktoken.get_encoding("cl100k_base")
+        tokenizer = tiktoken.get_encoding("o200k_base")
 
     def _count_tokens(text: str) -> int:
         """Count tokens in a text string using tiktoken."""
