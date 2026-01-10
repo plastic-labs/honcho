@@ -23,6 +23,7 @@ from src.deriver.consumer import (
     process_item,
     process_representation_batch,
 )
+from src.deriver.vector_reconciliation import run_vector_reconciliation_cycle
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
@@ -47,6 +48,10 @@ class WorkerOwnership(NamedTuple):
 
     work_unit_key: str
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
+
+
+QUEUE_CLEANUP_INTERVAL_SECONDS = 43200  # 12 hours
+RECONCILIATION_INTERVAL_SECONDS = 900  # 15 minutes
 
 
 class QueueManager:
@@ -111,7 +116,7 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start background maintenance loop
+        # Start background maintenance loop (handles both queue cleanup and vector cleanup)
         try:
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
         except Exception:
@@ -343,29 +348,87 @@ class QueueManager:
             await db.commit()
 
     async def _maintenance_loop(self) -> None:
-        """Run periodic maintenance tasks on the queue."""
+        """
+        Run periodic maintenance tasks.
+
+        - Queue cleanup: every 12 hours (remove old processed/errored queue items)
+        - Reconciliation: every 5 minutes (sync vectors + clean up soft deletes)
+          Always runs to keep vector stores consistent with the DB
+        """
+        # Track when each task should next run
+        next_queue_cleanup = datetime.now(timezone.utc)
+        next_vector_reconciliation = datetime.now(timezone.utc)
+
         try:
             while not self.shutdown_event.is_set():
-                try:
-                    await self.cleanup_queue_items()
-                except Exception:
-                    logger.exception("Error during maintenance cleanup")
-                    if settings.SENTRY.ENABLED:
-                        sentry_sdk.capture_exception()
+                now = datetime.now(timezone.utc)
 
-                # Sleep until interval elapses or shutdown event is set
+                # Run queue cleanup if due
+                if now >= next_queue_cleanup:
+                    try:
+                        await self.cleanup_queue_items()
+                    except Exception:
+                        logger.exception("Error during queue cleanup")
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception()
+                    next_queue_cleanup = now + timedelta(
+                        seconds=QUEUE_CLEANUP_INTERVAL_SECONDS
+                    )
+
+                # Run vector store reconciliation if due
+                if now >= next_vector_reconciliation:
+                    try:
+                        logger.info("Running vector reconciliation cycle")
+                        await self._run_reconciliation()
+                    except Exception:
+                        logger.exception("Error during vector reconciliation")
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception()
+                    next_vector_reconciliation = now + timedelta(
+                        seconds=RECONCILIATION_INTERVAL_SECONDS
+                    )
+
+                # Sleep until next task is due or shutdown
+                # Filter out None values when computing next task time
+                task_times = [next_queue_cleanup]
+                task_times.append(next_vector_reconciliation)
+                next_task_time = min(task_times)
+                sleep_seconds = max(
+                    0, (next_task_time - datetime.now(timezone.utc)).total_seconds()
+                )
+
                 try:
                     await asyncio.wait_for(
                         self.shutdown_event.wait(),
-                        timeout=43200,  # 12 hours
+                        timeout=sleep_seconds
+                        or 1,  # At least 1 second to avoid busy loop
                     )
                     break  # Shutdown event set
                 except asyncio.TimeoutError:
-                    # Timeout means it's time for next cleanup
+                    # Timeout means it's time for next task
                     pass
         except asyncio.CancelledError:
             logger.debug("Maintenance loop cancelled")
             raise
+
+    async def _run_reconciliation(self) -> None:
+        """Run vector store reconciliation for sync + cleanup."""
+
+        metrics = await run_vector_reconciliation_cycle()
+
+        if (
+            metrics.total_synced > 0
+            or metrics.total_failed > 0
+            or metrics.total_cleaned > 0
+        ):
+            logger.info(
+                "Reconciliation: synced %s docs, %s message embeddings; failed %s docs, %s message embeddings; cleaned %s docs",
+                metrics.documents_synced,
+                metrics.message_embeddings_synced,
+                metrics.documents_failed,
+                metrics.message_embeddings_failed,
+                metrics.documents_cleaned,
+            )
 
     async def _handle_processing_error(
         self,
@@ -795,6 +858,7 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
+
     try:
         await init_cache()
     except Exception as e:

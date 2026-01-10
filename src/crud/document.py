@@ -1,11 +1,13 @@
+import datetime
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
+from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.config import settings
@@ -15,6 +17,12 @@ from src.crud.session import get_session
 from src.embedding_client import embedding_client
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.utils.filter import apply_filter
+from src.vector_store import (
+    VectorRecord,
+    VectorStore,
+    get_vector_store,
+    upsert_with_retry,
+)
 
 logger = getLogger(__name__)
 
@@ -49,6 +57,7 @@ def get_all_documents(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
+        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
     )
 
     # Apply additional filters if provided
@@ -86,8 +95,10 @@ def get_documents_with_filters(
     Returns:
         Select query for documents
     """
-    stmt = select(models.Document).where(
-        models.Document.workspace_name == workspace_name
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
     )
 
     # Apply additional filters if provided
@@ -123,7 +134,7 @@ async def query_documents(
         query: Search query text
         observer: Name of the observing peer
         observed: Name of the observed peer
-        filters: Optional filters to apply
+        filters: Optional filters to apply at vector store level (supports: level, session_name)
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
         embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
@@ -140,22 +151,86 @@ async def query_documents(
                 f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
             ) from e
 
+    # If pgvector is primary, query Postgres directly with similarity + filters
+    # This avoids duplicate fetches from the same database
+    if settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector":
+        stmt = (
+            select(models.Document)
+            .where(models.Document.workspace_name == workspace_name)
+            .where(models.Document.observer == observer)
+            .where(models.Document.observed == observed)
+            .where(models.Document.embedding.isnot(None))
+            .where(models.Document.deleted_at.is_(None))
+        )
+
+        if max_distance is not None:
+            stmt = stmt.where(
+                models.Document.embedding.cosine_distance(embedding) <= max_distance
+            )
+
+        stmt = apply_filter(stmt, models.Document, filters)
+        stmt = stmt.order_by(
+            models.Document.embedding.cosine_distance(embedding)
+        ).limit(top_k)
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    # FALLBACK: Use vector store abstraction for external stores (Turbopuffer, LanceDB)
+    vector_store = get_vector_store()
+    namespace = vector_store.get_vector_namespace(
+        "document", workspace_name, observer, observed
+    )
+
+    # Build vector store filters
+    # Convert filter dict to vector store format (handles level, session_name, etc.)
+    vector_filters: dict[str, Any] = {}
+    if filters:
+        # Direct pass-through for simple equality filters
+        # The filters dict can contain: level, session_name, or other document fields
+        # We can push level and session_name to vector store since they're in metadata
+        for key in ["level", "session_name"]:
+            if key in filters:
+                vector_filters[key] = filters[key]
+
+    # Query vector store for similar documents with filters applied
+    vector_results = await vector_store.query(
+        namespace,
+        embedding,
+        top_k=top_k,
+        max_distance=max_distance,
+        filters=vector_filters if vector_filters else None,
+    )
+
+    if not vector_results:
+        return []
+
+    # Get document IDs from vector results (vector ID = document ID for documents)
+    document_ids = [result.id for result in vector_results]
+
+    # Fetch documents from database
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
+        .where(models.Document.deleted_at.is_(None))
+        .where(models.Document.id.in_(document_ids))
     )
-    if max_distance is not None:
-        stmt = stmt.where(
-            models.Document.embedding.cosine_distance(embedding) < max_distance
-        )
+    # Re-apply all filters at the database layer to catch any constraints
+    # that aren't supported by the vector store metadata.
     stmt = apply_filter(stmt, models.Document, filters)
-    stmt = stmt.limit(top_k).order_by(
-        models.Document.embedding.cosine_distance(embedding)
-    )
+
     result = await db.execute(stmt)
-    return result.scalars().all()
+    documents = {doc.id: doc for doc in result.scalars().all()}
+
+    # Return documents in order of similarity (preserving vector store order)
+    ordered_docs: list[models.Document] = []
+    for vr in vector_results:
+        if vr.id in documents:
+            ordered_docs.append(documents[vr.id])
+
+    return ordered_docs
 
 
 async def create_documents(
@@ -181,6 +256,9 @@ async def create_documents(
         Count of new documents
     """
     honcho_documents: list[models.Document] = []
+    # Store (document_model, embedding) pairs - IDs aren't available until after commit
+    docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
+
     for doc in documents:
         try:
             # for each document, if deduplicate is True, perform a process
@@ -194,8 +272,17 @@ async def create_documents(
                     continue
 
             metadata_dict = doc.metadata.model_dump(exclude_none=True)
-            honcho_documents.append(
-                models.Document(
+
+            # Check if pgvector is being used (primary or secondary)
+            # If so, write embeddings to ORM since pgvector relies on postgres
+            pgvector_in_use = (
+                settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+                or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
+            )
+
+            if pgvector_in_use and doc.embedding:
+                # pgvector in use: write embedding to ORM (postgres)
+                new_doc = models.Document(
                     workspace_name=workspace_name,
                     observer=observer,
                     observed=observed,
@@ -203,18 +290,118 @@ async def create_documents(
                     level=doc.level,
                     times_derived=doc.times_derived,
                     internal_metadata=metadata_dict,
+                    session_name=doc.session_name,
                     embedding=doc.embedding,
+                )
+            else:
+                # pgvector not in use or no embedding: don't write embedding to postgres
+                new_doc = models.Document(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    content=doc.content,
+                    level=doc.level,
+                    times_derived=doc.times_derived,
+                    internal_metadata=metadata_dict,
                     session_name=doc.session_name,
                 )
-            )
+
+            if doc.embedding:
+                new_doc.sync_state = "pending"
+            honcho_documents.append(new_doc)
+
+            # Track embedding for vector store (ID will be available after commit)
+            if doc.embedding:
+                docs_with_embeddings.append((new_doc, doc.embedding))
+
         except Exception as e:
             logger.error(
                 f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
             )
             continue
+
     try:
         db.add_all(honcho_documents)
+        # NOTE
+        # If the process crashes after this commit but before vector upsert completes,
+        # documents will be left in sync_state='pending' with NULL embeddings.
+        # The reconciliation job will automatically re-embed and sync these documents,
         await db.commit()
+
+        # Store embeddings in vector store after documents are committed (IDs now available)
+        if docs_with_embeddings:
+            vector_store = get_vector_store()
+            namespace = vector_store.get_vector_namespace(
+                "document",
+                workspace_name,
+                observer,
+                observed,
+            )
+
+            # Build vector records with metadata for filtering
+            vector_records: list[VectorRecord] = []
+            doc_ids: list[str] = []
+            for doc, embedding in docs_with_embeddings:
+                doc_ids.append(doc.id)
+                vector_records.append(
+                    VectorRecord(
+                        id=doc.id,
+                        embedding=embedding,
+                        metadata={
+                            "workspace_name": workspace_name,
+                            "observer": observer,
+                            "observed": observed,
+                            "session_name": doc.session_name,
+                            "level": doc.level,
+                        },
+                    )
+                )
+
+            # Upsert to vector store with retry and update sync state
+            try:
+                result = await upsert_with_retry(
+                    vector_store, namespace, vector_records
+                )
+                if result is not None and result.secondary_ok is False:
+                    # Partial success: primary has data but secondary doesn't
+                    logger.warning(
+                        f"Partial sync for namespace {namespace}: {result.secondary_error}"
+                    )
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+                else:
+                    # Success: both primary and secondary stores have the data
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_state="synced",
+                            last_sync_at=func.now(),
+                            sync_attempts=0,
+                        )
+                    )
+                    await db.commit()
+
+            except Exception as e:
+                # Total failure: primary write failed after retries
+                logger.error(f"Failed to upsert vectors after retries: {e}")
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_attempts=models.Document.sync_attempts + 1,
+                        last_sync_at=func.now(),
+                    )
+                )
+                await db.commit()
+
     except IntegrityError as e:
         await db.rollback()
         raise ValidationException(
@@ -234,7 +421,14 @@ async def delete_document(
     session_name: str | None = None,
 ) -> None:
     """
-    Delete a single document by ID.
+    Delete a single document by ID using hybrid sync/soft delete pattern.
+
+    Soft deletes first (sets deleted_at), then tries to delete from vector store.
+    If vector store delete succeeds, hard deletes from DB.
+    If vector store delete fails, leaves soft-deleted for cleanup job.
+
+    This order ensures crash safety: if the process crashes at any point,
+    the document is either fully deleted or soft-deleted (never orphaned).
 
     Args:
         db: Database session
@@ -247,24 +441,55 @@ async def delete_document(
     Raises:
         ResourceNotFoundException: If document not found or doesn't match criteria
     """
-    stmt = delete(models.Document).where(
+    # Build base query conditions
+    conditions = [
         models.Document.id == document_id,
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
-    )
-
-    # If session is specified, ensure document belongs to that session
+        models.Document.deleted_at.is_(None),  # Only delete non-deleted docs
+    ]
     if session_name is not None:
-        stmt = stmt.where(models.Document.session_name == session_name)
+        conditions.append(models.Document.session_name == session_name)
 
-    result = await db.execute(stmt)
-    await db.commit()
+    # Check document exists first
+    check_stmt = select(models.Document).where(*conditions)
+    result = await db.execute(check_stmt)
+    doc = result.scalar_one_or_none()
 
-    if result.rowcount == 0:
+    if doc is None:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to the specified collection/session"
         )
+
+    # Step 1: Soft delete first (crash-safe - ensures document is marked for deletion)
+    update_stmt = (
+        update(models.Document)
+        .where(models.Document.id == document_id)
+        .values(deleted_at=func.now())
+    )
+    await db.execute(update_stmt)
+    await db.commit()
+
+    # Step 2: Try to delete from vector store
+    vector_store = get_vector_store()
+    namespace = vector_store.get_vector_namespace(
+        "document", workspace_name, observer, observed
+    )
+    vector_deleted = False
+
+    try:
+        await vector_store.delete_many(namespace, [document_id])
+        vector_deleted = True
+    except Exception as e:
+        logger.warning(f"Failed to delete vector for document {document_id}: {e}")
+
+    # Step 3: If vector deleted successfully, hard delete from DB
+    if vector_deleted:
+        delete_stmt = delete(models.Document).where(models.Document.id == document_id)
+        await db.execute(delete_stmt)
+        await db.commit()
+    # If vector delete failed, document stays soft-deleted for cleanup job
 
 
 async def delete_document_by_id(
@@ -273,7 +498,14 @@ async def delete_document_by_id(
     document_id: str,
 ) -> None:
     """
-    Delete a single document by ID and workspace.
+    Delete a single document by ID and workspace using hybrid sync/soft delete pattern.
+
+    Soft deletes first (sets deleted_at), then tries to delete from vector store.
+    If vector store delete succeeds, hard deletes from DB.
+    If vector store delete fails, leaves soft-deleted for cleanup job.
+
+    This order ensures crash safety: if the process crashes at any point,
+    the document is either fully deleted or soft-deleted (never orphaned).
 
     Args:
         db: Database session
@@ -283,18 +515,51 @@ async def delete_document_by_id(
     Raises:
         ResourceNotFoundException: If document not found or doesn't belong to the workspace
     """
-    stmt = delete(models.Document).where(
+    # Fetch document to get observer/observed for namespace
+    stmt = select(models.Document).where(
         models.Document.id == document_id,
         models.Document.workspace_name == workspace_name,
+        models.Document.deleted_at.is_(None),  # Only delete non-deleted docs
     )
-
     result = await db.execute(stmt)
-    await db.commit()
+    doc = result.scalar_one_or_none()
 
-    if result.rowcount == 0:
+    if doc is None:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
+
+    # Step 1: Soft delete first (crash-safe - ensures document is marked for deletion)
+    update_stmt = (
+        update(models.Document)
+        .where(models.Document.id == document_id)
+        .values(deleted_at=func.now())
+    )
+    await db.execute(update_stmt)
+    await db.commit()
+
+    # Step 2: Try to delete from vector store
+    vector_store = get_vector_store()
+    namespace = vector_store.get_vector_namespace(
+        "document",
+        workspace_name,
+        doc.observer,
+        doc.observed,
+    )
+    vector_deleted = False
+
+    try:
+        await vector_store.delete_many(namespace, [document_id])
+        vector_deleted = True
+    except Exception as e:
+        logger.warning(f"Failed to delete vector for document {document_id}: {e}")
+
+    # Step 3: If vector deleted successfully, hard delete from DB
+    if vector_deleted:
+        delete_stmt = delete(models.Document).where(models.Document.id == document_id)
+        await db.execute(delete_stmt)
+        await db.commit()
+    # If vector delete failed, document stays soft-deleted for cleanup job
 
 
 async def create_observations(
@@ -355,11 +620,24 @@ async def create_observations(
     except ValueError as e:
         raise ValidationException(str(e)) from e
 
-    # Create document objects
+    # Create document objects and track embeddings for vector store
     honcho_documents: list[models.Document] = []
+    # Group observations by collection (observer, observed) for vector store upserts
+    collection_embeddings: dict[
+        tuple[str, str], list[tuple[models.Document, list[float]]]
+    ] = {}
+
+    # Check if pgvector is being used (primary or secondary)
+    # If so, write embeddings to ORM since pgvector relies on postgres
+    pgvector_in_use = (
+        settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector"
+        or settings.VECTOR_STORE.SECONDARY_TYPE == "pgvector"
+    )
+
     for obs, embedding in zip(observations, embeddings, strict=True):
-        honcho_documents.append(
-            models.Document(
+        if pgvector_in_use:
+            # pgvector in use: write embedding to ORM (postgres)
+            doc = models.Document(
                 workspace_name=workspace_name,
                 observer=obs.observer_id,
                 observed=obs.observed_id,
@@ -367,10 +645,29 @@ async def create_observations(
                 level="explicit",  # Manually created observations are always explicit
                 times_derived=1,
                 internal_metadata={},  # No message_ids since not derived from messages
+                session_name=obs.session_id,
                 embedding=embedding,
+            )
+        else:
+            # pgvector not in use: don't write embedding to postgres
+            doc = models.Document(
+                workspace_name=workspace_name,
+                observer=obs.observer_id,
+                observed=obs.observed_id,
+                content=obs.content,
+                level="explicit",  # Manually created observations are always explicit
+                times_derived=1,
+                internal_metadata={},  # No message_ids since not derived from messages
                 session_name=obs.session_id,
             )
-        )
+        doc.sync_state = "pending"
+        honcho_documents.append(doc)
+
+        # Track embedding for vector store (grouped by collection)
+        collection_key = (obs.observer_id, obs.observed_id)
+        if collection_key not in collection_embeddings:
+            collection_embeddings[collection_key] = []
+        collection_embeddings[collection_key].append((doc, embedding))
 
     try:
         db.add_all(honcho_documents)
@@ -378,6 +675,83 @@ async def create_observations(
         # Refresh all documents to get generated IDs and timestamps
         for doc in honcho_documents:
             await db.refresh(doc)
+
+        # Store embeddings in vector store after documents are committed (IDs now available)
+        vector_store = get_vector_store()
+        for (observer, observed), docs_with_embeddings in collection_embeddings.items():
+            namespace = vector_store.get_vector_namespace(
+                "document",
+                workspace_name,
+                observer,
+                observed,
+            )
+
+            # Build vector records with metadata for filtering
+            vector_records: list[VectorRecord] = []
+            doc_ids: list[str] = []
+            for doc, embedding in docs_with_embeddings:
+                doc_ids.append(doc.id)
+                vector_records.append(
+                    VectorRecord(
+                        id=doc.id,
+                        embedding=embedding,
+                        metadata={
+                            "workspace_name": workspace_name,
+                            "observer": observer,
+                            "observed": observed,
+                            "session_name": doc.session_name,
+                            "level": doc.level,
+                        },
+                    )
+                )
+
+            # Upsert to vector store with retry and update sync state
+            try:
+                result = await upsert_with_retry(
+                    vector_store, namespace, vector_records
+                )
+                if result is not None and result.secondary_ok is False:
+                    # Partial success: primary has data but secondary doesn't
+                    logger.warning(
+                        f"Partial sync for namespace {namespace}: {result.secondary_error}"
+                    )
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+                else:
+                    # Success: both primary and secondary stores have the data
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_state="synced",
+                            last_sync_at=func.now(),
+                            sync_attempts=0,
+                        )
+                    )
+                    await db.commit()
+
+            except Exception as e:
+                # Total failure: primary write failed after retries
+                logger.error(
+                    f"Failed to upsert vectors for {namespace} after retries: {e}"
+                )
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_attempts=models.Document.sync_attempts + 1,
+                        last_sync_at=func.now(),
+                    )
+                )
+                await db.commit()
+
     except IntegrityError as e:
         await db.rollback()
         raise ValidationException(
@@ -446,8 +820,25 @@ async def is_rejected_duplicate(
         logger.warning(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
-        await db.delete(existing_doc)
-        await db.flush()  # Flush to make deletion visible in this transaction
+        vector_store = get_vector_store()
+        namespace = vector_store.get_vector_namespace(
+            "document",
+            workspace_name,
+            observer,
+            observed,
+        )
+        vector_deleted = False
+        try:
+            await vector_store.delete_many(namespace, [existing_doc.id])
+            vector_deleted = True
+        except Exception:
+            existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+            await db.flush()
+
+        if vector_deleted:
+            await db.delete(existing_doc)
+            await db.flush()  # Flush to make deletion visible in this transaction
+
         return False  # Don't reject the new document
 
     # Existing document has more information, reject the new one
@@ -455,3 +846,84 @@ async def is_rejected_duplicate(
         f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
     )
     return True
+
+
+async def cleanup_soft_deleted_documents(
+    db: AsyncSession,
+    vector_store: VectorStore,
+    batch_size: int = 100,
+    older_than_minutes: int = 5,
+) -> int:
+    """
+    Cleanup soft-deleted documents by removing their vectors and database records.
+
+    This function implements a two-phase cleanup process for documents that have been
+    soft-deleted (deleted_at is not NULL)
+
+    Args:
+        db: Database session for executing queries
+        vector_store: Vector store instance for deleting vectors
+        batch_size: Maximum number of documents to process per call (default 100)
+        older_than_minutes: Only process documents soft-deleted more than this many
+            minutes ago (default 5).
+
+    Returns:
+        Count of documents cleaned up (only those where vector deletion succeeded).
+    """
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=older_than_minutes
+    )
+
+    # Find soft-deleted documents ready for cleanup
+    # Use FOR UPDATE SKIP LOCKED to prevent multiple deriver instances from
+    # processing the same documents simultaneously
+    stmt = (
+        select(models.Document)
+        .where(models.Document.deleted_at.is_not(None))
+        .where(models.Document.deleted_at < cutoff)
+        .limit(batch_size)
+        .with_for_update(skip_locked=True)
+    )
+    result = await db.execute(stmt)
+    documents = list(result.scalars().all())
+
+    if not documents:
+        return 0
+
+    # Group by namespace for batch vector deletion
+    by_namespace: dict[str, list[str]] = {}
+    for doc in documents:
+        namespace = vector_store.get_vector_namespace(
+            "document",
+            doc.workspace_name,
+            doc.observer,
+            doc.observed,
+        )
+        by_namespace.setdefault(namespace, []).append(doc.id)
+
+    # Delete from vector store (per namespace) and track successful deletions
+    successfully_deleted_ids: set[str] = set()
+    for namespace, ids in by_namespace.items():
+        try:
+            await vector_store.delete_many(namespace, ids)
+            # Only add to successfully_deleted_ids if vector deletion succeeded
+            successfully_deleted_ids.update(ids)
+        except Exception as e:
+            # Log but continue - vectors may already be deleted or namespace may not exist
+            logger.warning(f"Failed to delete vectors from {namespace}: {e}")
+
+    # Only hard delete documents where vector deletion succeeded
+    if successfully_deleted_ids:
+        await db.execute(
+            delete(models.Document).where(
+                models.Document.id.in_(successfully_deleted_ids)
+            )
+        )
+        await db.commit()
+        logger.debug(
+            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+        )
+        return len(successfully_deleted_ids)
+
+    # No documents were successfully deleted from vector store
+    return 0

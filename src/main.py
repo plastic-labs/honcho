@@ -125,6 +125,10 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        # Import here to avoid circular import at module load time
+        from src.vector_store import close_vector_store
+
+        await close_vector_store()
         await close_cache()
         await engine.dispose()
 

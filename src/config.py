@@ -67,6 +67,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
         "DREAM": "dream",
+        "VECTOR_STORE": "vector_store",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -356,6 +357,52 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
 
 
+class VectorStoreSettings(HonchoSettings):
+    """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
+
+    model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
+
+    # Primary vector store type
+    PRIMARY_TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+
+    # Secondary vector store type (optional)
+    # When set, enables:
+    # - Dual-write: writes go to both primary and secondary
+    # - Fallback read: reads try primary first, fall back to secondary if empty
+    SECONDARY_TYPE: Literal["pgvector", "turbopuffer", "lancedb"] | None = None
+
+    # Global namespace prefix for all vector namespaces
+    # Namespaces follow the pattern:
+    # - Documents: {NAMESPACE}.{workspace}.{observer}.{observed}
+    # - Messages: {NAMESPACE}.{workspace}.messages
+    NAMESPACE: str = "honcho"
+
+    DIMENSIONS: Annotated[
+        int,
+        Field(
+            default=1536,
+            gt=0,
+        ),
+    ] = 1536
+
+    # Turbopuffer-specific settings
+    TURBOPUFFER_API_KEY: str | None = None
+    TURBOPUFFER_REGION: str | None = None
+
+    # LanceDB-specific settings (local embedded mode)
+    LANCEDB_PATH: str = "./lancedb_data"
+
+    @model_validator(mode="after")
+    def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
+        if (
+            self.PRIMARY_TYPE == "turbopuffer" or self.SECONDARY_TYPE == "turbopuffer"
+        ) and not self.TURBOPUFFER_API_KEY:
+            raise ValueError(
+                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when PRIMARY_TYPE or SECONDARY_TYPE is 'turbopuffer'"
+            )
+        return self
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -397,6 +444,7 @@ class AppSettings(HonchoSettings):
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
+    VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
@@ -409,13 +457,17 @@ class AppSettings(HonchoSettings):
     def propagate_namespace(self) -> "AppSettings":
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
-        After this validator runs, CACHE.NAMESPACE and METRICS.NAMESPACE are guaranteed
-        to exist.
+        After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE, and
+        VECTOR_STORE.NAMESPACE are guaranteed to exist. Explicitly provided
+        nested namespaces are preserved.
         """
-        if self.CACHE.NAMESPACE is None:
+        if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
-        if self.METRICS.NAMESPACE is None:
+        if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
+            self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+
         return self
 
 

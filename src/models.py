@@ -21,12 +21,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.orm.properties import MappedColumn
+from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
-from src.utils.types import DocumentLevel, TaskType
+from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
 
@@ -279,7 +278,7 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -290,6 +289,16 @@ class MessageEmbedding(Base):
     peer_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    # Vector sync state tracking
+    sync_state: Mapped[VectorSyncState] = mapped_column(
+        TEXT, nullable=False, server_default="pending", index=True
+    )
+    last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
     )
 
     __table_args__ = (
@@ -371,7 +380,7 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -382,6 +391,21 @@ class Document(Base):
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
     session_name: Mapped[str] = mapped_column(TEXT, index=True)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True, default=None
+    )
+
+    # Vector sync state tracking
+    sync_state: Mapped[VectorSyncState] = mapped_column(
+        TEXT, nullable=False, server_default="pending", index=True
+    )
+    last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
