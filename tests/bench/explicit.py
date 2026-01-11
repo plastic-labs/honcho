@@ -35,19 +35,20 @@ A single-file implementation of the 5-axis evaluation system for explicit deriva
 
 ## Input Format (Trace JSON/JSONL):
 
-The script accepts two formats:
+The script accepts traces in JSON array or JSONL format, with three supported schemas:
 
-1. JSON array:
-[
-  {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}},
-  {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}},
-  ...
-]
+### Format 1: trace.py generator output (recommended)
+{"conversation_id": "...", "peer_id": "...", "input_prompt": "...<messages>...</messages>...", "explicit_derivations": ["obs1", "obs2"], ...}
 
-2. JSONL (one JSON object per line):
+### Format 2: Alternative format with explicit_observations
+{"conversation_id": "...", "peer_id": "...", "input_messages": [{"peer": "user", "content": "..."}], "explicit_observations": [{"content": "obs1", "level": "explicit"}], ...}
+
+### Format 3: Legacy format
 {"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}}
-{"input": {"prompt": "...<messages>...</messages>..."}, "output": {"content": {"explicit": [{"content": "prop1"}, ...]}}}
-...
+
+All formats work with:
+- JSON array: [trace1, trace2, ...]
+- JSONL: one trace per line
 
 ## Output:
 
@@ -1108,6 +1109,31 @@ def load_traces_from_json(path: Path) -> list[dict[str, Any]]:
 
 
 def extract_propositions(trace: dict[str, Any]) -> list[str]:
+    # Try new format first (from trace.py generator)
+    explicit_derivations: Any = trace.get("explicit_derivations")
+    if explicit_derivations is not None:
+        if isinstance(explicit_derivations, list):
+            propositions: list[str] = []
+            for item in explicit_derivations:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(item, str):
+                    propositions.append(item)
+            return propositions
+        return []
+
+    # Try explicit_observations format (alternative format with level field)
+    explicit_observations: Any = trace.get("explicit_observations")
+    if explicit_observations is not None:
+        if isinstance(explicit_observations, list):
+            propositions: list[str] = []
+            for item in explicit_observations:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(item, dict) and "content" in item:
+                    content_val: Any = item["content"]  # pyright: ignore[reportUnknownVariableType]
+                    if isinstance(content_val, str):
+                        propositions.append(content_val)
+            return propositions
+        return []
+
+    # Fall back to old format (output.content.explicit)
     output: Any = trace.get("output", {})
     if not isinstance(output, dict):
         return []
@@ -1127,11 +1153,32 @@ def extract_propositions(trace: dict[str, Any]) -> list[str]:
 
 
 def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
-    input_data: Any = trace.get("input", {})
-    if not isinstance(input_data, dict):
-        return []
-    prompt_raw: Any = input_data.get("prompt", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    prompt: str = str(prompt_raw) if isinstance(prompt_raw, str) else ""
+    # Try direct input_messages array first (alternative format)
+    input_messages: Any = trace.get("input_messages")
+    if input_messages is not None and isinstance(input_messages, list):
+        messages: list[dict[str, Any]] = []
+        for msg in input_messages:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(msg, dict):
+                # Extract speaker and text from various field names
+                speaker = msg.get("peer") or msg.get("speaker") or "user"
+                text = msg.get("content") or msg.get("text") or ""
+                if isinstance(speaker, str) and isinstance(text, str):
+                    messages.append({"speaker": speaker, "text": text})
+        if messages:
+            return messages
+
+    # Try new format (from trace.py generator): trace["input_prompt"]
+    prompt_raw: Any = trace.get("input_prompt")
+    if prompt_raw is not None and isinstance(prompt_raw, str):
+        prompt: str = prompt_raw
+    else:
+        # Fall back to old format: trace["input"]["prompt"]
+        input_data: Any = trace.get("input", {})
+        if not isinstance(input_data, dict):
+            return []
+        prompt_raw = input_data.get("prompt", "")  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        prompt = str(prompt_raw) if isinstance(prompt_raw, str) else ""
+
     messages: list[dict[str, Any]] = []
 
     if "<messages>" in prompt:
@@ -1140,13 +1187,26 @@ def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
             line = line.strip()
             if not line:
                 continue
-            parts = line.split(" ", 3)
-            if len(parts) >= 3:
-                speaker: str = parts[2].rstrip(":")
-                text: str = parts[3] if len(parts) > 3 else ""
-                if "->->" in text:
-                    text = text.split("->->")[0].strip()
-                messages.append({"speaker": speaker, "text": text})
+            # Handle both old format "# speaker: text" and new format "[timestamp] speaker: text"
+            if line.startswith("["):
+                # New format: [timestamp] speaker: text
+                parts = line.split("]", 1)
+                if len(parts) >= 2:
+                    rest = parts[1].strip()
+                    if ":" in rest:
+                        speaker_text = rest.split(":", 1)
+                        speaker = speaker_text[0].strip()
+                        text = speaker_text[1].strip() if len(speaker_text) > 1 else ""
+                        messages.append({"speaker": speaker, "text": text})
+            else:
+                # Old format: # speaker: text ->->
+                parts = line.split(" ", 3)
+                if len(parts) >= 3:
+                    speaker: str = parts[2].rstrip(":")
+                    text: str = parts[3] if len(parts) > 3 else ""
+                    if "->->" in text:
+                        text = text.split("->->")[0].strip()
+                    messages.append({"speaker": speaker, "text": text})
 
     return messages
 
@@ -1163,7 +1223,13 @@ def extract_conversation_id(trace: dict[str, Any], index: int) -> str:
 
 
 def extract_peer_name(trace: dict[str, Any]) -> str:
-    """Extract peer name from trace propositions."""
+    """Extract peer name from trace."""
+    # Try new format first: direct peer_id field (from trace.py generator)
+    peer_id: Any = trace.get("peer_id")
+    if peer_id is not None and isinstance(peer_id, str) and peer_id:
+        return peer_id
+
+    # Fall back to extracting from propositions
     for prop in extract_propositions(trace):
         prop_lower = prop.lower()
         # Pattern: "user's name is Victor" or "User is named Victor"
