@@ -66,12 +66,12 @@ python -m tests.bench.harness --pool-size 4
 
 ```bash
 # Basic usage
-python -m tests.bench.trace_optimize \\
+python -m tests.bench.trace \\
   --input tests/bench/trace_data/input.jsonl \\
   --output tests/bench/trace_data/output.jsonl
 
 # High throughput with parallelization
-python -m tests.bench.trace_optimize \\
+python -m tests.bench.trace \\
   --input tests/bench/trace_data/input.jsonl \\
   --output tests/bench/trace_data/output.jsonl \\
   --concurrency 20 \\
@@ -79,7 +79,7 @@ python -m tests.bench.trace_optimize \\
   --base-api-port 8000
 
 # Process only first N conversations
-python -m tests.bench.trace_optimize \\
+python -m tests.bench.trace \\
   --input tests/bench/trace_data/input.jsonl \\
   --output tests/bench/trace_data/output.jsonl \\
   --limit 1000
