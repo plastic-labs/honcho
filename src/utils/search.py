@@ -17,7 +17,7 @@ from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.models import session_peers_table
 from src.utils.filter import apply_filter
-from src.vector_store import get_vector_store
+from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
 
@@ -91,9 +91,10 @@ async def _semantic_search(
             f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
         ) from e
 
-    # If pgvector is primary, query Postgres directly with similarity + filters
-    # This avoids duplicate fetches from the same database
-    if settings.EMBED_MESSAGES and settings.VECTOR_STORE.PRIMARY_TYPE == "pgvector":
+    # Query Postgres / pgvector directly
+    if settings.EMBED_MESSAGES and (
+        settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
+    ):
         # Join message_embeddings with messages to get full message objects
         distance_expr = models.MessageEmbedding.embedding.cosine_distance(
             embedding_query
@@ -124,9 +125,12 @@ async def _semantic_search(
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
-    # FALLBACK: Use vector store abstraction for external stores (Turbopuffer, LanceDB)
-    vector_store = get_vector_store()
-    namespace = vector_store.get_vector_namespace("message", workspace_name)
+    # FALLBACK: Use external vector store (Turbopuffer, LanceDB)
+    external_vector_store = get_external_vector_store()
+    if external_vector_store is None:
+        return []
+
+    namespace = external_vector_store.get_vector_namespace("message", workspace_name)
 
     # Build vector store filters from the provided filters
     vector_filters: dict[str, Any] = {}
@@ -137,9 +141,9 @@ async def _semantic_search(
         if "peer_id" in filters:
             vector_filters["peer_name"] = filters["peer_id"]
 
-    # Query vector store for similar message embeddings
+    # Query external vector store for similar message embeddings
     # Since all filters are applied at the vector store level, we don't need to oversample
-    vector_results = await vector_store.query(
+    vector_results = await external_vector_store.query(
         namespace,
         embedding_query,
         top_k=limit,

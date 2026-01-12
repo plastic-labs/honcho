@@ -71,7 +71,7 @@ class TurbopufferVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return VectorUpsertResult(primary_ok=True)
+            return VectorUpsertResult(ok=True)
 
         ns = self._get_namespace(namespace)
 
@@ -89,7 +89,7 @@ class TurbopufferVectorStore(VectorStore):
                 upsert_rows=rows,
                 distance_metric=DISTANCE_METRIC,
             )
-            return VectorUpsertResult(primary_ok=True)
+            return VectorUpsertResult(ok=True)
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"

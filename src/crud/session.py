@@ -18,7 +18,7 @@ from src.exceptions import (
     ResourceNotFoundException,
 )
 from src.utils.filter import apply_filter
-from src.vector_store import get_vector_store
+from src.vector_store import get_external_vector_store
 
 from .peer import get_or_create_peers, get_peer
 from .workspace import get_or_create_workspace
@@ -430,9 +430,10 @@ async def delete_session(
             )
         )
         embeddings = list(embedding_result.scalars().all())
-        vector_store = get_vector_store()
+        external_vector_store = get_external_vector_store()
 
-        if embeddings:
+        # Only delete from external vector store if one exists
+        if external_vector_store is not None and embeddings:
             # Compute chunk_index for each embedding based on message_id ordering
             message_chunks: dict[str, list[models.MessageEmbedding]] = {}
             for emb in embeddings:
@@ -445,10 +446,12 @@ async def delete_session(
                 for chunk_idx, chunk in enumerate(chunks):
                     vector_ids.append(f"{chunk.message_id}_{chunk_idx}")
 
-            # Try to delete from vector store (best effort)
+            # Try to delete from external vector store (best effort)
             try:
-                namespace = vector_store.get_vector_namespace("message", workspace_name)
-                await vector_store.delete_many(namespace, vector_ids)
+                namespace = external_vector_store.get_vector_namespace(
+                    "message", workspace_name
+                )
+                await external_vector_store.delete_many(namespace, vector_ids)
                 logger.debug(
                     f"Deleted {len(vector_ids)} message vectors for session {session_name}"
                 )
@@ -483,11 +486,12 @@ async def delete_session(
         )
         documents = doc_result.all()
 
-        if documents:
+        # Only delete from external vector store if one exists
+        if external_vector_store is not None and documents:
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
-                namespace = vector_store.get_vector_namespace(
+                namespace = external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     doc.observer,
@@ -495,10 +499,10 @@ async def delete_session(
                 )
                 docs_by_namespace.setdefault(namespace, []).append(doc.id)
 
-            # Try to delete from vector store (best effort, per namespace)
+            # Try to delete from external vector store (best effort, per namespace)
             for namespace, doc_ids in docs_by_namespace.items():
                 try:
-                    await vector_store.delete_many(namespace, doc_ids)
+                    await external_vector_store.delete_many(namespace, doc_ids)
                     logger.debug(
                         f"Deleted {len(doc_ids)} document vectors from {namespace}"
                     )

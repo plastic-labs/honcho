@@ -150,7 +150,7 @@ class LanceDBVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return VectorUpsertResult(primary_ok=True)
+            return VectorUpsertResult(ok=True)
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
@@ -165,7 +165,7 @@ class LanceDBVectorStore(VectorStore):
             )
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
-            return VectorUpsertResult(primary_ok=True)
+            return VectorUpsertResult(ok=True)
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"

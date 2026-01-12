@@ -144,8 +144,10 @@ DEFAULT_LOCK_TTL_SECONDS = 5
 
 # Vector store settings
 [vector_store]
-PRIMARY_TYPE = "pgvector"
-# SECONDARY_TYPE = "lancedb"
+# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+TYPE = "pgvector"
+# Migration flag: set to true when migration from pgvector is complete
+MIGRATED = false
 NAMESPACE = "honcho"
 DIMENSIONS = 1536
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"

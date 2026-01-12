@@ -362,14 +362,10 @@ class VectorStoreSettings(HonchoSettings):
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
-    # Primary vector store type
-    PRIMARY_TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+    # Vector store type to use
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
 
-    # Secondary vector store type (optional)
-    # When set, enables:
-    # - Dual-write: writes go to both primary and secondary
-    # - Fallback read: reads try primary first, fall back to secondary if empty
-    SECONDARY_TYPE: Literal["pgvector", "turbopuffer", "lancedb"] | None = None
+    MIGRATED: bool = False
 
     # Global namespace prefix for all vector namespaces
     # Namespaces follow the pattern:
@@ -394,11 +390,9 @@ class VectorStoreSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
-        if (
-            self.PRIMARY_TYPE == "turbopuffer" or self.SECONDARY_TYPE == "turbopuffer"
-        ) and not self.TURBOPUFFER_API_KEY:
+        if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
-                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when PRIMARY_TYPE or SECONDARY_TYPE is 'turbopuffer'"
+                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
             )
         return self
 

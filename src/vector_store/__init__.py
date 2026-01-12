@@ -37,12 +37,9 @@ class VectorUpsertResult(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
         frozen=True,
-        arbitrary_types_allowed=True,
     )
 
-    primary_ok: bool
-    secondary_ok: bool | None = None
-    secondary_error: Exception | None = None
+    ok: bool
 
 
 class VectorStore(ABC):
@@ -173,9 +170,7 @@ class VectorStore(ABC):
 
 
 # Import implementations after base classes are defined to avoid circular imports
-from src.vector_store.composite import CompositeVectorStore  # noqa: E402
 from src.vector_store.lancedb import LanceDBVectorStore  # noqa: E402
-from src.vector_store.pgvector import PgVectorStore  # noqa: E402
 from src.vector_store.turbopuffer import TurbopufferVectorStore  # noqa: E402
 from src.vector_store.utils import upsert_with_retry  # noqa: E402
 
@@ -186,68 +181,46 @@ def _create_store_by_type(store_type: str) -> VectorStore:
         return TurbopufferVectorStore()
     elif store_type == "lancedb":
         return LanceDBVectorStore()
-    elif store_type == "pgvector":
-        return PgVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
 
 
-def _create_vector_store() -> VectorStore:
-    """
-    Create a new vector store instance based on configuration.
-
-    If SECONDARY_TYPE is set, returns a CompositeVectorStore that:
-    - Writes to both primary and secondary stores
-    - Reads from primary only, falls back to secondary on failure
-
-    Returns:
-        The vector store instance based on configuration.
-
-    Raises:
-        ValueError: If the configured vector store type is invalid.
-    """
-    primary = _create_store_by_type(settings.VECTOR_STORE.PRIMARY_TYPE)
-
-    if settings.VECTOR_STORE.SECONDARY_TYPE:
-        secondary = _create_store_by_type(settings.VECTOR_STORE.SECONDARY_TYPE)
-        return CompositeVectorStore(primary=primary, secondary=secondary)
-
-    return primary
-
-
 @cache
-def get_vector_store() -> VectorStore:
+def get_external_vector_store() -> VectorStore | None:
     """
-    Get the configured vector store instance (singleton).
+    Get the configured external vector store instance (singleton).
 
-    Uses functools.cache to ensure only one instance is created per process.
-    This is asyncio-safe since there are no await points in the creation path.
+    Returns None if TYPE='pgvector' since pgvector operations happen via ORM directly.
+    External vector stores include Turbopuffer and LanceDB.
 
     Returns:
-        The vector store instance based on configuration.
+        The external vector store instance, or None if using pgvector (ORM handles it).
 
     Raises:
         ValueError: If the configured vector store type is invalid.
     """
-    return _create_vector_store()
+    if settings.VECTOR_STORE.TYPE == "pgvector":
+        return None
+    return _create_store_by_type(settings.VECTOR_STORE.TYPE)
 
 
-async def close_vector_store() -> None:
+async def close_external_vector_store() -> None:
     """
-    Close the vector store and release resources.
+    Close the external vector store and release resources.
 
     Call this during application shutdown to cleanly close connections.
-    After calling this, you must call get_vector_store.cache_clear() if you
+    After calling this, you must call get_external_vector_store.cache_clear() if you
     want to create a new instance.
     """
     # Check if an instance was ever created
     if (
-        get_vector_store.cache_info().hits > 0
-        or get_vector_store.cache_info().misses > 0
+        get_external_vector_store.cache_info().hits > 0
+        or get_external_vector_store.cache_info().misses > 0
     ):
-        store = get_vector_store()
-        await store.close()
-        get_vector_store.cache_clear()
+        store = get_external_vector_store()
+        if store is not None:
+            await store.close()
+        get_external_vector_store.cache_clear()
 
 
 __all__ = [
@@ -255,7 +228,7 @@ __all__ = [
     "VectorRecord",
     "VectorQueryResult",
     "VectorUpsertResult",
-    "get_vector_store",
-    "close_vector_store",
+    "get_external_vector_store",
+    "close_external_vector_store",
     "upsert_with_retry",
 ]

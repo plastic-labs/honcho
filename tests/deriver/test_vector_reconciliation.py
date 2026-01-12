@@ -80,7 +80,7 @@ class TestStateTransitions:
             return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
         )
         mock_vector_store.upsert_many = AsyncMock(
-            return_value=VectorUpsertResult(primary_ok=True, secondary_ok=True)
+            return_value=VectorUpsertResult(ok=True)
         )
 
         # Run sync
@@ -136,23 +136,19 @@ class TestStateTransitions:
         await db_session.commit()
         await db_session.refresh(doc)
 
-        # Mock vector store to have partial failure (secondary fails)
+        # Mock vector store to fail with exception
         mock_vector_store = MagicMock(spec=VectorStore)
         mock_vector_store.get_vector_namespace = MagicMock(
             return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
         )
         mock_vector_store.upsert_many = AsyncMock(
-            return_value=VectorUpsertResult(
-                primary_ok=True,
-                secondary_ok=False,
-                secondary_error=Exception("Secondary failed"),
-            )
+            side_effect=Exception("Vector store failed")
         )
 
         # Run sync
         synced, failed = await _sync_documents(db_session, [doc], mock_vector_store)
 
-        # Verify partial failure recorded
+        # Verify failure recorded
         assert synced == 0
         assert failed == 1
 
@@ -201,15 +197,13 @@ class TestStateTransitions:
         await db_session.commit()
         await db_session.refresh(doc)
 
-        # Mock vector store to fail
+        # Mock vector store to fail with exception
         mock_vector_store = MagicMock(spec=VectorStore)
         mock_vector_store.get_vector_namespace = MagicMock(
             return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
         )
         mock_vector_store.upsert_many = AsyncMock(
-            return_value=VectorUpsertResult(
-                primary_ok=True, secondary_ok=False, secondary_error=Exception("Failed")
-            )
+            side_effect=Exception("Vector store failed")
         )
 
         # Run sync - this should be the final attempt
@@ -316,7 +310,7 @@ class TestBatchProcessing:
             if namespace not in namespace_calls:
                 namespace_calls[namespace] = []
             namespace_calls[namespace].extend(vectors)
-            return VectorUpsertResult(primary_ok=True, secondary_ok=True)
+            return VectorUpsertResult(ok=True)
 
         mock_vector_store.get_vector_namespace = mock_get_namespace
         mock_vector_store.upsert_many = mock_upsert
@@ -444,7 +438,7 @@ class TestReEmbedding:
                 return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
             )
             mock_vector_store.upsert_many = AsyncMock(
-                return_value=VectorUpsertResult(primary_ok=True, secondary_ok=True)
+                return_value=VectorUpsertResult(ok=True)
             )
 
             # Run sync
@@ -518,7 +512,7 @@ class TestReEmbedding:
                 return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
             )
             mock_vector_store.upsert_many = AsyncMock(
-                return_value=VectorUpsertResult(primary_ok=True, secondary_ok=True)
+                return_value=VectorUpsertResult(ok=True)
             )
 
             # Run sync
@@ -792,7 +786,7 @@ class TestEndToEndReconciliation:
         # For now, we verify the function signature and return type
         with (
             patch("src.deriver.vector_reconciliation.tracked_db") as mock_tracked_db,
-            patch("src.deriver.vector_reconciliation.get_vector_store"),
+            patch("src.deriver.vector_reconciliation.get_external_vector_store"),
             patch(
                 "src.deriver.vector_reconciliation._get_documents_needing_sync"
             ) as mock_get_docs,

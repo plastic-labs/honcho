@@ -393,7 +393,7 @@ def mock_vector_store():
             vector_storage[namespace] = {}
         for vector in vectors:
             vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
-        return VectorUpsertResult(primary_ok=True)
+        return VectorUpsertResult(ok=True)
 
     async def mock_query(
         namespace: str, embedding: list[float], **kwargs: Any
@@ -423,10 +423,10 @@ def mock_vector_store():
     async def mock_delete_namespace(namespace: str) -> None:
         vector_storage.pop(namespace, None)
 
-    # Clear the cache on get_vector_store before patching
-    from src.vector_store import get_vector_store
+    # Clear the cache on get_external_vector_store before patching
+    from src.vector_store import get_external_vector_store
 
-    get_vector_store.cache_clear()  # type: ignore
+    get_external_vector_store.cache_clear()  # type: ignore
 
     # Create the mock vector store
     mock_vs = MagicMock()
@@ -454,19 +454,20 @@ def mock_vector_store():
     mock_vs.get_vector_namespace = mock_get_vector_namespace
 
     with (
-        patch("src.crud.document.get_vector_store", return_value=mock_vs),
-        patch("src.crud.workspace.get_vector_store", return_value=mock_vs),
-        patch("src.crud.session.get_vector_store", return_value=mock_vs),
-        patch("src.crud.message.get_vector_store", return_value=mock_vs),
+        patch("src.crud.document.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.workspace.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.session.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.message.get_external_vector_store", return_value=mock_vs),
         patch(
-            "src.deriver.vector_reconciliation.get_vector_store", return_value=mock_vs
+            "src.deriver.vector_reconciliation.get_external_vector_store",
+            return_value=mock_vs,
         ),
-        patch("src.utils.search.get_vector_store", return_value=mock_vs),
+        patch("src.utils.search.get_external_vector_store", return_value=mock_vs),
     ):
         yield mock_vs
 
         # Clear cache after test as well for cleanliness
-        get_vector_store.cache_clear()  # type: ignore
+        get_external_vector_store.cache_clear()  # type: ignore
 
 
 @pytest.fixture(autouse=True)
