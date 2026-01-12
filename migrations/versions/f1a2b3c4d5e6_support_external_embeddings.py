@@ -182,13 +182,6 @@ def downgrade() -> None:
     """Remove deleted_at columns and revert embedding columns."""
     inspector = sa.inspect(op.get_bind())
 
-    # Remove sync state columns from message_embeddings
-    if column_exists("message_embeddings", "sync_attempts", inspector):
-        op.drop_column("message_embeddings", "sync_attempts", schema=schema)
-
-    if column_exists("message_embeddings", "last_sync_at", inspector):
-        op.drop_column("message_embeddings", "last_sync_at", schema=schema)
-
     if column_exists("message_embeddings", "sync_state", inspector):
         # Drop composite index first
         op.drop_index(
@@ -201,14 +194,15 @@ def downgrade() -> None:
             table_name="message_embeddings",
             schema=schema,
         )
+
+    if column_exists("message_embeddings", "sync_state", inspector):
         op.drop_column("message_embeddings", "sync_state", schema=schema)
 
-    # Remove sync state columns from documents
-    if column_exists("documents", "sync_attempts", inspector):
-        op.drop_column("documents", "sync_attempts", schema=schema)
+    if column_exists("message_embeddings", "sync_attempts", inspector):
+        op.drop_column("message_embeddings", "sync_attempts", schema=schema)
 
-    if column_exists("documents", "last_sync_at", inspector):
-        op.drop_column("documents", "last_sync_at", schema=schema)
+    if column_exists("message_embeddings", "last_sync_at", inspector):
+        op.drop_column("message_embeddings", "last_sync_at", schema=schema)
 
     if column_exists("documents", "sync_state", inspector):
         # Drop composite index first
@@ -218,7 +212,16 @@ def downgrade() -> None:
             schema=schema,
         )
         op.drop_index("ix_documents_sync_state", table_name="documents", schema=schema)
+
+    if column_exists("documents", "sync_state", inspector):
         op.drop_column("documents", "sync_state", schema=schema)
+
+    # Remove sync state columns from documents
+    if column_exists("documents", "sync_attempts", inspector):
+        op.drop_column("documents", "sync_attempts", schema=schema)
+
+    if column_exists("documents", "last_sync_at", inspector):
+        op.drop_column("documents", "last_sync_at", schema=schema)
 
     # Remove deleted_at column and index from documents
     if column_exists("documents", "deleted_at", inspector):
