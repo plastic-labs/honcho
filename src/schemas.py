@@ -134,10 +134,6 @@ class MessageConfiguration(BaseModel):
         default=None,
         description="Configuration for reasoning functionality.",
     )
-    peer_card: PeerCardConfiguration | None = Field(
-        default=None,
-        description="Configuration for peer card functionality. If reasoning is disabled, peer cards will also be disabled and these settings will be ignored.",
-    )
 
 
 class ResolvedReasoningConfiguration(BaseModel):

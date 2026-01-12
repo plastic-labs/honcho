@@ -197,7 +197,7 @@ class ConclusionScope:
             ],
         )
 
-    def representation(
+    def get_representation(
         self,
         search_query: str | None = None,
         search_top_k: int | None = None,

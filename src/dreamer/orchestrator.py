@@ -17,10 +17,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import crud
 from src.config import settings
 from src.dreamer.specialists import SPECIALISTS
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SpecialistExecutionError, SurprisalError
+from src.utils.config_helpers import get_configuration
 from src.utils.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -79,6 +81,13 @@ async def run_dream(
     logger.info(
         f"[{run_id}] Starting dream cycle for {workspace_name}/{observer}/{observed}"
     )
+
+    session = await crud.get_session(
+        db, workspace_name=workspace_name, session_name=session_name
+    )
+    workspace = await crud.get_workspace(db, workspace_name=workspace_name)
+
+    configuration = get_configuration(None, session, workspace)
 
     # Phase 0: Surprisal-based sampling (if enabled)
     probing_questions = PROBING_QUESTIONS  # Default
@@ -149,6 +158,7 @@ async def run_dream(
             observed=observed,
             session_name=session_name,
             probing_questions=probing_questions,
+            configuration=configuration,
         )
         logger.info(f"[{run_id}] Deduction completed: {deduction_result[:200]}...")
         accumulate_metric(task_name, "deduction_result", deduction_result, "blob")
@@ -167,6 +177,7 @@ async def run_dream(
             observed=observed,
             session_name=session_name,
             probing_questions=probing_questions,
+            configuration=configuration,
         )
         logger.info(f"[{run_id}] Induction completed: {induction_result[:200]}...")
         accumulate_metric(task_name, "induction_result", induction_result, "blob")

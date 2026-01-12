@@ -200,7 +200,9 @@ class DreamScheduler:
     ) -> None:
         """Execute the dream by enqueueing it and updating collection metadata."""
         # Import here to avoid circular dependency
+        from src import crud
         from src.deriver.enqueue import enqueue_dream
+        from src.utils.config_helpers import get_configuration
 
         # Find the most recent session for this observer/observed pair
         async with tracked_db("dream_session_lookup") as db:
@@ -216,11 +218,24 @@ class DreamScheduler:
             )
             session_name = await db.scalar(stmt)
 
-        if not session_name:
-            logger.warning(
-                f"No documents found for {workspace_name}/{observer}/{observed}, skipping dream"
+            if not session_name:
+                logger.warning(
+                    f"No documents found for {workspace_name}/{observer}/{observed}, skipping dream"
+                )
+                return
+
+            session = await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
             )
-            return
+            workspace = await crud.get_workspace(db, workspace_name=workspace_name)
+
+            configuration = get_configuration(None, session, workspace)
+
+            if not configuration.dream.enabled:
+                logger.info(
+                    f"Dreams disabled for {workspace_name}/{session_name}, skipping dream"
+                )
+                return
 
         await enqueue_dream(
             workspace_name,
