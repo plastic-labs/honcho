@@ -94,7 +94,7 @@ class ConclusionScope:
             session: Optional session (ID string or Session object) to filter by
 
         Returns:
-            List of Conclusion objects
+            Paginated response containing Conclusion objects
         """
         resolved_session_id = (
             None
@@ -311,7 +311,7 @@ class AsyncConclusionScope:
             session: Optional session (ID string or AsyncSession object) to filter by
 
         Returns:
-            List of Conclusion objects
+            Paginated response containing Conclusion objects
         """
         resolved_session_id = (
             None

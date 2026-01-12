@@ -73,6 +73,8 @@ async def run_dream(
         observed: Observed peer name
         session_name: Session identifier
     """
+    if not settings.DREAM.ENABLED:
+        return
 
     run_id = str(uuid.uuid4())[:8]
     task_name = f"dream_orchestrator_{run_id}"
@@ -88,6 +90,11 @@ async def run_dream(
     workspace = await crud.get_workspace(db, workspace_name=workspace_name)
 
     configuration = get_configuration(None, session, workspace)
+    if not configuration.dream.enabled:
+        logger.info(
+            f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping dream"
+        )
+        return
 
     # Phase 0: Surprisal-based sampling (if enabled)
     probing_questions = PROBING_QUESTIONS  # Default

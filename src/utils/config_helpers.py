@@ -79,7 +79,7 @@ def normalize_configuration_dict(raw: dict[str, Any]) -> dict[str, Any]:
 
 def get_configuration(
     message_configuration: MessageConfiguration | None,
-    session: models.Session,
+    session: models.Session | None,
     workspace: models.Workspace | None = None,
 ) -> ResolvedConfiguration:
     """
@@ -92,8 +92,9 @@ def get_configuration(
     4. Global defaults from settings
 
     Args:
-        session: The session model
-        workspace: Optional workspace model (if not provided, only session and global config are used)
+        message_configuration: Optional message configuration
+        session: Optional session model
+        workspace: Optional workspace model
 
     Returns:
         ResolvedConfiguration
@@ -119,7 +120,8 @@ def get_configuration(
     if workspace is not None:
         deep_update(config_dict, normalize_configuration_dict(workspace.configuration))
 
-    deep_update(config_dict, normalize_configuration_dict(session.configuration))
+    if session is not None:
+        deep_update(config_dict, normalize_configuration_dict(session.configuration))
 
     if message_configuration is not None:
         deep_update(

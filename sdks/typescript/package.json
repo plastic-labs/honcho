@@ -20,7 +20,7 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
-    "@honcho-ai/core": "2.0.0",
+    "@honcho-ai/core": "2.1.0",
     "@types/node": "^24.0.1",
     "zod": "4.0.0"
   },
