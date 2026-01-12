@@ -1,9 +1,6 @@
 {
   "description": "Test that a peer with observe_me=false can still observe others (observe_others=true)",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

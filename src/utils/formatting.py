@@ -2,10 +2,44 @@
 Shared formatting utility functions for both dialectic and deriver modules.
 
 This module contains helper functions for processing observations, formatting context,
-and handling temporal metadata for the reasoning system.
+handling temporal metadata, and string escaping for the reasoning system.
 """
 
 from datetime import datetime, timezone
+
+ILIKE_ESCAPE_CHAR = "\\"
+
+
+def escape_ilike_pattern(text: str) -> str:
+    """
+    Escape SQL ILIKE/LIKE pattern special characters in user-provided text.
+
+    SQL LIKE/ILIKE patterns treat '%' as "match any sequence" and '_' as
+    "match any single character". Without escaping, a user searching for
+    "100%" would match "100" followed by anything, not the literal "100%".
+
+    This function escapes these wildcards so user input is treated literally.
+    The escape character itself (backslash) is also escaped.
+
+    Args:
+        text: User-provided search text that may contain %, _, or backslash
+
+    Returns:
+        Escaped text safe for use in ILIKE patterns. Use with escape='\\' parameter.
+
+    Example:
+        >>> escape_ilike_pattern("100%")
+        '100\\%'
+        >>> escape_ilike_pattern("file_name")
+        'file\\_name'
+        >>> escape_ilike_pattern("path\\to\\file")
+        'path\\\\to\\\\file'
+    """
+    return (
+        text.replace(ILIKE_ESCAPE_CHAR, ILIKE_ESCAPE_CHAR + ILIKE_ESCAPE_CHAR)
+        .replace("%", ILIKE_ESCAPE_CHAR + "%")
+        .replace("_", ILIKE_ESCAPE_CHAR + "_")
+    )
 
 
 def format_datetime_utc(dt: datetime) -> str:

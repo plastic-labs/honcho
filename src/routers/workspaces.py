@@ -128,9 +128,40 @@ async def search_workspace(
 
 
 @router.get(
-    "/{workspace_id}/deriver/status",
-    response_model=schemas.DeriverStatus,
+    "/{workspace_id}/queue/status",
+    response_model=schemas.QueueStatus,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_queue_status(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    observer_id: str | None = Query(
+        None, description="Optional observer ID to filter by"
+    ),
+    sender_id: str | None = Query(None, description="Optional sender ID to filter by"),
+    session_id: str | None = Query(
+        None, description="Optional session ID to filter by"
+    ),
+    db: AsyncSession = db,
+):
+    """Get the processing queue status, optionally scoped to an observer, sender, and/or session."""
+    try:
+        return await crud.get_queue_status(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
+            observer=observer_id,
+            observed=sender_id,
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid request parameters: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get(
+    "/{workspace_id}/deriver/status",
+    response_model=schemas.QueueStatus,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    deprecated=True,
 )
 async def get_deriver_status(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -143,9 +174,9 @@ async def get_deriver_status(
     ),
     db: AsyncSession = db,
 ):
-    """Get the deriver processing status, optionally scoped to an observer, sender, and/or session"""
+    """Deprecated: use /queue/status. Provides identical response payload."""
     try:
-        return await crud.get_deriver_status(
+        return await crud.get_queue_status(
             db,
             workspace_name=workspace_id,
             session_name=session_id,
@@ -202,8 +233,14 @@ async def trigger_dream(
         observed=observed,
         dream_type=dream_type,
         document_count=document_count,
+        session_name=request.session_id,
     )
 
     logger.info(
-        f"Manually triggered dream: {dream_type.value} for {workspace_id}/{observer}/{observed}"
+        "Manually triggered dream: %s for %s/%s/%s (session: %s)",
+        dream_type.value,
+        workspace_id,
+        observer,
+        observed,
+        request.session_id,
     )

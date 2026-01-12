@@ -1,9 +1,6 @@
 {
   "description": "Test that observe_me=false prevents local representation creation even when other peer has observe_others=true",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

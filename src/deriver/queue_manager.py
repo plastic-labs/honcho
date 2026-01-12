@@ -19,10 +19,7 @@ from src import models, prometheus
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
-from src.deriver.consumer import (
-    process_item,
-    process_representation_batch,
-)
+from src.deriver.consumer import process_item, process_representation_batch
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
@@ -453,7 +450,7 @@ class QueueManager:
                                     e,
                                     items_to_process,
                                     work_unit_key,
-                                    "processing representation batch",
+                                    f"processing {work_unit.task_type} batch",
                                 )
 
                         else:
@@ -523,10 +520,6 @@ class QueueManager:
                                     observed=work_unit.observed,
                                 )
                             )
-                        else:
-                            logger.debug(
-                                f"Skipping queue.empty event for webhook work unit {work_unit_key}"
-                            )
                     except Exception:
                         logger.exception("Error triggering queue_empty webhook")
                 else:
@@ -541,7 +534,7 @@ class QueueManager:
         """Get the next queue item to process for a specific work unit."""
         if task_type == "representation":
             raise ValueError(
-                "Representation tasks are not supported for get_next_queue_item"
+                "representation tasks are not supported for get_next_queue_item"
             )
         async with tracked_db("get_next_queue_item") as db:
             # ActiveQueueSession conditions for worker ownership verification
@@ -579,16 +572,21 @@ class QueueManager:
         aqs_id: str,
     ) -> tuple[list[models.Message], list[QueueItem], ResolvedConfiguration | None]:
         """
-        Representation-only: returns a tuple of (messages_context, items_to_process).
+        Batch processing for representation and agent tasks.
+        Returns a tuple of (messages_context, items_to_process, configuration).
         - messages_context: unique Message rows (conversation turns) forming the context window
         - items_to_process: QueueItems for the current work_unit_key within that window
+        - configuration: Resolved configuration for the batch
         """
         if task_type != "representation":
             raise ValueError(
-                "Non-representation tasks are not supported for get_queue_item_batch"
+                f"{task_type} tasks are not supported for get_queue_item_batch"
             )
+
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
         async with tracked_db("get_queue_item_batch") as db:
-            # For representation tasks, get a batch based on token limit.
+            # For batch tasks, get messages based on token limit.
             # Step 1: Parse work_unit_key to get session context and focused sender
             parsed_key = parse_work_unit_key(work_unit_key)
 
@@ -605,10 +603,11 @@ class QueueManager:
 
             # Step 2: Build a single SQL query that:
             # 1. Finds the earliest unprocessed message for this work_unit_key
-            # 2. Gets ALL messages from that point forward (for conversational context)
-            # 3. Tracks cumulative tokens and focused sender position
-            # 4. Returns empty if focused sender is beyond token limit
-            # 5. Otherwise returns messages up to token limit + first focused sender message
+            # 2. Optionally includes the preceding message if from a different peer (for context)
+            # 3. Gets ALL messages from that point forward (for conversational context)
+            # 4. Tracks cumulative tokens and focused sender position
+            # 5. Returns empty if focused sender is beyond token limit
+            # 6. Otherwise returns messages up to token limit + first focused sender message
 
             # Find the minimum message_id with an unprocessed queue item across the session
             min_unprocessed_message_id_subq = (
@@ -625,8 +624,32 @@ class QueueManager:
                 .scalar_subquery()
             )
 
-            # Build CTE with ALL messages starting from the earliest unprocessed message
-            # This includes interleaving messages for conversational context
+            # Find the immediately preceding message ID (the one right before min_unprocessed)
+            immediately_preceding_id_subq = (
+                select(func.max(models.Message.id))
+                .where(models.Message.session_name == parsed_key.session_name)
+                .where(models.Message.workspace_name == parsed_key.workspace_name)
+                .where(models.Message.id < min_unprocessed_message_id_subq)
+                .scalar_subquery()
+            )
+
+            # Only include the preceding message if it's from a different peer than observed
+            # This provides conversational context (e.g., the question that prompted the response)
+            preceding_message_id_subq = (
+                select(models.Message.id)
+                .where(models.Message.id == immediately_preceding_id_subq)
+                .where(models.Message.peer_name != parsed_key.observed)
+                .scalar_subquery()
+            )
+
+            # Determine the effective start: preceding message if it qualifies, else min_unprocessed
+            # We use COALESCE to fall back to min_unprocessed if no preceding message qualifies
+            effective_start_id = func.coalesce(
+                preceding_message_id_subq, min_unprocessed_message_id_subq
+            )
+
+            # Build CTE with ALL messages starting from effective_start_id
+            # This includes the preceding context message (if any) and interleaving messages
             cte = (
                 select(
                     models.Message.id.label("message_id"),
@@ -638,16 +661,13 @@ class QueueManager:
                 )
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
-                .where(models.Message.id >= min_unprocessed_message_id_subq)
+                .where(models.Message.id >= effective_start_id)
                 .order_by(models.Message.id)
                 .cte()
             )
 
             allowed_condition = (
-                (
-                    cte.c.cumulative_token_count
-                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-                )
+                (cte.c.cumulative_token_count <= batch_max_tokens)
                 | (
                     cte.c.message_id == min_unprocessed_message_id_subq
                 )  # always include the first unprocessed message

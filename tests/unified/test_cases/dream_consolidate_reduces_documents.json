@@ -1,9 +1,6 @@
 {
   "description": "Test that manually triggering consolidate dream reduces document count by merging repetitive facts",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    },
     "dream": {
       "enabled": true
     }
@@ -29,23 +26,7 @@
         },
         {
           "peer_id": "user",
-          "content": "I really love the color blue."
-        },
-        {
-          "peer_id": "user",
-          "content": "Blue is my preferred color."
-        },
-        {
-          "peer_id": "user",
           "content": "I have a dog named Max."
-        },
-        {
-          "peer_id": "user",
-          "content": "My dog's name is Max."
-        },
-        {
-          "peer_id": "user",
-          "content": "I own a dog called Max."
         },
         {
           "peer_id": "user",
@@ -53,23 +34,59 @@
         },
         {
           "peer_id": "user",
+          "content": "I'm employed as a software engineer."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_dream_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "I really love the color blue."
+        },
+        {
+          "peer_id": "user",
+          "content": "I own a dog called Max."
+        },
+        {
+          "peer_id": "user",
           "content": "My home is in San Francisco."
         },
         {
           "peer_id": "user",
-          "content": "San Francisco is where I live."
-        },
-        {
-          "peer_id": "user",
           "content": "I work as a software engineer."
-        },
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_dream_test",
+      "messages": [
         {
           "peer_id": "user",
           "content": "My job is software engineering."
         },
         {
           "peer_id": "user",
-          "content": "I'm employed as a software engineer."
+          "content": "Blue is my preferred color."
+        },
+        {
+          "peer_id": "user",
+          "content": "My dog's name is Max."
+        },
+        {
+          "peer_id": "user",
+          "content": "San Francisco is where I live."
         }
       ]
     },
@@ -93,7 +110,7 @@
     {
       "step_type": "trigger_dream",
       "observer": "user",
-      "dream_type": "consolidate"
+      "dream_type": "omni"
     },
     {
       "step_type": "wait",
