@@ -923,7 +923,7 @@ describe('Session', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       })
     })
@@ -947,7 +947,7 @@ describe('Session', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       })
     })
@@ -970,7 +970,7 @@ describe('Session', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       })
     })
@@ -995,7 +995,7 @@ describe('Session', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       })
     })

@@ -491,7 +491,7 @@ class Peer(PeerBase):
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
-        include_most_derived: bool | None = None,
+        include_most_frequent: bool | None = None,
         max_conclusions: int | None = None,
     ) -> str:
         """
@@ -504,7 +504,7 @@ class Peer(PeerBase):
             search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
-            include_most_derived: Whether to include the most derived conclusions
+            include_most_frequent: Whether to include the most frequent conclusions
             max_conclusions: Maximum number of conclusions to include
 
         Returns:
@@ -552,8 +552,8 @@ class Peer(PeerBase):
                 search_max_distance=search_max_distance
                 if search_max_distance is not None
                 else omit,
-                include_most_derived=include_most_derived
-                if include_most_derived is not None
+                include_most_frequent=include_most_frequent
+                if include_most_frequent is not None
                 else omit,
                 max_conclusions=max_conclusions
                 if max_conclusions is not None
@@ -568,7 +568,7 @@ class Peer(PeerBase):
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
-        include_most_derived: bool | None = None,
+        include_most_frequent: bool | None = None,
         max_conclusions: int | None = None,
     ) -> PeerGetContextResponse:
         """
@@ -584,7 +584,7 @@ class Peer(PeerBase):
             search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
-            include_most_derived: Whether to include the most derived conclusions
+            include_most_frequent: Whether to include the most frequent conclusions
             max_conclusions: Maximum number of conclusions to include
 
         Returns:
@@ -623,8 +623,8 @@ class Peer(PeerBase):
             search_max_distance=search_max_distance
             if search_max_distance is not None
             else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
+            include_most_frequent=include_most_frequent
+            if include_most_frequent is not None
             else omit,
             max_conclusions=max_conclusions if max_conclusions is not None else omit,
         )

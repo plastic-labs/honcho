@@ -574,7 +574,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       });
     });
@@ -596,7 +596,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       });
     });
@@ -619,7 +619,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       });
     });
@@ -641,7 +641,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       });
     });
@@ -664,7 +664,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       });
     });
@@ -690,7 +690,7 @@ describe('Peer', () => {
         search_query: 'programming',
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: undefined,
       });
     });
@@ -712,7 +712,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: 10,
       });
     });
@@ -740,7 +740,7 @@ describe('Peer', () => {
         search_query: 'Python programming',
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: 25,
       });
     });
@@ -766,7 +766,7 @@ describe('Peer', () => {
         search_query: 'machine learning',
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: 50,
       });
     });
@@ -788,7 +788,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: 1,
       });
 
@@ -803,7 +803,7 @@ describe('Peer', () => {
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
+        include_most_frequent: undefined,
         max_conclusions: 100,
       });
     });

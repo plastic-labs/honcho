@@ -288,9 +288,9 @@ class PeerRepresentationGet(BaseModel):
         le=1.0,
         description="Only used if `search_query` is provided. Maximum distance to search for semantically relevant conclusions",
     )
-    include_most_derived: bool | None = Field(
+    include_most_frequent: bool | None = Field(
         default=None,
-        description="Only used if `search_query` is provided. Whether to include the most derived conclusions in the representation",
+        description="Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation",
     )
     max_conclusions: int | None = Field(
         default=25,

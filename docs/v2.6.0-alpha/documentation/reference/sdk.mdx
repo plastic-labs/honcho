@@ -366,8 +366,8 @@ context = alice.get_context(
     search_query="work preferences",
     search_top_k=10,
     search_max_distance=0.8,
-    include_most_derived=True,
-    max_observations=50
+    include_most_frequent=True,
+    max_conclusions=50
 )
 ```
 
@@ -385,8 +385,8 @@ const searchedContext = await alice.getContext("bob", {
   searchQuery: "work preferences",
   searchTopK: 10,
   searchMaxDistance: 0.8,
-  includeMostDerived: true,
-  maxObservations: 50
+  includeMostFrequent: true,
+  maxConclusions: 50
 });
 ```
 </CodeGroup>
@@ -455,8 +455,8 @@ context = alice.get_context(
     search_query="work preferences",
     search_top_k=10,
     search_max_distance=0.8,
-    include_most_derived=True,
-    max_observations=50
+    include_most_frequent=True,
+    max_conclusions=50
 )
 ```
 
@@ -474,8 +474,8 @@ const searchedContext = await alice.getContext("bob", {
   searchQuery: "work preferences",
   searchTopK: 10,
   searchMaxDistance: 0.8,
-  includeMostDerived: true,
-  maxObservations: 50
+  includeMostFrequent: true,
+  maxConclusions: 50
 });
 ```
 </CodeGroup>
@@ -626,7 +626,7 @@ context = session.get_context(
     limit_to_session=True,
     search_top_k=10,
     search_max_distance=0.8,
-    include_most_derived=True,
+    include_most_frequent=True,
     max_observations=25
 )
 
@@ -640,7 +640,7 @@ searched_rep = session.get_representation(
     "alice",
     search_query="preferences",
     search_top_k=10,
-    include_most_derived=True
+    include_most_frequent=True
 )
 
 # Upload a file to create messages
@@ -845,8 +845,8 @@ The SessionContext object has the following structure:
 | `limit_to_session` | `bool` | Limit representation to session only |
 | `search_top_k` | `int` | Number of semantic search results (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
-| `include_most_derived` | `bool` | Include most derived observations |
-| `max_observations` | `int` | Max observations to include (1-100) |
+| `include_most_frequent` | `bool` | Include most frequent conclusions |
+| `max_conclusions` | `int` | Max conclusions to include (1-100) |
 
 ## Advanced Usage
 

@@ -485,30 +485,30 @@ def test_get_peer_representation_with_search_max_distance(
         assert "representation" in data
 
 
-def test_get_peer_representation_with_include_most_derived(
+def test_get_peer_representation_with_include_most_frequent(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test peer representation with include_most_derived parameter"""
+    """Test peer representation with include_most_frequent parameter"""
     test_workspace, test_peer = sample_data
 
-    # Test with include_most_derived=True
+    # Test with include_most_frequent=True
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
         json={
             "search_query": "test query",
-            "include_most_derived": True,
+            "include_most_frequent": True,
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
 
-    # Test with include_most_derived=False
+    # Test with include_most_frequent=False
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
         json={
             "search_query": "test query",
-            "include_most_derived": False,
+            "include_most_frequent": False,
         },
     )
     assert response.status_code == 200
@@ -566,7 +566,7 @@ def test_get_peer_representation_with_all_parameters(
             "search_query": "What do I know about this peer?",
             "search_top_k": 15,
             "search_max_distance": 0.75,
-            "include_most_derived": True,
+            "include_most_frequent": True,
             "max_observations": 30,
         },
     )

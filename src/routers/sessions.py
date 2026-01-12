@@ -541,9 +541,9 @@ async def get_session_context(
         le=1.0,
         description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant conclusions",
     ),
-    include_most_derived: bool = Query(
+    include_most_frequent: bool = Query(
         default=False,
-        description="Only used if `last_message` is provided. Whether to include the most derived conclusions in the representation",
+        description="Only used if `last_message` is provided. Whether to include the most frequent conclusions in the representation",
     ),
     max_conclusions: int | None = Query(
         None,
@@ -591,7 +591,7 @@ async def get_session_context(
         session_name=session_id if limit_to_session else None,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
-        include_most_derived=include_most_derived,
+        include_most_derived=include_most_frequent,
         max_observations=max_conclusions,
     )
     card = await _get_peer_card_task(workspace_id, observer=observer, observed=observed)

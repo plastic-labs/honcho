@@ -1230,10 +1230,10 @@ def test_get_session_context_with_search_parameters(
     assert "peer_representation" in data
 
 
-def test_get_session_context_with_include_most_derived(
+def test_get_session_context_with_include_most_frequent(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session context with include_most_derived parameter"""
+    """Test session context with include_most_frequent parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -1243,13 +1243,13 @@ def test_get_session_context_with_include_most_derived(
         json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
-    # Get context with include_most_derived
+    # Get context with include_most_frequent
     response = client.get(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
             "last_message": "Test query",
-            "include_most_derived": True,
+            "include_most_frequent": True,
         },
     )
     assert response.status_code == 200
@@ -1316,7 +1316,7 @@ def test_get_session_context_with_all_representation_params(
             "limit_to_session": True,
             "search_top_k": 10,
             "search_max_distance": 0.9,  # float value (semantic distance 0.0-1.0)
-            "include_most_derived": True,
+            "include_most_frequent": True,
             "max_observations": 15,
             "summary": True,
         },

@@ -231,8 +231,8 @@ Both `get_representation()` and `chat()` support semantic filtering to retrieve 
 | `search_query` | `str` | Semantic query to filter conclusions |
 | `search_top_k` | `int` | Number of results to include (1–100) |
 | `search_max_distance` | `float` | Maximum semantic distance (0.0–1.0) |
-| `include_most_derived` | `bool` | Include most recently derived conclusions |
-| `max_observations` | `int` | Cap on total conclusions returned (1–100) |
+| `include_most_frequent` | `bool` | Include most frequent conclusions |
+| `max_conclusions` | `int` | Cap on total conclusions returned (1–100) |
 
 <CodeGroup>
 ```python Python
@@ -242,7 +242,7 @@ alice_view_billing = session.get_representation(
     target="bob",
     search_query="billing issues",
     search_top_k=10,
-    include_most_derived=True
+    include_most_frequent=True
 )
 ```
 
@@ -251,7 +251,7 @@ const aliceViewBilling = await session.getRepresentation("alice", {
     target: "bob",
     searchQuery: "billing issues",
     searchTopK: 10,
-    includeMostDerived: true
+    includeMostFrequent: true
 });
 ```
 </CodeGroup>

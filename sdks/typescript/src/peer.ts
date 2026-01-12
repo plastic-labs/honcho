@@ -544,8 +544,8 @@ export class Peer {
         search_query: getRepresentationParams.options?.searchQuery,
         search_top_k: getRepresentationParams.options?.searchTopK,
         search_max_distance: getRepresentationParams.options?.searchMaxDistance,
-        include_most_derived:
-          getRepresentationParams.options?.includeMostDerived,
+        include_most_frequent:
+          getRepresentationParams.options?.includeMostFrequent,
         max_conclusions: getRepresentationParams.options?.maxConclusions,
       }
     )
@@ -598,7 +598,7 @@ export class Peer {
         search_query: options?.searchQuery,
         search_top_k: options?.searchTopK,
         search_max_distance: options?.searchMaxDistance,
-        include_most_derived: options?.includeMostDerived,
+        include_most_frequent: options?.includeMostFrequent,
         max_conclusions: options?.maxConclusions,
       }
     )

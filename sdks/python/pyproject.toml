@@ -8,7 +8,7 @@ authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
-    "honcho-core @ https://pkg.stainless.com/s/honcho-python/a4ed5aa9f5ea84ee7864f2c8c9dbdb1bba2dbc5d/honcho_core-1.8.0-py3-none-any.whl",
+    "honcho-core @ https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl",
     "httpx>=0.28.0, <1",
     "pydantic>=2.0.0, <3",
     "typing-extensions>=4.12.0; python_version < \"3.12\"",

@@ -18,9 +18,9 @@ export interface RepresentationOptions {
   searchMaxDistance?: number
 
   /**
-   * Whether to include the most derived conclusions.
+   * Whether to include the most frequent conclusions.
    */
-  includeMostDerived?: boolean
+  includeMostFrequent?: boolean
 
   /**
    * Maximum number of conclusions to include.

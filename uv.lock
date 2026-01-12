@@ -859,7 +859,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", url = "https://pkg.stainless.com/s/honcho-python/a4ed5aa9f5ea84ee7864f2c8c9dbdb1bba2dbc5d/honcho_core-1.8.0-py3-none-any.whl" },
+    { name = "honcho-core", url = "https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -871,7 +871,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 [[package]]
 name = "honcho-core"
 version = "1.8.0"
-source = { url = "https://pkg.stainless.com/s/honcho-python/a4ed5aa9f5ea84ee7864f2c8c9dbdb1bba2dbc5d/honcho_core-1.8.0-py3-none-any.whl" }
+source = { url = "https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -881,7 +881,7 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://pkg.stainless.com/s/honcho-python/a4ed5aa9f5ea84ee7864f2c8c9dbdb1bba2dbc5d/honcho_core-1.8.0-py3-none-any.whl", hash = "sha256:8a05498cdbd5804e219eb86300dd6989051af55b7b373f1f35488f61bdfb2087" },
+    { url = "https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl", hash = "sha256:2684c2dbd4d6479c381028038500b9972bbf3c66cf3f37c404f8cbe4cecfba01" },
 ]
 
 [package.metadata]

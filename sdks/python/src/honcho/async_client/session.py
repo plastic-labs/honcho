@@ -597,9 +597,9 @@ class AsyncSession(SessionBase):
             le=1.0,
             description="Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.",
         ),
-        include_most_derived: bool | None = Field(
+        include_most_frequent: bool | None = Field(
             None,
-            description="Whether to include the most derived conclusions in the representation.",
+            description="Whether to include the most frequent conclusions in the representation.",
         ),
         max_conclusions: int | None = Field(
             None,
@@ -626,7 +626,7 @@ class AsyncSession(SessionBase):
             limit_to_session: Whether to limit the representation to this session only. If True, only conclusions from this session will be included.
             search_top_k: Number of semantically relevant facts to return when searching with `last_user_message`.
             search_max_distance: Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.
-            include_most_derived: Whether to include the most derived conclusions in the representation.
+            include_most_frequent: Whether to include the most frequent conclusions in the representation.
             max_conclusions: Maximum number of conclusions to include in the representation.
 
         Returns:
@@ -669,8 +669,8 @@ class AsyncSession(SessionBase):
             search_max_distance=search_max_distance
             if search_max_distance is not None
             else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
+            include_most_frequent=include_most_frequent
+            if include_most_frequent is not None
             else omit,
             max_conclusions=max_conclusions if max_conclusions is not None else omit,
         )
@@ -873,7 +873,7 @@ class AsyncSession(SessionBase):
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
-        include_most_derived: bool | None = None,
+        include_most_frequent: bool | None = None,
         max_conclusions: int | None = None,
     ) -> str:
         """
@@ -886,7 +886,7 @@ class AsyncSession(SessionBase):
             search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
-            include_most_derived: Whether to include the most derived conclusions
+            include_most_frequent: Whether to include the most frequent conclusions
             max_conclusions: Maximum number of conclusions to include
 
         Returns:
@@ -927,8 +927,8 @@ class AsyncSession(SessionBase):
                 search_max_distance=search_max_distance
                 if search_max_distance is not None
                 else omit,
-                include_most_derived=include_most_derived
-                if include_most_derived is not None
+                include_most_frequent=include_most_frequent
+                if include_most_frequent is not None
                 else omit,
                 max_conclusions=max_conclusions
                 if max_conclusions is not None

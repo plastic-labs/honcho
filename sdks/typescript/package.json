@@ -20,7 +20,7 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
-    "@honcho-ai/core": "https://pkg.stainless.com/s/honcho-node/8e00aeff9dd7fff301f037664f32c16ace55943c/dist.tar.gz",
+    "@honcho-ai/core": "https://pkg.stainless.com/s/honcho-node/dc4ac0ffd48642608da2f99f306f77f7ee5a9d1d/dist.tar.gz",
     "@types/node": "^24.0.1",
     "zod": "4.0.0"
   },

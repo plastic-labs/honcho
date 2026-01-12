@@ -176,7 +176,7 @@ export const RepresentationOptionsSchema = z.object({
     .min(0.0, 'searchMaxDistance must be at least 0.0')
     .max(1.0, 'searchMaxDistance must be at most 1.0')
     .optional(),
-  includeMostDerived: z.boolean().optional(),
+  includeMostFrequent: z.boolean().optional(),
   maxConclusions: z
     .number()
     .int()

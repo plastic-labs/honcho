@@ -308,7 +308,7 @@ export class ConclusionScope {
         search_query: options?.searchQuery,
         search_top_k: options?.searchTopK,
         search_max_distance: options?.searchMaxDistance,
-        include_most_derived: options?.includeMostDerived,
+        include_most_frequent: options?.includeMostFrequent,
         max_conclusions: options?.maxConclusions,
       }
     )

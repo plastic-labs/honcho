@@ -255,8 +255,8 @@ async def get_representation(
             include_semantic_query=options.search_query,
             semantic_search_top_k=options.search_top_k,
             semantic_search_max_distance=options.search_max_distance,
-            include_most_derived=options.include_most_derived
-            if options.include_most_derived is not None
+            include_most_derived=options.include_most_frequent
+            if options.include_most_frequent is not None
             else False,
             max_observations=options.max_conclusions
             if options.max_conclusions is not None
@@ -372,9 +372,9 @@ async def get_peer_context(
         le=1.0,
         description="Only used if `search_query` is provided. Maximum distance for semantically relevant conclusions",
     ),
-    include_most_derived: bool = Query(
+    include_most_frequent: bool = Query(
         default=True,
-        description="Whether to include the most derived conclusions in the representation",
+        description="Whether to include the most frequent conclusions in the representation",
     ),
     max_conclusions: int | None = Query(
         None,
@@ -408,7 +408,7 @@ async def get_peer_context(
             include_semantic_query=search_query,
             semantic_search_top_k=search_top_k,
             semantic_search_max_distance=search_max_distance,
-            include_most_derived=include_most_derived,
+            include_most_derived=include_most_frequent,
             max_observations=max_conclusions
             if max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,

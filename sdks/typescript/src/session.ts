@@ -713,8 +713,8 @@ export class Session {
         search_top_k: contextParams.representationOptions?.searchTopK,
         search_max_distance:
           contextParams.representationOptions?.searchMaxDistance,
-        include_most_derived:
-          contextParams.representationOptions?.includeMostDerived,
+        include_most_frequent:
+          contextParams.representationOptions?.includeMostFrequent,
         max_conclusions: contextParams.representationOptions?.maxConclusions,
       }
     )
@@ -1038,7 +1038,7 @@ export class Session {
       searchQuery?: string
       searchTopK?: number
       searchMaxDistance?: number
-      includeMostDerived?: boolean
+      includeMostFrequent?: boolean
       maxConclusions?: number
     }
   ): Promise<string> {
@@ -1066,8 +1066,8 @@ export class Session {
         search_query: getRepresentationParams.options?.searchQuery,
         search_top_k: getRepresentationParams.options?.searchTopK,
         search_max_distance: getRepresentationParams.options?.searchMaxDistance,
-        include_most_derived:
-          getRepresentationParams.options?.includeMostDerived,
+        include_most_frequent:
+          getRepresentationParams.options?.includeMostFrequent,
         max_conclusions: getRepresentationParams.options?.maxConclusions,
       }
     )
