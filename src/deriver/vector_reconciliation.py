@@ -362,11 +362,23 @@ async def _sync_message_embeddings(
         namespace = vector_store.get_vector_namespace("message", emb.workspace_name)
         by_namespace.setdefault(namespace, []).append(emb)
 
+    # Compute chunk_index for each embedding based on message_id ordering
+    # Group embeddings by message_id and assign chunk_index
+    message_chunks: dict[str, list[models.MessageEmbedding]] = {}
+    for emb in embeddings:
+        message_chunks.setdefault(emb.message_id, []).append(emb)
+
+    # Sort each message's chunks by id and assign chunk_index
+    for chunks in message_chunks.values():
+        chunks.sort(key=lambda e: e.id)
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk._chunk_index = chunk_idx
+
     # Sync each namespace batch
     for namespace, embs in by_namespace.items():
         embs_with_vectors: list[models.MessageEmbedding] = []
         try:
-            # Build vector records
+            # Build vector records with {message_id}_{chunk_index} format
             vector_records: list[VectorRecord] = []
             for emb in embs:
                 embedding = (
@@ -377,9 +389,12 @@ async def _sync_message_embeddings(
                 if embedding is None:
                     continue
 
+                # Use {message_id}_{chunk_index} as vector ID (consistent with creation)
+                vector_id = f"{emb.message_id}_{emb._chunk_index}"
+
                 vector_records.append(
                     VectorRecord(
-                        id=str(emb.id),
+                        id=vector_id,
                         embedding=[float(x) for x in embedding],
                         metadata={
                             "message_id": emb.message_id,

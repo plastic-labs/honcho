@@ -422,18 +422,28 @@ async def delete_session(
         )
 
         # Delete message vectors from vector store before deleting DB records
-        # Fetch all MessageEmbedding records to build vector IDs
+        # Fetch all MessageEmbedding records to build vector IDs with {message_id}_{chunk_index}
         embedding_result = await db.execute(
-            select(models.MessageEmbedding.id).where(
+            select(models.MessageEmbedding).where(
                 models.MessageEmbedding.session_name == session_name,
                 models.MessageEmbedding.workspace_name == workspace_name,
             )
         )
-        embeddings = embedding_result.all()
+        embeddings = list(embedding_result.scalars().all())
         vector_store = get_vector_store()
 
         if embeddings:
-            vector_ids = [str(e.id) for e in embeddings]
+            # Compute chunk_index for each embedding based on message_id ordering
+            message_chunks: dict[str, list[models.MessageEmbedding]] = {}
+            for emb in embeddings:
+                message_chunks.setdefault(emb.message_id, []).append(emb)
+
+            # Sort each message's chunks by id and build vector IDs
+            vector_ids: list[str] = []
+            for chunks in message_chunks.values():
+                chunks.sort(key=lambda e: e.id)
+                for chunk_idx, chunk in enumerate(chunks):
+                    vector_ids.append(f"{chunk.message_id}_{chunk_idx}")
 
             # Try to delete from vector store (best effort)
             try:
