@@ -505,6 +505,9 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     # InductionSpecialist: identifies patterns across observations
     INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
 
+    # Surprisal-based sampling subsystem
+    SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
+
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DreamSettings":
         """Ensure the output token limit exceeds the thinking budget."""
