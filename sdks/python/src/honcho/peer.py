@@ -634,7 +634,7 @@ class Peer(PeerBase):
         has made about themselves. Use this for self-conclusion scenarios.
 
         Returns:
-            An ConclusionScope scoped to this peer's self-conclusions
+            A ConclusionScope scoped to this peer's self-conclusions
 
         Example:
             ```python
@@ -663,7 +663,7 @@ class Peer(PeerBase):
             target: The target peer (either a Peer object or peer ID string)
 
         Returns:
-            An ConclusionScope scoped to this peer's conclusions of the target
+            A ConclusionScope scoped to this peer's conclusions of the target
 
         Example:
             ```python

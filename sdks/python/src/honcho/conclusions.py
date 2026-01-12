@@ -66,7 +66,7 @@ class ConclusionScope:
         observed: str,
     ):
         """
-        Initialize an ConclusionScope.
+        Initialize a ConclusionScope.
 
         Args:
             client: The Honcho client instance
@@ -165,7 +165,7 @@ class ConclusionScope:
         Create conclusions in this scope.
 
         Args:
-            conclusions: Single conclusion or list of conclusions to create.
+            conclusions: List of conclusions to create.
                 Each conclusion can be a ConclusionCreateParams object or a dictionary with 'content' and 'session_id' keys.
 
         Returns:
@@ -173,12 +173,6 @@ class ConclusionScope:
 
         Example:
             ```python
-            # Create a single conclusion
-            conclusions = peer.conclusions.create(
-                {"content": "User prefers dark mode", "session_id": "session1"}
-            )
-
-            # Create multiple conclusions
             conclusions = peer.conclusions.create([
                 {"content": "User prefers dark mode", "session_id": "session1"},
                 {"content": "User is interested in AI", "session_id": "session1"},
@@ -388,7 +382,7 @@ class AsyncConclusionScope:
         Create conclusions in this scope.
 
         Args:
-            conclusions: Single conclusion or list of conclusions to create.
+            conclusions: List of conclusions to create.
                 Each conclusion can be a ConclusionCreateParams object or a dictionary with 'content' and 'session_id' keys.
 
         Returns:
@@ -396,12 +390,6 @@ class AsyncConclusionScope:
 
         Example:
             ```python
-            # Create a single conclusion
-            conclusions = await peer.conclusions.create(
-                {"content": "User prefers dark mode", "session_id": "session1"}
-            )
-
-            # Create multiple conclusions
             conclusions = await peer.conclusions.create([
                 {"content": "User prefers dark mode", "session_id": "session1"},
                 {"content": "User is interested in AI", "session_id": "session1"},

@@ -614,7 +614,7 @@ export class Peer {
    * This property provides a convenient way to access conclusions that this peer
    * has made about themselves. Use this for self-conclusion scenarios.
    *
-   * @returns An ConclusionScope scoped to this peer's self-conclusions
+   * @returns A ConclusionScope scoped to this peer's self-conclusions
    *
    * @example
    * ```typescript
@@ -639,7 +639,7 @@ export class Peer {
    * observer and the target is the observed peer.
    *
    * @param target - The target peer (either a Peer object or peer ID string)
-   * @returns An ConclusionScope scoped to this peer's conclusions of the target
+   * @returns A ConclusionScope scoped to this peer's conclusions of the target
    *
    * @example
    * ```typescript

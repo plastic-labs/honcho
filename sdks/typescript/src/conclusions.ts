@@ -7,7 +7,7 @@ import type { ConclusionCreateParam } from './types'
 export type { RepresentationOptions, ConclusionCreateParam }
 
 /**
- * An conclusion from the theory-of-mind system.
+ * A conclusion from Honcho's reasoning system.
  *
  * Conclusions are facts derived from messages that help build a representation
  * of a peer.
@@ -60,7 +60,7 @@ export class Conclusion {
   }
 
   /**
-   * Create an Conclusion from an API response object.
+   * Create a Conclusion from an API response object.
    *
    * @param data - API response data
    * @returns A new Conclusion instance
@@ -135,7 +135,7 @@ export class ConclusionScope {
   readonly observed: string
 
   /**
-   * Initialize an ConclusionScope.
+   * Initialize a ConclusionScope.
    *
    * @param client - The Honcho client instance
    * @param workspaceId - The workspace ID
