@@ -756,25 +756,9 @@ async def is_rejected_duplicate(
         logger.warning(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
-        vector_store = get_vector_store()
-        namespace = vector_store.get_vector_namespace(
-            "document",
-            workspace_name,
-            observer,
-            observed,
-        )
-        vector_deleted = False
-        try:
-            await vector_store.delete_many(namespace, [existing_doc.id])
-            vector_deleted = True
-        except Exception:
-            existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
-            await db.flush()
-
-        if vector_deleted:
-            await db.delete(existing_doc)
-            await db.flush()  # Flush to make deletion visible in this transaction
-
+        # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
+        existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        await db.flush()
         return False  # Don't reject the new document
 
     # Existing document has more information, reject the new one
