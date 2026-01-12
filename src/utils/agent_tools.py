@@ -522,6 +522,8 @@ DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations"],
     TOOLS["delete_observations"],
     TOOLS["get_reasoning_chain"],
+    TOOLS["update_peer_card"],
+    TOOLS["get_peer_card"],
 ]
 
 # Tools for the induction specialist (dreamer phase 2)
@@ -531,6 +533,8 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["get_recent_observations"],
     TOOLS["create_observations"],
     TOOLS["get_reasoning_chain"],
+    TOOLS["update_peer_card"],
+    TOOLS["get_peer_card"],
 ]
 
 
@@ -642,33 +646,6 @@ async def create_observations(
         logger.info(
             f"Created {len(documents)} observations in {workspace_name}/{observer}/{observed}"
         )
-
-
-async def update_peer_card(
-    db: AsyncSession,
-    workspace_name: str,
-    observer: str,
-    observed: str,
-    content: list[str],
-) -> None:
-    """
-    Update the peer card for an observer/observed relationship.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        observer: The peer maintaining the card
-        observed: The peer the card is about
-        content: List of facts/information about the observed peer
-    """
-    await crud.set_peer_card(
-        db,
-        workspace_name=workspace_name,
-        peer_card=content,
-        observer=observer,
-        observed=observed,
-    )
-    logger.info(f"Updated peer card for {workspace_name}/{observer}/{observed}")
 
 
 async def get_recent_history(
@@ -829,299 +806,6 @@ async def get_observation_context(
     messages = list(result.scalars().all())
 
     return messages
-
-
-async def search_messages(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str | None,
-    query: str,
-    limit: int = 10,
-    context_window: int = 2,
-) -> list[tuple[list[models.Message], list[models.Message]]]:
-    """
-    Search for messages using semantic similarity and return conversation snippets.
-
-    Overlapping snippets within the same session are merged to avoid repetition.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        session_name: Session identifier
-        query: Search query text
-        limit: Maximum number of matching messages to return
-        context_window: Number of messages before/after each match
-
-    Returns:
-        List of tuples: (matched_messages, context_messages)
-        Each snippet may contain multiple matches if they were close together.
-    """
-    return await crud.search_messages(
-        db,
-        workspace_name=workspace_name,
-        session_name=session_name,
-        query=query,
-        limit=limit,
-        context_window=context_window,
-    )
-
-
-async def grep_messages(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str | None,
-    text: str,
-    limit: int = 10,
-    context_window: int = 2,
-) -> list[tuple[list[models.Message], list[models.Message]]]:
-    """
-    Search for messages containing specific text (case-insensitive).
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        session_name: Session identifier (optional)
-        text: Text to search for
-        limit: Maximum messages to return
-        context_window: Number of messages before/after each match
-
-    Returns:
-        List of tuples: (matched_messages, context_messages)
-    """
-    return await crud.grep_messages(
-        db,
-        workspace_name=workspace_name,
-        session_name=session_name,
-        text=text,
-        limit=limit,
-        context_window=context_window,
-    )
-
-
-async def get_messages_by_date_range(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str | None,
-    after_date: datetime | None = None,
-    before_date: datetime | None = None,
-    limit: int = 20,
-    order: str = "desc",
-) -> list[models.Message]:
-    """
-    Get messages within a date range.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        session_name: Session identifier (optional)
-        after_date: Return messages after this datetime
-        before_date: Return messages before this datetime
-        limit: Maximum messages to return
-        order: Sort order - 'asc' or 'desc'
-
-    Returns:
-        List of messages within the date range
-    """
-    return await crud.get_messages_by_date_range(
-        db,
-        workspace_name=workspace_name,
-        session_name=session_name,
-        after_date=after_date,
-        before_date=before_date,
-        limit=limit,
-        order=order,
-    )
-
-
-async def search_messages_temporal(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str | None,
-    query: str,
-    after_date: datetime | None = None,
-    before_date: datetime | None = None,
-    limit: int = 10,
-    context_window: int = 2,
-) -> list[tuple[list[models.Message], list[models.Message]]]:
-    """
-    Search for messages using semantic similarity with optional date filtering.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        session_name: Session identifier (optional)
-        query: Search query text
-        after_date: Only return messages after this datetime
-        before_date: Only return messages before this datetime
-        limit: Maximum messages to return
-        context_window: Number of messages before/after each match
-
-    Returns:
-        List of tuples: (matched_messages, context_messages)
-    """
-    return await crud.search_messages_temporal(
-        db,
-        workspace_name=workspace_name,
-        session_name=session_name,
-        query=query,
-        after_date=after_date,
-        before_date=before_date,
-        limit=limit,
-        context_window=context_window,
-    )
-
-
-async def get_recent_observations(
-    db: AsyncSession,
-    workspace_name: str,
-    observer: str,
-    observed: str,
-    limit: int = 10,
-    session_name: str | None = None,
-) -> Representation:
-    """
-    Get the most recent observations about a peer.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        observer: The peer who made the observations
-        observed: The peer who was observed
-        limit: Maximum number of observations
-        session_name: Optional session name to filter by
-
-    Returns:
-        Representation object containing recent observations
-    """
-    documents = await crud.query_documents_recent(
-        db=db,
-        workspace_name=workspace_name,
-        observer=observer,
-        observed=observed,
-        limit=limit,
-        session_name=session_name,
-    )
-
-    return Representation.from_documents(documents)
-
-
-async def get_most_derived_observations(
-    db: AsyncSession,
-    workspace_name: str,
-    observer: str,
-    observed: str,
-    limit: int = 10,
-) -> Representation:
-    """
-    Get observations that have been reinforced most frequently.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        observer: The peer who made the observations
-        observed: The peer who was observed
-        limit: Maximum number of observations
-
-    Returns:
-        Representation object containing most-derived observations
-    """
-    documents = await crud.query_documents_most_derived(
-        db=db,
-        workspace_name=workspace_name,
-        observer=observer,
-        observed=observed,
-        limit=limit,
-    )
-
-    return Representation.from_documents(documents)
-
-
-async def get_session_summary(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str,
-    summary_type: str = "short",
-) -> summarizer.Summary | None:
-    """
-    Get the session summary.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        session_name: Session identifier
-        summary_type: "short" or "long"
-
-    Returns:
-        Summary dict or None if no summary exists
-    """
-    st = (
-        summarizer.SummaryType.LONG
-        if summary_type == "long"
-        else summarizer.SummaryType.SHORT
-    )
-    return await summarizer.get_summary(db, workspace_name, session_name, st)
-
-
-async def get_peer_card(
-    db: AsyncSession,
-    workspace_name: str,
-    observer: str,
-    observed: str,
-) -> list[str] | None:
-    """
-    Get the peer card containing biographical information.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        observer: The peer who maintains the card
-        observed: The peer the card is about
-
-    Returns:
-        List of facts about the peer, or None
-    """
-    return await crud.get_peer_card(
-        db,
-        workspace_name=workspace_name,
-        observer=observer,
-        observed=observed,
-    )
-
-
-async def delete_observations(
-    db: AsyncSession,
-    workspace_name: str,
-    observer: str,
-    observed: str,
-    observation_ids: list[str],
-) -> int:
-    """
-    Delete observations by their IDs.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        observer: The peer who made the observations
-        observed: The peer who was observed
-        observation_ids: List of observation IDs to delete
-
-    Returns:
-        Number of observations deleted
-    """
-    deleted_count = 0
-    for obs_id in observation_ids:
-        try:
-            await crud.delete_document(
-                db,
-                workspace_name=workspace_name,
-                document_id=obs_id,
-                observer=observer,
-                observed=observed,
-            )
-            deleted_count += 1
-        except Exception as e:
-            logger.warning(f"Failed to delete observation {obs_id}: {e}")
-    return deleted_count
 
 
 async def extract_preferences(
@@ -1315,13 +999,16 @@ async def _handle_create_observations(
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle update_peer_card tool."""
     async with ctx.db_lock:
-        await update_peer_card(
+        await crud.set_peer_card(
             ctx.db,
             workspace_name=ctx.workspace_name,
+            peer_card=tool_input["content"],
             observer=ctx.observer,
             observed=ctx.observed,
-            content=tool_input["content"],
         )
+    logger.info(
+        f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
+    )
     return f"Updated peer card for {ctx.observed} by {ctx.observer}"
 
 
@@ -1354,14 +1041,15 @@ async def _handle_get_recent_history(
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
     top_k = min(tool_input.get("top_k", 20), 40)
-    mem: Representation = await search_memory(
-        ctx.db,
+    documents = await crud.query_documents(
+        db=ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
         query=tool_input["query"],
-        limit=top_k,
+        top_k=top_k,
     )
+    mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
         return f"No observations found for query '{tool_input['query']}'"
@@ -1399,12 +1087,13 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
     """Handle search_messages tool."""
     query = tool_input["query"]
     limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
-    snippets = await search_messages(
+    snippets = await crud.search_messages(
         ctx.db,
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         query=query,
         limit=limit,
+        context_window=2,
     )
     if not snippets:
         return f"No messages found for query '{query}'"
@@ -1420,7 +1109,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
     limit = min(tool_input.get("limit", 10), 15)  # Cap at 15
     context_window = min(tool_input.get("context_window", 2), 2)  # Cap context
 
-    snippets = await grep_messages(
+    snippets = await crud.grep_messages(
         ctx.db,
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
@@ -1481,7 +1170,7 @@ async def _handle_get_messages_by_date_range(
     if isinstance(before_date, str):
         return before_date  # Error message
 
-    messages = await get_messages_by_date_range(
+    messages = await crud.get_messages_by_date_range(
         ctx.db,
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
@@ -1538,7 +1227,7 @@ async def _handle_search_messages_temporal(
     if isinstance(before_date, str):
         return before_date
 
-    snippets = await search_messages_temporal(
+    snippets = await crud.search_messages_temporal(
         ctx.db,
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
@@ -1567,14 +1256,15 @@ async def _handle_get_recent_observations(
 ) -> str:
     """Handle get_recent_observations tool."""
     session_only = tool_input.get("session_only", False)
-    representation: Representation = await get_recent_observations(
-        ctx.db,
+    documents = await crud.query_documents_recent(
+        db=ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
         limit=tool_input.get("limit", 10),
         session_name=ctx.session_name if session_only else None,
     )
+    representation = Representation.from_documents(documents)
     total_count = representation.len()
     if total_count == 0:
         return "No recent observations found"
@@ -1591,13 +1281,14 @@ async def _handle_get_most_derived_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_most_derived_observations tool."""
-    representation = await get_most_derived_observations(
-        ctx.db,
+    documents = await crud.query_documents_most_derived(
+        db=ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
         limit=tool_input.get("limit", 10),
     )
+    representation = Representation.from_documents(documents)
     total_count = representation.len()
     if total_count == 0:
         return "No established observations found"
@@ -1615,11 +1306,14 @@ async def _handle_get_session_summary(
     """Handle get_session_summary tool."""
     if not ctx.session_name:
         return "ERROR: No session available for summary"
-    summary = await get_session_summary(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        summary_type=tool_input.get("summary_type", "short"),
+    summary_type = tool_input.get("summary_type", "short")
+    st = (
+        summarizer.SummaryType.LONG
+        if summary_type == "long"
+        else summarizer.SummaryType.SHORT
+    )
+    summary = await summarizer.get_summary(
+        ctx.db, ctx.workspace_name, ctx.session_name, st
     )
     if not summary:
         return "No session summary available yet"
@@ -1629,7 +1323,7 @@ async def _handle_get_session_summary(
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
-    peer_card = await get_peer_card(
+    peer_card = await crud.get_peer_card(
         ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
@@ -1650,14 +1344,20 @@ async def _handle_delete_observations(
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 
+    deleted_count = 0
     async with ctx.db_lock:
-        deleted_count = await delete_observations(
-            ctx.db,
-            workspace_name=ctx.workspace_name,
-            observer=ctx.observer,
-            observed=ctx.observed,
-            observation_ids=observation_ids,
-        )
+        for obs_id in observation_ids:
+            try:
+                await crud.delete_document(
+                    ctx.db,
+                    workspace_name=ctx.workspace_name,
+                    document_id=obs_id,
+                    observer=ctx.observer,
+                    observed=ctx.observed,
+                )
+                deleted_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete observation {obs_id}: {e}")
     return f"Deleted {deleted_count} observations"
 
 

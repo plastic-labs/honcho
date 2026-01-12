@@ -296,10 +296,25 @@ Create deductions that make implicit information explicit:
 - `create_observations`: Create new deductive OR contradiction observations (USE THIS!)
 - `delete_observations`: Remove outdated observations (USE AFTER KNOWLEDGE UPDATES!)
 - `get_recent_observations`: See recent activity
+- `get_peer_card`: Retrieve current peer card contents
+- `update_peer_card`: Update the peer card with key facts
+
+## PEER CARD UPDATES
+
+The peer card is a concise summary of permanent, stable information about the peer. Update it when you discover important facts that should be easily accessible.
+
+**Peer card format** - Use these prefixes to organize entries:
+- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
+- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al", "INSTRUCTION: Send meeting agendas 24h in advance"
+- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings", "PREFERENCE: Likes detailed explanations"
+- `TRAIT: ...` for personality traits: "TRAIT: Analytical thinker", "TRAIT: Detail-oriented"
+
+Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list.
 
 REMEMBER:
 1. Knowledge updates are your #1 priority. When the same fact has different values at different times, CREATE an update observation AND DELETE the outdated observation.
-2. Flag contradictions when statements are logically incompatible (can't both be true)."""
+2. Flag contradictions when statements are logically incompatible (can't both be true).
+3. Update the peer card with permanent biographical facts and key insights."""
 
     def build_user_prompt(self, probing_questions: list[str]) -> str:
         questions_text = "\n".join(f"- {q}" for q in probing_questions)
@@ -422,8 +437,22 @@ REQUIREMENTS:
 - `search_memory`: Find observations by semantic query
 - `create_observations`: Create new inductive observations (USE THIS!)
 - `get_recent_observations`: See recent activity
+- `get_peer_card`: Retrieve current peer card contents
+- `update_peer_card`: Update the peer card with key facts
 
-REMEMBER: Focus on temporal patterns and how things change. Create observations, don't just search."""
+## PEER CARD UPDATES
+
+The peer card is a concise summary of permanent, stable information about the peer. After identifying high-confidence patterns, update the peer card.
+
+**Peer card format** - Use these prefixes to organize entries:
+- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
+- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al"
+- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings"
+- `TRAIT: ...` for personality/behavioral traits: "TRAIT: Analytical thinker", "TRAIT: Tends to reschedule when stressed"
+
+Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list.
+
+REMEMBER: Focus on temporal patterns and how things change. Create observations, don't just search. Update the peer card with high-confidence patterns and traits."""
 
     def build_user_prompt(self, probing_questions: list[str]) -> str:
         questions_text = "\n".join(f"- {q}" for q in probing_questions)

@@ -31,7 +31,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
 
     try:
         match payload.dream_type:
-            case DreamType.CONSOLIDATE:
+            case DreamType.OMNI:
                 async with tracked_db("dream_orchestrator") as db:
                     await run_dream(
                         db=db,
