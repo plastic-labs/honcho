@@ -153,10 +153,10 @@ context = session.get_context(
     tokens=2000,
     peer_target="user-123",
     last_user_message="What are my coding preferences?",
-    search_top_k=10,           # Number of relevant observations
+    search_top_k=10,           # Number of relevant conclusions to fetch
     search_max_distance=0.8,   # Max semantic distance (0.0-1.0)
-    include_most_derived=True, # Include most recent observations
-    max_observations=25        # Cap total observations
+    include_most_frequent=True, # Include most frequent conclusions
+    max_conclusions=25        # Cap total conclusions
 )
 ```
 
@@ -167,10 +167,10 @@ context = session.get_context(
       peerTarget: "user-123",
       lastUserMessage: "What are my coding preferences?",
       representationOptions: {
-        searchTopK: 10,           // Number of relevant observations
+        searchTopK: 10,           // Number of relevant conclusions to fetch
         searchMaxDistance: 0.8,   // Max semantic distance (0.0-1.0)
-        includeMostDerived: true, // Include most recent observations
-        maxObservations: 25       // Cap total observations
+        includeMostFrequent: true, // Include most frequent conclusions
+        maxConclusions: 25       // Cap total conclusions
       }
     });
 })();
@@ -212,11 +212,11 @@ context = session.get_context(
 | `peer_target` | `str` | Peer ID to include representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
 | `last_user_message` | `str` | Message for semantic search (requires peer_target) |
-| `limit_to_session` | `bool` | Limit to session observations only |
+| `limit_to_session` | `bool` | Limit to session conclusions only |
 | `search_top_k` | `int` | Semantic search results to include (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
-| `include_most_derived` | `bool` | Include most recently derived observations |
-| `max_observations` | `int` | Maximum observations to include (1-100) |
+| `include_most_frequent` | `bool` | Include most frequent conclusions |
+| `max_conclusions` | `int` | Maximum conclusions to include (1-100) |
 
 ## Converting to LLM Formats
 

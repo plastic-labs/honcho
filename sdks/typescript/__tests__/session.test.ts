@@ -3,7 +3,6 @@ import { Peer } from '../src/peer'
 import { Page } from '../src/pagination'
 import { SessionContext } from '../src/session_context'
 import { Honcho } from '../src/client'
-import { Representation } from '../src/representation'
 
 // Mock the @honcho-ai/core module
 jest.mock('@honcho-ai/core', () => {
@@ -31,9 +30,11 @@ jest.mock('@honcho-ai/core', () => {
         search: jest.fn(),
       },
       peers: {
-        workingRepresentation: jest.fn(),
+        getRepresentation: jest.fn(),
       },
-      deriverStatus: jest.fn(),
+      queue: {
+        getStatus: jest.fn(),
+      },
       getOrCreate: jest.fn(),
       update: jest.fn(),
       list: jest.fn(),
@@ -903,136 +904,108 @@ describe('Session', () => {
     })
   })
 
-  describe('workingRep', () => {
+  describe('getRepresentation', () => {
     it('should get working representation with peer string', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Some knowledge about the peer',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentationString = 'Some knowledge about the peer'
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentationString,
       })
 
-      const result = await session.workingRep('peer1')
+      const result = await session.getRepresentation('peer1')
 
-      expect(result).toBeInstanceOf(Representation)
-      expect(result.explicit).toHaveLength(1)
-      expect(result.explicit[0].content).toBe('Some knowledge about the peer')
-      expect(result.deductive).toHaveLength(0)
+      expect(typeof result).toBe('string')
+      expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: undefined,
+        search_query: undefined,
+        search_top_k: undefined,
+        search_max_distance: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       })
     })
 
     it('should get working representation with Peer object', async () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Some knowledge',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentationString = 'Some knowledge'
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentationString,
       })
 
-      const result = await session.workingRep(peer)
+      const result = await session.getRepresentation(peer)
 
-      expect(result).toBeInstanceOf(Representation)
-      expect(result.explicit).toHaveLength(1)
-      expect(result.explicit[0].content).toBe('Some knowledge')
-      expect(result.deductive).toHaveLength(0)
+      expect(typeof result).toBe('string')
+      expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: undefined,
+        search_query: undefined,
+        search_top_k: undefined,
+        search_max_distance: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       })
     })
 
     it('should get working representation with target peer string', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'What peer1 knows about target',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentationString = 'What peer1 knows about target'
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentationString,
       })
 
-      const result = await session.workingRep('peer1', 'target-peer')
+      const result = await session.getRepresentation('peer1', 'target-peer')
 
-      expect(result).toBeInstanceOf(Representation)
-      expect(result.explicit).toHaveLength(1)
-      expect(result.explicit[0].content).toBe('What peer1 knows about target')
-      expect(result.deductive).toHaveLength(0)
+      expect(typeof result).toBe('string')
+      expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: 'target-peer',
+        search_query: undefined,
+        search_top_k: undefined,
+        search_max_distance: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       })
     })
 
     it('should get working representation with target Peer object', async () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
       const target = new Peer('target-peer', 'test-workspace', mockClient)
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'What peer1 knows about target',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      }
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentationString = 'What peer1 knows about target'
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentationString,
       })
 
-      const result = await session.workingRep(peer, target)
+      const result = await session.getRepresentation(peer, target)
 
-      expect(result).toBeInstanceOf(Representation)
-      expect(result.explicit).toHaveLength(1)
-      expect(result.explicit[0].content).toBe('What peer1 knows about target')
-      expect(result.deductive).toHaveLength(0)
+      expect(typeof result).toBe('string')
+      expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: 'target-peer',
+        search_query: undefined,
+        search_top_k: undefined,
+        search_max_distance: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       })
     })
 
     it('should handle API errors', async () => {
-      mockClient.workspaces.peers.workingRepresentation.mockRejectedValue(
+      mockClient.workspaces.peers.getRepresentation.mockRejectedValue(
         new Error('Failed to get working representation')
       )
 
-      await expect(session.workingRep('peer1')).rejects.toThrow()
+      await expect(session.getRepresentation('peer1')).rejects.toThrow()
     })
   })
   describe('delete', () => {
@@ -1124,8 +1097,8 @@ describe('Session', () => {
     })
   })
 
-  describe('getDeriverStatus', () => {
-    it('should return deriver status without options', async () => {
+  describe('getQueueStatus', () => {
+    it('should return queue status without options', async () => {
       const mockStatus = {
         total_work_units: 10,
         completed_work_units: 5,
@@ -1133,9 +1106,9 @@ describe('Session', () => {
         pending_work_units: 2,
         sessions: { session1: { status: 'active' } },
       }
-      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus)
+      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatus)
 
-      const status = await session.getDeriverStatus()
+      const status = await session.getQueueStatus()
 
       expect(status).toEqual({
         totalWorkUnits: 10,
@@ -1144,22 +1117,22 @@ describe('Session', () => {
         pendingWorkUnits: 2,
         sessions: { session1: { status: 'active' } },
       })
-      expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
         'test-workspace',
         { session_id: 'test-session' }
       )
     })
 
-    it('should return deriver status with options', async () => {
+    it('should return queue status with options', async () => {
       const mockStatus = {
         total_work_units: 5,
         completed_work_units: 3,
         in_progress_work_units: 1,
         pending_work_units: 1,
       }
-      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus)
+      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatus)
 
-      const status = await session.getDeriverStatus({
+      const status = await session.getQueueStatus({
         observer: 'observer1',
         sender: 'sender1',
       })
@@ -1171,7 +1144,7 @@ describe('Session', () => {
         pendingWorkUnits: 1,
         sessions: undefined,
       })
-      expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
         'test-workspace',
         {
           observer_id: 'observer1',
@@ -1181,7 +1154,7 @@ describe('Session', () => {
       )
     })
 
-    describe('pollDeriverStatus', () => {
+    describe('pollQueueStatus', () => {
       it('should poll until processing is complete', async () => {
         const mockStatusComplete = {
           total_work_units: 5,
@@ -1189,11 +1162,11 @@ describe('Session', () => {
           in_progress_work_units: 0,
           pending_work_units: 0,
         }
-        mockClient.workspaces.deriverStatus.mockResolvedValue(
+        mockClient.workspaces.queue.getStatus.mockResolvedValue(
           mockStatusComplete
         )
 
-        const status = await session.pollDeriverStatus()
+        const status = await session.pollQueueStatus()
 
         expect(status).toEqual({
           totalWorkUnits: 5,
@@ -1203,7 +1176,7 @@ describe('Session', () => {
           sessions: undefined,
         })
 
-        expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith(
+        expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
           'test-workspace',
           { session_id: 'test-session' }
         )
@@ -1216,10 +1189,10 @@ describe('Session', () => {
           in_progress_work_units: 2,
           pending_work_units: 1,
         }
-        mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatusPending)
+        mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatusPending)
 
         await expect(
-          session.pollDeriverStatus({ timeoutMs: 100 })
+          session.pollQueueStatus({ timeoutMs: 100 })
         ).rejects.toThrow()
       })
     })

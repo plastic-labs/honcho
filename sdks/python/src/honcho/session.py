@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
-from honcho_core.types import DeriverStatus
+from honcho_core.types.workspaces import QueueGetStatusResponse
+from honcho_core.types.workspaces.peer_get_representation_response import (
+    PeerGetRepresentationResponse,
+)
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from honcho_core.types.workspaces.sessions.message_create_param import Configuration
@@ -21,7 +24,6 @@ from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
     from .peer import Peer
-    from .types import Representation
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +392,7 @@ class Session(SessionBase):
         Makes an API call to permanently delete this session and all related data including:
         - Messages
         - Message embeddings
-        - Observations
+        - Conclusions
         - Session-Peer associations
         - Background processing queue items
 
@@ -544,7 +546,7 @@ class Session(SessionBase):
         ),
         last_user_message: str | Message | None = Field(
             None,
-            description="The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
+            description="The most recent message (string or Message object), used to fetch semantically relevant conclusions and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
         ),
         peer_perspective: str | None = Field(
             None,
@@ -552,7 +554,7 @@ class Session(SessionBase):
         ),
         limit_to_session: bool = Field(
             False,
-            description="Whether to limit the representation to this session only. If True, only observations from this session will be included.",
+            description="Whether to limit the representation to this session only. If True, only conclusions from this session will be included.",
         ),
         search_top_k: int | None = Field(
             None,
@@ -566,15 +568,15 @@ class Session(SessionBase):
             le=1.0,
             description="Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.",
         ),
-        include_most_derived: bool | None = Field(
+        include_most_frequent: bool | None = Field(
             None,
-            description="Whether to include the most derived observations in the representation.",
+            description="Whether to include the most frequent conclusions in the representation.",
         ),
-        max_observations: int | None = Field(
+        max_conclusions: int | None = Field(
             None,
             ge=1,
             le=100,
-            description="Maximum number of observations to include in the representation.",
+            description="Maximum number of conclusions to include in the representation.",
         ),
     ) -> SessionContext:
         """
@@ -590,13 +592,13 @@ class Session(SessionBase):
             tokens: Maximum number of tokens to include in the context. Will default
             to Honcho server configuration if not provided.
             peer_target: A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.
-            last_user_message: The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
+            last_user_message: The most recent message (string or Message object), used to fetch semantically relevant conclusions and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
             peer_perspective: A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.
-            limit_to_session: Whether to limit the representation to this session only. If True, only observations from this session will be included.
+            limit_to_session: Whether to limit the representation to this session only. If True, only conclusions from this session will be included.
             search_top_k: Number of semantically relevant facts to return when searching with `last_user_message`.
             search_max_distance: Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.
-            include_most_derived: Whether to include the most derived observations in the representation.
-            max_observations: Maximum number of observations to include in the representation.
+            include_most_frequent: Whether to include the most frequent conclusions in the representation.
+            max_conclusions: Maximum number of conclusions to include in the representation.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -638,10 +640,10 @@ class Session(SessionBase):
             search_max_distance=search_max_distance
             if search_max_distance is not None
             else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
+            include_most_frequent=include_most_frequent
+            if include_most_frequent is not None
             else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+            max_conclusions=max_conclusions if max_conclusions is not None else omit,
         )
 
         # Convert the honcho_core summary to our Summary if it exists
@@ -834,7 +836,7 @@ class Session(SessionBase):
 
         return [Message.model_validate(msg) for msg in response]
 
-    def working_rep(
+    def get_representation(
         self,
         peer: str | PeerBase,
         *,
@@ -842,43 +844,42 @@ class Session(SessionBase):
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
-        include_most_derived: bool | None = None,
-        max_observations: int | None = None,
-    ) -> "Representation":
+        include_most_frequent: bool | None = None,
+        max_conclusions: int | None = None,
+    ) -> str:
         """
-        Get the current working representation of the peer in this session.
+        Get a subset of the representation of the peer in this session.
 
         Args:
-            peer: Peer to get the working representation of.
+            peer: Peer to get the representation of.
             target: Optional target peer to get the representation of. If provided,
             queries what `peer` knows about the `target`.
-            search_query: Semantic search query to filter relevant observations
+            search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
-            include_most_derived: Whether to include the most derived observations
-            max_observations: Maximum number of observations to include
+            include_most_frequent: Whether to include the most frequent conclusions
+            max_conclusions: Maximum number of conclusions to include
 
         Returns:
-            A Representation object containing explicit and deductive observations
+            A Representation string
 
         Example:
             ```python
             # Get peer's representation in this session
-            rep = session.working_rep('user123')
+            rep = session.get_representation('user123')
             print(rep)
 
             # Get what user123 knows about assistant in this session
-            local_rep = session.working_rep('user123', target='assistant')
+            local_rep = session.get_representation('user123', target='assistant')
 
             # Get representation with semantic search
-            searched_rep = session.working_rep(
+            searched_rep = session.get_representation(
                 'user123',
                 search_query='preferences',
                 search_top_k=10
             )
             ```
         """
-        from .types import Representation as _Representation
 
         peer_id = peer if isinstance(peer, str) else peer.id
         target_id = (
@@ -886,31 +887,35 @@ class Session(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data = self._client.workspaces.peers.working_representation(
-            peer_id,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
-            else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+        data: PeerGetRepresentationResponse = (
+            self._client.workspaces.peers.get_representation(
+                peer_id,
+                workspace_id=self.workspace_id,
+                session_id=self.id,
+                target=target_id,
+                search_query=search_query if search_query is not None else omit,
+                search_top_k=search_top_k if search_top_k is not None else omit,
+                search_max_distance=search_max_distance
+                if search_max_distance is not None
+                else omit,
+                include_most_frequent=include_most_frequent
+                if include_most_frequent is not None
+                else omit,
+                max_conclusions=max_conclusions
+                if max_conclusions is not None
+                else omit,
+            )
         )
-        return _Representation.from_dict(data)  # type: ignore
+        return data.representation
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def get_deriver_status(
+    def get_queue_status(
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
-    ) -> DeriverStatus:
+    ) -> QueueGetStatusResponse:
         """
-        Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+        Get the queue processing status, optionally scoped to an observer, sender, and/or session.
 
         Args:
             observer: Optional observer (ID string or Peer object) to scope the status check
@@ -927,7 +932,7 @@ class Session(SessionBase):
             else (sender if isinstance(sender, str) else sender.id)
         )
 
-        return self._client.workspaces.deriver_status(
+        return self._client.workspaces.queue.get_status(
             workspace_id=self.workspace_id,
             observer_id=resolved_observer_id,
             sender_id=resolved_sender_id,
@@ -935,7 +940,7 @@ class Session(SessionBase):
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def poll_deriver_status(
+    def poll_queue_status(
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
@@ -944,10 +949,10 @@ class Session(SessionBase):
             gt=0,
             description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
         ),
-    ) -> DeriverStatus:
+    ) -> QueueGetStatusResponse:
         """
-        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
-        This allows you to guarantee that all messages have been processed by the deriver for
+        Poll get_queue_status until pending_work_units and in_progress_work_units are both 0.
+        This allows you to guarantee that all messages have been processed by the queue for
         use with the dialectic endpoint.
 
         The polling estimates sleep time by assuming each work unit takes 1 second.
@@ -958,19 +963,19 @@ class Session(SessionBase):
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
-            DeriverStatus when all work units are complete
+            QueueGetStatusResponse when all work units are complete
 
         Raises:
             TimeoutError: If timeout is exceeded before work units complete
-            Exception: If get_deriver_status fails repeatedly
+            Exception: If get_queue_status fails repeatedly
         """
         start_time = time.time()
 
         while True:
             try:
-                status = self.get_deriver_status(observer, sender)
+                status = self.get_queue_status(observer, sender)
             except Exception as e:
-                logger.warning(f"Failed to get deriver status: {e}")
+                logger.warning(f"Failed to get queue status: {e}")
                 # Sleep briefly before retrying
                 time.sleep(1)
 

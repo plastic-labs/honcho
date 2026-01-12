@@ -252,7 +252,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 4096
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
     LOG_OBSERVATIONS: bool = False
@@ -323,6 +323,19 @@ class DialecticLevelSettings(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_anthropic_thinking_budget(self) -> "DialecticLevelSettings":
+        """Ensure Anthropic thinking budget is >= 1024 when enabled."""
+        if (
+            self.PROVIDER == "anthropic"
+            and self.THINKING_BUDGET_TOKENS > 0
+            and self.THINKING_BUDGET_TOKENS < 1024
+        ):
+            raise ValueError(
+                f"THINKING_BUDGET_TOKENS must be >= 1024 for Anthropic provider when enabled (got {self.THINKING_BUDGET_TOKENS})"
+            )
+        return self
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -341,14 +354,14 @@ class DialecticSettings(HonchoSettings):
             ),
             "low": DialecticLevelSettings(
                 PROVIDER="google",
-                MODEL="gemini-3-flash",
+                MODEL="gemini-3-flash-preview",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=5,
             ),
             "medium": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=512,
+                THINKING_BUDGET_TOKENS=1024,
                 MAX_TOOL_ITERATIONS=4,
             ),
             "high": DialecticLevelSettings(
@@ -360,7 +373,7 @@ class DialecticSettings(HonchoSettings):
             "extra-high": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-opus-4-5",
-                THINKING_BUDGET_TOKENS=512,
+                THINKING_BUDGET_TOKENS=2048,
                 MAX_TOOL_ITERATIONS=10,
             ),
         }

@@ -28,6 +28,50 @@ def deep_update(base: dict[str, Any], update: dict[str, Any]) -> None:
             base[key] = value
 
 
+def normalize_configuration_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize a workspace/session/message configuration dict to match the current
+    `ResolvedConfiguration` schema.
+
+    This function exists to preserve backwards compatibility with older clients/tests
+    that used legacy configuration keys (e.g. `deriver.enabled` or `skip_deriver`).
+
+    Behavior:
+    - If `reasoning.enabled` is not explicitly set, but `deriver.enabled` is present,
+      `reasoning.enabled` is derived from `deriver.enabled`.
+    - If `skip_deriver` is explicitly `True`, `reasoning.enabled` is forced to `False`
+      unless `reasoning.enabled` was already explicitly set.
+    - Legacy keys are removed from the returned dict to avoid polluting the resolved
+      configuration with unused fields.
+    """
+    normalized: dict[str, Any] = dict(raw)
+
+    reasoning_raw = normalized.get("reasoning")
+    reasoning: dict[str, Any] = (
+        cast(dict[str, Any], reasoning_raw) if isinstance(reasoning_raw, dict) else {}
+    )
+    reasoning_enabled_explicit = reasoning.get("enabled") is not None
+
+    if not reasoning_enabled_explicit:
+        deriver_raw = normalized.get("deriver")
+        deriver = (
+            cast(dict[str, Any], deriver_raw) if isinstance(deriver_raw, dict) else {}
+        )
+        if deriver.get("enabled") is not None:
+            reasoning["enabled"] = bool(deriver["enabled"])
+
+    if not reasoning_enabled_explicit and normalized.get("skip_deriver") is True:
+        reasoning["enabled"] = False
+
+    if reasoning:
+        normalized["reasoning"] = reasoning
+
+    normalized.pop("deriver", None)
+    normalized.pop("skip_deriver", None)
+
+    return normalized
+
+
 def get_configuration(
     message_configuration: MessageConfiguration | None,
     session: models.Session,
@@ -51,7 +95,7 @@ def get_configuration(
     """
     # Start with defaults
     config_dict: dict[str, Any] = {
-        "deriver": {"enabled": settings.DERIVER.ENABLED},
+        "reasoning": {"enabled": settings.DERIVER.ENABLED},
         "peer_card": {
             "use": settings.PEER_CARD.ENABLED,
             "create": settings.PEER_CARD.ENABLED,
@@ -68,11 +112,16 @@ def get_configuration(
     # Note: deep_update modifies config_dict in place
 
     if workspace is not None:
-        deep_update(config_dict, workspace.configuration)
+        deep_update(config_dict, normalize_configuration_dict(workspace.configuration))
 
-    deep_update(config_dict, session.configuration)
+    deep_update(config_dict, normalize_configuration_dict(session.configuration))
 
     if message_configuration is not None:
-        deep_update(config_dict, message_configuration.model_dump(exclude_none=True))
+        deep_update(
+            config_dict,
+            normalize_configuration_dict(
+                message_configuration.model_dump(exclude_none=True)
+            ),
+        )
 
     return ResolvedConfiguration(**config_dict)

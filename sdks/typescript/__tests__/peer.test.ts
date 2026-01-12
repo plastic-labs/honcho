@@ -2,7 +2,6 @@ import { Peer } from '../src/peer';
 import { Session } from '../src/session';
 import { Page } from '../src/pagination';
 import { Honcho } from '../src/client';
-import { Representation } from '../src/representation';
 
 // Mock the @honcho-ai/core module
 jest.mock('@honcho-ai/core', () => {
@@ -553,420 +552,268 @@ describe('Peer', () => {
     });
   });
 
-  describe('workingRep', () => {
+  describe('getRepresentation', () => {
     beforeEach(() => {
-      mockClient.workspaces.peers.workingRepresentation = jest.fn();
+      mockClient.workspaces.peers.getRepresentation = jest.fn();
     });
 
     it('should get working representation with no parameters', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Observation 1',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-          {
-            content: 'Observation 2',
-            created_at: '2024-01-01T00:01:00Z',
-            message_ids: [[3, 4]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [
-          {
-            conclusion: 'Conclusion 1',
-            premises: ['Observation 1', 'Observation 2'],
-            created_at: '2024-01-01T00:02:00Z',
-            message_ids: [[5, 6]],
-            session_name: 'test-session',
-          },
-        ],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'Observation 1\nObservation 2\nConclusion 1';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep();
+      const result = await peer.getRepresentation();
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(2);
-      expect(result.explicit[0].content).toBe('Observation 1');
-      expect(result.explicit[1].content).toBe('Observation 2');
-      expect(result.deductive).toHaveLength(1);
-      expect(result.deductive[0].conclusion).toBe('Conclusion 1');
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: undefined,
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       });
     });
 
     it('should get working representation with session as string', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Session-scoped observation',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'session-123',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'Session-scoped observation';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep('session-123');
+      const result = await peer.getRepresentation('session-123');
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe('Session-scoped observation');
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: 'session-123',
         target: undefined,
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       });
     });
 
     it('should get working representation with session as Session object', async () => {
       const session = new Session('session-123', 'test-workspace', mockClient);
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Session object observation',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'session-123',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'Session object observation';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(session);
+      const result = await peer.getRepresentation(session);
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe('Session object observation');
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: 'session-123',
         target: undefined,
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       });
     });
 
     it('should get working representation with target as string', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: "Observer's view of target",
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = "Observer's view of target";
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(undefined, 'target-peer');
+      const result = await peer.getRepresentation(undefined, 'target-peer');
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe("Observer's view of target");
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: 'target-peer',
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       });
     });
 
     it('should get working representation with target as Peer object', async () => {
       const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: "Observer's view of target peer object",
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = "Observer's view of target peer object";
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(undefined, targetPeer);
+      const result = await peer.getRepresentation(undefined, targetPeer);
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe("Observer's view of target peer object");
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: 'target-peer',
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       });
     });
 
     it('should get working representation with search query', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Query-curated observation',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'Query-curated observation';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(
+      const result = await peer.getRepresentation(
         undefined,
         undefined,
         { searchQuery: 'programming' }
       );
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe('Query-curated observation');
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: undefined,
         search_query: 'programming',
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       });
     });
 
     it('should get working representation with custom size', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Limited observations',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'Limited observations';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(undefined, undefined, { maxObservations: 10 });
+      const result = await peer.getRepresentation(undefined, undefined, { maxConclusions: 10 });
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe('Limited observations');
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: undefined,
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: 10,
+        include_most_frequent: undefined,
+        max_conclusions: 10,
       });
     });
 
     it('should get working representation with all parameters', async () => {
       const session = new Session('session-123', 'test-workspace', mockClient);
       const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Fully parameterized observation',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'session-123',
-          },
-        ],
-        deductive: [
-          {
-            conclusion: 'Conclusion with all params',
-            premises: ['Fully parameterized observation'],
-            created_at: '2024-01-01T00:01:00Z',
-            message_ids: [[3, 4]],
-            session_name: 'session-123',
-          },
-        ],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'Fully parameterized observation\nConclusion with all params';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(
+      const result = await peer.getRepresentation(
         session,
         targetPeer,
-        { searchQuery: 'Python programming', maxObservations: 25 }
+        { searchQuery: 'Python programming', maxConclusions: 25 }
       );
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe('Fully parameterized observation');
-      expect(result.deductive).toHaveLength(1);
-      expect(result.deductive[0].conclusion).toBe('Conclusion with all params');
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: 'session-123',
         target: 'target-peer',
         search_query: 'Python programming',
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: 25,
+        include_most_frequent: undefined,
+        max_conclusions: 25,
       });
     });
 
     it('should get working representation with string session and string target', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'String params observation',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'session-456',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentation = 'String params observation';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentation,
       });
 
-      const result = await peer.workingRep(
+      const result = await peer.getRepresentation(
         'session-456',
         'target-peer-123',
-        { searchQuery: 'machine learning', maxObservations: 50 }
+        { searchQuery: 'machine learning', maxConclusions: 50 }
       );
 
-      expect(result).toBeInstanceOf(Representation);
-      expect(result.explicit).toHaveLength(1);
-      expect(result.explicit[0].content).toBe('String params observation');
-      expect(result.deductive).toHaveLength(0);
+      expect(result).toBe(mockRepresentation);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
         session_id: 'session-456',
         target: 'target-peer-123',
         search_query: 'machine learning',
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: 50,
+        include_most_frequent: undefined,
+        max_conclusions: 50,
       });
     });
 
     it('should handle boundary size values', async () => {
-      const mockRepresentationData = {
-        explicit: [
-          {
-            content: 'Boundary test',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'test-session',
-          },
-        ],
-        deductive: [],
-      };
-      mockClient.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockRepresentationData,
+      const mockRepresentationString = 'Boundary test representation';
+      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+        representation: mockRepresentationString,
       });
 
       // Test size = 1
-      const result1 = await peer.workingRep(undefined, undefined, { maxObservations: 1 });
-      expect(result1).toBeInstanceOf(Representation);
+      const result1 = await peer.getRepresentation(undefined, undefined, { maxConclusions: 1 });
+      expect(result1).toBe(mockRepresentationString);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenLastCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: undefined,
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: 1,
+        include_most_frequent: undefined,
+        max_conclusions: 1,
       });
 
       // Test size = 100
-      const result2 = await peer.workingRep(undefined, undefined, { maxObservations: 100 });
-      expect(result2).toBeInstanceOf(Representation);
+      const result2 = await peer.getRepresentation(undefined, undefined, { maxConclusions: 100 });
+      expect(result2).toBe(mockRepresentationString);
       expect(
-        mockClient.workspaces.peers.workingRepresentation
+        mockClient.workspaces.peers.getRepresentation
       ).toHaveBeenLastCalledWith('test-workspace', 'test-peer', {
         session_id: undefined,
         target: undefined,
         search_query: undefined,
         search_top_k: undefined,
         search_max_distance: undefined,
-        include_most_derived: undefined,
-        max_observations: 100,
+        include_most_frequent: undefined,
+        max_conclusions: 100,
       });
     });
 
     it('should handle API errors', async () => {
-      mockClient.workspaces.peers.workingRepresentation.mockRejectedValue(
+      mockClient.workspaces.peers.getRepresentation.mockRejectedValue(
         new Error('Working representation fetch failed')
       );
 
-      await expect(peer.workingRep()).rejects.toThrow(
+      await expect(peer.getRepresentation()).rejects.toThrow(
         'Working representation fetch failed'
       );
     });

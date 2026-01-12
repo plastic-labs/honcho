@@ -86,7 +86,7 @@ def _extract_pattern_snippet(
     if len(content) <= max_chars:
         return content
 
-    match = re.search(re.escape(pattern), content, re.IGNORECASE)
+    match = re.search(pattern, content, re.IGNORECASE)
     if not match:
         # No match, return beginning
         return content[:max_chars] + "..."
@@ -1086,7 +1086,7 @@ async def _handle_get_observation_context(
 async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_messages tool."""
     query = tool_input["query"]
-    limit = min(tool_input.get("limit", 10), 20)  # Cap at 20
+    limit = min(tool_input.get("limit", 10), 10)  # Cap at 10
     snippets = await crud.search_messages(
         ctx.db,
         workspace_name=ctx.workspace_name,
@@ -1106,7 +1106,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
     text = tool_input.get("text", "")
     if not text:
         return "ERROR: 'text' parameter is required"
-    limit = min(tool_input.get("limit", 10), 30)  # Cap at 30
+    limit = min(tool_input.get("limit", 10), 15)  # Cap at 15
     context_window = min(tool_input.get("context_window", 2), 2)  # Cap context
 
     snippets = await crud.grep_messages(

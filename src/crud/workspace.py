@@ -11,6 +11,7 @@ from src.cache.client import cache, get_cache_namespace
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
+from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
@@ -52,7 +53,7 @@ async def get_or_create_workspace(
     workspace: schemas.WorkspaceCreate,
     *,
     _retry: bool = False,
-) -> models.Workspace:
+) -> GetOrCreateResult[models.Workspace]:
     """
     Get an existing workspace or create a new one if it doesn't exist.
 
@@ -61,7 +62,7 @@ async def get_or_create_workspace(
         workspace: Workspace creation schema
 
     Returns:
-        The workspace if found or created
+        GetOrCreateResult containing the workspace and whether it was created
 
     Raises:
         ConflictException: If we fail to get or create the workspace
@@ -77,7 +78,7 @@ async def get_or_create_workspace(
         logger.debug("Found existing workspace: %s", workspace.name)
         # Merge cached object into session (cached objects are detached)
         existing_workspace = await db.merge(existing_workspace, load=False)
-        return existing_workspace
+        return GetOrCreateResult(existing_workspace, created=False)
 
     # Workspace doesn't exist, create a new one
     honcho_workspace = models.Workspace(
@@ -96,7 +97,7 @@ async def get_or_create_workspace(
         await cache.set(
             cache_key, honcho_workspace, expire=settings.CACHE.DEFAULT_TTL_SECONDS
         )
-        return honcho_workspace
+        return GetOrCreateResult(honcho_workspace, created=True)
     except IntegrityError:
         await db.rollback()
         if _retry:
@@ -164,13 +165,16 @@ async def update_workspace(
     Returns:
         The updated workspace
     """
-    honcho_workspace = await get_or_create_workspace(
-        db,
-        schemas.WorkspaceCreate(
-            name=workspace_name,
-            metadata=workspace.metadata or {},  # Provide empty dict if metadata is None
-        ),
-    )
+    honcho_workspace: models.Workspace = (
+        await get_or_create_workspace(
+            db,
+            schemas.WorkspaceCreate(
+                name=workspace_name,
+                metadata=workspace.metadata
+                or {},  # Provide empty dict if metadata is None
+            ),
+        )
+    ).resource
 
     # Track if anything changed
     needs_update = False

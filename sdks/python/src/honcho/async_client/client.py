@@ -8,7 +8,7 @@ from typing import Any, Literal
 import httpx
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core import Honcho as HonchoCore
-from honcho_core.types import DeriverStatus, Workspace
+from honcho_core.types.workspaces import QueueGetStatusResponse
 from honcho_core.types.workspaces.peer import Peer as PeerCore
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
@@ -425,19 +425,16 @@ class AsyncHoncho(BaseModel):
         workspace_id: str = Field(
             ..., min_length=1, description="ID of the workspace to delete"
         ),
-    ) -> Workspace:
+    ) -> None:
         """
         Delete a workspace.
 
-        Makes an async API call to delete the specified workspace.
+        Makes an async API call to delete the specified workspace. This action cannot be undone.
 
         Args:
             workspace_id: The ID of the workspace to delete
-
-        Returns:
-            The deleted Workspace object
         """
-        return await self._client.workspaces.delete(workspace_id)
+        await self._client.workspaces.delete(workspace_id)
 
     @validate_call
     async def search(
@@ -472,14 +469,14 @@ class AsyncHoncho(BaseModel):
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def get_deriver_status(
+    async def get_queue_status(
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
-    ) -> DeriverStatus:
+    ) -> QueueGetStatusResponse:
         """
-        Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+        Get the queue processing status, optionally scoped to an observer, sender, and/or session.
 
         Args:
             observer: Optional observer (ID string or Peer object) to scope the status check
@@ -502,7 +499,7 @@ class AsyncHoncho(BaseModel):
             else (session if isinstance(session, str) else session.id)
         )
 
-        return await self._client.workspaces.deriver_status(
+        return await self._client.workspaces.queue.get_status(
             workspace_id=self.workspace_id,
             observer_id=resolved_observer_id,
             sender_id=resolved_sender_id,
@@ -510,7 +507,7 @@ class AsyncHoncho(BaseModel):
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def poll_deriver_status(
+    async def poll_queue_status(
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
@@ -520,11 +517,11 @@ class AsyncHoncho(BaseModel):
             gt=0,
             description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
         ),
-    ) -> DeriverStatus:
+    ) -> QueueGetStatusResponse:
         """
-        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
-        This allows you to guarantee that all messages have been processed by the deriver for
-        use with the dialectic endpoint.
+        Poll get_queue_status until pending_work_units and in_progress_work_units are both 0.
+        This allows you to guarantee that all messages have been processed by the queue for
+        use with the chat endpoint.
 
         The polling estimates sleep time by assuming each work unit takes 1 second.
 
@@ -535,19 +532,19 @@ class AsyncHoncho(BaseModel):
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
-            DeriverStatus when all work units are complete
+            QueueGetStatusResponse when all work units are complete
 
         Raises:
             TimeoutError: If timeout is exceeded before work units complete
-            Exception: If get_deriver_status fails repeatedly
+            Exception: If get_queue_status fails repeatedly
         """
         start_time = time.time()
 
         while True:
             try:
-                status = await self.get_deriver_status(observer, sender, session)
+                status = await self.get_queue_status(observer, sender, session)
             except Exception as e:
-                logger.warning(f"Failed to get deriver status: {e}")
+                logger.warning(f"Failed to get queue status: {e}")
                 # Sleep briefly before retrying
                 await asyncio.sleep(1)
 
@@ -590,44 +587,44 @@ class AsyncHoncho(BaseModel):
             await asyncio.sleep(sleep_time)
 
     @validate_call
-    async def list_observations(
+    async def list_conclusions(
         self,
         filters: dict[str, object] | None = Field(
-            None, description="Filters to scope the observations"
+            None, description="Filters to scope the conclusions"
         ),
         reverse: bool = Field(
             False, description="Whether to reverse the order of results"
         ),
     ):
         """
-        List all observations in the current workspace with optional filtering.
+        List all conclusions in the current workspace with optional filtering.
 
-        Makes an async API call to retrieve observations that match the specified filters.
-        Observations can be filtered by session_id, observer_id, and observed_id.
+        Makes an async API call to retrieve conclusions that match the specified filters.
+        Conclusions can be filtered by session_id, observer_id, and observed_id.
 
         Args:
-            filters: Optional filter criteria for observations. Supported filters include:
-                    - session_id: Filter observations by session
-                    - observer_id: Filter observations by observer peer
-                    - observed_id: Filter observations by observed peer
+            filters: Optional filter criteria for conclusions. Supported filters include:
+                    - session_id: Filter conclusions by session
+                    - observer_id: Filter conclusions by observer peer
+                    - observed_id: Filter conclusions by observed peer
             reverse: Whether to reverse the order of results (default: False)
 
         Returns:
-            A paginated list of Observation objects matching the specified criteria
+            A paginated list of Conclusion objects matching the specified criteria
 
         Example:
-            >>> observations = await client.list_observations(
+            >>> conclusions = await client.list_conclusions(
             ...     filters={"observer_id": "user123", "observed_id": "assistant"}
             ... )
         """
-        return await self._client.workspaces.observations.list(
+        return await self._client.workspaces.conclusions.list(
             workspace_id=self.workspace_id,
             filters=filters,
             reverse=reverse,
         )
 
     @validate_call
-    async def query_observations(
+    async def query_conclusions(
         self,
         query: str = Field(..., min_length=1, description="Semantic search query"),
         observer: str = Field(
@@ -650,9 +647,9 @@ class AsyncHoncho(BaseModel):
         ),
     ):
         """
-        Query observations using semantic search.
+        Query conclusions using semantic search.
 
-        Performs vector similarity search on observations to find semantically relevant results.
+        Performs vector similarity search on conclusions to find semantically relevant results.
         Observer and observed peer IDs are required for semantic search.
 
         Args:
@@ -664,10 +661,10 @@ class AsyncHoncho(BaseModel):
             filters: Optional filters to scope the query
 
         Returns:
-            A list of Observation objects matching the query
+            A list of Conclusion objects matching the query
 
         Example:
-            >>> observations = await client.query_observations(
+            >>> conclusions = await client.query_conclusions(
             ...     query="user preferences about music",
             ...     observer="user123",
             ...     observed="assistant",
@@ -682,7 +679,7 @@ class AsyncHoncho(BaseModel):
             "observed": observed,
         }
 
-        return await self._client.workspaces.observations.query(
+        return await self._client.workspaces.conclusions.query(
             workspace_id=self.workspace_id,
             query=query,
             top_k=top_k,
@@ -691,27 +688,27 @@ class AsyncHoncho(BaseModel):
         )
 
     @validate_call
-    async def delete_observation(
+    async def delete_conclusion(
         self,
-        observation_id: str = Field(
-            ..., min_length=1, description="ID of the observation to delete"
+        conclusion_id: str = Field(
+            ..., min_length=1, description="ID of the conclusion to delete"
         ),
     ) -> None:
         """
-        Delete a specific observation by ID.
+        Delete a specific conclusion by ID.
 
-        This permanently deletes the observation (document) from the theory-of-mind system.
+        This permanently deletes the conclusion (document) from the theory-of-mind system.
         This action cannot be undone.
 
         Args:
-            observation_id: The ID of the observation to delete
+            conclusion_id: The ID of the conclusion to delete
 
         Example:
-            >>> await client.delete_observation('obs_123abc')
+            >>> await client.delete_conclusion('con_123abc')
         """
-        await self._client.workspaces.observations.delete(
+        await self._client.workspaces.conclusions.delete(
             workspace_id=self.workspace_id,
-            observation_id=observation_id,
+            conclusion_id=conclusion_id,
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
