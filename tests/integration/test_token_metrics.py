@@ -503,13 +503,13 @@ class TestDeriverSummaryMetrics:
         last_message = messages[-1]
 
         # Get the actual messages that would be included in the summary
-        # (to match what _create_and_save_summary computes)
-        actual_messages = await crud.get_messages_id_range(
+        # (to match what _create_and_save_summary computes via get_messages_by_seq_range)
+        actual_messages = await crud.get_messages_by_seq_range(
             db_session,
             workspace.name,
             session.name,
-            start_id=0,  # No previous summary
-            end_id=last_message.id,
+            start_seq=1,
+            end_seq=last_message.seq_in_session,
         )
         expected_messages_tokens = sum(m.token_count for m in actual_messages)
 

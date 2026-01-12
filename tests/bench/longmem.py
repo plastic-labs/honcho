@@ -314,7 +314,7 @@ class LongMemEvalRunner:
         payload: dict[str, Any] = {
             "observer": observer,
             "observed": observed,
-            "dream_type": "consolidate",
+            "dream_type": "omni",
             "session_id": session_id or f"{workspace_id}_session",
         }
 

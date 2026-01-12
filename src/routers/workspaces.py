@@ -12,7 +12,6 @@ from src.dependencies import db
 from src.deriver.enqueue import enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
-from src.utils.queue_payload import ReasoningFocus
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -227,17 +226,6 @@ async def trigger_dream(
     )
     document_count = int(await db.scalar(count_stmt) or 0)
 
-    # Convert reasoning_focus string to enum if provided
-    reasoning_focus: ReasoningFocus | None = None
-    if request.reasoning_focus is not None:
-        try:
-            reasoning_focus = ReasoningFocus(request.reasoning_focus)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid reasoning_focus: {request.reasoning_focus}. Valid values: {[f.value for f in ReasoningFocus]}",
-            ) from None
-
     # Enqueue the dream task for immediate processing
     await enqueue_dream(
         workspace_id,
@@ -246,16 +234,13 @@ async def trigger_dream(
         dream_type=dream_type,
         document_count=document_count,
         session_name=request.session_id,
-        reasoning_focus=reasoning_focus,
     )
 
-    focus_str = f", focus: {reasoning_focus.value}" if reasoning_focus else ""
     logger.info(
-        "Manually triggered dream: %s for %s/%s/%s (session: %s%s)",
+        "Manually triggered dream: %s for %s/%s/%s (session: %s)",
         dream_type.value,
         workspace_id,
         observer,
         observed,
         request.session_id,
-        focus_str,
     )

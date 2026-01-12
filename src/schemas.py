@@ -1,7 +1,7 @@
 import datetime
 import ipaddress
 from enum import Enum
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Self
 from urllib.parse import urlparse
 
 import tiktoken
@@ -25,7 +25,7 @@ RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 class DreamType(str, Enum):
     """Types of dreams that can be triggered."""
 
-    CONSOLIDATE = "consolidate"
+    OMNI = "omni"
 
 
 class DeriverConfiguration(BaseModel):
@@ -792,15 +792,6 @@ class TriggerDreamRequest(BaseModel):
     )
     dream_type: DreamType = Field(..., description="Type of dream to trigger")
     session_id: str = Field(..., description="Session ID to scope the dream to")
-    reasoning_focus: Literal["deduction", "induction", "knowledge_update"] | None = (
-        Field(
-            None,
-            description="Optional focus mode to bias the dream toward specific reasoning: "
-            + "'deduction' prioritizes logical inferences from explicit facts, "
-            + "'induction' prioritizes pattern recognition across observations, "
-            + "'knowledge_update' detects when facts have changed over time",
-        )
-    )
 
 
 # Webhook endpoint schemas

@@ -477,7 +477,7 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
-    ENABLED_TYPES: list[str] = ["consolidate"]
+    ENABLED_TYPES: list[str] = ["omni"]
 
     # LLM settings for dream processing - upgraded for extended reasoning
     PROVIDER: SupportedProviders = "anthropic"

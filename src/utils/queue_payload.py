@@ -1,19 +1,9 @@
 from datetime import datetime
-from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from src.schemas import DreamType, ResolvedConfiguration
-
-
-class ReasoningFocus(str, Enum):
-    """Focus modes for dream reasoning tasks."""
-
-    DEDUCTION = "deduction"  # Prioritize creating deductive observations
-    INDUCTION = "induction"  # Prioritize creating inductive observations
-    CONSOLIDATION = "consolidation"  # Focus on cleanup, deduplication, peer card
-    KNOWLEDGE_UPDATE = "knowledge_update"  # Detect when facts have changed over time
 
 
 class BasePayload(BaseModel):
@@ -67,10 +57,6 @@ class DreamPayload(BasePayload):
     observer: str
     observed: str
     session_name: str
-    reasoning_focus: ReasoningFocus | None = Field(
-        default=None,
-        description="Optional focus to bias the dream toward specific reasoning types",
-    )
 
 
 class DeletionPayload(BasePayload):
@@ -97,7 +83,6 @@ def create_dream_payload(
     observer: str,
     observed: str,
     session_name: str,
-    reasoning_focus: ReasoningFocus | None = None,
 ) -> dict[str, Any]:
     """Create a dream payload."""
     return DreamPayload(
@@ -105,7 +90,6 @@ def create_dream_payload(
         observer=observer,
         observed=observed,
         session_name=session_name,
-        reasoning_focus=reasoning_focus,
     ).model_dump(mode="json", exclude_none=True)
 
 

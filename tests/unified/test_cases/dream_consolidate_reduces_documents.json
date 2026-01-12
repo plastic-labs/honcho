@@ -110,7 +110,7 @@
     {
       "step_type": "trigger_dream",
       "observer": "user",
-      "dream_type": "consolidate"
+      "dream_type": "omni"
     },
     {
       "step_type": "wait",
