@@ -142,6 +142,9 @@ export const ChatQuerySchema = z.object({
     .transform((val) =>
       val ? (typeof val === 'string' ? val : val.id) : undefined
     ),
+  reasoningLevel: z
+    .enum(['minimal', 'low', 'medium', 'high', 'extra-high'])
+    .optional(),
 })
 
 /**

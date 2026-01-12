@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Generator
+from typing import Literal
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
@@ -121,6 +122,8 @@ class Peer(PeerBase):
         stream: bool = False,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "extra-high"]
+        | None = None,
     ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
@@ -139,6 +142,8 @@ class Peer(PeerBase):
             session: Optional session to scope the query to. If provided, only
                      information from that session is considered. Can be a session
                      ID string or a Session object.
+            reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
+                             "high", or "extra-high". Defaults to "low" if not provided.
 
         Returns:
             For non-streaming: Response string containing the answer, or None if no relevant information
@@ -169,6 +174,9 @@ class Peer(PeerBase):
                     stream=True,
                     target=target_id,
                     session_id=resolved_session_id,
+                    reasoning_level=reasoning_level
+                    if reasoning_level is not None
+                    else omit,
                 ) as response:
                     response.http_response.raise_for_status()
                     for line in response.iter_lines():
@@ -194,6 +202,7 @@ class Peer(PeerBase):
             stream=stream,
             target=target_id,
             session_id=resolved_session_id,
+            reasoning_level=reasoning_level if reasoning_level is not None else omit,
         )
         if response.content in ("", None, "None"):
             return None
