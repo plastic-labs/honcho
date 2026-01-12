@@ -859,7 +859,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", url = "https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl" },
+    { name = "honcho-core", specifier = "==1.9.0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -870,8 +870,8 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.8.0"
-source = { url = "https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl" }
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -880,22 +880,10 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/be/4496fa3deb447e958d06490e6a18ae173c8ddb427a86a60a2bcaa9bba649/honcho_core-1.9.0.tar.gz", hash = "sha256:baaa61be3826e9fd3489037a5606c6d87e6ff6ac0c2d17139ed2153691f9bae8", size = 144184, upload-time = "2026-01-12T22:11:27.159Z" }
 wheels = [
-    { url = "https://pkg.stainless.com/s/honcho-python/b5539818022ab4ad757250ea3234648f8dc5906e/honcho_core-1.8.0-py3-none-any.whl", hash = "sha256:2684c2dbd4d6479c381028038500b9972bbf3c66cf3f37c404f8cbe4cecfba01" },
+    { url = "https://files.pythonhosted.org/packages/d1/64/99a96c61e15e6aaa696ea67a752bdcda0472712de2d5f5a0f827f0de22d9/honcho_core-1.9.0-py3-none-any.whl", hash = "sha256:b80f1215b5f9f5e134421b7243865eea6620e66fbe39629e3d59cc688031cf90", size = 138655, upload-time = "2026-01-12T22:11:26.204Z" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'aiohttp'" },
-    { name = "anyio", specifier = ">=3.5.0,<5" },
-    { name = "distro", specifier = ">=1.7.0,<2" },
-    { name = "httpx", specifier = ">=0.23.0,<1" },
-    { name = "httpx-aiohttp", marker = "extra == 'aiohttp'", specifier = ">=0.1.9" },
-    { name = "pydantic", specifier = ">=1.9.0,<3" },
-    { name = "sniffio" },
-    { name = "typing-extensions", specifier = ">=4.10,<5" },
-]
-provides-extras = ["aiohttp"]
 
 [[package]]
 name = "httpcore"

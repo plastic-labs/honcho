@@ -19,6 +19,7 @@ __all__ = [
     "ConclusionCreateResponse",
     "ConclusionScope",
     "ConclusionCreateParams",
+    "AsyncConclusionScope",
 ]
 
 ConclusionCreateResponse: TypeAlias = list[Conclusion]
@@ -202,7 +203,7 @@ class ConclusionScope:
             ],
         )
 
-    def get_representation(
+    def representation(
         self,
         search_query: str | None = None,
         search_top_k: int | None = None,
@@ -228,7 +229,7 @@ class ConclusionScope:
         """
         from honcho_core._types import omit
 
-        response = self._client.workspaces.peers.get_representation(
+        response = self._client.workspaces.peers.representation(
             peer_id=self.observer,
             workspace_id=self.workspace_id,
             target=self.observed,
@@ -450,7 +451,7 @@ class AsyncConclusionScope:
         """
         from honcho_core._types import omit
 
-        response = await self._client.workspaces.peers.get_representation(
+        response = await self._client.workspaces.peers.representation(
             peer_id=self.observer,
             workspace_id=self.workspace_id,
             target=self.observed,

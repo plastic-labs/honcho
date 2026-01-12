@@ -252,7 +252,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 4096
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
     LOG_OBSERVATIONS: bool = False

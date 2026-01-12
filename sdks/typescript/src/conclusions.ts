@@ -300,7 +300,7 @@ export class ConclusionScope {
    * @returns Promise resolving to a string of the representation
    */
   async getRepresentation(options?: RepresentationOptions): Promise<string> {
-    const response = await this._client.workspaces.peers.getRepresentation(
+    const response = await this._client.workspaces.peers.representation(
       this.workspaceId,
       this.observer,
       {

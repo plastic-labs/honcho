@@ -13,7 +13,7 @@ import httpx
 from anthropic import AsyncAnthropic
 from honcho.async_client.session import AsyncSession
 from honcho.session_context import SessionContext
-from honcho_core.types.workspaces import QueueGetStatusResponse
+from honcho_core.types.workspaces import QueueStatusResponse
 from pydantic import ValidationError
 
 # Adjust path to allow imports from tests.bench
@@ -292,7 +292,7 @@ class UnifiedTestExecutor:
         await asyncio.sleep(1)
         start = time.time()
         while time.time() - start < timeout:
-            status: QueueGetStatusResponse = await self.client.get_queue_status()
+            status: QueueStatusResponse = await self.client.get_queue_status()
             # status structure from schema: DeriverStatus with pending_work_units, in_progress_work_units
             if status.pending_work_units == 0 and status.in_progress_work_units == 0:
                 return

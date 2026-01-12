@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
-from honcho_core.types.workspaces import QueueGetStatusResponse
-from honcho_core.types.workspaces.peer_get_representation_response import (
-    PeerGetRepresentationResponse,
+from honcho_core.types.workspaces import QueueStatusResponse
+from honcho_core.types.workspaces.peer_representation_response import (
+    PeerRepresentationResponse,
 )
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
@@ -281,14 +281,14 @@ class Session(SessionBase):
         Get the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        peer_get_config_response = self._client.workspaces.sessions.peers.get_config(
+        peer_config_response = self._client.workspaces.sessions.peers.config(
             peer_id=peer_id,
             workspace_id=self.workspace_id,
             session_id=self.id,
         )
         return SessionPeerConfig(
-            observe_others=peer_get_config_response.observe_others,
-            observe_me=peer_get_config_response.observe_me,
+            observe_others=peer_config_response.observe_others,
+            observe_me=peer_config_response.observe_me,
         )
 
     def set_peer_config(self, peer: str | PeerBase, config: SessionPeerConfig) -> None:
@@ -625,7 +625,7 @@ class Session(SessionBase):
             if isinstance(last_user_message, Message)
             else last_user_message
         )
-        context = self._client.workspaces.sessions.get_context(
+        context = self._client.workspaces.sessions.context(
             session_id=self.id,
             workspace_id=self.workspace_id,
             tokens=tokens if tokens is not None else omit,
@@ -887,24 +887,20 @@ class Session(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerGetRepresentationResponse = (
-            self._client.workspaces.peers.get_representation(
-                peer_id,
-                workspace_id=self.workspace_id,
-                session_id=self.id,
-                target=target_id,
-                search_query=search_query if search_query is not None else omit,
-                search_top_k=search_top_k if search_top_k is not None else omit,
-                search_max_distance=search_max_distance
-                if search_max_distance is not None
-                else omit,
-                include_most_frequent=include_most_frequent
-                if include_most_frequent is not None
-                else omit,
-                max_conclusions=max_conclusions
-                if max_conclusions is not None
-                else omit,
-            )
+        data: PeerRepresentationResponse = self._client.workspaces.peers.representation(
+            peer_id,
+            workspace_id=self.workspace_id,
+            session_id=self.id,
+            target=target_id,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_frequent=include_most_frequent
+            if include_most_frequent is not None
+            else omit,
+            max_conclusions=max_conclusions if max_conclusions is not None else omit,
         )
         return data.representation
 
@@ -913,7 +909,7 @@ class Session(SessionBase):
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
-    ) -> QueueGetStatusResponse:
+    ) -> QueueStatusResponse:
         """
         Get the queue processing status, optionally scoped to an observer, sender, and/or session.
 
@@ -932,7 +928,7 @@ class Session(SessionBase):
             else (sender if isinstance(sender, str) else sender.id)
         )
 
-        return self._client.workspaces.queue.get_status(
+        return self._client.workspaces.queue.status(
             workspace_id=self.workspace_id,
             observer_id=resolved_observer_id,
             sender_id=resolved_sender_id,
@@ -949,7 +945,7 @@ class Session(SessionBase):
             gt=0,
             description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
         ),
-    ) -> QueueGetStatusResponse:
+    ) -> QueueStatusResponse:
         """
         Poll get_queue_status until pending_work_units and in_progress_work_units are both 0.
         This allows you to guarantee that all messages have been processed by the queue for
@@ -963,7 +959,7 @@ class Session(SessionBase):
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
-            QueueGetStatusResponse when all work units are complete
+            QueueStatusResponse when all work units are complete
 
         Raises:
             TimeoutError: If timeout is exceeded before work units complete

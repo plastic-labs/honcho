@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
-from honcho_core.types.workspaces import QueueGetStatusResponse
-from honcho_core.types.workspaces.peer_get_representation_response import (
-    PeerGetRepresentationResponse,
+from honcho_core.types.workspaces import QueueStatusResponse
+from honcho_core.types.workspaces.peer_representation_response import (
+    PeerRepresentationResponse,
 )
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
@@ -306,16 +306,14 @@ class AsyncSession(SessionBase):
         Get the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        peer_get_config_response = (
-            await self._client.workspaces.sessions.peers.get_config(
-                peer_id=peer_id,
-                workspace_id=self.workspace_id,
-                session_id=self.id,
-            )
+        peer_config_response = await self._client.workspaces.sessions.peers.config(
+            peer_id=peer_id,
+            workspace_id=self.workspace_id,
+            session_id=self.id,
         )
         return SessionPeerConfig(
-            observe_others=peer_get_config_response.observe_others,
-            observe_me=peer_get_config_response.observe_me,
+            observe_others=peer_config_response.observe_others,
+            observe_me=peer_config_response.observe_me,
         )
 
     async def set_peer_config(
@@ -654,7 +652,7 @@ class AsyncSession(SessionBase):
             if isinstance(last_user_message, Message)
             else last_user_message
         )
-        context = await self._client.workspaces.sessions.get_context(
+        context = await self._client.workspaces.sessions.context(
             session_id=self.id,
             workspace_id=self.workspace_id,
             tokens=tokens if tokens is not None else omit,
@@ -916,8 +914,8 @@ class AsyncSession(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerGetRepresentationResponse = (
-            await self._client.workspaces.peers.get_representation(
+        data: PeerRepresentationResponse = (
+            await self._client.workspaces.peers.representation(
                 peer_id,
                 workspace_id=self.workspace_id,
                 session_id=self.id,
@@ -942,7 +940,7 @@ class AsyncSession(SessionBase):
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
-    ) -> QueueGetStatusResponse:
+    ) -> QueueStatusResponse:
         """
         Get the queue processing status, optionally scoped to an observer, sender, and/or session.
 
@@ -961,7 +959,7 @@ class AsyncSession(SessionBase):
             else (sender if isinstance(sender, str) else sender.id)
         )
 
-        return await self._client.workspaces.queue.get_status(
+        return await self._client.workspaces.queue.status(
             workspace_id=self.workspace_id,
             observer_id=resolved_observer_id,
             sender_id=resolved_sender_id,
@@ -978,7 +976,7 @@ class AsyncSession(SessionBase):
             gt=0,
             description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
         ),
-    ) -> QueueGetStatusResponse:
+    ) -> QueueStatusResponse:
         """
         Poll get_queue_status until pending_work_units and in_progress_work_units are both 0.
         This allows you to guarantee that all messages have been processed by the queue for
@@ -992,7 +990,7 @@ class AsyncSession(SessionBase):
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
-            QueueGetStatusResponse when all work units are complete
+            QueueStatusResponse when all work units are complete
 
         Raises:
             TimeoutError: If timeout is exceeded before work units complete

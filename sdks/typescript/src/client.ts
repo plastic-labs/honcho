@@ -1,8 +1,8 @@
 import HonchoCore from '@honcho-ai/core'
 import type { DefaultQuery } from '@honcho-ai/core/core'
 import type {
-  QueueGetStatusParams,
-  QueueGetStatusResponse,
+  QueueStatusParams,
+  QueueStatusResponse,
 } from '@honcho-ai/core/resources/workspaces/queue'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
@@ -504,7 +504,7 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, QueueGetStatusResponse.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -522,12 +522,12 @@ export class Honcho {
         : options.session.id
       : undefined
 
-    const queryParams: QueueGetStatusParams = {}
+    const queryParams: QueueStatusParams = {}
     if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
     if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
     if (resolvedSessionId) queryParams.session_id = resolvedSessionId
 
-    const status = await this._client.workspaces.queue.getStatus(
+    const status = await this._client.workspaces.queue.status(
       this.workspaceId,
       queryParams
     )
@@ -570,7 +570,7 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, QueueGetStatusResponse.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()

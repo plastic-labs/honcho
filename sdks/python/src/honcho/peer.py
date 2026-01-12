@@ -7,11 +7,11 @@ from typing import Literal
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import omit
 from honcho_core.types.workspaces import PeerCardResponse
-from honcho_core.types.workspaces.peer_get_context_response import (
-    PeerGetContextResponse,
+from honcho_core.types.workspaces.peer_context_response import (
+    PeerContextResponse,
 )
-from honcho_core.types.workspaces.peer_get_representation_response import (
-    PeerGetRepresentationResponse,
+from honcho_core.types.workspaces.peer_representation_response import (
+    PeerRepresentationResponse,
 )
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
@@ -541,24 +541,20 @@ class Peer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerGetRepresentationResponse = (
-            self._client.workspaces.peers.get_representation(
-                peer_id=self.id,
-                workspace_id=self.workspace_id,
-                session_id=session_id,
-                target=target_id,
-                search_query=search_query if search_query is not None else omit,
-                search_top_k=search_top_k if search_top_k is not None else omit,
-                search_max_distance=search_max_distance
-                if search_max_distance is not None
-                else omit,
-                include_most_frequent=include_most_frequent
-                if include_most_frequent is not None
-                else omit,
-                max_conclusions=max_conclusions
-                if max_conclusions is not None
-                else omit,
-            )
+        data: PeerRepresentationResponse = self._client.workspaces.peers.representation(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            session_id=session_id,
+            target=target_id,
+            search_query=search_query if search_query is not None else omit,
+            search_top_k=search_top_k if search_top_k is not None else omit,
+            search_max_distance=search_max_distance
+            if search_max_distance is not None
+            else omit,
+            include_most_frequent=include_most_frequent
+            if include_most_frequent is not None
+            else omit,
+            max_conclusions=max_conclusions if max_conclusions is not None else omit,
         )
         return data.representation
 
@@ -570,7 +566,7 @@ class Peer(PeerBase):
         search_max_distance: float | None = None,
         include_most_frequent: bool | None = None,
         max_conclusions: int | None = None,
-    ) -> PeerGetContextResponse:
+    ) -> PeerContextResponse:
         """
         Get context for this peer, including representation and peer card.
 
@@ -614,7 +610,7 @@ class Peer(PeerBase):
             else (target if isinstance(target, str) else target.id)
         )
 
-        return self._client.workspaces.peers.get_context(
+        return self._client.workspaces.peers.context(
             peer_id=self.id,
             workspace_id=self.workspace_id,
             target=target_id,

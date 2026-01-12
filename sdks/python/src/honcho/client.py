@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import httpx
 from honcho_core import Honcho as HonchoCore
-from honcho_core.types.workspaces import QueueGetStatusResponse
+from honcho_core.types.workspaces import QueueStatusResponse
 from honcho_core.types.workspaces.peer import Peer as PeerCore
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
@@ -449,7 +449,7 @@ class Honcho(BaseModel):
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
-    ) -> QueueGetStatusResponse:
+    ) -> QueueStatusResponse:
         """
         Get the queue processing status, optionally scoped to an observer, sender, and/or session.
 
@@ -474,7 +474,7 @@ class Honcho(BaseModel):
             else (session if isinstance(session, str) else session.id)
         )
 
-        return self._client.workspaces.queue.get_status(
+        return self._client.workspaces.queue.status(
             workspace_id=self.workspace_id,
             observer_id=resolved_observer_id,
             sender_id=resolved_sender_id,
@@ -492,7 +492,7 @@ class Honcho(BaseModel):
             gt=0,
             description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
         ),
-    ) -> QueueGetStatusResponse:
+    ) -> QueueStatusResponse:
         """
         Poll get_queue_status until pending_work_units and in_progress_work_units are both 0.
         This allows you to guarantee that all messages have been processed by the queue for
@@ -507,7 +507,7 @@ class Honcho(BaseModel):
             timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
 
         Returns:
-            QueueGetStatusResponse when all work units are complete
+            QueueStatusResponse when all work units are complete
 
         Raises:
             TimeoutError: If timeout is exceeded before work units complete

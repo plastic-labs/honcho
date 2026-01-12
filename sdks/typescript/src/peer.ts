@@ -535,7 +535,7 @@ export class Peer {
         : getRepresentationParams.target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.getRepresentation(
+    const response = await this._client.workspaces.peers.representation(
       this.workspaceId,
       this.id,
       {
@@ -590,7 +590,7 @@ export class Peer {
         : target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.getContext(
+    const response = await this._client.workspaces.peers.context(
       this.workspaceId,
       this.id,
       {

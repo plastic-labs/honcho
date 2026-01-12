@@ -14,7 +14,7 @@ jest.mock('@honcho-ai/core', () => {
           set: jest.fn(),
           remove: jest.fn(),
           list: jest.fn(),
-          getConfig: jest.fn(),
+          config: jest.fn(),
           setConfig: jest.fn(),
         },
         messages: {
@@ -26,14 +26,14 @@ jest.mock('@honcho-ai/core', () => {
         update: jest.fn(),
         delete: jest.fn(),
         clone: jest.fn(),
-        getContext: jest.fn(),
+        context: jest.fn(),
         search: jest.fn(),
       },
       peers: {
-        getRepresentation: jest.fn(),
+        representation: jest.fn(),
       },
       queue: {
-        getStatus: jest.fn(),
+        status: jest.fn(),
       },
       getOrCreate: jest.fn(),
       update: jest.fn(),
@@ -333,7 +333,7 @@ describe('Session', () => {
   describe('getPeerConfig', () => {
     it('should return peer configuration', async () => {
       const mockConfig = { observe_me: true, observe_others: false }
-      mockClient.workspaces.sessions.peers.getConfig.mockResolvedValue(
+      mockClient.workspaces.sessions.peers.config.mockResolvedValue(
         mockConfig
       )
 
@@ -341,14 +341,14 @@ describe('Session', () => {
 
       expect(config).toEqual(mockConfig)
       expect(
-        mockClient.workspaces.sessions.peers.getConfig
+        mockClient.workspaces.sessions.peers.config
       ).toHaveBeenCalledWith('test-workspace', 'test-session', 'peer1')
     })
 
     it('should handle Peer object input', async () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
       const mockConfig = { observe_me: false, observe_others: true }
-      mockClient.workspaces.sessions.peers.getConfig.mockResolvedValue(
+      mockClient.workspaces.sessions.peers.config.mockResolvedValue(
         mockConfig
       )
 
@@ -356,7 +356,7 @@ describe('Session', () => {
 
       expect(config).toEqual(mockConfig)
       expect(
-        mockClient.workspaces.sessions.peers.getConfig
+        mockClient.workspaces.sessions.peers.config
       ).toHaveBeenCalledWith('test-workspace', 'test-session', 'peer1')
     })
   })
@@ -775,7 +775,7 @@ describe('Session', () => {
           token_count: 100,
         },
       }
-      mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext)
+      mockClient.workspaces.sessions.context.mockResolvedValue(mockContext)
 
       const context = await session.getContext()
 
@@ -783,7 +783,7 @@ describe('Session', () => {
       expect(context.sessionId).toBe('test-session')
       expect(context.messages).toEqual(mockContext.messages)
       expect(context.summary?.content).toBe('Conversation summary')
-      expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.sessions.context).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
         { tokens: undefined, summary: undefined }
@@ -801,12 +801,12 @@ describe('Session', () => {
           token_count: 50,
         },
       }
-      mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext)
+      mockClient.workspaces.sessions.context.mockResolvedValue(mockContext)
 
       const context = await session.getContext({ summary: true, tokens: 1000 })
 
       expect(context).toBeInstanceOf(SessionContext)
-      expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.sessions.context).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
         { tokens: 1000, summary: true }
@@ -817,7 +817,7 @@ describe('Session', () => {
       const mockContext = {
         messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
       }
-      mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext)
+      mockClient.workspaces.sessions.context.mockResolvedValue(mockContext)
 
       const context = await session.getContext()
 
@@ -825,7 +825,7 @@ describe('Session', () => {
     })
 
     it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.getContext.mockRejectedValue(
+      mockClient.workspaces.sessions.context.mockRejectedValue(
         new Error('Failed to get context')
       )
 
@@ -907,7 +907,7 @@ describe('Session', () => {
   describe('getRepresentation', () => {
     it('should get working representation with peer string', async () => {
       const mockRepresentationString = 'Some knowledge about the peer'
-      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+      mockClient.workspaces.peers.representation.mockResolvedValue({
         representation: mockRepresentationString,
       })
 
@@ -916,7 +916,7 @@ describe('Session', () => {
       expect(typeof result).toBe('string')
       expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.getRepresentation
+        mockClient.workspaces.peers.representation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: undefined,
@@ -931,7 +931,7 @@ describe('Session', () => {
     it('should get working representation with Peer object', async () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
       const mockRepresentationString = 'Some knowledge'
-      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+      mockClient.workspaces.peers.representation.mockResolvedValue({
         representation: mockRepresentationString,
       })
 
@@ -940,7 +940,7 @@ describe('Session', () => {
       expect(typeof result).toBe('string')
       expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.getRepresentation
+        mockClient.workspaces.peers.representation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: undefined,
@@ -954,7 +954,7 @@ describe('Session', () => {
 
     it('should get working representation with target peer string', async () => {
       const mockRepresentationString = 'What peer1 knows about target'
-      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+      mockClient.workspaces.peers.representation.mockResolvedValue({
         representation: mockRepresentationString,
       })
 
@@ -963,7 +963,7 @@ describe('Session', () => {
       expect(typeof result).toBe('string')
       expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.getRepresentation
+        mockClient.workspaces.peers.representation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: 'target-peer',
@@ -979,7 +979,7 @@ describe('Session', () => {
       const peer = new Peer('peer1', 'test-workspace', mockClient)
       const target = new Peer('target-peer', 'test-workspace', mockClient)
       const mockRepresentationString = 'What peer1 knows about target'
-      mockClient.workspaces.peers.getRepresentation.mockResolvedValue({
+      mockClient.workspaces.peers.representation.mockResolvedValue({
         representation: mockRepresentationString,
       })
 
@@ -988,7 +988,7 @@ describe('Session', () => {
       expect(typeof result).toBe('string')
       expect(result).toBe(mockRepresentationString)
       expect(
-        mockClient.workspaces.peers.getRepresentation
+        mockClient.workspaces.peers.representation
       ).toHaveBeenCalledWith('test-workspace', 'peer1', {
         session_id: 'test-session',
         target: 'target-peer',
@@ -1001,7 +1001,7 @@ describe('Session', () => {
     })
 
     it('should handle API errors', async () => {
-      mockClient.workspaces.peers.getRepresentation.mockRejectedValue(
+      mockClient.workspaces.peers.representation.mockRejectedValue(
         new Error('Failed to get working representation')
       )
 
@@ -1106,7 +1106,7 @@ describe('Session', () => {
         pending_work_units: 2,
         sessions: { session1: { status: 'active' } },
       }
-      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatus)
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus)
 
       const status = await session.getQueueStatus()
 
@@ -1117,7 +1117,7 @@ describe('Session', () => {
         pendingWorkUnits: 2,
         sessions: { session1: { status: 'active' } },
       })
-      expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
         'test-workspace',
         { session_id: 'test-session' }
       )
@@ -1130,7 +1130,7 @@ describe('Session', () => {
         in_progress_work_units: 1,
         pending_work_units: 1,
       }
-      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatus)
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus)
 
       const status = await session.getQueueStatus({
         observer: 'observer1',
@@ -1144,7 +1144,7 @@ describe('Session', () => {
         pendingWorkUnits: 1,
         sessions: undefined,
       })
-      expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
         'test-workspace',
         {
           observer_id: 'observer1',
@@ -1162,7 +1162,7 @@ describe('Session', () => {
           in_progress_work_units: 0,
           pending_work_units: 0,
         }
-        mockClient.workspaces.queue.getStatus.mockResolvedValue(
+        mockClient.workspaces.queue.status.mockResolvedValue(
           mockStatusComplete
         )
 
@@ -1176,7 +1176,7 @@ describe('Session', () => {
           sessions: undefined,
         })
 
-        expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
+        expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
           'test-workspace',
           { session_id: 'test-session' }
         )
@@ -1189,7 +1189,7 @@ describe('Session', () => {
           in_progress_work_units: 2,
           pending_work_units: 1,
         }
-        mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatusPending)
+        mockClient.workspaces.queue.status.mockResolvedValue(mockStatusPending)
 
         await expect(
           session.pollQueueStatus({ timeoutMs: 100 })

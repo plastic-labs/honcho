@@ -7,11 +7,11 @@ from typing import Literal
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
 from honcho_core.types.workspaces import PeerCardResponse
-from honcho_core.types.workspaces.peer_get_context_response import (
-    PeerGetContextResponse,
+from honcho_core.types.workspaces.peer_context_response import (
+    PeerContextResponse,
 )
-from honcho_core.types.workspaces.peer_get_representation_response import (
-    PeerGetRepresentationResponse,
+from honcho_core.types.workspaces.peer_representation_response import (
+    PeerRepresentationResponse,
 )
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
@@ -565,8 +565,8 @@ class AsyncPeer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerGetRepresentationResponse = (
-            await self._client.workspaces.peers.get_representation(
+        data: PeerRepresentationResponse = (
+            await self._client.workspaces.peers.representation(
                 peer_id=self.id,
                 workspace_id=self.workspace_id,
                 session_id=session_id,
@@ -594,7 +594,7 @@ class AsyncPeer(PeerBase):
         search_max_distance: float | None = None,
         include_most_frequent: bool | None = None,
         max_conclusions: int | None = None,
-    ) -> PeerGetContextResponse:
+    ) -> PeerContextResponse:
         """
         Get context for this peer, including representation and peer card.
 
@@ -637,7 +637,7 @@ class AsyncPeer(PeerBase):
             else (target if isinstance(target, str) else target.id)
         )
 
-        return await self._client.workspaces.peers.get_context(
+        return await self._client.workspaces.peers.context(
             peer_id=self.id,
             workspace_id=self.workspace_id,
             target=target_id,

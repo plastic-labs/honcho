@@ -47,23 +47,28 @@ def normalize_configuration_dict(raw: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = dict(raw)
 
     reasoning_raw = normalized.get("reasoning")
-    reasoning: dict[str, Any] = (
-        cast(dict[str, Any], reasoning_raw) if isinstance(reasoning_raw, dict) else {}
-    )
+    reasoning_present = "reasoning" in normalized
+    reasoning: dict[str, Any]
+    if isinstance(reasoning_raw, dict):
+        reasoning = dict(cast(dict[str, Any], reasoning_raw))
+    else:
+        reasoning = {}
     reasoning_enabled_explicit = reasoning.get("enabled") is not None
 
     if not reasoning_enabled_explicit:
         deriver_raw = normalized.get("deriver")
-        deriver = (
-            cast(dict[str, Any], deriver_raw) if isinstance(deriver_raw, dict) else {}
-        )
+        deriver: dict[str, Any]
+        if isinstance(deriver_raw, dict):
+            deriver = dict(cast(dict[str, Any], deriver_raw))
+        else:
+            deriver = {}
         if deriver.get("enabled") is not None:
             reasoning["enabled"] = bool(deriver["enabled"])
 
     if not reasoning_enabled_explicit and normalized.get("skip_deriver") is True:
         reasoning["enabled"] = False
 
-    if reasoning:
+    if reasoning_present or reasoning:
         normalized["reasoning"] = reasoning
 
     normalized.pop("deriver", None)

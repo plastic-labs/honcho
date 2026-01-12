@@ -1,7 +1,7 @@
 import type HonchoCore from '@honcho-ai/core'
 import type {
-  QueueGetStatusParams,
-  QueueGetStatusResponse,
+  QueueStatusParams,
+  QueueStatusResponse,
 } from '@honcho-ai/core/resources/workspaces/queue'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type { Uploadable } from '@honcho-ai/core/uploads'
@@ -337,7 +337,7 @@ export class Session {
    */
   async getPeerConfig(peer: string | Peer): Promise<SessionPeerConfig> {
     const peerId = typeof peer === 'string' ? peer : peer.id
-    return await this._client.workspaces.sessions.peers.getConfig(
+    return await this._client.workspaces.sessions.peers.config(
       this.workspaceId,
       this.id,
       peerId
@@ -700,7 +700,7 @@ export class Session {
         ? contextParams.lastUserMessage
         : contextParams.lastUserMessage?.id
 
-    const context = await this._client.workspaces.sessions.getContext(
+    const context = await this._client.workspaces.sessions.context(
       this.workspaceId,
       this.id,
       {
@@ -820,7 +820,7 @@ export class Session {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, QueueGetStatusResponse.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -833,13 +833,13 @@ export class Session {
         : options.sender.id
       : undefined
 
-    const queryParams: QueueGetStatusParams = {
+    const queryParams: QueueStatusParams = {
       session_id: this.id, // Always use this session's ID
     }
     if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
     if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
 
-    const status = await this._client.workspaces.queue.getStatus(
+    const status = await this._client.workspaces.queue.status(
       this.workspaceId,
       queryParams
     )
@@ -880,7 +880,7 @@ export class Session {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, QueueGetStatusResponse.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
@@ -1057,7 +1057,7 @@ export class Session {
         : getRepresentationParams.target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.getRepresentation(
+    const response = await this._client.workspaces.peers.representation(
       this.workspaceId,
       peerId,
       {

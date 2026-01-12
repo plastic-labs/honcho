@@ -17,7 +17,7 @@ jest.mock('@honcho-ai/core', () => {
         getOrCreate: jest.fn(),
       },
       queue: {
-        getStatus: jest.fn(),
+        status: jest.fn(),
       },
       getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
       update: jest.fn(),
@@ -419,7 +419,7 @@ describe('Honcho Client', () => {
         pending_work_units: 2,
         sessions: { 'session1': { status: 'active' } },
       };
-      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatus);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus);
 
       const status = await honcho.getQueueStatus();
 
@@ -430,7 +430,7 @@ describe('Honcho Client', () => {
         pendingWorkUnits: 2,
         sessions: { 'session1': { status: 'active' } },
       });
-      expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
         'test-workspace',
         {}
       );
@@ -443,7 +443,7 @@ describe('Honcho Client', () => {
         in_progress_work_units: 1,
         pending_work_units: 1,
       };
-      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatus);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus);
 
       const status = await honcho.getQueueStatus({
         observer: 'observer1',
@@ -458,7 +458,7 @@ describe('Honcho Client', () => {
         pendingWorkUnits: 1,
         sessions: undefined,
       });
-      expect(mockClient.workspaces.queue.getStatus).toHaveBeenCalledWith(
+      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
         'test-workspace',
         {
           observer_id: 'observer1',
@@ -477,7 +477,7 @@ describe('Honcho Client', () => {
         in_progress_work_units: 0,
         pending_work_units: 0,
       };
-      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatusComplete);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatusComplete);
 
       const status = await honcho.pollQueueStatus();
 
@@ -497,7 +497,7 @@ describe('Honcho Client', () => {
         in_progress_work_units: 2,
         pending_work_units: 1,
       };
-      mockClient.workspaces.queue.getStatus.mockResolvedValue(mockStatusPending);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatusPending);
 
       await expect(honcho.pollQueueStatus({ timeoutMs: 0 })).rejects.toThrow();
     });
