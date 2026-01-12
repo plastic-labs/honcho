@@ -624,12 +624,14 @@ class TestObservationRoutes:
         data = response.json()
         assert data["message"] == "Observation deleted successfully"
 
-        # Verify observation is deleted
+        # Verify observation is soft-deleted
         from sqlalchemy import select
 
         stmt = select(models.Document).where(models.Document.id == observation_id)
         result = await db_session.execute(stmt)
-        assert result.scalar_one_or_none() is None
+        doc = result.scalar_one_or_none()
+        assert doc is not None
+        assert doc.deleted_at is not None
 
     @pytest.mark.asyncio
     async def test_delete_observation_not_found(

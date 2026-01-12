@@ -313,9 +313,11 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        # Verify document is deleted
+        # Verify document is soft-deleted
         result = await db_session.execute(stmt)
-        assert result.scalar_one_or_none() is None
+        doc = result.scalar_one_or_none()
+        assert doc is not None
+        assert doc.deleted_at is not None
 
     @pytest.mark.asyncio
     async def test_delete_document_not_found(
