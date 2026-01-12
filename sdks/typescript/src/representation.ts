@@ -29,7 +29,7 @@ export interface RepresentationOptions {
 }
 
 /**
- * Metadata associated with an conclusion.
+ * Metadata associated with a conclusion.
  */
 export interface ConclusionMetadata {
   created_at: string

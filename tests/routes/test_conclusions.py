@@ -592,7 +592,7 @@ class TestConclusionRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test deleting an conclusion"""
+        """Test deleting a conclusion"""
         test_workspace, test_peer = sample_data
 
         # Create another peer

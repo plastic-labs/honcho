@@ -230,7 +230,7 @@ export class ConclusionScope {
   }
 
   /**
-   * Delete an conclusion by ID.
+   * Delete a conclusion by ID.
    *
    * @param conclusionId - The ID of the conclusion to delete
    */

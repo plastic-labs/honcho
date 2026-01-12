@@ -17,7 +17,7 @@ export interface Conclusion {
 }
 
 /**
- * Parameters for creating an conclusion.
+ * Parameters for creating a conclusion.
  */
 export interface ConclusionCreateParam {
   /** The conclusion content/text */

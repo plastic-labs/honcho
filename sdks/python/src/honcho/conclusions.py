@@ -9,10 +9,8 @@ from honcho_core import Honcho as HonchoCore
 from honcho_core.pagination import AsyncPage, SyncPage
 from honcho_core.types.workspaces import conclusion_create_params
 from honcho_core.types.workspaces.conclusion import Conclusion
-from honcho_core.types.workspaces.conclusion_create_response import (
-    ConclusionCreateResponse,
-)
 from pydantic import BaseModel, PrivateAttr
+from typing_extensions import TypeAlias
 
 from .base import SessionBase
 
@@ -22,6 +20,8 @@ __all__ = [
     "ConclusionScope",
     "ConclusionCreateParams",
 ]
+
+ConclusionCreateResponse: TypeAlias = list[Conclusion]
 
 
 class ConclusionCreateParams(BaseModel):
@@ -146,7 +146,7 @@ class ConclusionScope:
 
     def delete(self, conclusion_id: str) -> None:
         """
-        Delete an conclusion by ID.
+        Delete a conclusion by ID.
 
         Args:
             conclusion_id: The ID of the conclusion to delete
@@ -369,7 +369,7 @@ class AsyncConclusionScope:
 
     async def delete(self, conclusion_id: str) -> None:
         """
-        Delete an conclusion by ID.
+        Delete a conclusion by ID.
 
         Args:
             conclusion_id: The ID of the conclusion to delete
@@ -382,7 +382,7 @@ class AsyncConclusionScope:
     async def create(
         self,
         conclusions: list[ConclusionCreateParams | dict[str, Any]],
-    ) -> ConclusionCreateResponse:
+    ) -> list[Conclusion]:
         """
         Create conclusions in this scope.
 
