@@ -36,6 +36,7 @@ dependencies = [
     "redis>=7.0.0,<8.0.0",
     "cashews[redis]==7.4.4",
     "scikit-learn>=1.6.0",
+    "datasets>=4.4.2",
 ]
 [dependency-groups]
 dev = [
