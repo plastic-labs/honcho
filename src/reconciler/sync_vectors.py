@@ -555,6 +555,7 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             )
             if cleaned:
                 metrics.documents_cleaned += cleaned
+                await db.commit()
                 did_work = True
 
             if not did_work:

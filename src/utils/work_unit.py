@@ -64,6 +64,12 @@ def construct_work_unit_key(
             )
         return f"deletion:{workspace_name}:{deletion_type}:{resource_id}"
 
+    if task_type == "reconciler":
+        reconciler_type = payload.get("reconciler_type")
+        if not reconciler_type:
+            raise ValueError("reconciler_type is required for reconciler tasks")
+        return f"reconciler:{reconciler_type}"
+
     raise ValueError(f"Invalid task type: {task_type}")
 
 
@@ -131,6 +137,19 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
         return ParsedWorkUnit(
             task_type=task_type,
             workspace_name=parts[1],
+            session_name=None,
+            observer=None,
+            observed=None,
+        )
+
+    if task_type == "reconciler":
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name="__system__",
             session_name=None,
             observer=None,
             observed=None,

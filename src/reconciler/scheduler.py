@@ -45,12 +45,12 @@ QUEUE_CLEANUP_INTERVAL_SECONDS = 12 * 3600  # 12 hours
 RECONCILER_TASKS: dict[str, ReconcilerTask] = {
     "sync_vectors": ReconcilerTask(
         name="sync_vectors",
-        work_unit_key="global:sync_vectors",
+        work_unit_key="reconciler:sync_vectors",
         interval_seconds=settings.VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS,
     ),
     "cleanup_queue": ReconcilerTask(
         name="cleanup_queue",
-        work_unit_key="global:cleanup_queue",
+        work_unit_key="reconciler:cleanup_queue",
         interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
     ),
 }
