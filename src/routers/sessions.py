@@ -129,11 +129,37 @@ async def _get_session_context_task(
 
 
 @router.post(
+    "/list",
+    response_model=Page[schemas.Session],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_sessions(
+    workspace_id: str = Path(...),
+    options: schemas.SessionGet | None = Body(
+        None, description="Filtering and pagination options for the sessions list"
+    ),
+    db: AsyncSession = db,
+):
+    """Get all Sessions for a Workspace, paginated with optional filters."""
+    filter_param = None
+
+    if options and hasattr(options, "filters") and options.filters:
+        filter_param = options.filters
+        if filter_param == {}:  # Explicitly check for empty dict
+            filter_param = None
+
+    return await apaginate(
+        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
+    )
+
+
+@router.post(
     "",
     response_model=schemas.Session,
 )
 async def get_or_create_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    response: Response,
+    workspace_id: str = Path(...),
     session: schemas.SessionCreate = Body(
         ..., description="Session creation parameters"
     ),
@@ -141,9 +167,9 @@ async def get_or_create_session(
     db: AsyncSession = db,
 ):
     """
-    Get a specific session in a workspace.
+    Get a Session by ID or create a new Session with the given ID.
 
-    If session_id is provided as a query parameter, it verifies the session is in the workspace.
+    If Session ID is provided as a parameter, it verifies the Session is in the Workspace.
     Otherwise, it uses the session_id from the JWT for verification.
     """
     # Verify JWT has access to the requested resource
@@ -167,37 +193,14 @@ async def get_or_create_session(
 
     # Handle session creation with proper error handling
     try:
-        return await crud.get_or_create_session(
+        result = await crud.get_or_create_session(
             db, workspace_name=workspace_id, session=session
         )
+        response.status_code = 201 if result.created else 200
+        return result.resource
     except ValueError as e:
         logger.warning(f"Failed to get or create session {session.name}: {str(e)}")
         raise ValidationException(str(e)) from e
-
-
-@router.post(
-    "/list",
-    response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
-)
-async def get_sessions(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    options: schemas.SessionGet | None = Body(
-        None, description="Filtering and pagination options for the sessions list"
-    ),
-    db: AsyncSession = db,
-):
-    """Get All Sessions in a Workspace"""
-    filter_param = None
-
-    if options and hasattr(options, "filters") and options.filters:
-        filter_param = options.filters
-        if filter_param == {}:  # Explicitly check for empty dict
-            filter_param = None
-
-    return await apaginate(
-        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
-    )
 
 
 @router.put(
@@ -208,19 +211,18 @@ async def get_sessions(
     ],
 )
 async def update_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session to update"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
     ),
     db: AsyncSession = db,
 ):
-    """Update the metadata of a Session"""
+    """Update a Session's metadata and/or configuration."""
     try:
         updated_session = await crud.update_session(
             db, workspace_name=workspace_id, session_name=session_id, session=session
         )
-        logger.debug("Session %s updated successfully", session_id)
         return updated_session
     except ValueError as e:
         logger.warning(f"Failed to update session {session_id}: {str(e)}")
@@ -235,16 +237,15 @@ async def update_session(
     ],
 )
 async def delete_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session to delete"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     db: AsyncSession = db,
 ):
     """
-    Delete a session and all associated data.
+    Delete a Session and all associated messages.
 
-    The session is marked as inactive immediately and returns 202 Accepted. The actual
-    deletion of all related data (messages, embeddings, documents, etc.) happens
-    asynchronously via the queue with retry support.
+    The Session is marked as inactive immediately and returns 202 Accepted. The actual
+    deletion of all related data happens asynchronously via the queue with retry support.
 
     This action cannot be undone.
     """
@@ -271,22 +272,23 @@ async def delete_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.get(
+@router.post(
     "/{session_id}/clone",
     response_model=schemas.Session,
+    status_code=201,
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def clone_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session to clone"),
-    db: AsyncSession = db,
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     message_id: str | None = Query(
         None, description="Message ID to cut off the clone at"
     ),
+    db: AsyncSession = db,
 ):
-    """Clone a session, optionally up to a specific message"""
+    """Clone a Session, optionally up to a specific message ID."""
     try:
         # TODO: Update crud.clone_session to work with new paradigm
         cloned_session = await crud.clone_session(
@@ -310,16 +312,17 @@ async def clone_session(
     ],
 )
 async def add_peers_to_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     peers: dict[str, schemas.SessionPeerConfig] = Body(
-        ..., description="List of peer IDs to add to the session"
+        ...,
+        description="List of peer IDs (with session-level configuration) to add to the session",
     ),
     db: AsyncSession = db,
 ):
-    """Add peers to a session"""
+    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically."""
     try:
-        session = await crud.get_or_create_session(
+        result = await crud.get_or_create_session(
             db,
             session=schemas.SessionCreate(
                 name=session_id,
@@ -327,8 +330,7 @@ async def add_peers_to_session(
             ),
             workspace_name=workspace_id,
         )
-        logger.debug("Added peers to session %s successfully", session_id)
-        return session
+        return result.resource
     except ValueError as e:
         logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
@@ -342,14 +344,19 @@ async def add_peers_to_session(
     ],
 )
 async def set_session_peers(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     peers: dict[str, schemas.SessionPeerConfig] = Body(
-        ..., description="List of peer IDs to set for the session"
+        ...,
+        description="List of peer IDs (with session-level configuration) to set for the session",
     ),
     db: AsyncSession = db,
 ):
-    """Set the peers in a session"""
+    """
+    Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.
+
+    This will fully replace the current set of Peers in the Session.
+    """
     try:
         await crud.set_peers_for_session(
             db,
@@ -358,13 +365,13 @@ async def set_session_peers(
             peer_names=peers,
         )
         # Get the session to return
-        session = await crud.get_or_create_session(
+        result = await crud.get_or_create_session(
             db,
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
         logger.debug("Set peers for session %s successfully", session_id)
-        return session
+        return result.resource
     except ValueError as e:
         logger.warning(f"Failed to set peers for session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Failed to set peers for session") from e
@@ -378,14 +385,14 @@ async def set_session_peers(
     ],
 )
 async def remove_peers_from_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     peers: list[str] = Body(
         ..., description="List of peer IDs to remove from the session"
     ),
     db: AsyncSession = db,
 ):
-    """Remove peers from a session"""
+    """Remove Peers by ID from a Session."""
     try:
         await crud.remove_peers_from_session(
             db,
@@ -394,13 +401,13 @@ async def remove_peers_from_session(
             peer_names=set(peers),
         )
         # Get the session to return
-        session = await crud.get_or_create_session(
+        result = await crud.get_or_create_session(
             db,
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
         logger.debug("Removed peers from session %s successfully", session_id)
-        return session
+        return result.resource
     except ValueError as e:
         logger.warning(f"Failed to remove peers from session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
@@ -414,12 +421,12 @@ async def remove_peers_from_session(
     ],
 )
 async def get_peer_config(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
-    peer_id: str = Path(..., description="ID of the peer"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    peer_id: str = Path(...),
     db: AsyncSession = db,
 ):
-    """Get the configuration for a peer in a session"""
+    """Get the configuration for a Peer in a Session."""
     return await crud.get_peer_config(
         db,
         workspace_name=workspace_id,
@@ -428,20 +435,22 @@ async def get_peer_config(
     )
 
 
-@router.post(
+@router.put(
     "/{session_id}/peers/{peer_id}/config",
+    status_code=204,
+    response_model=None,
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def set_peer_config(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
-    peer_id: str = Path(..., description="ID of the peer"),
-    config: schemas.SessionPeerConfig = Body(..., description="Peer configuration"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    peer_id: str = Path(...),
+    config: schemas.SessionPeerConfig = Body(..., description="New peer configuration"),
     db: AsyncSession = db,
 ):
-    """Set the configuration for a peer in a session"""
+    """Set the configuration for a Peer in a Session."""
     try:
         await crud.set_peer_config(
             db,
@@ -453,7 +462,6 @@ async def set_peer_config(
         logger.debug(
             "Set peer config for %s in session %s successfully", peer_id, session_id
         )
-        return Response(status_code=200)
     except ValueError as e:
         logger.warning(
             f"Failed to set peer config for {peer_id} in session {session_id}: {str(e)}"
@@ -469,11 +477,11 @@ async def set_peer_config(
     ],
 )
 async def get_session_peers(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     db: AsyncSession = db,
 ):
-    """Get peers from a session"""
+    """Get all Peers in a Session. Results are paginated."""
     try:
         peers_query = await crud.get_peers_from_session(
             workspace_name=workspace_id, session_name=session_id
@@ -492,8 +500,8 @@ async def get_session_peers(
     ],
 )
 async def get_session_context(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
@@ -502,7 +510,7 @@ async def get_session_context(
     *,
     last_message: str | None = Query(
         None,
-        description="The most recent message, used to fetch semantically relevant observations",
+        description="The most recent message, used to fetch semantically relevant conclusions",
     ),
     include_summary: bool = Query(
         default=True,
@@ -525,27 +533,27 @@ async def get_session_context(
         None,
         ge=1,
         le=100,
-        description="Only used if `last_message` is provided. The number of semantic-search-retrieved observations to include in the representation",
+        description="Only used if `last_message` is provided. The number of semantic-search-retrieved conclusions to include in the representation",
     ),
     search_max_distance: float | None = Query(
         None,
         ge=0.0,
         le=1.0,
-        description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant observations",
+        description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant conclusions",
     ),
-    include_most_derived: bool = Query(
+    include_most_frequent: bool = Query(
         default=False,
-        description="Only used if `last_message` is provided. Whether to include the most derived observations in the representation",
+        description="Only used if `last_message` is provided. Whether to include the most frequent conclusions in the representation",
     ),
-    max_observations: int | None = Query(
+    max_conclusions: int | None = Query(
         None,
         ge=1,
         le=100,
-        description="Only used if `last_message` is provided. The maximum number of observations to include in the representation",
+        description="Only used if `last_message` is provided. The maximum number of conclusions to include in the representation",
     ),
 ):
     """
-    Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.
+    Produce a context object from the Session. The caller provides an optional token limit which the entire context must fit into.
     If not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit
     to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
     this. If the caller does not want a summary, we allocate all the tokens to recent messages.
@@ -583,8 +591,8 @@ async def get_session_context(
         session_name=session_id if limit_to_session else None,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
-        include_most_derived=include_most_derived,
-        max_observations=max_observations,
+        include_most_derived=include_most_frequent,
+        max_observations=max_conclusions,
     )
     card = await _get_peer_card_task(workspace_id, observer=observer, observed=observed)
 
@@ -603,7 +611,7 @@ async def get_session_context(
         name=session_id,
         messages=messages,
         summary=summary,
-        peer_representation=representation,
+        peer_representation=representation.format_as_markdown(),
         peer_card=card,
     )
 
@@ -616,12 +624,12 @@ async def get_session_context(
     ],
 )
 async def get_session_summaries(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     db: AsyncSession = db,
 ) -> schemas.SessionSummaries:
     """
-    Get available summaries for a session.
+    Get available summaries for a Session.
 
     Returns both short and long summaries if available, including metadata like
     the message ID they cover up to, creation timestamp, and token count.
@@ -657,14 +665,16 @@ async def get_session_summaries(
     ],
 )
 async def search_session(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     body: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters"
     ),
     db: AsyncSession = db,
 ):
-    """Search a Session"""
+    """
+    Search a Session with optional filters. Use `limit` to control the number of results returned.
+    """
     # take user-provided filter and add workspace_id and session_id to it
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id

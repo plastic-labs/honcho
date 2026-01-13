@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import prometheus
 from src.config import settings
+from src.schemas import ResolvedConfiguration
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
@@ -32,13 +33,17 @@ from src.utils.logging import accumulate_metric, log_performance_metrics
 logger = logging.getLogger(__name__)
 
 
+# Tool names to exclude when peer card creation is disabled
+PEER_CARD_TOOL_NAMES = {"update_peer_card", "get_peer_card"}
+
+
 class BaseSpecialist(ABC):
     """Base class for agentic specialists."""
 
     name: str = "base"
 
     @abstractmethod
-    def get_tools(self) -> list[dict[str, Any]]:
+    def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         """Get the tools available to this specialist."""
         ...
 
@@ -56,7 +61,9 @@ class BaseSpecialist(ABC):
         return 15
 
     @abstractmethod
-    def build_system_prompt(self, observed: str) -> str:
+    def build_system_prompt(
+        self, observed: str, *, peer_card_enabled: bool = True
+    ) -> str:
         """Build the system prompt for this specialist."""
         ...
 
@@ -73,6 +80,7 @@ class BaseSpecialist(ABC):
         observed: str,
         session_name: str,
         probing_questions: list[str],
+        configuration: ResolvedConfiguration | None = None,
     ) -> str:
         """
         Run the specialist agent.
@@ -84,6 +92,7 @@ class BaseSpecialist(ABC):
             observed: The peer being observed
             session_name: Session identifier
             probing_questions: Entry point questions to guide exploration
+            configuration: Resolved configuration for checking feature flags (optional)
 
         Returns:
             Summary of work done
@@ -92,9 +101,17 @@ class BaseSpecialist(ABC):
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 
+        # Determine if peer card tools should be included
+        peer_card_enabled = configuration is None or configuration.peer_card.create
+
         # Build messages
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self.build_system_prompt(observed)},
+            {
+                "role": "system",
+                "content": self.build_system_prompt(
+                    observed, peer_card_enabled=peer_card_enabled
+                ),
+            },
             {"role": "user", "content": self.build_user_prompt(probing_questions)},
         ]
 
@@ -109,6 +126,7 @@ class BaseSpecialist(ABC):
             session_name=session_name,
             include_observation_ids=True,
             history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
+            configuration=configuration,
         )
 
         # Get model with potential override
@@ -120,7 +138,7 @@ class BaseSpecialist(ABC):
             llm_settings=llm_settings,
             prompt="",  # Ignored since we pass messages
             max_tokens=self.get_max_tokens(),
-            tools=self.get_tools(),
+            tools=self.get_tools(peer_card_enabled=peer_card_enabled),
             tool_choice=None,
             tool_executor=tool_executor,
             max_tool_iterations=self.get_max_iterations(),
@@ -172,8 +190,14 @@ class DeductionSpecialist(BaseSpecialist):
 
     name: str = "deduction"
 
-    def get_tools(self) -> list[dict[str, Any]]:
-        return DEDUCTION_SPECIALIST_TOOLS
+    def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
+        if peer_card_enabled:
+            return DEDUCTION_SPECIALIST_TOOLS
+        return [
+            t
+            for t in DEDUCTION_SPECIALIST_TOOLS
+            if t["name"] not in PEER_CARD_TOOL_NAMES
+        ]
 
     def get_model(self) -> str:
         return settings.DREAM.DEDUCTION_MODEL
@@ -184,7 +208,50 @@ class DeductionSpecialist(BaseSpecialist):
     def get_max_iterations(self) -> int:
         return 12
 
-    def build_system_prompt(self, observed: str) -> str:
+    def build_system_prompt(
+        self, observed: str, *, peer_card_enabled: bool = True
+    ) -> str:
+        # Base tools list
+        tools_section = """## TOOLS
+
+- `search_memory`: Find observations by semantic query
+- `create_observations`: Create new deductive OR contradiction observations (USE THIS!)
+- `delete_observations`: Remove outdated observations (USE AFTER KNOWLEDGE UPDATES!)
+- `get_recent_observations`: See recent activity"""
+
+        if peer_card_enabled:
+            tools_section += """
+- `get_peer_card`: Retrieve current peer card contents
+- `update_peer_card`: Update the peer card with key facts"""
+
+        # Peer card section (only if enabled)
+        peer_card_section = ""
+        if peer_card_enabled:
+            peer_card_section = """
+
+## PEER CARD UPDATES
+
+The peer card is a concise summary of permanent, stable information about the peer. Update it when you discover important facts that should be easily accessible.
+
+**Peer card format** - Use these prefixes to organize entries:
+- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
+- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al", "INSTRUCTION: Send meeting agendas 24h in advance"
+- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings", "PREFERENCE: Likes detailed explanations"
+- `TRAIT: ...` for personality traits: "TRAIT: Analytical thinker", "TRAIT: Detail-oriented"
+
+Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list."""
+
+        # Remember section
+        remember_section = """
+
+REMEMBER:
+1. Knowledge updates are your #1 priority. When the same fact has different values at different times, CREATE an update observation AND DELETE the outdated observation.
+2. Flag contradictions when statements are logically incompatible (can't both be true)."""
+
+        if peer_card_enabled:
+            remember_section += """
+3. Update the peer card with permanent biographical facts and key insights."""
+
         return f"""You are a deductive reasoning specialist for {observed}. Your ONLY job is to create deductive observations by calling tools. Do NOT explain your reasoning - just make tool calls.
 
 ## MANDATORY WORKFLOW - YOU MUST FOLLOW THIS PATTERN
@@ -290,31 +357,7 @@ Create deductions that make implicit information explicit:
 }}
 ```
 
-## TOOLS
-
-- `search_memory`: Find observations by semantic query
-- `create_observations`: Create new deductive OR contradiction observations (USE THIS!)
-- `delete_observations`: Remove outdated observations (USE AFTER KNOWLEDGE UPDATES!)
-- `get_recent_observations`: See recent activity
-- `get_peer_card`: Retrieve current peer card contents
-- `update_peer_card`: Update the peer card with key facts
-
-## PEER CARD UPDATES
-
-The peer card is a concise summary of permanent, stable information about the peer. Update it when you discover important facts that should be easily accessible.
-
-**Peer card format** - Use these prefixes to organize entries:
-- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
-- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al", "INSTRUCTION: Send meeting agendas 24h in advance"
-- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings", "PREFERENCE: Likes detailed explanations"
-- `TRAIT: ...` for personality traits: "TRAIT: Analytical thinker", "TRAIT: Detail-oriented"
-
-Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list.
-
-REMEMBER:
-1. Knowledge updates are your #1 priority. When the same fact has different values at different times, CREATE an update observation AND DELETE the outdated observation.
-2. Flag contradictions when statements are logically incompatible (can't both be true).
-3. Update the peer card with permanent biographical facts and key insights."""
+{tools_section}{peer_card_section}{remember_section}"""
 
     def build_user_prompt(self, probing_questions: list[str]) -> str:
         questions_text = "\n".join(f"- {q}" for q in probing_questions)
@@ -342,8 +385,14 @@ class InductionSpecialist(BaseSpecialist):
 
     name: str = "induction"
 
-    def get_tools(self) -> list[dict[str, Any]]:
-        return INDUCTION_SPECIALIST_TOOLS
+    def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
+        if peer_card_enabled:
+            return INDUCTION_SPECIALIST_TOOLS
+        return [
+            t
+            for t in INDUCTION_SPECIALIST_TOOLS
+            if t["name"] not in PEER_CARD_TOOL_NAMES
+        ]
 
     def get_model(self) -> str:
         return settings.DREAM.INDUCTION_MODEL
@@ -354,7 +403,48 @@ class InductionSpecialist(BaseSpecialist):
     def get_max_iterations(self) -> int:
         return 10
 
-    def build_system_prompt(self, observed: str) -> str:
+    def build_system_prompt(
+        self, observed: str, *, peer_card_enabled: bool = True
+    ) -> str:
+        # Base tools list
+        tools_section = """## TOOLS
+
+- `search_memory`: Find observations by semantic query
+- `create_observations`: Create new inductive observations (USE THIS!)
+- `get_recent_observations`: See recent activity"""
+
+        if peer_card_enabled:
+            tools_section += """
+- `get_peer_card`: Retrieve current peer card contents
+- `update_peer_card`: Update the peer card with key facts"""
+
+        # Peer card section (only if enabled)
+        peer_card_section = ""
+        if peer_card_enabled:
+            peer_card_section = """
+
+## PEER CARD UPDATES
+
+The peer card is a concise summary of permanent, stable information about the peer. After identifying high-confidence patterns, update the peer card.
+
+**Peer card format** - Use these prefixes to organize entries:
+- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
+- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al"
+- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings"
+- `TRAIT: ...` for personality/behavioral traits: "TRAIT: Analytical thinker", "TRAIT: Tends to reschedule when stressed"
+
+Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list."""
+
+        # Remember section
+        remember_section = """
+
+REMEMBER: Focus on temporal patterns and how things change. Create observations, don't just search."""
+
+        if peer_card_enabled:
+            remember_section += (
+                " Update the peer card with high-confidence patterns and traits."
+            )
+
         return f"""You are an inductive reasoning specialist for {observed}. Your ONLY job is to create inductive observations by calling tools. Do NOT explain your reasoning - just make tool calls.
 
 ## MANDATORY WORKFLOW - YOU MUST FOLLOW THIS PATTERN
@@ -432,27 +522,7 @@ REQUIREMENTS:
 - Confidence based on source count: low=2, medium=3-4, high=5+
 - Pattern must generalize, not just restate one fact
 
-## TOOLS
-
-- `search_memory`: Find observations by semantic query
-- `create_observations`: Create new inductive observations (USE THIS!)
-- `get_recent_observations`: See recent activity
-- `get_peer_card`: Retrieve current peer card contents
-- `update_peer_card`: Update the peer card with key facts
-
-## PEER CARD UPDATES
-
-The peer card is a concise summary of permanent, stable information about the peer. After identifying high-confidence patterns, update the peer card.
-
-**Peer card format** - Use these prefixes to organize entries:
-- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
-- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al"
-- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings"
-- `TRAIT: ...` for personality/behavioral traits: "TRAIT: Analytical thinker", "TRAIT: Tends to reschedule when stressed"
-
-Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list.
-
-REMEMBER: Focus on temporal patterns and how things change. Create observations, don't just search. Update the peer card with high-confidence patterns and traits."""
+{tools_section}{peer_card_section}{remember_section}"""
 
     def build_user_prompt(self, probing_questions: list[str]) -> str:
         questions_text = "\n".join(f"- {q}" for q in probing_questions)

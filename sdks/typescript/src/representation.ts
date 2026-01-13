@@ -3,12 +3,12 @@
  */
 export interface RepresentationOptions {
   /**
-   * Semantic search query to filter relevant observations.
+   * Semantic search query to filter relevant conclusions.
    */
   searchQuery?: string
 
   /**
-   * Number of semantically relevant facts to return.
+   * Number of semantically relevant conclusions to return.
    */
   searchTopK?: number
 
@@ -18,94 +18,94 @@ export interface RepresentationOptions {
   searchMaxDistance?: number
 
   /**
-   * Whether to include the most derived observations.
+   * Whether to include the most frequent conclusions.
    */
-  includeMostDerived?: boolean
+  includeMostFrequent?: boolean
 
   /**
-   * Maximum number of observations to include.
+   * Maximum number of conclusions to include.
    */
-  maxObservations?: number
+  maxConclusions?: number
 }
 
 /**
- * Metadata associated with an observation.
+ * Metadata associated with a conclusion.
  */
-export interface ObservationMetadata {
+export interface ConclusionMetadata {
   created_at: string
   message_ids: Array<[number, number]>
   session_name: string
 }
 
 /**
- * An explicit observation with full metadata.
+ * An explicit conclusion with full metadata.
  * Represents facts LITERALLY stated - direct quotes or clear paraphrases only.
  */
-export interface ExplicitObservationBase {
+export interface ExplicitConclusionBase {
   content: string
 }
 
 /**
- * Base interface for deductive observations - logical conclusions.
+ * Base interface for deductive conclusions - logical conclusions.
  */
-export interface DeductiveObservationBase {
+export interface DeductiveConclusionBase {
   premises: string[]
   conclusion: string
 }
 
-export interface ExplicitObservation
-  extends ExplicitObservationBase,
-    ObservationMetadata {}
+export interface ExplicitConclusion
+  extends ExplicitConclusionBase,
+    ConclusionMetadata {}
 
 /**
- * A deductive observation with full metadata.
+ * A deductive conclusion with full metadata.
  * Represents conclusions that MUST be true given explicit facts and premises.
  */
-export interface DeductiveObservation
-  extends DeductiveObservationBase,
-    ObservationMetadata {}
+export interface DeductiveConclusion
+  extends DeductiveConclusionBase,
+    ConclusionMetadata {}
 
 /**
  * Raw representation data structure returned from the API.
  */
 export interface RepresentationData {
-  explicit: ExplicitObservation[]
-  deductive: DeductiveObservation[]
+  explicit: ExplicitConclusion[]
+  deductive: DeductiveConclusion[]
 }
 
 /**
- * A Representation is a traversable and diffable map of observations.
+ * A Representation is a traversable and diffable map of conclusions.
  *
- * At the base, we have a list of explicit observations, derived from a peer's messages.
- * From there, deductive observations can be made by establishing logical relationships
- * between explicit observations.
+ * At the base, we have a list of explicit conclusions, derived from a peer's messages.
+ * From there, deductive conclusions can be made by establishing logical relationships
+ * between explicit conclusions.
  *
- * All of a peer's observations are stored as documents in a collection. These documents
+ * All of a peer's conclusions are stored as documents in a collection. These documents
  * can be queried in various ways to produce this Representation object.
  *
  * A "working representation" is a version of this data structure representing the most
- * recent observations within a single session.
+ * recent conclusions within a single session.
  */
 export class Representation {
   /**
    * Facts LITERALLY stated - direct quotes or clear paraphrases only, no interpretation or inference.
    */
-  explicit: ExplicitObservation[]
+  explicit: ExplicitConclusion[]
 
   /**
    * Conclusions that MUST be true given explicit facts and premises - strict logical necessities.
    */
-  deductive: DeductiveObservation[]
+  deductive: DeductiveConclusion[]
 
   /**
-   * Create a new Representation from observation lists.
+   * Create a new Representation from conclusion lists.
    *
-   * @param explicit - List of explicit observations
-   * @param deductive - List of deductive observations
+   * @param explicit - List of explicit conclusions
+   * @param deductive - List of deductive conclusions
    */
   constructor(
-    explicit: ExplicitObservation[] = [],
-    deductive: DeductiveObservation[] = []
+    explicit: ExplicitConclusion[] = [],
+    deductive: DeductiveConclusion[] = []
   ) {
     this.explicit = explicit
     this.deductive = deductive
@@ -114,7 +114,7 @@ export class Representation {
   /**
    * Check if the representation is empty.
    *
-   * @returns True if both explicit and deductive observation lists are empty
+   * @returns True if both explicit and deductive conclusion lists are empty
    */
   isEmpty(): boolean {
     return this.explicit.length === 0 && this.deductive.length === 0
@@ -122,13 +122,13 @@ export class Representation {
 
   /**
    * Given this and another representation, return a new representation with only
-   * observations that are unique to the other.
+   * conclusions that are unique to the other.
    *
    * Note: This only removes literal duplicates based on stringified comparison,
    * not semantically equivalent ones.
    *
    * @param other - The representation to compare against
-   * @returns A new Representation containing only observations unique to other
+   * @returns A new Representation containing only conclusions unique to other
    */
   diff(other: Representation): Representation {
     const thisExplicitSet = new Set(
@@ -151,21 +151,21 @@ export class Representation {
   /**
    * Merge another representation into this one.
    *
-   * This automatically deduplicates explicit and deductive observations.
-   * Preserves order of observations to retain FIFO order.
+   * This automatically deduplicates explicit and deductive conclusions.
+   * Preserves order of conclusions to retain FIFO order.
    *
-   * Note: Observations with the same timestamp may not have order preserved,
+   * Note: Conclusions with the same timestamp may not have order preserved,
    * but that's acceptable since they're from the same timestamp.
    *
    * @param other - The representation to merge into this one
-   * @param maxObservations - Optional maximum number of observations to keep per type
+   * @param maxConclusions - Optional maximum number of conclusions to keep per type
    */
-  merge(other: Representation, maxObservations?: number): void {
+  merge(other: Representation, maxConclusions?: number): void {
     // Deduplicate by converting to Set using hash, then back to array
-    const explicitMap = new Map<string, ExplicitObservation>()
-    const deductiveMap = new Map<string, DeductiveObservation>()
+    const explicitMap = new Map<string, ExplicitConclusion>()
+    const deductiveMap = new Map<string, DeductiveConclusion>()
 
-    // Add existing observations
+    // Add existing conclusions
     for (const obs of this.explicit) {
       explicitMap.set(this._hashExplicit(obs), obs)
     }
@@ -173,7 +173,7 @@ export class Representation {
       deductiveMap.set(this._hashDeductive(obs), obs)
     }
 
-    // Add new observations (overwrites duplicates)
+    // Add new conclusions (overwrites duplicates)
     for (const obs of other.explicit) {
       explicitMap.set(this._hashExplicit(obs), obs)
     }
@@ -193,10 +193,10 @@ export class Representation {
         this._parseTimestampForSort(b.created_at)
     )
 
-    // Apply max observations limit if specified
-    if (maxObservations !== undefined) {
-      this.explicit = this.explicit.slice(-maxObservations)
-      this.deductive = this.deductive.slice(-maxObservations)
+    // Apply max conclusions limit if specified
+    if (maxConclusions !== undefined) {
+      this.explicit = this.explicit.slice(-maxConclusions)
+      this.deductive = this.deductive.slice(-maxConclusions)
     }
   }
 
@@ -293,7 +293,7 @@ export class Representation {
   toMarkdown(): string {
     const parts: string[] = []
 
-    parts.push('## Explicit Observations\n')
+    parts.push('## Explicit Conclusions\n')
     for (let i = 0; i < this.explicit.length; i++) {
       const obs = this.explicit[i]
       const timestamp = this._stripMicroseconds(obs.created_at)
@@ -301,7 +301,7 @@ export class Representation {
     }
     parts.push('')
 
-    parts.push('## Deductive Observations\n')
+    parts.push('## Deductive Conclusions\n')
     for (let i = 0; i < this.deductive.length; i++) {
       const obs = this.deductive[i]
       const timestamp = this._stripMicroseconds(obs.created_at)
@@ -330,10 +330,10 @@ export class Representation {
   }
 
   /**
-   * Create a hash string for an explicit observation for deduplication.
+   * Create a hash string for an explicit conclusion for deduplication.
    * Based on content, created_at, and session_name.
    */
-  private _hashExplicit(obs: ExplicitObservation): string {
+  private _hashExplicit(obs: ExplicitConclusion): string {
     return JSON.stringify({
       content: obs.content,
       created_at: obs.created_at,
@@ -342,10 +342,10 @@ export class Representation {
   }
 
   /**
-   * Create a hash string for a deductive observation for deduplication.
+   * Create a hash string for a deductive conclusion for deduplication.
    * Based on conclusion, created_at, and session_name (premises not included).
    */
-  private _hashDeductive(obs: DeductiveObservation): string {
+  private _hashDeductive(obs: DeductiveConclusion): string {
     return JSON.stringify({
       conclusion: obs.conclusion,
       created_at: obs.created_at,

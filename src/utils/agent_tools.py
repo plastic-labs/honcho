@@ -12,6 +12,7 @@ from src import crud, models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.models import Document
+from src.schemas import ResolvedConfiguration
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
@@ -884,6 +885,8 @@ class ToolContext:
     # This lock is obtained from the module-level registry to ensure all concurrent
     # tool executors for the same data share the same lock.
     db_lock: asyncio.Lock
+    # Optional resolved configuration for checking feature flags
+    configuration: ResolvedConfiguration | None = None
 
 
 async def _handle_create_observations(
@@ -998,6 +1001,15 @@ async def _handle_create_observations(
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle update_peer_card tool."""
+    # Check if peer card creation is disabled via configuration
+    if ctx.configuration is not None and not ctx.configuration.peer_card.create:
+        logger.info(
+            f"Peer card creation disabled for {ctx.workspace_name}, skipping update"
+        )
+        return (
+            "Peer card creation is disabled for this workspace/session configuration."
+        )
+
     async with ctx.db_lock:
         await crud.set_peer_card(
             ctx.db,
@@ -1544,6 +1556,7 @@ async def create_tool_executor(
     current_messages: list[models.Message] | None = None,
     include_observation_ids: bool = False,
     history_token_limit: int = 8192,
+    configuration: ResolvedConfiguration | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1560,6 +1573,7 @@ async def create_tool_executor(
         current_messages: List of current messages being processed (optional, for deriver)
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
         history_token_limit: Maximum tokens for get_recent_history (default: 8192)
+        configuration: Resolved configuration for checking feature flags (optional)
 
     Returns:
         An async callable that executes tools with the captured context
@@ -1578,6 +1592,7 @@ async def create_tool_executor(
         include_observation_ids=include_observation_ids,
         history_token_limit=history_token_limit,
         db_lock=shared_lock,
+        configuration=configuration,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

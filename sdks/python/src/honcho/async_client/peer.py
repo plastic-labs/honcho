@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, cast
+from typing import Literal
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
 from honcho_core.types.workspaces import PeerCardResponse
-from honcho_core.types.workspaces.peer_working_representation_response import (
-    PeerWorkingRepresentationResponse,
+from honcho_core.types.workspaces.peer_context_response import (
+    PeerContextResponse,
+)
+from honcho_core.types.workspaces.peer_representation_response import (
+    PeerRepresentationResponse,
 )
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
@@ -17,13 +20,9 @@ from honcho_core.types.workspaces.sessions.message_create_param import Configura
 from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
 from ..base import PeerBase, SessionBase
+from ..conclusions import AsyncConclusionScope
 from ..types import DialecticStreamResponse
 from .pagination import AsyncPage
-
-if TYPE_CHECKING:
-    from ..observations import AsyncObservationScope
-    from ..types import PeerContext, Representation
-
 from .session import AsyncSession
 
 
@@ -146,6 +145,8 @@ class AsyncPeer(PeerBase):
         stream: bool = False,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "extra-high"]
+        | None = None,
     ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
@@ -164,6 +165,8 @@ class AsyncPeer(PeerBase):
             session: Optional session to scope the query to. If provided, only
                      information from that session is considered. Can be a session
                      ID string or an AsyncSession object.
+            reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
+                             "high", or "extra-high". Defaults to "low" if not provided.
 
         Returns:
             For non-streaming: Response string containing the answer, or None if no relevant information
@@ -194,6 +197,9 @@ class AsyncPeer(PeerBase):
                     stream=True,
                     target=target_id,
                     session_id=resolved_session_id,
+                    reasoning_level=reasoning_level
+                    if reasoning_level is not None
+                    else omit,
                 ) as response:
                     response.http_response.raise_for_status()
                     async for line in response.iter_lines():
@@ -219,6 +225,7 @@ class AsyncPeer(PeerBase):
             stream=stream,
             target=target_id,
             session_id=resolved_session_id,
+            reasoning_level=reasoning_level if reasoning_level is not None else omit,
         )
         # "If the context provided doesn't help address the query, write absolutely NOTHING but "None""
         if response.content in ("", None, "None"):
@@ -501,50 +508,49 @@ class AsyncPeer(PeerBase):
         items: list[str] = response.peer_card
         return "\n".join(items)
 
-    async def working_rep(
+    async def get_representation(
         self,
         session: str | SessionBase | None = None,
         target: str | PeerBase | None = None,
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
-        include_most_derived: bool | None = None,
-        max_observations: int | None = None,
-    ) -> "Representation":
+        include_most_frequent: bool | None = None,
+        max_conclusions: int | None = None,
+    ) -> str:
         """
-        Get a working representation for this peer.
+        Get a subset of the representation of the peer.
 
         Args:
             session: Optional session to scope the representation to.
             target: Optional target peer to get the representation of. If provided,
             returns the representation of the target from the perspective of this peer.
-            search_query: Semantic search query to filter relevant observations
+            search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
-            include_most_derived: Whether to include the most derived observations
-            max_observations: Maximum number of observations to include
+            include_most_frequent: Whether to include the most frequent conclusions
+            max_conclusions: Maximum number of conclusions to include
 
         Returns:
-            A Representation object containing explicit and deductive observations
+            A Representation string
 
         Example:
             ```python
             # Get global representation
-            rep = await peer.working_rep()
+            rep = await peer.get_representation()
             print(rep)
 
             # Get representation scoped to a session
-            session_rep = await peer.working_rep(session='session-123')
+            session_rep = await peer.get_representation(session='session-123')
 
             # Get representation with semantic search
-            searched_rep = await peer.working_rep(
+            searched_rep = await peer.get_representation(
                 search_query='preferences',
                 search_top_k=10,
-                max_observations=50
+                max_conclusions=50
             )
             ```
         """
-        from ..types import Representation as _Representation
 
         session_id = (
             None
@@ -559,8 +565,8 @@ class AsyncPeer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerWorkingRepresentationResponse = (
-            await self._client.workspaces.peers.working_representation(
+        data: PeerRepresentationResponse = (
+            await self._client.workspaces.peers.representation(
                 peer_id=self.id,
                 workspace_id=self.workspace_id,
                 session_id=session_id,
@@ -570,19 +576,15 @@ class AsyncPeer(PeerBase):
                 search_max_distance=search_max_distance
                 if search_max_distance is not None
                 else omit,
-                include_most_derived=include_most_derived
-                if include_most_derived is not None
+                include_most_frequent=include_most_frequent
+                if include_most_frequent is not None
                 else omit,
-                max_observations=max_observations
-                if max_observations is not None
+                max_conclusions=max_conclusions
+                if max_conclusions is not None
                 else omit,
             )
         )
-        representation = data.get("representation")
-        if representation is not None:
-            return _Representation.from_dict(cast(dict[str, object], representation))
-        else:
-            return _Representation.from_dict(data)
+        return data.representation
 
     async def get_context(
         self,
@@ -590,9 +592,9 @@ class AsyncPeer(PeerBase):
         search_query: str | None = None,
         search_top_k: int | None = None,
         search_max_distance: float | None = None,
-        include_most_derived: bool | None = None,
-        max_observations: int | None = None,
-    ) -> "PeerContext":
+        include_most_frequent: bool | None = None,
+        max_conclusions: int | None = None,
+    ) -> PeerContextResponse:
         """
         Get context for this peer, including representation and peer card.
 
@@ -603,11 +605,11 @@ class AsyncPeer(PeerBase):
             target: Optional target peer to get context for. If provided, returns
                    the context for the target from this peer's perspective.
                    Can be an AsyncPeer object or peer ID string.
-            search_query: Semantic search query to filter relevant observations
+            search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
-            include_most_derived: Whether to include the most derived observations
-            max_observations: Maximum number of observations to include
+            include_most_frequent: Whether to include the most frequent conclusions
+            max_conclusions: Maximum number of conclusions to include
 
         Returns:
             A PeerContext object containing the representation and peer card
@@ -629,15 +631,13 @@ class AsyncPeer(PeerBase):
             )
             ```
         """
-        from ..types import PeerContext as _PeerContext
-
         target_id = (
             None
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
 
-        response = await self._client.workspaces.peers.get_context(
+        return await self._client.workspaces.peers.context(
             peer_id=self.id,
             workspace_id=self.workspace_id,
             target=target_id,
@@ -646,73 +646,69 @@ class AsyncPeer(PeerBase):
             search_max_distance=search_max_distance
             if search_max_distance is not None
             else omit,
-            include_most_derived=include_most_derived
-            if include_most_derived is not None
+            include_most_frequent=include_most_frequent
+            if include_most_frequent is not None
             else omit,
-            max_observations=max_observations if max_observations is not None else omit,
+            max_conclusions=max_conclusions if max_conclusions is not None else omit,
         )
 
-        return _PeerContext.from_api_response(response)
-
     @property
-    def observations(self) -> "AsyncObservationScope":
+    def conclusions(self) -> "AsyncConclusionScope":
         """
-        Access this peer's self-observations (where observer == observed == self).
+        Access this peer's self-conclusions (where observer == observed == self).
 
-        This property provides a convenient way to access observations that this peer
-        has made about themselves. Use this for self-observation scenarios.
+        This property provides a convenient way to access conclusions that this peer
+        has made about themselves. Use this for self-conclusion scenarios.
 
         Returns:
-            An AsyncObservationScope scoped to this peer's self-observations
+            An AsyncConclusionScope scoped to this peer's self-conclusions
 
         Example:
             ```python
-            # List self-observations
-            obs_list = await peer.observations.list()
+            # List self-conclusions
+            obs_list = await peer.conclusions.list()
 
-            # Search self-observations
-            results = await peer.observations.query("preferences")
+            # Search self-conclusions
+            results = await peer.conclusions.query("preferences")
 
-            # Delete a self-observation
-            await peer.observations.delete("obs-123")
+            # Delete a self-conclusion
+            await peer.conclusions.delete("obs-123")
             ```
         """
-        from ..observations import AsyncObservationScope as _AsyncObservationScope
+        return AsyncConclusionScope(self._client, self.workspace_id, self.id, self.id)
 
-        return _AsyncObservationScope(self._client, self.workspace_id, self.id, self.id)
-
-    def observations_of(self, target: str | PeerBase) -> "AsyncObservationScope":
+    def conclusions_of(self, target: str | PeerBase) -> "AsyncConclusionScope":
         """
-        Access observations this peer has made about another peer.
+        Access conclusions this peer has made about another peer.
 
-        This method provides scoped access to observations where this peer is the
+        This method provides scoped access to conclusions where this peer is the
         observer and the target is the observed peer.
 
         Args:
             target: The target peer (either an AsyncPeer object or peer ID string)
 
         Returns:
-            An AsyncObservationScope scoped to this peer's observations of the target
+            An AsyncConclusionScope scoped to this peer's conclusions of the target
 
         Example:
             ```python
-            # Get observations about another peer
-            bob_observations = peer.observations_of("bob")
+            # Get conclusions about another peer
+            bob_conclusions = peer.conclusions_of("bob")
 
-            # List observations
-            obs_list = await bob_observations.list()
+            # List conclusions
+            obs_list = await bob_conclusions.list()
 
-            # Search observations
-            results = await bob_observations.query("work history")
+            # Search conclusions
+            results = await bob_conclusions.query("work history")
 
-            # Get the representation from these observations
-            rep = await bob_observations.get_representation()
+            # Get the representation from these conclusions
+            rep = await bob_conclusions.get_representation()
             ```
         """
-        from ..observations import AsyncObservationScope as _AsyncObservationScope
+        from ..conclusions import AsyncConclusionScope as _AsyncConclusionScope
 
         target_id = target.id if isinstance(target, PeerBase) else target
-        return _AsyncObservationScope(
+        return _AsyncConclusionScope(
             self._client, self.workspace_id, self.id, target_id
         )
 

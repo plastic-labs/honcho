@@ -1,15 +1,14 @@
 import HonchoCore from '@honcho-ai/core'
 import type { DefaultQuery } from '@honcho-ai/core/core'
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type {
-  DeriverStatus,
-  WorkspaceDeriverStatusParams,
-} from '@honcho-ai/core/resources/workspaces/workspaces'
+  QueueStatusParams,
+  QueueStatusResponse,
+} from '@honcho-ai/core/resources/workspaces/queue'
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
 import {
-  type DeriverStatusOptions,
   FilterSchema,
   type Filters,
   type HonchoConfig,
@@ -21,6 +20,7 @@ import {
   PeerIdSchema,
   type PeerMetadata,
   PeerMetadataSchema,
+  type QueueStatusOptions,
   SearchQuerySchema,
   type SessionConfig,
   SessionConfigSchema,
@@ -479,20 +479,20 @@ export class Honcho {
   }
 
   /**
-   * Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+   * Get the queue processing status, optionally scoped to an observer, sender, and/or session.
    *
-   * Makes an API call to retrieve the current status of the deriver processing queue.
-   * The deriver is responsible for processing messages and updating peer representations.
+   * Makes an API call to retrieve the current status of the queue processing queue.
+   * The queue is responsible for processing messages and updating peer representations.
    *
    * @param options - Configuration options for the status request
    * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
    * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @param options.session - Optional session (ID string or Session object) to scope the status to
-   * @returns Promise resolving to the deriver status information including work unit counts
+   * @returns Promise resolving to the queue status information including work unit counts
    */
-  async getDeriverStatus(
+  async getQueueStatus(
     options?: Omit<
-      DeriverStatusOptions,
+      QueueStatusOptions,
       'observerId' | 'senderId' | 'sessionId'
     > & {
       observer?: string | Peer
@@ -504,7 +504,7 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -522,12 +522,12 @@ export class Honcho {
         : options.session.id
       : undefined
 
-    const queryParams: WorkspaceDeriverStatusParams = {}
+    const queryParams: QueueStatusParams = {}
     if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
     if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
     if (resolvedSessionId) queryParams.session_id = resolvedSessionId
 
-    const status = await this._client.workspaces.deriverStatus(
+    const status = await this._client.workspaces.queue.status(
       this.workspaceId,
       queryParams
     )
@@ -542,8 +542,8 @@ export class Honcho {
   }
 
   /**
-   * Poll getDeriverStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
-   * This allows you to guarantee that all messages have been processed by the deriver for
+   * Poll getQueueStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
+   * This allows you to guarantee that all messages have been processed by the queue for
    * use with the dialectic endpoint.
    *
    * The polling estimates sleep time by assuming each work unit takes 1 second.
@@ -553,12 +553,12 @@ export class Honcho {
    * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @param options.session - Optional session (ID string or Session object) to scope the status to
    * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
-   * @returns Promise resolving to the final deriver status when processing is complete
+   * @returns Promise resolving to the final queue status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
-  async pollDeriverStatus(
+  async pollQueueStatus(
     options?: Omit<
-      DeriverStatusOptions,
+      QueueStatusOptions,
       'observerId' | 'senderId' | 'sessionId'
     > & {
       observer?: string | Peer
@@ -570,13 +570,13 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(options)
+      const status = await this.getQueueStatus(options)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
         return status
       }

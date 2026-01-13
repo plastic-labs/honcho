@@ -70,7 +70,7 @@ def test_message_validations_api(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Test content too long
     response = client.post(
@@ -110,7 +110,7 @@ def test_session_validations_api(
             "configuration": {"test_flag": "test_value"},
         },
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Test invalid metadata type
     response = client.put(
@@ -137,7 +137,7 @@ def test_session_validations_api(
             "id": session_id,
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["metadata"] == {"test_key": "test_value"}
     assert data["configuration"] == {"test_flag": "test_value"}
@@ -159,7 +159,7 @@ def test_agent_query_validations_api(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Test valid string query (under 10000 chars)
     response = client.post(
@@ -199,7 +199,7 @@ def test_required_field_validations_api(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Test missing required content in message
     response = client.post(
@@ -232,7 +232,7 @@ def test_filter_validations_api(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 201
 
     # Test invalid filter type in message list (at session level)
     response = client.post(

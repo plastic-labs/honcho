@@ -468,12 +468,6 @@ class QueueItem(Base):
             postgresql_where=text("message_id IS NOT NULL"),
         ),
         Index(
-            "ux_queue_dream_pending_work_unit_key",
-            "work_unit_key",
-            unique=True,
-            postgresql_where=text("task_type = 'dream' AND processed = false"),
-        ),
-        Index(
             "ix_queue_work_unit_key_processed_id",
             "work_unit_key",
             "processed",
