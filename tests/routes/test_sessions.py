@@ -15,7 +15,7 @@ def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace,
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": str(generate_nanoid())},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert isinstance(data["id"], str)
     assert data["metadata"] == {}
@@ -27,7 +27,7 @@ def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace,
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert response2.status_code == 200
+    assert response2.status_code in [200, 201]
     data2 = response2.json()
     assert data2["id"] == session_id
     assert data2["metadata"] == {}
@@ -38,7 +38,7 @@ def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace,
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    assert response3.status_code == 200
+    assert response3.status_code in [200, 201]
     data3 = response3.json()
     assert data3["id"] == session_id
     assert data3["metadata"] == {}
@@ -58,7 +58,7 @@ def test_create_session_with_metadata(
             "metadata": {"session_key": "session_value"},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["metadata"] == {"session_key": "session_value"}
     assert "id" in data
@@ -82,7 +82,7 @@ def test_create_session_with_configuration(
             "configuration": configuration,
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["configuration"] == configuration
     assert data["id"] == session_id
@@ -107,7 +107,7 @@ def test_create_session_with_all_optional_params(
             "configuration": configuration,
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["metadata"] == metadata
     assert data["configuration"] == configuration
@@ -129,7 +129,7 @@ def test_create_session_with_too_many_peers(
             f"/v2/workspaces/{test_workspace.name}/peers",
             json={"name": peer_name, "metadata": {}},
         )
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
         peer_names.append(peer_name)
 
     # Test 1: Create session with 11 non-observers should succeed
@@ -140,7 +140,7 @@ def test_create_session_with_too_many_peers(
             "peer_names": {peer_name: {} for peer_name in peer_names},
         },
     )
-    assert response.status_code == 200  # Should succeed since no observers
+    assert response.status_code in [200, 201]  # Should succeed since no observers
 
     # Test 2: Try to create session with 11 observers (exceeds limit)
     response = client.post(
@@ -173,7 +173,7 @@ def test_create_session_with_too_many_peers(
             "peer_names": {peer_name: {} for peer_name in peer_names},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["id"] == "test_session"
     assert data["workspace_id"] == test_workspace.name
@@ -191,7 +191,7 @@ def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
             "metadata": {"test_key": "test_value"},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["metadata"] == {"test_key": "test_value"}
     assert "id" in data
@@ -237,7 +237,7 @@ def test_update_delete_metadata(
             "metadata": {"default": "value"},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}",
@@ -259,7 +259,7 @@ def test_update_session(client: TestClient, sample_data: tuple[Workspace, Peer])
             "peer_names": {test_peer.name: {}},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}",
@@ -283,7 +283,7 @@ def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer])
             "metadata": {"test_key": "test_value"},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Delete the session
     response = client.delete(
@@ -392,7 +392,7 @@ def test_clone_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
             "metadata": {"test": "key"},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create some messages in the session
     response = client.post(
@@ -412,12 +412,12 @@ def test_clone_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
 
-    response = client.get(
+    response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/clone",
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["metadata"] == {"test": "key"}
 
@@ -462,16 +462,16 @@ def test_clone_session_with_cutoff(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     messages_data = response.json()
     # The response is a list of messages, not a paginated response
     first_message_id = messages_data[0]["id"]
 
     # Clone with cutoff at first message
-    response = client.get(
+    response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/clone?message_id={first_message_id}",
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert "id" in data
 
@@ -484,7 +484,7 @@ def test_add_peers_to_session(client: TestClient, sample_data: tuple[Workspace, 
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create a test session
     session_id = str(generate_nanoid())
@@ -495,7 +495,7 @@ def test_add_peers_to_session(client: TestClient, sample_data: tuple[Workspace, 
             "peer_names": {test_peer.name: {}},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Add another peer to the session
     response = client.post(
@@ -513,7 +513,7 @@ def test_get_session_peers(client: TestClient, sample_data: tuple[Workspace, Pee
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create a test session with multiple peers
     session_id = str(generate_nanoid())
@@ -524,7 +524,7 @@ def test_get_session_peers(client: TestClient, sample_data: tuple[Workspace, Pee
             "peer_names": {test_peer.name: {}, peer2_name: {}},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Get peers from the session
     response = client.get(
@@ -547,7 +547,7 @@ def test_set_session_peers(client: TestClient, sample_data: tuple[Workspace, Pee
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create a test session
     session_id = str(generate_nanoid())
@@ -558,7 +558,7 @@ def test_set_session_peers(client: TestClient, sample_data: tuple[Workspace, Pee
             "peer_names": {test_peer.name: {}},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Set peers for the session (should replace existing peers)
     response = client.put(
@@ -593,7 +593,7 @@ def test_set_session_peers_with_observer_limit(
             "id": session_id,
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create 15 peers (more than the limit of 10 observers)
     peer_names = [test_peer.name]
@@ -603,7 +603,7 @@ def test_set_session_peers_with_observer_limit(
             f"/v2/workspaces/{test_workspace.name}/peers",
             json={"name": peer_name, "metadata": {}},
         )
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
         peer_names.append(peer_name)
 
     # Test 1: Adding 15 peers with observe_others=False should succeed
@@ -654,7 +654,7 @@ def test_update_peer_config_observer_limit(
             "id": session_id,
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create exactly 10 peers and add them as observers
     peer_names: list[str] = []
@@ -664,7 +664,7 @@ def test_update_peer_config_observer_limit(
             f"/v2/workspaces/{test_workspace.name}/peers",
             json={"name": peer_name, "metadata": {}},
         )
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]
         peer_names.append(peer_name)
 
     # Add all 10 peers as observers
@@ -681,7 +681,7 @@ def test_update_peer_config_observer_limit(
     assert response.status_code == 200  # Should succeed with exactly 10 observers
 
     # Now try to update test_peer to become an observer (would exceed limit)
-    response = client.post(
+    response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{test_peer.name}/config",
         json={"observe_others": True},
     )
@@ -690,25 +690,25 @@ def test_update_peer_config_observer_limit(
     assert "Maximum allowed is 10 observers" in response.json()["detail"]
 
     # Verify that updating a peer that's already an observer still works
-    response = client.post(
+    response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{peer_names[0]}/config",
         json={"observe_others": True, "observe_me": False},  # Still an observer
     )
-    assert response.status_code == 200  # Should succeed since count doesn't change
+    assert response.status_code == 204  # Should succeed since count doesn't change
 
     # Change one observer to non-observer
-    response = client.post(
+    response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{peer_names[0]}/config",
         json={"observe_others": False},
     )
-    assert response.status_code == 200
+    assert response.status_code == 204
 
     # Now test_peer can become an observer (9 + 1 = 10)
-    response = client.post(
+    response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{test_peer.name}/config",
         json={"observe_others": True},
     )
-    assert response.status_code == 200  # Should succeed now
+    assert response.status_code == 204  # Should succeed now
 
 
 def test_remove_peers_from_session(
@@ -721,7 +721,7 @@ def test_remove_peers_from_session(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Create a test session with multiple peers
     session_id = str(generate_nanoid())
@@ -732,7 +732,7 @@ def test_remove_peers_from_session(
             "peer_names": {test_peer.name: {}, peer2_name: {}},
         },
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Remove one peer from the session
     response = client.request(
@@ -1092,7 +1092,7 @@ def test_get_session_context_with_peer_target(
     assert "peer_card" in data
     # Representation should be present
     assert data["peer_representation"] is not None
-    assert isinstance(data["peer_representation"], dict)
+    assert isinstance(data["peer_representation"], str)
 
 
 def test_get_session_context_with_peer_perspective(
@@ -1104,10 +1104,11 @@ def test_get_session_context_with_peer_perspective(
 
     # Create another peer
     peer2_name = str(generate_nanoid())
-    client.post(
+    response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {}},
     )
+    assert response.status_code in [200, 201]
 
     # Create session with both peers
     client.post(
@@ -1229,10 +1230,10 @@ def test_get_session_context_with_search_parameters(
     assert "peer_representation" in data
 
 
-def test_get_session_context_with_include_most_derived(
+def test_get_session_context_with_include_most_frequent(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session context with include_most_derived parameter"""
+    """Test session context with include_most_frequent parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -1242,13 +1243,13 @@ def test_get_session_context_with_include_most_derived(
         json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
-    # Get context with include_most_derived
+    # Get context with include_most_frequent
     response = client.get(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
             "last_message": "Test query",
-            "include_most_derived": True,
+            "include_most_frequent": True,
         },
     )
     assert response.status_code == 200
@@ -1292,10 +1293,11 @@ def test_get_session_context_with_all_representation_params(
 
     # Create another peer
     peer2_name = str(generate_nanoid())
-    client.post(
+    response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {}},
     )
+    assert response.status_code in [200, 201]
 
     # Create session
     client.post(
@@ -1314,7 +1316,7 @@ def test_get_session_context_with_all_representation_params(
             "limit_to_session": True,
             "search_top_k": 10,
             "search_max_distance": 0.9,  # float value (semantic distance 0.0-1.0)
-            "include_most_derived": True,
+            "include_most_frequent": True,
             "max_observations": 15,
             "summary": True,
         },
@@ -1329,7 +1331,7 @@ def test_get_session_context_with_all_representation_params(
     assert "peer_representation" in data
     assert "peer_card" in data
     # Validate representation structure
-    assert isinstance(data["peer_representation"], dict)
+    assert isinstance(data["peer_representation"], str)
 
 
 def test_get_session_context_response_structure(
@@ -1355,7 +1357,7 @@ def test_get_session_context_response_structure(
             ]
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     # Get context and validate response structure
     response = client.get(

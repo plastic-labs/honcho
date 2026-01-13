@@ -1,37 +1,30 @@
 import type HonchoCore from '@honcho-ai/core'
 import type {
-  DeriverStatus,
-  WorkspaceDeriverStatusParams,
-} from '@honcho-ai/core/resources/index'
+  QueueStatusParams,
+  QueueStatusResponse,
+} from '@honcho-ai/core/resources/workspaces/queue'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type { Uploadable } from '@honcho-ai/core/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import {
-  Representation,
-  type RepresentationData,
-  type RepresentationOptions,
-} from './representation'
+import type { RepresentationOptions } from './representation'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
-// Disabled: observations not ready for release
-// import type { Observation, ObservationQueryParams } from './types'
 import {
   ContextParamsSchema,
-  type DeriverStatusOptions,
   FileUploadSchema,
   FilterSchema,
   type Filters,
+  GetRepresentationParamsSchema,
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
-  // ObservationQueryParamsSchema,  // Disabled: observations not ready for release
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
   PeerRemovalSchema,
+  type QueueStatusOptions,
   SearchQuerySchema,
   SessionPeerConfigSchema,
-  WorkingRepParamsSchema,
 } from './validation'
 
 /**
@@ -57,7 +50,7 @@ export class SessionPeerConfig {
   observe_others?: boolean | null
 
   /**
-   * Initialize SessionPeerConfig with observation settings.
+   * Initialize SessionPeerConfig with conclusion settings.
    *
    * @param observe_me - Whether other peers should observe this peer in the session
    * @param observe_others - Whether this peer should observe others in the session
@@ -82,7 +75,7 @@ export class SessionPeerConfig {
  * representations of each other.
  *
  * Key features:
- * - Multi-peer conversations with configurable observation settings
+ * - Multi-peer conversations with configurable conclusion settings
  * - Message storage and retrieval with filtering capabilities
  * - Context optimization for token-limited scenarios
  * - File upload support with automatic message creation
@@ -179,7 +172,7 @@ export class Session {
    * Makes an API call to add one or more peers to this session. Adding peers
    * creates bidirectional relationships and allows them to participate in
    * the session's conversations. Peers can be added with optional session-specific
-   * configuration to control observation behaviors.
+   * configuration to control conclusion behaviors.
    *
    * @param peers - Peers to add to the session. Can be:
    *   - string: Single peer ID
@@ -336,7 +329,7 @@ export class Session {
    * Get the configuration for a peer in this session.
    *
    * Makes an API call to retrieve the session-specific configuration for a peer.
-   * This includes observation settings that control how this peer interacts
+   * This includes conclusion settings that control how this peer interacts
    * with other peers within this session context.
    *
    * @param peer - The peer to get configuration for. Can be peer ID string or Peer object
@@ -344,7 +337,7 @@ export class Session {
    */
   async getPeerConfig(peer: string | Peer): Promise<SessionPeerConfig> {
     const peerId = typeof peer === 'string' ? peer : peer.id
-    return await this._client.workspaces.sessions.peers.getConfig(
+    return await this._client.workspaces.sessions.peers.config(
       this.workspaceId,
       this.id,
       peerId
@@ -355,11 +348,11 @@ export class Session {
    * Set the configuration for a peer in this session.
    *
    * Makes an API call to update the session-specific configuration for a peer.
-   * This controls observation behaviors and theory-of-mind formation within
+   * This controls conclusion behaviors and theory-of-mind formation within
    * this session context.
    *
    * @param peer - The peer to configure. Can be peer ID string or Peer object
-   * @param config - SessionPeerConfig object specifying the observation settings
+   * @param config - SessionPeerConfig object specifying the conclusion settings
    */
   async setPeerConfig(
     peer: string | Peer,
@@ -541,7 +534,7 @@ export class Session {
    * Makes an API call to permanently delete this session and all related data including:
    * - Messages
    * - Message embeddings
-   * - Observations
+   * - Conclusions
    * - Session-Peer associations
    * - Background processing queue items
    *
@@ -608,7 +601,7 @@ export class Session {
    *                             If given with `peerPerspective`, will get the representation and card
    *                             for this peer from the perspective of that peer.
    * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
-   *                                  observations and returned as part of the context object.
+   *                                  conclusions and returned as part of the context object.
    *                                  Can be either a message ID string or a Message object.
    * @param options.peerPerspective - A peer to get context for. If given, response will attempt to
    *                                  include representation and card from the perspective of that peer.
@@ -707,7 +700,7 @@ export class Session {
         ? contextParams.lastUserMessage
         : contextParams.lastUserMessage?.id
 
-    const context = await this._client.workspaces.sessions.getContext(
+    const context = await this._client.workspaces.sessions.context(
       this.workspaceId,
       this.id,
       {
@@ -720,9 +713,9 @@ export class Session {
         search_top_k: contextParams.representationOptions?.searchTopK,
         search_max_distance:
           contextParams.representationOptions?.searchMaxDistance,
-        include_most_derived:
-          contextParams.representationOptions?.includeMostDerived,
-        max_observations: contextParams.representationOptions?.maxObservations,
+        include_most_frequent:
+          contextParams.representationOptions?.includeMostFrequent,
+        max_conclusions: contextParams.representationOptions?.maxConclusions,
       }
     )
     // Convert the summary response to Summary object if present
@@ -803,105 +796,20 @@ export class Session {
   }
 
   /**
-   * List all observations for this session.
+   * Get the queue processing status for this session, optionally scoped to an observer or sender.
    *
-   * Observations are theory-of-mind data (documents) that peers have formed about each other.
-   * Returns paginated results that can be filtered by observer_id and observed_id.
-   *
-   * @param filters - Optional filters to scope the observations: see [filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-   * @returns A paginated list of Observation objects.
-   *
-   * @example
-   * ```typescript
-   * const observations = await session.listObservations()
-   * for await (const observation of observations) {
-   *   console.log(`${observation.observer_id} observed: ${observation.content}`)
-   * }
-   * ```
-   */
-  // Disabled: observations not ready for release
-  // async listObservations(filters?: Filters): Promise<Page<Observation>> {
-  //   const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
-  //   const response = await this._client.workspaces.sessions.observations.list(
-  //     this.workspaceId,
-  //     this.id,
-  //     { filters: validatedFilters }
-  //   )
-  //   return new Page(response)
-  // }
-
-  /**
-   * Query observations using semantic search.
-   *
-   * Performs vector similarity search on observations to find semantically relevant results.
-   * Use this to find observations related to a specific topic or concept.
-   *
-   * @param params - Query parameters
-   * @param params.query - The semantic search query
-   * @param params.top_k - Number of results to return (1-100, default: 10)
-   * @param params.distance - Maximum cosine distance threshold for results (0.0-1.0)
-   * @param params.filters - Optional filters to scope the query
-   * @returns A list of Observation objects matching the query
-   *
-   * @example
-   * ```typescript
-   * const observations = await session.queryObservations({
-   *   query: "user preferences about music",
-   *   top_k: 5,
-   *   distance: 0.8
-   * })
-   * ```
-   */
-  // Disabled: observations not ready for release
-  // async queryObservations(
-  //   params: ObservationQueryParams
-  // ): Promise<Observation[]> {
-  //   const validated = ObservationQueryParamsSchema.parse(params)
-  //   return await this._client.workspaces.sessions.observations.query(
-  //     this.workspaceId,
-  //     this.id,
-  //     validated
-  //   )
-  // }
-
-  /**
-   * Delete a specific observation by ID.
-   *
-   * This permanently deletes the observation (document) from the theory-of-mind system.
-   * This action cannot be undone.
-   *
-   * @param observationId - The ID of the observation to delete
-   * @returns A promise that resolves when the observation is deleted
-   *
-   * @example
-   * ```typescript
-   * await session.deleteObservation('obs_123abc')
-   * ```
-   */
-  // Disabled: observations not ready for release
-  // async deleteObservation(observationId: string): Promise<void> {
-  //   await this._client.workspaces.sessions.observations.delete(
-  //     this.workspaceId,
-  //     this.id,
-  //     observationId
-  //   )
-  // }
-
-  /**
-   * Get the deriver processing status for this session, optionally scoped to an observer or sender.
-   *
-   * Makes an API call to retrieve the current status of the deriver processing queue.
-   * The deriver is responsible for processing messages and updating peer representations.
+   * Makes an API call to retrieve the current status of the queue processing queue.
+   * The queue is responsible for processing messages and updating peer representations.
    * This method automatically scopes the status to this session.
    *
    * @param options - Configuration options for the status request
    * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
    * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
-   * @returns Promise resolving to the deriver status information including work unit counts
+   * @returns Promise resolving to the queue status information including work unit counts
    */
-  async getDeriverStatus(
+  async getQueueStatus(
     options?: Omit<
-      DeriverStatusOptions,
+      QueueStatusOptions,
       'sessionId' | 'observerId' | 'senderId'
     > & {
       observer?: string | Peer
@@ -912,7 +820,7 @@ export class Session {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -925,13 +833,13 @@ export class Session {
         : options.sender.id
       : undefined
 
-    const queryParams: WorkspaceDeriverStatusParams = {
+    const queryParams: QueueStatusParams = {
       session_id: this.id, // Always use this session's ID
     }
     if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
     if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
 
-    const status = await this._client.workspaces.deriverStatus(
+    const status = await this._client.workspaces.queue.status(
       this.workspaceId,
       queryParams
     )
@@ -946,8 +854,8 @@ export class Session {
   }
 
   /**
-   * Poll getDeriverStatus until pending_work_units and in_progress_work_units are both 0.
-   * This allows you to guarantee that all messages have been processed by the deriver for
+   * Poll getQueueStatus until pending_work_units and in_progress_work_units are both 0.
+   * This allows you to guarantee that all messages have been processed by the queue for
    * use with the dialectic endpoint.
    *
    * The polling estimates sleep time by assuming each work unit takes 1 second.
@@ -956,12 +864,12 @@ export class Session {
    * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
    * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
-   * @returns Promise resolving to the final deriver status when processing is complete
+   * @returns Promise resolving to the final queue status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
-  async pollDeriverStatus(
+  async pollQueueStatus(
     options?: Omit<
-      DeriverStatusOptions,
+      QueueStatusOptions,
       'sessionId' | 'observerId' | 'senderId'
     > & {
       observer?: string | Peer
@@ -972,13 +880,13 @@ export class Session {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, DeriverStatus.Sessions>
+    sessions?: Record<string, QueueStatusResponse.Sessions>
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(options)
+      const status = await this.getQueueStatus(options)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
         return status
       }
@@ -1095,7 +1003,7 @@ export class Session {
   }
 
   /**
-   * Get the current working representation of a peer in this session.
+   * Get a subset of Honcho's Representation of a peer in this session.
    *
    * Makes an API call to retrieve the session-scoped representation that has been
    * built for a peer. This can be either the peer's global representation or
@@ -1105,71 +1013,65 @@ export class Session {
    * @param target - Optional target peer. If provided, returns what `peer` knows about
    *                 `target` within this session context rather than `peer`'s global representation
    * @param options - Optional representation options to filter and configure the results
-   * @returns Promise resolving to a Representation object containing explicit and deductive observations
+   * @returns Promise resolving to a Representation string
    *
    * @example
    * ```typescript
    * // Get peer's global representation in this session
-   * const globalRep = await session.workingRep('user123')
-   * console.log(globalRep.toString())
+   * const globalRep = await session.getRepresentation('user123')
+   * console.log(globalRep)
    *
    * // Get what user123 knows about assistant in this session
-   * const localRep = await session.workingRep('user123', 'assistant')
+   * const localRep = await session.getRepresentation('user123', 'assistant')
    *
    * // Get representation with semantic search
-   * const searchedRep = await session.workingRep('user123', undefined, {
+   * const searchedRep = await session.getRepresentation('user123', undefined, {
    *   searchQuery: 'preferences',
    *   searchTopK: 10
    * })
    * ```
    */
-  async workingRep(
+  async getRepresentation(
     peer: string | Peer,
     target?: string | Peer,
     options?: {
       searchQuery?: string
       searchTopK?: number
       searchMaxDistance?: number
-      includeMostDerived?: boolean
-      maxObservations?: number
+      includeMostFrequent?: boolean
+      maxConclusions?: number
     }
-  ): Promise<Representation> {
-    const workingRepParams = WorkingRepParamsSchema.parse({
+  ): Promise<string> {
+    const getRepresentationParams = GetRepresentationParamsSchema.parse({
       peer,
       target,
       options,
     })
     const peerId =
-      typeof workingRepParams.peer === 'string'
-        ? workingRepParams.peer
-        : workingRepParams.peer.id
-    const targetId = workingRepParams.target
-      ? typeof workingRepParams.target === 'string'
-        ? workingRepParams.target
-        : workingRepParams.target.id
+      typeof getRepresentationParams.peer === 'string'
+        ? getRepresentationParams.peer
+        : getRepresentationParams.peer.id
+    const targetId = getRepresentationParams.target
+      ? typeof getRepresentationParams.target === 'string'
+        ? getRepresentationParams.target
+        : getRepresentationParams.target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.workingRepresentation(
+    const response = await this._client.workspaces.peers.representation(
       this.workspaceId,
       peerId,
       {
         session_id: this.id,
         target: targetId,
-        search_query: workingRepParams.options?.searchQuery,
-        search_top_k: workingRepParams.options?.searchTopK,
-        search_max_distance: workingRepParams.options?.searchMaxDistance,
-        include_most_derived: workingRepParams.options?.includeMostDerived,
-        max_observations: workingRepParams.options?.maxObservations,
+        search_query: getRepresentationParams.options?.searchQuery,
+        search_top_k: getRepresentationParams.options?.searchTopK,
+        search_max_distance: getRepresentationParams.options?.searchMaxDistance,
+        include_most_frequent:
+          getRepresentationParams.options?.includeMostFrequent,
+        max_conclusions: getRepresentationParams.options?.maxConclusions,
       }
     )
-    const maybe = response as
-      | RepresentationData
-      | { representation?: RepresentationData | null }
-      | null
-    const rep = (maybe && typeof maybe === 'object' && 'representation' in maybe
-      ? (maybe as { representation?: RepresentationData | null }).representation
-      : maybe) ?? { explicit: [], deductive: [] }
-    return Representation.fromData(rep as RepresentationData)
+    return response.representation
   }
 
   /**

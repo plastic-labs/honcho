@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy import func, select
@@ -24,6 +24,7 @@ router = APIRouter(
 
 @router.post("", response_model=schemas.Workspace)
 async def get_or_create_workspace(
+    response: Response,
     workspace: schemas.WorkspaceCreate = Body(
         ..., description="Workspace creation parameters"
     ),
@@ -48,7 +49,9 @@ async def get_or_create_workspace(
             )
         workspace.name = jwt_params.w
 
-    return await crud.get_or_create_workspace(db, workspace=workspace)
+    result = await crud.get_or_create_workspace(db, workspace=workspace)
+    response.status_code = 201 if result.created else 200
+    return result.resource
 
 
 @router.post(
@@ -62,7 +65,7 @@ async def get_all_workspaces(
     ),
     db: AsyncSession = db,
 ):
-    """Get all Workspaces"""
+    """Get all Workspaces, paginated with optional filters."""
     filter_param = None
     if options and hasattr(options, "filters"):
         filter_param = options.filters
@@ -81,13 +84,13 @@ async def get_all_workspaces(
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def update_workspace(
-    workspace_id: str = Path(..., description="ID of the workspace to update"),
+    workspace_id: str = Path(...),
     workspace: schemas.WorkspaceUpdate = Body(
         ..., description="Updated workspace parameters"
     ),
     db: AsyncSession = db,
 ):
-    """Update a Workspace"""
+    """Update Workspace metadata and/or configuration."""
     # ResourceNotFoundException will be caught by global handler if workspace not found
     honcho_workspace = await crud.update_workspace(
         db, workspace_name=workspace_id, workspace=workspace
@@ -97,15 +100,21 @@ async def update_workspace(
 
 @router.delete(
     "/{workspace_id}",
-    response_model=schemas.Workspace,
+    status_code=204,
+    response_model=None,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def delete_workspace(
-    workspace_id: str = Path(..., description="ID of the workspace to delete"),
+    workspace_id: str = Path(...),
     db: AsyncSession = db,
 ):
-    """Delete a Workspace"""
-    return await crud.delete_workspace(db, workspace_name=workspace_id)
+    """
+    Delete a Workspace. This will permanently delete all sessions, peers, messages, and conclusions
+    associated with the workspace.
+
+    This action cannot be undone.
+    """
+    await crud.delete_workspace(db, workspace_name=workspace_id)
 
 
 @router.post(
@@ -114,13 +123,16 @@ async def delete_workspace(
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def search_workspace(
-    workspace_id: str = Path(..., description="ID of the workspace to search"),
+    workspace_id: str = Path(...),
     body: schemas.MessageSearchOptions = Body(
-        ..., description="Message search parameters "
+        ..., description="Message search parameters"
     ),
     db: AsyncSession = db,
 ):
-    """Search a Workspace"""
+    """
+    Search messages in a Workspace using optional filters. Use `limit` to control the number of
+    results returned.
+    """
     # take user-provided filter and add workspace_id to it
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
@@ -133,7 +145,7 @@ async def search_workspace(
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_queue_status(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     observer_id: str | None = Query(
         None, description="Optional observer ID to filter by"
     ),
@@ -143,38 +155,10 @@ async def get_queue_status(
     ),
     db: AsyncSession = db,
 ):
-    """Get the processing queue status, optionally scoped to an observer, sender, and/or session."""
-    try:
-        return await crud.get_queue_status(
-            db,
-            workspace_name=workspace_id,
-            session_name=session_id,
-            observer=observer_id,
-            observed=sender_id,
-        )
-    except ValueError as e:
-        logger.warning(f"Invalid request parameters: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-@router.get(
-    "/{workspace_id}/deriver/status",
-    response_model=schemas.QueueStatus,
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
-    deprecated=True,
-)
-async def get_deriver_status(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    observer_id: str | None = Query(
-        None, description="Optional observer ID to filter by"
-    ),
-    sender_id: str | None = Query(None, description="Optional sender ID to filter by"),
-    session_id: str | None = Query(
-        None, description="Optional session ID to filter by"
-    ),
-    db: AsyncSession = db,
-):
-    """Deprecated: use /queue/status. Provides identical response payload."""
+    """
+    Get the processing queue status for a Workspace, optionally scoped to an observer, sender,
+    and/or session.
+    """
     try:
         return await crud.get_queue_status(
             db,
@@ -189,22 +173,25 @@ async def get_deriver_status(
 
 
 @router.post(
-    "/{workspace_id}/trigger_dream",
+    "/{workspace_id}/schedule_dream",
     status_code=204,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
-async def trigger_dream(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    request: schemas.TriggerDreamRequest = Body(
-        ..., description="Dream trigger parameters"
+async def schedule_dream(
+    workspace_id: str = Path(...),
+    request: schemas.ScheduleDreamRequest = Body(
+        ..., description="Dream scheduling parameters"
     ),
     db: AsyncSession = db,
 ):
     """
-    Manually trigger a dream task immediately for a specific collection.
+    Manually schedule a dream task for a specific collection.
 
     This endpoint bypasses all automatic dream conditions (document threshold,
-    minimum hours between dreams) and executes the dream task immediately without delay.
+    minimum hours between dreams) and schedules the dream task for a future execution.
+
+    Currently this endpoint only supports scheduling immediate dreams. In the future,
+    users may pass a cron-style expression to schedule dreams at specific times.
     """
     # Check if dreams are enabled
     if not settings.DREAM.ENABLED:
@@ -237,7 +224,7 @@ async def trigger_dream(
     )
 
     logger.info(
-        "Manually triggered dream: %s for %s/%s/%s (session: %s)",
+        "Manually scheduled dream: %s for %s/%s/%s (session: %s)",
         dream_type.value,
         workspace_id,
         observer,

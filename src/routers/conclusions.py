@@ -22,19 +22,20 @@ router = APIRouter(
 @router.post(
     "",
     response_model=list[schemas.Conclusion],
+    status_code=201,
 )
 async def create_conclusions(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     body: schemas.ConclusionBatchCreate = Body(
         ...,
-        description="Batch of conclusions to create",
+        description="Batch of Conclusions to create",
     ),
     db: AsyncSession = db,
 ) -> list[schemas.Conclusion]:
     """
-    Create one or more conclusions.
+    Create one or more Conclusions.
 
-    Conclusions are theory-of-mind facts derived from interactions between peers.
+    Conclusions are logical certainties derived from interactions between Peers. They form the basis of a Peer's Representation.
     """
     documents = await crud.create_observations(
         db,
@@ -55,10 +56,10 @@ async def create_conclusions(
     response_model=Page[schemas.Conclusion],
 )
 async def list_conclusions(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     options: schemas.ConclusionGet | None = Body(
         None,
-        description="Filtering options for the conclusions list",
+        description="Filtering options for the Conclusions list",
     ),
     reverse: bool | None = Query(
         False,
@@ -67,7 +68,7 @@ async def list_conclusions(
     db: AsyncSession = db,
 ):
     """
-    List conclusions using custom filters, ordered by recency unless `reverse` is true.
+    List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.
     """
     filters = None
     if options and hasattr(options, "filters"):
@@ -89,15 +90,15 @@ async def list_conclusions(
     response_model=list[schemas.Conclusion],
 )
 async def query_conclusions(
-    workspace_id: str = Path(..., description="ID of the workspace"),
+    workspace_id: str = Path(...),
     body: schemas.ConclusionQuery = Body(
         ...,
-        description="Semantic search parameters for conclusions",
+        description="Semantic search parameters for Conclusions",
     ),
     db: AsyncSession = db,
 ) -> list[schemas.Conclusion]:
     """
-    Query conclusions using semantic search.
+    Query Conclusions using semantic search. Use `top_k` to control the number of results returned.
     """
     observer = None
     observed = None
@@ -125,14 +126,18 @@ async def query_conclusions(
 
 @router.delete(
     "/{conclusion_id}",
+    status_code=204,
+    response_model=None,
 )
 async def delete_conclusion(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    conclusion_id: str = Path(..., description="ID of the conclusion to delete"),
+    workspace_id: str = Path(...),
+    conclusion_id: str = Path(...),
     db: AsyncSession = db,
 ):
     """
-    Delete a specific conclusion (document).
+    Delete a single Conclusion by ID.
+
+    This action cannot be undone.
     """
     try:
         await crud.delete_document_by_id(
@@ -142,7 +147,6 @@ async def delete_conclusion(
         )
 
         logger.debug("Conclusion %s deleted successfully", conclusion_id)
-        return {"message": "Conclusion deleted successfully"}
     except ResourceNotFoundException:
         raise
     except ValueError as e:

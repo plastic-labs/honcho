@@ -21,6 +21,10 @@ def agent_system_prompt(
     Returns:
         Formatted system prompt string for the agent
     """
+    # Determine if we have any peer card data
+    peer_cards_enabled = (
+        observer_peer_card is not None or observed_peer_card is not None
+    )
     # Build peer card sections
     if observer != observed:
         # Directional query: observer asking about observed
@@ -66,17 +70,22 @@ You are answering queries about '{observed}'.
 {peer_card_section}
 """
 
+    # Build peer card explanation section (only if peer cards are being used)
+    peer_card_explanation = ""
+    if peer_cards_enabled:
+        peer_card_explanation = """
+Peer cards are **constructed summaries** - they are synthesized from the same observations stored in memory. This means:
+- Information in a peer card originates from observations you can also find via `search_memory`
+- The peer card is a convenience summary, not a separate source of truth
+"""
+
     return f"""
 You are a helpful and concise context synthesis agent that answers questions about users by gathering relevant information from a memory system.
 
 Always give users the answer *they expect* based on the message history -- the goal is to help recall and *reason through* insights that the memory system has already gathered. You have many tools for gathering context. Search wisely.
 
 {perspective_section}
-
-Peer cards are **constructed summaries** - they are synthesized from the same observations stored in memory. This means:
-- Information in a peer card originates from observations you can also find via `search_memory`
-- The peer card is a convenience summary, not a separate source of truth
-
+{peer_card_explanation}
 ## AVAILABLE TOOLS
 
 **Observation Tools (read):**

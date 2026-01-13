@@ -24,7 +24,6 @@ from src.routers import (
     conclusions,
     keys,
     messages,
-    observations,
     peers,
     sessions,
     webhooks,
@@ -137,14 +136,13 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     servers=[
-        {"url": "http://localhost:8000", "description": "Local Development Server"},
-        {"url": "https://demo.honcho.dev", "description": "Demo Server"},
         {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"},
+        {"url": "http://localhost:8000", "description": "Local Development Server"},
     ],
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
-    description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.5.1",
+    description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
+    version="2.6.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -160,7 +158,6 @@ app = FastAPI(
 origins = [
     "http://localhost",
     "http://127.0.0.1:8000",
-    "https://demo.honcho.dev",
     "https://api.honcho.dev",
 ]
 
@@ -180,7 +177,6 @@ app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
 app.include_router(conclusions.router, prefix="/v2")
-app.include_router(observations.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
 

@@ -18,6 +18,7 @@ from src.exceptions import (
     ResourceNotFoundException,
 )
 from src.utils.filter import apply_filter
+from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
 from .peer import get_or_create_peers, get_peer
@@ -103,7 +104,7 @@ async def get_or_create_session(
     workspace_name: str,
     *,
     _retry: bool = False,
-) -> models.Session:
+) -> GetOrCreateResult[models.Session]:
     """
     Get or create a session in a workspace with specified peers.
     If the session already exists, the peers are added to the session.
@@ -115,7 +116,7 @@ async def get_or_create_session(
         peer_names: List of peer names to add to the session
         _retry: Whether to retry the operation
     Returns:
-        The created session
+        GetOrCreateResult containing the session and whether it was created
 
     Raises:
         ResourceNotFoundException: If the session does not exist and create is false
@@ -137,8 +138,9 @@ async def get_or_create_session(
                 f"Session {session.name} not found in workspace {workspace_name}"
             )
 
-    # Track if we need to update cache
+    # Track if we need to update cache and if session was created
     needs_cache_update = False
+    created = False
 
     # Check if session already exists
     if honcho_session is None:
@@ -168,6 +170,7 @@ async def get_or_create_session(
             # Flush to ensure session exists in DB before adding peers and set flag to warm cache
             await db.flush()
             needs_cache_update = True
+            created = True
 
         except IntegrityError:
             await db.rollback()
@@ -225,7 +228,7 @@ async def get_or_create_session(
             "Session %s cache updated in workspace %s", session.name, workspace_name
         )
 
-    return honcho_session
+    return GetOrCreateResult(honcho_session, created=created)
 
 
 async def get_session(
@@ -291,9 +294,11 @@ async def update_session(
     Raises:
         ResourceNotFoundException: If the session does not exist or peer is not in session
     """
-    honcho_session = await get_or_create_session(
-        db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
-    )
+    honcho_session: models.Session = (
+        await get_or_create_session(
+            db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
+        )
+    ).resource
 
     # Track if anything changed
     needs_update = False

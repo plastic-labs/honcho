@@ -247,10 +247,10 @@ class TestDocumentCreationWorkflow:
             assert len(representation.explicit) == 1
             assert representation.explicit[0].content == "User likes dogs"
 
-    async def test_get_working_representation_with_most_derived(
+    async def test_get_working_representation_with_include_most_frequent(
         self, db_session: AsyncSession
     ):
-        """Test working representation retrieval prioritizing most derived observations"""
+        """Test working representation retrieval prioritizing most frequent observations"""
         workspace, observer_peer = await self.create_test_workspace_and_peer(db_session)
         _, observed_peer = await self.create_test_workspace_and_peer(
             db_session, workspace.name
@@ -295,7 +295,7 @@ class TestDocumentCreationWorkflow:
 
         await db_session.commit()
 
-        # Retrieve with most_derived=True
+        # Retrieve with include_most_frequent=True
         representation = await crud.get_working_representation(
             workspace.name,
             include_most_derived=True,
