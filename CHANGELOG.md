@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.6.0] - 2026-01-13
+
+### Added
+
+- Agentic Dreamer for intelligent memory consolidation using LLM agents
+- Agentic Dialectic for query answering using LLM agents with tool use
+- Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `extra-high`)
+- Prometheus token tracking for deriver and dialectic operations
+- n8n integration
+
+### Changed
+
+- API route renaming for consistency
+- Dreamer and dialectic now respect peer card configuration settings
+- Observations renamed to Conclusions across API and SDKs
+
+### Fixed
+
+- Dream scheduling bugs
+- Summary creation when start_message_id > end_message_id
+- Cashews upgrade to prevent NoScriptError
+
 ## [2.5.1] - 2025-12-15
 
 ### Fixed

@@ -284,7 +284,7 @@ context = alice.get_context()
 context = alice.get_context(target="bob")  # What alice knows about bob
 
 # Get working representation with semantic search
-rep = alice.working_rep(search_query="preferences", search_top_k=10)
+rep = alice.get_representation(search_query="preferences", search_top_k=10)
 
 # Access observations
 self_observations = alice.observations.list()  # Self-observations
@@ -335,7 +335,7 @@ const context = await alice.getContext();
 const targetContext = await alice.getContext("bob");  // What alice knows about bob
 
 // Get working representation with semantic search
-const rep = await alice.workingRep(undefined, undefined, {
+const rep = await alice.getRepresentation(undefined, undefined, {
   searchQuery: "preferences",
   searchTopK: 10
 });
@@ -366,8 +366,8 @@ context = alice.get_context(
     search_query="work preferences",
     search_top_k=10,
     search_max_distance=0.8,
-    include_most_derived=True,
-    max_observations=50
+    include_most_frequent=True,
+    max_conclusions=50
 )
 ```
 
@@ -385,8 +385,97 @@ const searchedContext = await alice.getContext("bob", {
   searchQuery: "work preferences",
   searchTopK: 10,
   searchMaxDistance: 0.8,
-  includeMostDerived: true,
-  maxObservations: 50
+  includeMostFrequent: true,
+  maxConclusions: 50
+});
+```
+</CodeGroup>
+
+### Observations
+
+Peers can access their observations (facts derived from messages) through the `observations` property and `observations_of()` method:
+
+<CodeGroup>
+```python Python
+# Access self-observations (what honcho knows about alice)
+self_obs = alice.observations
+
+# List self-observations
+obs_list = self_obs.list()
+
+# Search self-observations semantically
+results = self_obs.query("food preferences")
+
+# Delete an observation
+self_obs.delete("observation-id")
+
+# Access observations of another peer (what alice knows about bob)
+bob_obs = alice.observations_of("bob")
+bob_obs_list = bob_obs.list()
+bob_search = bob_obs.query("work history")
+```
+
+```typescript TypeScript
+// Access self-observations (what honcho knows about alice)
+const selfObs = alice.observations;
+
+// List self-observations
+const obsList = await selfObs.list();
+
+// Search self-observations semantically
+const results = await selfObs.query("food preferences");
+
+// Delete an observation
+await selfObs.delete("observation-id");
+
+// Access observations of another peer (what alice knows about bob)
+const bobObs = alice.observationsOf("bob");
+const bobObsList = await bobObs.list();
+const bobSearch = await bobObs.query("work history");
+```
+</CodeGroup>
+
+### Peer Context
+
+The `get_context()` method on peers retrieves both the working representation and peer card in a single API call:
+
+<CodeGroup>
+```python Python
+# Get peer's own context
+context = alice.get_context()
+print(context.representation)  # Working representation
+print(context.peer_card)       # Peer card as list of strings
+
+# Get context about another peer (what alice knows about bob)
+bob_context = alice.get_context(target="bob")
+
+# Get context with semantic search
+context = alice.get_context(
+    target="bob",
+    search_query="work preferences",
+    search_top_k=10,
+    search_max_distance=0.8,
+    include_most_frequent=True,
+    max_conclusions=50
+)
+```
+
+```typescript TypeScript
+// Get peer's own context
+const context = await alice.getContext();
+console.log(context.representation);  // Working representation
+console.log(context.peerCard);        // Peer card as array of strings
+
+// Get context about another peer (what alice knows about bob)
+const bobContext = await alice.getContext("bob");
+
+// Get context with semantic search
+const searchedContext = await alice.getContext("bob", {
+  searchQuery: "work preferences",
+  searchTopK: 10,
+  searchMaxDistance: 0.8,
+  includeMostFrequent: true,
+  maxConclusions: 50
 });
 ```
 </CodeGroup>
@@ -537,7 +626,7 @@ context = session.get_context(
     limit_to_session=True,
     search_top_k=10,
     search_max_distance=0.8,
-    include_most_derived=True,
+    include_most_frequent=True,
     max_observations=25
 )
 
@@ -545,13 +634,13 @@ context = session.get_context(
 results = session.search("help")
 
 # Working representation queries with semantic search
-global_rep = session.working_rep("alice")
-targeted_rep = session.working_rep(alice, target=bob)
-searched_rep = session.working_rep(
+global_rep = session.get_representation("alice")
+targeted_rep = session.get_representation(alice, target=bob)
+searched_rep = session.get_representation(
     "alice",
     search_query="preferences",
     search_top_k=10,
-    include_most_derived=True
+    include_most_frequent=True
 )
 
 # Upload a file to create messages
@@ -624,9 +713,9 @@ const richContext = await session.getContext({
 const results = await session.search("help");
 
 // Working representation queries with semantic search
-const globalRep = await session.workingRep("alice");
-const targetedRep = await session.workingRep(alice, { target: bob });
-const searchedRep = await session.workingRep("alice", undefined, {
+const globalRep = await session.getRepresentation("alice");
+const targetedRep = await session.getRepresentation(alice, { target: bob });
+const searchedRep = await session.getRepresentation("alice", undefined, {
   searchQuery: "preferences",
   searchTopK: 10,
   includeMostDerived: true
@@ -756,8 +845,8 @@ The SessionContext object has the following structure:
 | `limit_to_session` | `bool` | Limit representation to session only |
 | `search_top_k` | `int` | Number of semantic search results (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
-| `include_most_derived` | `bool` | Include most derived observations |
-| `max_observations` | `int` | Max observations to include (1-100) |
+| `include_most_frequent` | `bool` | Include most frequent conclusions |
+| `max_conclusions` | `int` | Max conclusions to include (1-100) |
 
 ## Advanced Usage
 
@@ -855,7 +944,7 @@ const response = await openai.chat.completions.create({
 When creating messages, you can optionally specify a custom `created_at` timestamp instead of using the server's current time:
 
 ```bash
-curl -X POST "https://api.honcho.dev/v2/workspaces/{workspace_id}/sessions/{session_id}/messages" \
+curl -X POST "https://api.honcho.dev/v2.6.0-alpha/workspaces/{workspace_id}/sessions/{session_id}/messages" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -879,7 +968,7 @@ If `created_at` is not provided, messages will use the server's current timestam
 
 ### Metadata and Filtering
 
-See [Using Filters](/v2/guides/using-filters) for more examples on how to use filters.
+See [Using Filters](/v2.6.0-alpha/guides/using-filters) for more examples on how to use filters.
 
 <CodeGroup>
 ```python Python

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.7.0] - 2026-01-13
+
+### Added
+
+- `ConclusionScope` object for CRUD operations on conclusions (renamed from observations)
+- Representation configuration support
+
+### Changed
+
+- Observations renamed to Conclusions across the SDK
+- Major SDK refactoring and cleanup
+- Simplified method signatures throughout
+
+### Fixed
+
+- Pagination `this` binding issue
+
 ## [1.6.0] - 2025-12-03
 
 ### Added

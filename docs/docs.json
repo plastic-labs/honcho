@@ -15,14 +15,21 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "navigation": {
     "versions": [
       {
-        "version": "v2.5.1",
+        "version": "v2.6.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -40,19 +47,28 @@
                 "group": "Core Concepts",
                 "pages": [
                   "v2/documentation/core-concepts/architecture",
-                  "v2/documentation/core-concepts/features/storing-data",
-                  "v2/documentation/core-concepts/features/dialectic-endpoint",
-                  "v2/documentation/core-concepts/features/get-context",
-                  "v2/documentation/core-concepts/features/search",
-                  "v2/documentation/core-concepts/features/working-rep",
-                  "v2/documentation/core-concepts/features/streaming-response",
-                  "v2/documentation/core-concepts/features/using-filters",
-                  "v2/documentation/core-concepts/features/file-uploads",
-                  "v2/documentation/core-concepts/features/queue-status",
-                  "v2/documentation/core-concepts/features/local-vs-global",
-                  "v2/documentation/core-concepts/configuration",
-                  "v2/documentation/core-concepts/summarizer",
-                  "v2/documentation/core-concepts/glossary"
+                  "v2/documentation/core-concepts/reasoning",
+                  "v2/documentation/core-concepts/representation"
+                ]
+              },
+              {
+                "group": "Features",
+                "pages": [
+                  "v2/documentation/features/get-context",
+                  "v2/documentation/features/chat",
+                  {
+                    "group": "Advanced",
+                    "pages": [
+                      "v2/documentation/features/advanced/overview",
+                      "v2/documentation/features/advanced/queue-status",
+                      "v2/documentation/features/advanced/reasoning-configuration",
+                      "v2/documentation/features/advanced/representation-scopes",
+                      "v2/documentation/features/advanced/summarizer",
+                      "v2/documentation/features/advanced/search",
+                      "v2/documentation/features/advanced/using-filters",
+                      "v2/documentation/features/advanced/streaming-response"
+                    ]
+                  }
                 ]
               },
               {
@@ -65,28 +81,55 @@
             ]
           },
           {
-            "tab": "Spellbooks",
+            "tab": "Guides",
             "groups": [
               {
-                "group": "Getting Started",
-                "pages": ["v2/guides/overview"]
-              },
-              {
-                "group": "Migrations",
-                "pages": ["v2/migrations/from-mem0"]
+                "group": "Overview",
+                "pages": [
+                  "v2/guides/overview",
+                  "v2/guides/file-uploads",
+                  "v2/guides/storing-data"
+                ]
               },
               {
                 "group": "Integrations",
                 "pages": [
-                  "v2/integrations/crewai",
-                  "v2/integrations/langgraph",
-                  "v2/integrations/mcp",
-                  "v2/integrations/n8n"
+                  "v2/guides/integrations/crewai",
+                  "v2/guides/integrations/langgraph",
+                  "v2/guides/integrations/mcp"
                 ]
               },
               {
-                "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+                "group": "Migrations",
+                "pages": [
+                  "v2/guides/migrations/mem0"
+                ]
+              },
+              {
+                "group": "Chatbots",
+                "pages": [
+                  "v2/guides/discord",
+                  "v2/guides/telegram"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Open Source",
+            "groups": [
+              {
+                "group": "Self-Hosting",
+                "pages": [
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/configuration"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/license"
+                ]
               }
             ]
           },
@@ -95,7 +138,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v2/api-reference/introduction"]
+                "pages": [
+                  "v2/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -191,236 +236,15 @@
                 ]
               }
             ]
-          },
-          {
-            "tab": "Contributing",
-            "groups": [
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v2/contributing/guidelines",
-                  "v2/contributing/self-hosting",
-                  "v2/contributing/configuration",
-                  "v2/contributing/license"
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "version": "v2.6.0-alpha",
-        "api": {
-          "openapi": ["openapi.json"]
-        },
-        "tabs": [
-          {
-            "tab": "Documentation",
-            "groups": [
-              {
-                "group": "Introduction",
-                "pages": [
-                  "v2.6.0-alpha/documentation/introduction/overview",
-                  "v2.6.0-alpha/documentation/introduction/quickstart",
-                  "v2.6.0-alpha/documentation/introduction/vibecoding"
-                ]
-              },
-              {
-                "group": "Core Concepts",
-                "pages": [
-                  "v2.6.0-alpha/documentation/core-concepts/architecture",
-                  "v2.6.0-alpha/documentation/core-concepts/reasoning",
-                  "v2.6.0-alpha/documentation/core-concepts/representation"
-                ]
-              },
-              {
-                "group": "Features",
-                "pages": [
-                  "v2.6.0-alpha/documentation/features/get-context",
-                  "v2.6.0-alpha/documentation/features/chat",
-                  {
-                    "group": "Advanced",
-                    "pages": [
-                      "v2.6.0-alpha/documentation/features/advanced/overview",
-                      "v2.6.0-alpha/documentation/features/advanced/queue-status",
-                      "v2.6.0-alpha/documentation/features/advanced/reasoning-configuration",
-                      "v2.6.0-alpha/documentation/features/advanced/representation-scopes",
-                      "v2.6.0-alpha/documentation/features/advanced/summarizer",
-                      "v2.6.0-alpha/documentation/features/advanced/search",
-                      "v2.6.0-alpha/documentation/features/advanced/using-filters",
-                      "v2.6.0-alpha/documentation/features/advanced/streaming-response"
-                    ]
-                  }
-                ]
-              },
-              {
-                "group": "Reference",
-                "pages": [
-                  "v2.6.0-alpha/documentation/reference/platform",
-                  "v2.6.0-alpha/documentation/reference/sdk"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Guides",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "v2.6.0-alpha/guides/overview",
-                  "v2.6.0-alpha/guides/file-uploads",
-                  "v2.6.0-alpha/guides/storing-data"
-                ]
-              },
-              {
-                "group": "Integrations",
-                "pages": [
-                  "v2.6.0-alpha/guides/integrations/crewai",
-                  "v2.6.0-alpha/guides/integrations/langgraph",
-                  "v2.6.0-alpha/guides/integrations/mcp"
-                ]
-              },
-              {
-                "group": "Migrations",
-                "pages": ["v2.6.0-alpha/guides/migrations/mem0"]
-              },
-              {
-                "group": "Chatbots",
-                "pages": [
-                  "v2.6.0-alpha/guides/discord",
-                  "v2.6.0-alpha/guides/telegram"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Open Source",
-            "groups": [
-              {
-                "group": "Self-Hosting",
-                "pages": [
-                  "v2.6.0-alpha/contributing/self-hosting",
-                  "v2.6.0-alpha/contributing/configuration"
-                ]
-              },
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v2.6.0-alpha/contributing/guidelines",
-                  "v2.6.0-alpha/contributing/license"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "API Reference",
-            "groups": [
-              {
-                "group": "API Documentation",
-                "pages": ["v2.6.0-alpha/api-reference/introduction"]
-              },
-              {
-                "group": "workspaces",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/get-or-create-workspace",
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/get-all-workspaces",
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/update-workspace",
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/delete-workspace",
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/search-workspace",
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/get-deriver-status",
-                  "v2.6.0-alpha/api-reference/endpoint/workspaces/trigger-dream"
-                ]
-              },
-              {
-                "group": "peers",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/peers/get-peers",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/get-or-create-peer",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/update-peer",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/get-sessions-for-peer",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/chat",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/get-working-representation",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/get-peer-card",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/set-peer-card",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/get-peer-context",
-                  "v2.6.0-alpha/api-reference/endpoint/peers/search-peer"
-                ]
-              },
-              {
-                "group": "sessions",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-or-create-session",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-sessions",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/update-session",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/delete-session",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/clone-session",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-session-peers",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/set-session-peers",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/add-peers-to-session",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/remove-peers-from-session",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-peer-config",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/set-peer-config",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-session-context",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/get-session-summaries",
-                  "v2.6.0-alpha/api-reference/endpoint/sessions/search-session"
-                ]
-              },
-              {
-                "group": "messages",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/messages/create-messages-for-session",
-                  "v2.6.0-alpha/api-reference/endpoint/messages/get-messages",
-                  "v2.6.0-alpha/api-reference/endpoint/messages/get-message",
-                  "v2.6.0-alpha/api-reference/endpoint/messages/update-message",
-                  "v2.6.0-alpha/api-reference/endpoint/messages/create-messages-with-file"
-                ]
-              },
-              {
-                "group": "observations",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/observations/create-observations",
-                  "v2.6.0-alpha/api-reference/endpoint/observations/list-observations",
-                  "v2.6.0-alpha/api-reference/endpoint/observations/query-observations",
-                  "v2.6.0-alpha/api-reference/endpoint/observations/delete-observation"
-                ]
-              },
-              {
-                "group": "webhooks",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/webhooks/list-webhook-endpoints",
-                  "v2.6.0-alpha/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint",
-                  "v2.6.0-alpha/api-reference/endpoint/webhooks/delete-webhook-endpoint",
-                  "v2.6.0-alpha/api-reference/endpoint/webhooks/test-emit"
-                ]
-              },
-              {
-                "group": "miscellaneous",
-                "pages": [
-                  "v2.6.0-alpha/api-reference/endpoint/keys/create-key",
-                  "v2.6.0-alpha/api-reference/endpoint/metrics"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Changelog",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "changelog/introduction",
-                  "changelog/compatibility-guide"
-                ]
-              }
-            ]
           }
         ]
       },
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -450,15 +274,23 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
+                "pages": [
+                  "v1/guides/overview",
+                  "v1/guides/streaming-response"
+                ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
+                "pages": [
+                  "v1/guides/discord",
+                  "v1/guides/honcho-mcp"
+                ]
               },
               {
                 "group": "Personal Memory",
-                "pages": ["v1/guides/dialectic-endpoint"]
+                "pages": [
+                  "v1/guides/dialectic-endpoint"
+                ]
               }
             ]
           },
@@ -467,7 +299,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v1/api-reference/introduction"]
+                "pages": [
+                  "v1/api-reference/introduction"
+                ]
               },
               {
                 "group": "apps",
@@ -515,7 +349,9 @@
               },
               {
                 "group": "keys",
-                "pages": ["v1/api-reference/endpoint/keys/create-key"]
+                "pages": [
+                  "v1/api-reference/endpoint/keys/create-key"
+                ]
               },
               {
                 "group": "metamessages",

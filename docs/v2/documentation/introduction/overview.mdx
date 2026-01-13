@@ -1,119 +1,103 @@
 ---
-title: "Honcho"
-description: "Go beyond memory to agents with actual social intelligence"
+title: "Honcho Overview"
 icon: "brain"
 sidebarTitle: "Overview"
 ---
 
-Honcho is an AI-native memory library for building agents with
-[state-of-the-art](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR)
-long-term memory.
+Honcho is an open source memory library with a managed service for building stateful agents. Use it with any model, framework, or architecture. It enables agents to build and maintain state about any entity--users, agents, groups, ideas, and more. And because it's a continual learning system, it understands entities that change over time. Using Honcho as your memory system will earn your agents higher retention, more trust, and help you build data moats to out-compete incumbents.
 
-Agents using Honcho have perfect recall with a wide variety of tools to traverse
-their history and get the exact context they need when they need it.
+<Note>
+Honcho has defined the Pareto Frontier of Agent Memory. Watch the [video](https://x.com/honchodotdev/status/2002090546521911703?s=20), check out our [evals page](https://evals.honcho.dev/), and read the [blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho) for more detail.
+</Note>
 
-It then goes beyond basic memory by reasoning about the stored history
-to expand the latent information available to your agent. Agents using Honcho
-will understand who they are, who they are interacting with, what happened, and
-when it happened — all without you having to think about it.
+<CardGroup cols={2}>
+  <Card title="Get an API Key" icon="key" href="https://app.honcho.dev">
+    Sign up and start building with Honcho
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/v2.6.0-alpha/documentation/introduction/quickstart">
+    Build your first stateful agent in minutes
+  </Card>
+</CardGroup>
 
-Use it to build
+## Why Use Honcho?
 
-- Highly personalized experiences
-- Agents with social cognition
-- Agents with rich identity that evolve over time
-- Multi-agent systems with complex social dynamics
+Honcho streamlines the agent building process by offering elegant, flexible primitives for managing context. It also reasons over that context to give developers access to far richer insights only accessible through reasoning.
 
+Take the following scenario:
 
-```python
-# Start simple by just adding messages
-session.add_messages([alice.message("I learn best with examples")])
+- You find a use case for LLMs and build an agent around it
+- It works well initially but can't maintain context across sessions
+- You spend weeks engineering a RAG solution that seems to help
+- Then the cycle begins...
+  - Users report the agent forgetting things, contradicting itself, or losing context mid-session
+  - You build evals to quantify the problem
+  - You re-engineer your entire RAG pipeline with better chunking, embeddings, retrieval strategies
+  - The problems shift but don't disappear
+  - Repeat
 
-# Honcho will automatically reason about the message to generate insights about Alice
+Eventually you realize the issue isn't engineering—-it's that you're not extracting all the latent information from your data. You need to reason exhaustively, handle contradictions, track patterns over time, and maintain coherent state. In other words, you'd need to build Honcho.
 
-# Get insights by chatting with the agent
-insight = peer.chat("How should I explain this concept?")
-# > "This user learns best through concrete examples..."
+Break free from this cycle. Honcho is a general solution to context engineering, memory, and statefulness.
+
+## How Honcho Works
+
+<Note>
+Honcho is a memory system that reasons. Read more on the approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning).
+</Note>
+
+Honcho has four storage primitives that work together:
+
+```mermaid
+ graph LR
+      W[Workspaces] -->|have| P[Peers]
+      W -->|have| S[Sessions]
+
+      S -->|have| SM[Messages]
+
+      P <-.->|many-to-many| S
+
+      style W fill:#B6DBFF,stroke:#333,color:#000
+      style P fill:#B6DBFF,stroke:#333,color:#000
+      style S fill:#B6DBFF,stroke:#333,color:#000
+      style SM fill:#B6DBFF,stroke:#333,color:#000
 ```
 
-Designed for developers and agents alike:
-- **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/architecture#dialectic-api) to get insights about your users and agents
-- **Automatic Context Management**: Smart conversation summaries to have infinite chats
-- **Native multi-agent support**: Sessions can natively have as many participants as you need
-- **Agent-first interfaces**: MCP connections and APIs designed for agents to consume and use as tools
-- **Provider Agnostic**: Works with any LLM or Agent Framework
+- **Workspaces** - Top-level containers that isolate different applications or environments
+- **Peers** - Any entity that persists but changes over time (users, agents, objects, and more)
+- **Sessions** - Interaction threads between peers with temporal boundaries
+- **Messages** - Units of data that trigger reasoning (conversations, events, activity, documents, and more)
 
-## How It Works
+When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical [*reasoning*](/v2.6.0-alpha/documentation/core-concepts/reasoning) to generate conclusions about each peer. These conclusions are stored as [*representations*](/v2.6.0-alpha/documentation/core-concepts/representation) that you can query to provide rich context for your agents.
 
-<Accordion title="High Level Diagram" defaultOpen="true">
-  <Frame>
-    <img src="/images/overview/honcho-overview.svg" alt="High Level Honcho Diagram" />
-  </Frame>
-</Accordion>
+![Honcho Architecture](/images/architecture.png)
 
-At a high level Honcho works very simply:
+The diagram above shows the flow: agents write messages to Honcho, which triggers reasoning that updates what's stored in representations. Developers (or agents) can then query to get additional context for their next response.
 
-1. Store messages sent by users and agents in Honcho
-2. Honcho reasons about the messages to generate insights about each entity in
-the system
-3. At runtime your agents can leverage insights from Honcho to get the exact
-context they need
+## Why Reasoning?
 
-There are several API endpoints to leverage the memory & insights in Honcho.
+Traditional RAG systems retrieve what was explicitly said, but they miss what matters most—the insights only accessible by *rigorously thinking* about your data. Without reasoning, you're leaving latent information on the table. Static retrieval can't surface implicit connections, struggles when new information contradicts old data, and fails when you need to make predictions under uncertainty.
 
-### Get Context
+Honcho uses formal logic to extract all that latent information. This reasoning is AI-native—it performs the rigorous, compute-intensive thinking that humans struggle with, instantly and consistently. The result is memory that goes beyond simple RAG recall to provide exhaustive context for statefulness.
 
-This is the easiest way to leverage Honcho. simply call get context and get the
-most relevant information for your conversation. This endpoint is highly
-customizable so you can specify parameters such as:
+## Get Started
 
-- A number of tokens you want
-- An option to include summaries of the conversation
-- An option to get a profile of a specific user (Peer Card & Representation)
+Honcho gives you maximum control over your agent's context and memory. The data model is flexible and composable, the reasoning backend is powerful yet cost-effective, and everything is built to give developers levers to manage token usage, latency, and reasoning depth.
 
-### Search
+We're just scratching the surface. Dive into the quickstart to see Honcho in action, explore the architecture to understand how it all fits together, or jump straight to building.
 
-This endpoint lets you search across Honcho for relevant messages using a
-hybrid search strategy that combines full-text and semantic search.
+Welcome to Honcho. We're excited to have you at the frontier of AI with us 🫡.
 
-You can optionally scope the endpoint to a specific workspace, peer, or session.
-
-### Working Representation
-
-This endpoint gives you a snapshot of a user or what we call a
-**Representation**. Essentially, a list of explicit and deductive facts about
-the user that are relevant to the current conversation.
-
-Plug this into your prompt to get a quick overview of the user.
-
-### Dialectic API
-
-This endpoint lets you chat with Honcho about any entity in your system. Honcho
-will leverage what it has remembered and learned about the entity to provide in-context actionable insights.
-
-This is especially helpful when you want your agent to back-channel with Honcho to
-change its behavior at runtime.
-
-Example Queries:
-- "What's the best way to explain technical concepts to this user?"
-- "Is this user more task-oriented or relationship-oriented?"
-- "What time of day is this user most engaged?"
-- "How does this user prefer to receive feedback?"
-- "What are this user's core values based on our conversations?"
-
-
-## Getting Started
-
-Ready to integrate Honcho into your application?
-
-<CardGroup cols={2}> <Card title="Quickstart Guide" icon="rocket"
-href="/v2/documentation/introduction/quickstart"> Get up and running with
-Honcho in minutes </Card> <Card title="Core Concepts" icon="brain"
-href="/v2/documentation/core-concepts/architecture"> Understand Honcho's
-fundamental concepts </Card> </CardGroup>
-
-## Community & Support
-
-- **GitHub**: [plastic-labs/honcho](https://github.com/plastic-labs/honcho)
-- **Discord**: [Join our community](http://discord.gg/plasticlabs)
-- **Issues**: Report bugs and request features on GitHub
+<CardGroup cols={2}>
+  <Card title="Get an API Key" icon="key" href="https://app.honcho.dev">
+    Sign up for the Honcho platform and get your API key
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/v2.6.0-alpha/documentation/introduction/quickstart">
+    Build your first stateful agent in minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/v2.6.0-alpha/documentation/core-concepts/architecture">
+    Deep dive into how Honcho's primitives fit together
+  </Card>
+  <Card title="Reasoning" icon="gears" href="/v2.6.0-alpha/documentation/core-concepts/reasoning">
+    Learn how Honcho reasons about data to build memory
+  </Card>
+</CardGroup>

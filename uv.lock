@@ -738,7 +738,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "2.5.1"
+version = "2.6.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -843,7 +843,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "1.6.0"
+version = "1.7.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "honcho-core" },
