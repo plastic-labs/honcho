@@ -51,11 +51,12 @@
       "session_id": "session_no_local_reps",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -67,11 +68,12 @@
       "session_id": "session_no_local_reps",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -82,11 +84,12 @@
       "session_id": "session_no_local_reps",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -97,11 +100,12 @@
       "session_id": "session_no_local_reps",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     }

@@ -51,9 +51,9 @@
       "session_id": "session_invisible_observer",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Alice's local representation of Bob contains information about Bob working in retail management with a team of 20 people.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "retail",
+          "case_sensitive": false
         }
       ]
     },
@@ -65,11 +65,12 @@
       "session_id": "session_invisible_observer",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     }
