@@ -6,7 +6,7 @@ This module provides a Turbopuffer-based implementation of the VectorStore inter
 
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from turbopuffer import AsyncTurbopuffer, NotFoundError
 from turbopuffer.lib.namespace import AsyncNamespace
@@ -18,8 +18,9 @@ from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
 
 logger = logging.getLogger(__name__)
 
-# Type alias for Turbopuffer's equality filter format
+# Type aliases for Turbopuffer's filter formats
 EqFilter = tuple[str, Literal["Eq"], Any]
+InFilter = tuple[str, Literal["In"], Sequence[Any]]
 AndFilter = tuple[Literal["And"], Sequence[Filter]]
 
 DISTANCE_METRIC = "cosine_distance"
@@ -192,7 +193,12 @@ class TurbopufferVectorStore(VectorStore):
         Convert a filter dict to Turbopuffer filter format.
 
         Turbopuffer uses tuples like (attribute, "Eq", value) for filters,
+        (attribute, "In", [values]) for membership filters,
         and ("And", [filters]) for combining multiple filters.
+
+        Supports filter formats:
+        - {"key": "value"} -> ("key", "Eq", "value")
+        - {"key": {"in": ["a", "b"]}} -> ("key", "In", ["a", "b"])
 
         Args:
             filters: Dictionary of attribute -> value filters
@@ -203,11 +209,16 @@ class TurbopufferVectorStore(VectorStore):
         if not filters:
             return None
 
-        filter_list: list[EqFilter] = []
+        filter_list: list[EqFilter | InFilter] = []
         for key, value in filters.items():
-            # Simple equality filter using "Eq" operator
-            eq_filter: EqFilter = (key, "Eq", value)
-            filter_list.append(eq_filter)
+            # Check if value is a dict with "in" operator
+            if isinstance(value, dict) and "in" in value:
+                # Membership filter using "In" operator
+                in_values = cast(Sequence[Any], value["in"])
+                filter_list.append((key, "In", in_values))
+            else:
+                # Simple equality filter using "Eq" operator
+                filter_list.append((key, "Eq", cast(Any, value)))
 
         if not filter_list:
             return None

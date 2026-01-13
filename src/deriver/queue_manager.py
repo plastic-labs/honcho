@@ -51,7 +51,7 @@ class WorkerOwnership(NamedTuple):
 
 
 QUEUE_CLEANUP_INTERVAL_SECONDS = 43200  # 12 hours
-RECONCILIATION_INTERVAL_SECONDS = 900  # 15 minutes
+RECONCILIATION_INTERVAL_SECONDS = 300  # 5 minutes
 
 
 class QueueManager:

@@ -312,9 +312,14 @@ class TestSearchMemory:
     """Tests for _handle_search_memory."""
 
     async def test_returns_matching_observations(
-        self, make_tool_context: Callable[..., ToolContext]
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Returns observations matching semantic query."""
+        # Force pgvector queries since test documents are created directly in postgres
+        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+
         ctx = make_tool_context()
 
         result = await _handle_search_memory(ctx, {"query": "coffee preferences"})

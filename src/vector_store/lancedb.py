@@ -6,6 +6,7 @@ This module provides a LanceDB-based implementation of the VectorStore interface
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 import lancedb
@@ -250,6 +251,10 @@ class LanceDBVectorStore(VectorStore):
         """
         Convert a filter dict to SQL WHERE clause syntax.
 
+        Supports filter formats:
+        - {"key": "value"} -> key = 'value'
+        - {"key": {"in": ["a", "b"]}} -> key IN ('a', 'b')
+
         Args:
             filters: Dictionary of attribute -> value filters
 
@@ -261,8 +266,20 @@ class LanceDBVectorStore(VectorStore):
 
         conditions: list[str] = []
         for key, value in filters.items():
+            # Check if value is a dict with "in" operator
+            if isinstance(value, dict) and "in" in value:
+                # IN clause for list membership
+                in_values = cast(Sequence[Any], value["in"])
+                if in_values:
+                    escaped_values = [
+                        f"'{str(v).replace(chr(39), chr(39) + chr(39))}'"
+                        if isinstance(v, str)
+                        else str(v)
+                        for v in in_values
+                    ]
+                    conditions.append(f"{key} IN ({', '.join(escaped_values)})")
             # Handle string values with proper quoting
-            if isinstance(value, str):
+            elif isinstance(value, str):
                 # Escape single quotes in the value
                 escaped_value = value.replace("'", "''")
                 conditions.append(f"{key} = '{escaped_value}'")

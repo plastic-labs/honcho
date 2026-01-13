@@ -479,7 +479,6 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
 
     from src.crud.document import cleanup_soft_deleted_documents
 
-    print("Running vector reconciliation cycle")
     async with tracked_db("reconciliation") as db:
         # If no external vector store (pgvector mode), only clean up soft-deleted documents
         if external_vector_store is None:
