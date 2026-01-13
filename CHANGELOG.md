@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Agentic Dreamer for intelligent memory consolidation using LLM agents
 - Agentic Dialectic for query answering using LLM agents with tool use
-- Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `extra-high`)
+- Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `max`)
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
 
@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Dream scheduling bugs
 - Summary creation when start_message_id > end_message_id
 - Cashews upgrade to prevent NoScriptError
+
+### Removed
+
+- Peer card configuration from message configuration; peers cards no longer created/updated in deriver process
 
 ## [2.5.1] - 2025-12-15
 

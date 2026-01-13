@@ -17,10 +17,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Observations renamed to Conclusions across the SDK
 - Major SDK refactoring and cleanup
 - Simplified method signatures throughout
+- Representation endpoints now return `string` instead of old Representation object
 
 ### Fixed
 
 - Pagination `this` binding issue
+
+### Removed
+
+- Representation object
 
 ## [1.6.0] - 2025-12-03
 
