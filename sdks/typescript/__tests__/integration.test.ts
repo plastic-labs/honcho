@@ -183,7 +183,7 @@ describe('Honcho SDK Integration Tests', () => {
         total: 2,
         size: 2,
         hasNextPage: false,
-        [Symbol.asyncIterator]: async function* () {
+        [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item
           }
@@ -309,9 +309,9 @@ describe('Honcho SDK Integration Tests', () => {
         size: 2,
         page: 1,
         pages: 2,
-        hasNextPage: true,
+        hasNextPage: () => true,
         getNextPage: jest.fn(),
-        [Symbol.asyncIterator]: async function* () {
+        [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item
           }
@@ -327,9 +327,9 @@ describe('Honcho SDK Integration Tests', () => {
         size: 2,
         page: 2,
         pages: 2,
-        hasNextPage: false,
+        hasNextPage: () => false,
         getNextPage: jest.fn().mockResolvedValue(null),
-        [Symbol.asyncIterator]: async function* () {
+        [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item
           }
@@ -381,6 +381,7 @@ describe('Honcho SDK Integration Tests', () => {
       const bob = await honcho.peer('bob')
 
       // Test working representation without target
+
       const globalRep = await session.getRepresentation('alice')
       expect(globalRep).toBe(mockRepresentation)
       expect(
