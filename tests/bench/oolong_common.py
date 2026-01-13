@@ -17,7 +17,7 @@ from typing import Any
 
 import dateutil.parser
 import tiktoken
-from datasets import load_dataset
+from datasets import load_dataset  # pyright: ignore[reportUnknownVariableType]
 from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def parse_synth_context_messages(context_text: str) -> list[dict[str, Any]]:
     Returns:
         List of message dictionaries with content and metadata
     """
-    messages = []
+    messages: list[dict[str, Any]] = []
 
     # Split by lines and parse each entry
     lines = context_text.strip().split("\n")
@@ -161,14 +161,15 @@ def parse_synth_context_messages(context_text: str) -> list[dict[str, Any]]:
             else:
                 content = instance_part
 
-            messages.append({
+            msg: dict[str, Any] = {
                 "content": content,
                 "metadata": {
                     "date": date_part,
                     "user_id": user_part,
                     "label": label,
                 },
-            })
+            }
+            messages.append(msg)
         except Exception as e:
             logger.warning(f"Error parsing line: {line}. Error: {e}")
             continue
@@ -189,7 +190,7 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
     Returns:
         List of message dictionaries with content and metadata
     """
-    messages = []
+    messages: list[dict[str, Any]] = []
 
     # Split by speaker turns (format: "SPEAKER: text")
     lines = context_text.strip().split("\n")
@@ -207,12 +208,13 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
                 # Include speaker in content for deriver visibility
                 content_text = " ".join(current_content)
                 content = f"[Speaker: {current_speaker}] {content_text}"
-                messages.append({
+                prev_msg: dict[str, Any] = {
                     "content": content,
                     "metadata": {
                         "speaker": current_speaker,
                     },
-                })
+                }
+                messages.append(prev_msg)
 
             # Parse new speaker
             parts = line.split(":", 1)
@@ -226,12 +228,13 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
     if current_speaker and current_content:
         content_text = " ".join(current_content)
         content = f"[Speaker: {current_speaker}] {content_text}"
-        messages.append({
+        last_msg: dict[str, Any] = {
             "content": content,
             "metadata": {
                 "speaker": current_speaker,
             },
-        })
+        }
+        messages.append(last_msg)
 
     return messages
 
@@ -266,9 +269,9 @@ def parse_synth_answer(answer_str: str) -> Any:
     try:
         parsed = ast.literal_eval(answer_str)
         # If it's a list with one element, return that element
-        if isinstance(parsed, list) and len(parsed) == 1:
-            return parsed[0]
-        return parsed
+        if isinstance(parsed, list) and len(parsed) == 1:  # pyright: ignore[reportUnknownArgumentType]
+            return parsed[0]  # pyright: ignore[reportUnknownVariableType]
+        return parsed  # pyright: ignore[reportUnknownVariableType]
     except (ValueError, SyntaxError):
         # Return as-is if can't parse
         return answer_str
@@ -442,13 +445,13 @@ def filter_dataset(
         Filtered dataset
     """
     if context_window_id is not None:
-        dataset = dataset.filter(lambda x: x["context_window_id"] == context_window_id)
+        dataset = dataset.filter(lambda x: x["context_window_id"] == context_window_id)  # pyright: ignore[reportUnknownLambdaType]
 
     if max_context_len is not None and "context_len" in dataset.column_names:
-        dataset = dataset.filter(lambda x: x.get("context_len", float('inf')) <= max_context_len)
+        dataset = dataset.filter(lambda x: x.get("context_len", float('inf')) <= max_context_len)  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
 
     if min_context_len is not None and "context_len" in dataset.column_names:
-        dataset = dataset.filter(lambda x: x.get("context_len", 0) >= min_context_len)
+        dataset = dataset.filter(lambda x: x.get("context_len", 0) >= min_context_len)  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
 
     if max_examples is not None and max_examples > 0:
         # Get a slice of the dataset
