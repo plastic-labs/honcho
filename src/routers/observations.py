@@ -22,6 +22,7 @@ router = APIRouter(
 @router.post(
     "",
     response_model=list[schemas.Observation],
+    deprecated=True,
 )
 async def create_observations(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -41,7 +42,7 @@ async def create_observations(
     """
     documents = await crud.create_observations(
         db,
-        observations=body.observations,
+        observations=body.conclusions,
         workspace_name=workspace_id,
     )
 
@@ -56,6 +57,7 @@ async def create_observations(
 @router.post(
     "/list",
     response_model=Page[schemas.Observation],
+    deprecated=True,
 )
 async def list_observations(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -94,6 +96,7 @@ async def list_observations(
 @router.post(
     "/query",
     response_model=list[schemas.Observation],
+    deprecated=True,
 )
 async def query_observations(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -138,6 +141,7 @@ async def query_observations(
 
 @router.delete(
     "/{observation_id}",
+    deprecated=True,
 )
 async def delete_observation(
     workspace_id: str = Path(..., description="ID of the workspace"),

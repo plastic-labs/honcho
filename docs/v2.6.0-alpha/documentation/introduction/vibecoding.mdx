@@ -1,7 +1,7 @@
 ---
 title: "AI-Powered Honcho Setup"
 icon: "wand-magic-sparkles"
-description: "Universal starter prompt for building with Honcho"
+description: "Universal starter prompt and Claude Code skill for building with Honcho"
 sidebarTitle: 'Vibecoding Setup'
 ---
 
@@ -12,7 +12,42 @@ We follow the llms.txt standard. There are both an llms.txt and llms-full.txt av
 - [llms.txt](/llms.txt)
 - [llms-full.txt](/llms-full.txt)
 
-We also provide a starter prompt to paste into a coding assistant to quickly get started building with Honcho.
+---
+
+## Claude Code Skill
+
+If you're using [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), you can install the Honcho integration skill for a guided, interactive setup experience. The skill will explore your codebase, ask targeted questions about your integration needs, and implement Honcho step by step.
+
+### Installation
+
+<CodeGroup>
+```bash Global Installation (all projects)
+# Add to your global skills directory
+curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+```
+
+```bash Project-specific Installation
+# Add to your project's .claude directory
+mkdir -p .claude/skills
+curl -o .claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+```
+</CodeGroup>
+
+### Usage
+
+Once installed, invoke the skill in Claude Code:
+
+```
+/honcho-integration
+```
+
+The skill will:
+1. **Explore your codebase** to understand your language, framework, and existing AI/LLM integrations
+2. **Interview you** about which entities should be peers, your preferred integration pattern, and session structure
+3. **Implement the integration** based on your answers
+4. **Verify the setup** to ensure everything is configured correctly
+
+---
 
 ## Universal Starter Prompt
 

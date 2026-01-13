@@ -1,9 +1,6 @@
 {
   "description": "Test single observer watching multiple peers - Alice observes both Bob and Charlie",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

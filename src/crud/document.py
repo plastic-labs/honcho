@@ -113,6 +113,80 @@ def get_documents_with_filters(
     return stmt
 
 
+async def query_documents_recent(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    limit: int = 10,
+    session_name: str | None = None,
+) -> Sequence[models.Document]:
+    """
+    Query most recent documents.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        limit: Maximum number of documents to return
+        session_name: Optional session name to filter by
+
+    Returns:
+        Sequence of documents ordered by created_at descending
+    """
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+    )
+
+    if session_name is not None:
+        stmt = stmt.where(models.Document.session_name == session_name)
+
+    stmt = stmt.order_by(models.Document.created_at.desc()).limit(limit)
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def query_documents_most_derived(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    limit: int = 10,
+) -> Sequence[models.Document]:
+    """
+    Query documents sorted by times_derived (most reinforced first).
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        limit: Maximum number of documents to return
+
+    Returns:
+        Sequence of documents ordered by times_derived descending
+    """
+    stmt = (
+        select(models.Document)
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+        )
+        .order_by(models.Document.times_derived.desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 async def query_documents(
     db: AsyncSession,
     workspace_name: str,
@@ -294,6 +368,8 @@ async def create_documents(
                     internal_metadata=metadata_dict,
                     session_name=doc.session_name,
                     embedding=doc.embedding,
+                    # Tree linkage column
+                    source_ids=doc.source_ids,
                 )
             else:
                 new_doc = models.Document(
@@ -305,6 +381,8 @@ async def create_documents(
                     times_derived=doc.times_derived,
                     internal_metadata=metadata_dict,
                     session_name=doc.session_name,
+                    # Tree linkage column
+                    source_ids=doc.source_ids,
                 )
 
             if doc.embedding:
@@ -500,7 +578,7 @@ async def delete_document_by_id(
 
 async def create_observations(
     db: AsyncSession,
-    observations: list[schemas.ObservationCreate],
+    observations: Sequence[schemas.ConclusionCreate],
     workspace_name: str,
 ) -> list[models.Document]:
     """
@@ -848,3 +926,72 @@ async def cleanup_soft_deleted_documents(
 
     # No documents were successfully deleted from vector store
     return 0
+
+
+# =============================================================================
+# Tree Traversal Functions - For reasoning chain navigation
+# =============================================================================
+
+
+async def get_documents_by_ids(
+    db: AsyncSession,
+    workspace_name: str,
+    document_ids: list[str],
+) -> Sequence[models.Document]:
+    """
+    Get multiple documents by their IDs.
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        document_ids: List of document IDs to retrieve
+
+    Returns:
+        Sequence of documents found (may be fewer than requested if some IDs don't exist)
+    """
+    if not document_ids:
+        return []
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.id.in_(document_ids),
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_child_observations(
+    db: AsyncSession,
+    workspace_name: str,
+    parent_id: str,
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
+) -> Sequence[models.Document]:
+    """
+    Get all observations that have this document as a source/premise.
+
+    Useful for traversing the reasoning tree upward (source -> derived observations).
+    Uses GIN index on source_ids for efficient lookups.
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        parent_id: Document ID to find children of
+        observer: Optional filter by observer
+        observed: Optional filter by observed
+
+    Returns:
+        Sequence of documents that reference this document as a source
+    """
+    # Find documents where source_ids contains the parent_id
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.source_ids.contains([parent_id]),
+    )
+    if observer:
+        stmt = stmt.where(models.Document.observer == observer)
+    if observed:
+        stmt = stmt.where(models.Document.observed == observed)
+
+    result = await db.execute(stmt)
+    return result.scalars().all()

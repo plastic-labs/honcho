@@ -381,6 +381,9 @@ class Document(Base):
         Integer, nullable=False, server_default=text("1")
     )
     embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    source_ids: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -446,6 +449,12 @@ class Document(Base):
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
         ),
+        # GIN index for efficient tree traversal (finding children by source IDs)
+        Index(
+            "ix_documents_source_ids_gin",
+            "source_ids",
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -481,6 +490,12 @@ class QueueItem(Base):
             "ix_queue_message_id_not_null",
             "message_id",
             postgresql_where=text("message_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_queue_dream_pending_work_unit_key",
+            "work_unit_key",
+            unique=True,
+            postgresql_where=text("task_type = 'dream' AND processed = false"),
         ),
         Index(
             "ix_queue_work_unit_key_processed_id",

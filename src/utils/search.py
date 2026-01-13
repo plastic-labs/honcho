@@ -17,6 +17,7 @@ from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.models import session_peers_table
 from src.utils.filter import apply_filter
+from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
@@ -263,9 +264,14 @@ async def _fulltext_search(
         re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
     )
 
+    # Escape ILIKE pattern characters to treat user input literally
+    escaped_query = escape_ilike_pattern(query)
+
     if has_special_chars:
         # For queries with special characters, use exact string matching (ILIKE)
-        search_condition = models.Message.content.ilike(f"%{query}%")
+        search_condition = models.Message.content.ilike(
+            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
+        )
         fulltext_query = stmt.where(search_condition).order_by(
             models.Message.created_at.desc()
         )
@@ -277,7 +283,10 @@ async def _fulltext_search(
 
         # Combine FTS with ILIKE as fallback for better coverage
         combined_condition = or_(
-            fts_condition, models.Message.content.ilike(f"%{query}%")
+            fts_condition,
+            models.Message.content.ilike(
+                f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
+            ),
         )
 
         fulltext_query = stmt.where(combined_condition).order_by(

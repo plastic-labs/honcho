@@ -1,0 +1,62 @@
+{
+    "question": "How long had I been with the person I mentioned meeting at that festival before we started dating?",
+    "answer": "You said you had been with Stephen for 5 years, and you met him at the Montserrat Film Festival in 2018.",
+    "difficulty": "medium",
+    "question_type": "duration_recall",
+    "conversation_reference": "Turn 1: Early mention of relationship details",
+    "key_facts_tested": [
+        "duration: 5 years",
+        "meeting event: Montserrat Film Festival",
+        "relationship start timing"
+    ],
+    "source_chat_ids": [
+        1
+    ],
+    "rubric": [
+        "LLM response should state: 5 years"
+    ]
+},
+{
+    "question": "By what date am I aiming to complete all my onboarding modules?",
+    "answer": "By April 22",
+    "difficulty": "easy",
+    "update_type": "goal_date_adjustment",
+    "tests_retention_of": "updated target completion date for onboarding modules",
+    "conversation_references": [
+        "I set a goal to complete all onboarding modules by April 25, aiming for 95% quiz scores.",
+        "I adjusted my onboarding goal to complete all modules by April 22 to better align with the startup\u2019s revised schedule."
+    ],
+    "potential_confusion": "LLM might incorrectly recall the original April 25 deadline instead of the updated April 22 date",
+    "source_chat_ids": {
+        "original_info": [
+            108
+        ],
+        "updated_info": []
+    },
+    "rubric": [
+        "LLM response should state: April 22"
+    ]
+},
+{
+    "question": "How many different shoe sizes have I mentioned across my messages?",
+    "answer": "Two sizes: 11 and 11.5",
+    "difficulty": "easy",
+    "reasoning_type": "simple_cross_session_facts",
+    "sessions_required": 2,
+    "conversation_references": [
+        "Choosing between Adidas Ultraboost and Nike React Infinity Run",
+        "Considering returning Adidas Ultraboost size 11 and reordering size 11.5"
+    ],
+    "reasoning_steps": [
+        "Identify the shoe size mentioned in the first user message about deciding between shoes (size not specified here).",
+        "Find the shoe sizes mentioned in the later user message about returning and reordering Adidas Ultraboost (sizes 11 and 11.5).",
+        "Count the distinct sizes mentioned across these messages."
+    ],
+    "source_chat_ids": [
+        32,
+        116
+    ],
+    "rubric": [
+        "LLM response should state: Two sizes: 11 and 11.5"
+    ]
+},

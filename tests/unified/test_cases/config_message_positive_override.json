@@ -16,7 +16,7 @@
       "messages": [
         {
           "peer_id": "charlie",
-          "content": "This message should be derived.",
+          "content": "I like turtles.",
           "config": {
             "deriver": {
               "enabled": true
@@ -25,7 +25,7 @@
         },
         {
           "peer_id": "charlie",
-          "content": "This one should not.",
+          "content": "I like squids.",
           "config": {
             "deriver": {
               "enabled": false
@@ -46,11 +46,11 @@
       "assertions": [
         {
           "assertion_type": "contains",
-          "text": "should be derived"
+          "text": "turtles"
         },
         {
           "assertion_type": "not_contains",
-          "text": "This one should not"
+          "text": "squids"
         }
       ]
     }

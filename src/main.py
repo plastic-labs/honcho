@@ -21,6 +21,7 @@ from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
+    conclusions,
     keys,
     messages,
     observations,
@@ -178,6 +179,7 @@ app.include_router(workspaces.router, prefix="/v2")
 app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
+app.include_router(conclusions.router, prefix="/v2")
 app.include_router(observations.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")

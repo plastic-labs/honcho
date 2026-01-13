@@ -1,9 +1,6 @@
 {
   "description": "Test circular observation - Alice observes Bob, Bob observes Charlie, Charlie observes Alice",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

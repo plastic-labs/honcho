@@ -1,9 +1,6 @@
 {
   "description": "Test summary generation control",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    },
     "summary": {
       "enabled": false
     },

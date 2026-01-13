@@ -40,6 +40,21 @@ class _EmbeddingClient:
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
+        elif self.provider == "openrouter":
+            if api_key is None:
+                api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                )
+            base_url = (
+                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                or "https://openrouter.ai/api/v1"
+            )
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = "openai/text-embedding-3-small"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
@@ -214,43 +229,64 @@ class _EmbeddingClient:
         return batches
 
     async def _process_batch(
-        self, batch: list[BatchItem]
+        self, batch: list[BatchItem], max_retries: int = 3
     ) -> dict[str, dict[int, list[float]]]:
         """
-        Process a single batch through the embeddings API.
+        Process a single batch through the embeddings API with retry logic.
 
         Args:
             batch: List of BatchItem objects to embed
+            max_retries: Maximum number of retry attempts (default: 3)
 
         Returns:
             Maps text IDs to {chunk_index: embedding_vector} dictionaries
         """
-        try:
-            # Organize embeddings by text_id and chunk_index
-            result: dict[str, dict[int, list[float]]] = defaultdict(dict)
+        last_exception: Exception | None = None
 
-            if isinstance(self.client, genai.Client):
-                response = await self.client.aio.models.embed_content(
-                    model=self.model,
-                    contents=[item.text for item in batch],
-                    config={"output_dimensionality": 1536},
-                )
-                if response.embeddings:
-                    for item, embedding in zip(batch, response.embeddings, strict=True):
-                        if embedding.values:
-                            result[item.text_id][item.chunk_index] = embedding.values
-            else:  # openai
-                response = await self.client.embeddings.create(
-                    model=self.model, input=[item.text for item in batch]
-                )
-                for item, embedding_data in zip(batch, response.data, strict=True):
-                    result[item.text_id][item.chunk_index] = embedding_data.embedding
+        for attempt in range(max_retries):
+            try:
+                # Organize embeddings by text_id and chunk_index
+                result: dict[str, dict[int, list[float]]] = defaultdict(dict)
 
-            return dict(result)
+                if isinstance(self.client, genai.Client):
+                    response = await self.client.aio.models.embed_content(
+                        model=self.model,
+                        contents=[item.text for item in batch],
+                        config={"output_dimensionality": 1536},
+                    )
+                    if response.embeddings:
+                        for item, embedding in zip(
+                            batch, response.embeddings, strict=True
+                        ):
+                            if embedding.values:
+                                result[item.text_id][item.chunk_index] = (
+                                    embedding.values
+                                )
+                else:  # openai / openrouter
+                    response = await self.client.embeddings.create(
+                        model=self.model, input=[item.text for item in batch]
+                    )
+                    for item, embedding_data in zip(batch, response.data, strict=True):
+                        result[item.text_id][item.chunk_index] = (
+                            embedding_data.embedding
+                        )
 
-        except Exception:
-            logger.exception("Error processing batch")
-            raise
+                return dict(result)
+
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 1s, 2s, 4s
+                    wait_time = 2**attempt
+                    logger.warning(
+                        f"Embedding batch failed (attempt {attempt + 1}/{max_retries}), "
+                        + f"retrying in {wait_time}s: {e}"
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.exception("Error processing batch after all retries")
+
+        raise last_exception or RuntimeError("Batch processing failed")
 
     def _accumulate_embeddings(
         self, batch_results: list[dict[str, dict[int, list[float]]]]
@@ -344,6 +380,8 @@ class EmbeddingClient:
                     provider = settings.LLM.EMBEDDING_PROVIDER
                     if provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
+                    elif provider == "openrouter":
+                        api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 

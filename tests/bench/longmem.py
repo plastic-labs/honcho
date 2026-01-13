@@ -8,7 +8,8 @@ This script:
 3. Creates sessions with haystack conversations
 4. Adds the answer session if present
 5. Waits for the deriver queue to be empty
-6. Executes the question and judges the response using an LLM
+6. Triggers a dream for memory consolidation
+7. Executes the question and judges the response using an LLM
 
 ## To use
 
@@ -45,10 +46,11 @@ Optional arguments:
 --merge-sessions: Merge all sessions within a question into a single session (default: False)
 --cleanup-workspace: Delete workspace after executing each question (default: False)
 --use-get-context: Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)
+--question-id: Run only the question with this question_id (skips all others)
 ```
 
 ## Other notes
-- Judge is Claude Sonnet 4
+- Judge is GPT-4o (per LongMemEval paper)
 - If processing lots of data, set timeout very high or all will be lost
 """
 
@@ -62,7 +64,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-import tiktoken
+import httpx
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
@@ -71,10 +73,23 @@ from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
+from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
+
+from .longmem_common import (
+    calculate_timing_statistics,
+    calculate_total_tokens,
+    calculate_type_statistics,
+    filter_questions,
+    format_duration,
+    judge_response,
+    load_test_file,
+    parse_longmemeval_date,
+    write_json_summary,
+)
 
 load_dotenv()
 
@@ -175,6 +190,12 @@ class LongMemEvalRunner:
                 raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
 
+        # OpenAI client for GPT-4o judge (per LongMemEval paper)
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set (required for GPT-4o judge)")
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
+
     def get_honcho_url_for_index(self, question_index: int) -> str:
         """
         Get the Honcho URL for a given question index using round-robin distribution.
@@ -189,64 +210,8 @@ class LongMemEvalRunner:
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
 
-    def _format_duration(self, total_seconds: float) -> str:
-        """Format a duration in seconds into a human-readable string.
-
-        If the duration is at least one minute, this returns a string in the
-        form "XmYYs" with zero-padded seconds. Otherwise, it returns the
-        duration in seconds with two decimal places, e.g., "12.34s".
-
-        Args:
-            total_seconds: The duration in seconds.
-
-        Returns:
-            A formatted duration string.
-        """
-        minutes = int(total_seconds // 60)
-        if minutes > 0:
-            seconds_rounded = int(round(total_seconds - minutes * 60))
-            if seconds_rounded == 60:
-                minutes += 1
-                seconds_rounded = 0
-            return f"{minutes}m{seconds_rounded:02d}s"
-        return f"{total_seconds:.2f}s"
-
-    def _calculate_total_tokens(
-        self, haystack_sessions: list[list[dict[str, str]]]
-    ) -> int:
-        """Calculate total tokens from all messages in all sessions.
-
-        Args:
-            haystack_sessions: List of sessions, each containing messages
-
-        Returns:
-            Total number of tokens across all messages
-        """
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        total_tokens = 0
-
-        for session_messages in haystack_sessions:
-            for msg in session_messages:
-                content = msg.get("content", "")
-                try:
-                    total_tokens += len(
-                        tokenizer.encode(
-                            content,
-                            disallowed_special=(
-                                tokenizer.special_tokens_set - {"<|endoftext|>"}
-                            ),
-                        )
-                    )
-                except Exception:
-                    total_tokens += len(content) // 4
-                    self.logger.warning(
-                        f"Error tokenizing content. Using rough estimate of {len(content) // 4} tokens"
-                    )
-
-        return total_tokens
-
-    def _get_latest_tokens_used(self) -> int | None:
-        """Get the tokens_used_estimate from the most recent dialectic_chat metric.
+    def _get_latest_input_tokens_used(self) -> int | None:
+        """Get the uncached input tokens from the most recent dialectic_chat metric.
 
         Returns:
             Number of tokens used, or None if not found
@@ -270,7 +235,7 @@ class LongMemEvalRunner:
                     if task_name.startswith("dialectic_chat_"):
                         for metric in data.get("metrics", []):
                             metric_name = metric.get("name", "")
-                            if metric_name.endswith("tokens_used_estimate"):
+                            if metric_name.endswith("uncached_input_tokens"):
                                 return int(metric.get("value", 0))
                 except (json.JSONDecodeError, KeyError, ValueError):
                     continue
@@ -279,47 +244,6 @@ class LongMemEvalRunner:
             self.logger.warning(f"Error reading metrics file: {e}")
 
         return None
-
-    def _parse_date(self, date_str: str) -> datetime:
-        """Parse longmemeval date format to datetime.
-
-        Args:
-            date_str: Date string in format "YYYY/MM/DD (Day) HH:MM"
-
-        Returns:
-            Parsed datetime object
-
-        Raises:
-            ValueError: If date format is invalid
-        """
-        try:
-            # Extract the date and time parts, ignoring the day name in parentheses
-            # Format: "2023/05/20 (Sat) 02:21"
-            parts = date_str.split(") ")
-            if len(parts) != 2:
-                raise ValueError(f"Invalid date format: {date_str}")
-
-            date_part = parts[0].split(" (")[0]  # "2023/05/20"
-            time_part = parts[1]  # "02:21"
-
-            # Combine and parse
-            datetime_str = f"{date_part} {time_part}"
-            return datetime.strptime(datetime_str, "%Y/%m/%d %H:%M")
-        except (ValueError, IndexError) as e:
-            raise ValueError(f"Failed to parse date '{date_str}': {e}") from e
-
-    def load_test_file(self, test_file: Path) -> list[dict[str, Any]]:
-        """
-        Load longmemeval test definitions from a JSON file.
-
-        Args:
-            test_file: Path to the JSON test file
-
-        Returns:
-            List of test question dictionaries
-        """
-        with open(test_file) as f:
-            return json.load(f)
 
     async def create_honcho_client(
         self, workspace_id: str, honcho_url: str
@@ -362,88 +286,69 @@ class LongMemEvalRunner:
                 return False
             await asyncio.sleep(1)
 
-    async def judge_response(
-        self, question: str, expected_answer: str, actual_response: str
-    ) -> dict[str, Any]:
+    async def trigger_dream_and_wait(
+        self,
+        honcho_client: AsyncHoncho,
+        workspace_id: str,
+        observer: str,
+        observed: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
         """
-        Use an LLM to judge if the actual response matches the expected answer.
+        Trigger a dream task and wait for it to complete.
 
         Args:
-            question: The question asked
-            expected_answer: Expected answer from the test
-            actual_response: Actual response from Honcho
+            honcho_client: Honcho client instance
+            workspace_id: Workspace identifier
+            observer: Observer peer name
+            observed: Observed peer name (defaults to observer)
+            session_id: Session ID to scope the dream to
 
         Returns:
-            Judgment result with pass/fail and reasoning
+            True if dream completed successfully, False on timeout
         """
+        observed = observed or observer
+        honcho_url = self.get_honcho_url_for_index(0)
+
+        url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
+        payload: dict[str, Any] = {
+            "observer": observer,
+            "observed": observed,
+            "dream_type": "omni",
+            "session_id": session_id or f"{workspace_id}_session",
+        }
+
+        # Trigger the dream via API
         try:
-            system_prompt = """
-You are an expert judge evaluating AI responses to memory questions. Your task is to determine if an actual response contains the correct answer from long-term memory.
-
-CRITICAL JUDGING PRINCIPLES:
-1. SEMANTIC UNDERSTANDING: Focus on whether the actual response conveys the same core factual information as expected, even if expressed differently
-2. FLEXIBLE INTERPRETATION: Accept responses that are longer, more detailed, or use different phrasing as long as they contain the correct answer
-3. MEMORY ACCURACY: The key is whether the AI correctly recalled and stated the factual information from memory
-4. PARTIAL CREDIT: If the response shows the AI accessed relevant memories but made minor errors in details, consider partial credit
-5. IMPLICIT vs EXPLICIT: Accept responses that clearly imply the correct answer through context
-
-ONLY FAIL when:
-- The core factual answer is demonstrably wrong
-- The response shows no evidence of accessing the relevant memory
-- The AI explicitly states incorrect information that contradicts the expected answer
-
-Always respond with valid JSON: {"passed": boolean, "reasoning": "short (1-3 sentences) explanation of why the response is correct or incorrect"}"""
-
-            user_prompt = f"""Question: "{question}"
-Expected answer: "{expected_answer}"
-Actual response: "{actual_response}"
-
-Evaluate whether the actual response correctly answers the question based on the expected answer. Focus on factual accuracy and evidence that the AI accessed the correct memory."""
-
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=300,
-                temperature=0.0,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
-                ],
-            )
-
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
-
-            content_block = response.content[0]
-            judgment_text = getattr(content_block, "text", None)
-            if judgment_text is None:
-                raise ValueError(
-                    f"No text content in response block: {type(content_block)}"
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    timeout=30.0,
                 )
-
-            # Extract JSON from the response if it's wrapped in markdown
-            if "```json" in judgment_text:
-                json_start = judgment_text.find("```json") + 7
-                json_end = judgment_text.find("```", json_start)
-                judgment_text = judgment_text[json_start:json_end].strip()
-            elif "```" in judgment_text:
-                json_start = judgment_text.find("```") + 3
-                json_end = judgment_text.find("```", json_start)
-                judgment_text = judgment_text[json_start:json_end].strip()
-
-            judgment = json.loads(judgment_text)
-            return judgment
-
+                if response.status_code != 204:
+                    print(
+                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
+                    )
+                    print(f"[{workspace_id}] Response body: {response.text}")
+                    return False
         except Exception as e:
-            self.logger.error(f"Error judging response: {e}")
-            # Fallback to simple string matching
-            is_correct = expected_answer.lower() in actual_response.lower()
-            return {
-                "passed": is_correct,
-                "reasoning": f"Fallback string matching due to error: {'Match found' if is_correct else 'No match found'}",
-            }
+            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
+            return False
+
+        print(
+            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
+        )
+
+        # Wait for dream queue to empty
+        print(f"[{workspace_id}] Waiting for dream to complete...")
+        await asyncio.sleep(2)  # Give time for dream to be enqueued
+        success = await self.wait_for_deriver_queue_empty(honcho_client)
+        if success:
+            print(f"[{workspace_id}] Dream queue empty")
+        else:
+            print(f"[{workspace_id}] Dream queue timeout")
+        return success
 
     async def execute_question(
         self, question_data: dict[str, Any], honcho_url: str
@@ -517,14 +422,14 @@ Evaluate whether the actual response correctly answers the question based on the
             parsed_dates: list[datetime] = []
             for date_str in haystack_dates:
                 try:
-                    parsed_dates.append(self._parse_date(date_str))
+                    parsed_dates.append(parse_longmemeval_date(date_str))
                 except ValueError as e:
                     raise ValueError(f"Error parsing date '{date_str}': {e}") from e
 
             haystack_total_messages = sum(len(session) for session in haystack_sessions)
 
             # Calculate total tokens available in the sessions for this question
-            total_available_tokens = self._calculate_total_tokens(haystack_sessions)
+            total_available_tokens = calculate_total_tokens(haystack_sessions)
 
             print(
                 f"[{workspace_id}] processing {len(haystack_sessions)} sessions with {haystack_total_messages} total messages ({total_available_tokens} total tokens)"
@@ -532,6 +437,9 @@ Evaluate whether the actual response correctly answers the question based on the
 
             # Determine which peer should be observed based on question type
             is_assistant_type = question_type == "single-session-assistant"
+
+            # Initialize merged_session_id for potential use in dream trigger
+            merged_session_id: str | None = None
 
             if self.merge_sessions:
                 # Create a single merged session for all messages
@@ -626,7 +534,6 @@ Evaluate whether the actual response correctly answers the question based on the
                     )
                 )
             else:
-                merged_session_id = None
                 # create separate sessions
                 # Zip together dates, session IDs, and session content
                 for session_date, session_id, session_messages in zip(
@@ -734,6 +641,36 @@ Evaluate whether the actual response correctly answers the question based on the
                 results["error"] = "Deriver queue timeout"
                 return results
 
+            # Trigger dream for memory consolidation before questions
+            print(
+                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation..."
+            )
+
+            # Determine session_id for dream
+            dream_session_id = (
+                merged_session_id
+                if self.merge_sessions and merged_session_id
+                else (
+                    haystack_session_ids[0]
+                    if haystack_session_ids
+                    else f"{workspace_id}_session"
+                )
+            )
+
+            # Determine observer based on question type
+            observer_peer = "assistant" if is_assistant_type else "user"
+
+            # Single orchestrated dream handles all reasoning types
+            dream_success = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer=observer_peer,
+                session_id=dream_session_id,
+            )
+            if not dream_success:
+                print(f"[{workspace_id}] Warning: Dream did not complete")
+            print(f"[{workspace_id}] Dream completed. Executing question...")
+
             # Execute the question
             output_lines.append(f"\nAsking question: {question_with_date}")
 
@@ -796,22 +733,27 @@ Evaluate whether the actual response correctly answers the question based on the
                     actual_response if isinstance(actual_response, str) else ""
                 )
 
-                tokens_used = self._get_latest_tokens_used()
+                input_tokens_used = self._get_latest_input_tokens_used()
 
                 token_efficiency = None
-                if tokens_used is not None and total_available_tokens > 0:
-                    efficiency_ratio = tokens_used / total_available_tokens
+                if input_tokens_used is not None and total_available_tokens > 0:
+                    efficiency_ratio = input_tokens_used / total_available_tokens
                     token_efficiency = {
                         "total_available_tokens": total_available_tokens,
-                        "tokens_used": tokens_used,
+                        "tokens_used": input_tokens_used,
                         "efficiency_ratio": efficiency_ratio,
                     }
                     output_lines.append(
-                        f"  token efficiency: {efficiency_ratio:.4f} ({tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
+                        f"  token efficiency: {efficiency_ratio:.4f} ({input_tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
                     )
 
-                judgment = await self.judge_response(
-                    question_with_date, expected_answer, actual_response
+                judgment = await judge_response(
+                    self.openai_client,
+                    question_with_date,
+                    expected_answer,
+                    actual_response,
+                    question_type,
+                    question_id,
                 )
 
                 query_result: QueryResult = {
@@ -856,7 +798,7 @@ Evaluate whether the actual response correctly answers the question based on the
             results["duration_seconds"] = results["end_time"] - results["start_time"]
 
             output_lines.append(
-                f"\nQuestion {question_id} completed. Status: {'PASS' if results['passed'] else 'FAIL'} (Duration: {self._format_duration(results['duration_seconds'])})"
+                f"\nQuestion {question_id} completed. Status: {'PASS' if results['passed'] else 'FAIL'} (Duration: {format_duration(results['duration_seconds'])})"
             )
 
         except Exception as e:
@@ -870,7 +812,11 @@ Evaluate whether the actual response correctly answers the question based on the
         return results
 
     async def run_all_questions(
-        self, test_file: Path, batch_size: int = 10, test_count: int | None = None
+        self,
+        test_file: Path,
+        batch_size: int = 10,
+        test_count: int | None = None,
+        question_id: str | None = None,
     ) -> tuple[list[TestResult], float]:
         """
         Run all questions in a longmemeval test file.
@@ -879,18 +825,15 @@ Evaluate whether the actual response correctly answers the question based on the
             test_file: Path to the longmemeval JSON file
             batch_size: Number of questions to run concurrently in each batch
             test_count: Optional number of tests to run (runs first N tests)
+            question_id: Optional question_id to run (skips all others)
 
         Returns:
             Tuple of (list of test results, total duration)
         """
-        questions = self.load_test_file(test_file)
-
-        # Limit to first N questions if test_count is specified
-        if test_count is not None and test_count > 0:
-            questions = questions[:test_count]
-            print(
-                f"limiting to first {len(questions)} {'question' if len(questions) == 1 else 'questions'} from {test_file}"
-            )
+        questions = load_test_file(test_file)
+        questions = filter_questions(questions, test_file, question_id, test_count)
+        if not questions:
+            return [], 0.0
 
         print(
             f"found {len(questions)} {'question' if len(questions) == 1 else 'questions'} in {test_file}"
@@ -967,7 +910,7 @@ Evaluate whether the actual response correctly answers the question based on the
         print(f"Passed: {passed_questions}")
         print(f"Failed: {failed_questions}")
         print(f"Success Rate: {(passed_questions / total_questions) * 100:.1f}%")
-        print(f"Total Test Time: {self._format_duration(total_test_time)}")
+        print(f"Total Test Time: {format_duration(total_test_time)}")
 
         efficiency_ratios: list[float] = []
         for result in results:
@@ -998,7 +941,7 @@ Evaluate whether the actual response correctly answers the question based on the
             question_id = result["question_id"]
             question_type = result["question_type"]
             status = "PASS" if result.get("passed", False) else "FAIL"
-            duration = self._format_duration(result["duration_seconds"])
+            duration = format_duration(result["duration_seconds"])
             workspace = result["workspace_id"]
 
             print(
@@ -1028,37 +971,10 @@ Evaluate whether the actual response correctly answers the question based on the
         failed_questions = total_questions - passed_questions
 
         # Calculate statistics by question type
-        type_stats: dict[str, dict[str, int | float]] = {}
-        for result in results:
-            q_type = result["question_type"]
-            if q_type not in type_stats:
-                type_stats[q_type] = {"total": 0, "passed": 0, "failed": 0}
-            type_stats[q_type]["total"] += 1
-            if result.get("passed", False):
-                type_stats[q_type]["passed"] += 1
-            else:
-                type_stats[q_type]["failed"] += 1
-
-        # Add success rates to type stats
-        for q_type in type_stats:
-            stats = type_stats[q_type]
-            stats["success_rate"] = (
-                (stats["passed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
-            )
+        type_stats = calculate_type_statistics(results)
 
         # Calculate timing statistics
-        durations = [r["duration_seconds"] for r in results]
-        timing_stats = {
-            "total_duration_seconds": total_elapsed_seconds,
-            "individual_test_durations": {
-                "min_seconds": min(durations) if durations else 0,
-                "max_seconds": max(durations) if durations else 0,
-                "mean_seconds": sum(durations) / len(durations) if durations else 0,
-                "median_seconds": sorted(durations)[len(durations) // 2]
-                if durations
-                else 0,
-            },
-        }
+        timing_stats = calculate_timing_statistics(results, total_elapsed_seconds)
 
         # Calculate token efficiency statistics
         efficiency_ratios: list[float] = []
@@ -1131,10 +1047,7 @@ Evaluate whether the actual response correctly answers the question based on the
         }
 
         if output_file:
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_file, "w") as f:
-                json.dump(summary, f, indent=2, default=str)
-            print(f"\nJSON summary written to: {output_file}")
+            write_json_summary(summary, output_file)
 
 
 async def main() -> int:
@@ -1150,6 +1063,7 @@ Examples:
   %(prog)s --test-file test.json --pool-size 4                            # Use 4 Honcho instances
   %(prog)s --test-file test.json --base-api-port 8000 --pool-size 4       # Custom base port with pool
   %(prog)s --test-file test.json --test-count 50                          # Run only first 50 tests
+  %(prog)s --test-file test.json --question-id "q123"                    # Run only question with ID "q123"
         """,
     )
 
@@ -1224,6 +1138,12 @@ Examples:
         help="Number of tests to run from the test file (default: all tests)",
     )
 
+    parser.add_argument(
+        "--question-id",
+        type=str,
+        help="Run only the question with this question_id (skips all others)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -1257,7 +1177,7 @@ Examples:
     try:
         # Run all questions
         results, total_elapsed = await runner.run_all_questions(
-            args.test_file, args.batch_size, args.test_count
+            args.test_file, args.batch_size, args.test_count, args.question_id
         )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
 
