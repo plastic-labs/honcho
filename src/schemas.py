@@ -653,7 +653,7 @@ class DialecticOptions(BaseModel):
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
         default="low",
-        description="Level of reasoning to apply: minimal, low, medium, high, or extra-high",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
     )
 
 
