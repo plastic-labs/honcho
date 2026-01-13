@@ -286,13 +286,13 @@ class PeerCardSettings(HonchoSettings):
 
 
 # Reasoning levels for dialectic - defined here to avoid circular imports with schemas
-ReasoningLevel = Literal["minimal", "low", "medium", "high", "extra-high"]
+ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 REASONING_LEVELS: list[ReasoningLevel] = [
     "minimal",
     "low",
     "medium",
     "high",
-    "extra-high",
+    "max",
 ]
 
 
@@ -313,6 +313,9 @@ class DialecticLevelSettings(BaseModel):
     MAX_TOOL_ITERATIONS: Annotated[
         int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
     ]
+    TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
+        None  # None/auto lets model decide, "any"/"required" forces tool use
+    )
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self) -> "DialecticLevelSettings":
@@ -350,7 +353,8 @@ class DialecticSettings(HonchoSettings):
                 PROVIDER="google",
                 MODEL="gemini-2.5-flash-lite",
                 THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=2,
+                MAX_TOOL_ITERATIONS=5,
+                TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
                 PROVIDER="google",
@@ -370,7 +374,7 @@ class DialecticSettings(HonchoSettings):
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=4,
             ),
-            "extra-high": DialecticLevelSettings(
+            "max": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-opus-4-5",
                 THINKING_BUDGET_TOKENS=2048,

@@ -145,7 +145,7 @@ class AsyncPeer(PeerBase):
         stream: bool = False,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
-        reasoning_level: Literal["minimal", "low", "medium", "high", "extra-high"]
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
     ) -> str | DialecticStreamResponse | None:
         """
@@ -166,7 +166,7 @@ class AsyncPeer(PeerBase):
                      information from that session is considered. Can be a session
                      ID string or an AsyncSession object.
             reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
-                             "high", or "extra-high". Defaults to "low" if not provided.
+                             "high", or "max". Defaults to "low" if not provided.
 
         Returns:
             For non-streaming: Response string containing the answer, or None if no relevant information

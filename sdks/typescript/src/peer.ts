@@ -112,7 +112,7 @@ export class Peer {
    *                  information from that session is considered. Can be a session
    *                  ID string or a Session object.
    * @param reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
-   *                         "high", or "extra-high". Defaults to "low" if not provided.
+   *                         "high", or "max". Defaults to "low" if not provided.
    * @returns Promise resolving to:
    *          - For non-streaming: response string or null if no relevant information
    *          - For streaming: DialecticStreamResponse that can be iterated over
