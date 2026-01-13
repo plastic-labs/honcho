@@ -16,11 +16,59 @@ from pathlib import Path
 from typing import Any
 
 import dateutil.parser
+import pyarrow.parquet as pq
 import tiktoken
-from datasets import load_dataset  # pyright: ignore[reportUnknownVariableType]
 from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class SimpleDataset:
+    """Simple dataset class that mimics HuggingFace dataset API."""
+
+    data: list[dict[str, Any]]
+    column_names: list[str]
+
+    def __init__(self, data: list[dict[str, Any]]):
+        """Initialize dataset with list of examples.
+
+        Args:
+            data: List of example dictionaries
+        """
+        self.data = data
+        self.column_names = list(data[0].keys()) if data else []
+
+    def __len__(self) -> int:
+        """Return number of examples."""
+        return len(self.data)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """Get example by index."""
+        return self.data[idx]
+
+    def filter(self, function: Any) -> "SimpleDataset":
+        """Filter dataset using a function.
+
+        Args:
+            function: Filter function
+
+        Returns:
+            Filtered dataset
+        """
+        filtered_data = [item for item in self.data if function(item)]
+        return SimpleDataset(filtered_data)
+
+    def select(self, indices: Sequence[int]) -> "SimpleDataset":
+        """Select examples by indices.
+
+        Args:
+            indices: List of indices to select
+
+        Returns:
+            Dataset with selected examples
+        """
+        selected_data = [self.data[i] for i in indices]
+        return SimpleDataset(selected_data)
 
 
 class BaseQueryResult(TypedDict):
@@ -93,28 +141,56 @@ def calculate_context_length(text: str) -> int:
         return len(text) // 4
 
 
-def load_oolong_synth_dataset(split: str = "test") -> Any:
-    """Load the OOLONG-synth dataset from HuggingFace.
+def load_oolong_synth_dataset(split: str = "test") -> SimpleDataset:
+    """Load the OOLONG-synth dataset from filesystem.
 
     Args:
         split: Dataset split to load (default: "test")
 
     Returns:
-        HuggingFace dataset object
+        SimpleDataset object
     """
-    return load_dataset("oolongbench/oolong-synth", split=split)
+    dataset_path = Path("/raid/datasets/benchmark/oolong/oolong-synth/data")
+
+    # Find all parquet files for the given split
+    parquet_files = sorted(dataset_path.glob(f"{split}-*.parquet"))
+
+    if not parquet_files:
+        raise FileNotFoundError(f"No {split} parquet files found in {dataset_path}")
+
+    # Load and combine all parquet files
+    all_data: list[dict[str, Any]] = []
+    for parquet_file in parquet_files:
+        table = pq.read_table(parquet_file)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        df = table.to_pandas()  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        all_data.extend(df.to_dict("records"))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+    return SimpleDataset(all_data)
 
 
-def load_oolong_real_dataset(split: str = "test") -> Any:
-    """Load the OOLONG-real dataset from HuggingFace.
+def load_oolong_real_dataset(split: str = "test") -> SimpleDataset:
+    """Load the OOLONG-real dataset from filesystem.
 
     Args:
         split: Dataset split to load (default: "test")
 
     Returns:
-        HuggingFace dataset object
+        SimpleDataset object
     """
-    return load_dataset("oolongbench/oolong-real", "dnd", split=split)
+    dataset_path = Path("/raid/datasets/benchmark/oolong/oolong-real/dnd")
+    jsonl_file = dataset_path / f"{split}.jsonl"
+
+    if not jsonl_file.exists():
+        raise FileNotFoundError(f"JSONL file not found: {jsonl_file}")
+
+    # Load JSONL file
+    data: list[dict[str, Any]] = []
+    with open(jsonl_file) as f:
+        for line in f:
+            if line.strip():
+                data.append(json.loads(line))
+
+    return SimpleDataset(data)
 
 
 def parse_synth_context_messages(context_text: str) -> list[dict[str, Any]]:

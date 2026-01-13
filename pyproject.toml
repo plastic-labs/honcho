@@ -36,7 +36,6 @@ dependencies = [
     "redis>=7.0.0,<8.0.0",
     "cashews[redis]==7.4.4",
     "scikit-learn>=1.6.0",
-    "datasets>=4.4.2",
 ]
 [dependency-groups]
 dev = [
@@ -54,6 +53,7 @@ dev = [
     "fakeredis>=2.32.0",
     "scipy>=1.15.3",
     "boto3>=1.42.5",
+    "pyarrow>=19.0.0",
 ]
 
 [tool.uv.workspace]
