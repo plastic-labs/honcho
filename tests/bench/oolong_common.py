@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -201,8 +201,10 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
         if not line.strip():
             continue
 
-        # Check if this is a new speaker turn
-        if ":" in line:
+        # Check if this is a new speaker turn (must start with speaker label)
+        # Speaker labels are typically single words or use underscores/hyphens (no spaces)
+        speaker_match = re.match(r'^\s*([A-Za-z0-9_-]+):', line)
+        if speaker_match:
             # Save previous message if exists
             if current_speaker and current_content:
                 # Include speaker in content for deriver visibility
@@ -216,10 +218,11 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
                 }
                 messages.append(prev_msg)
 
-            # Parse new speaker
-            parts = line.split(":", 1)
-            current_speaker = parts[0].strip()
-            current_content = [parts[1].strip()] if len(parts) > 1 and parts[1].strip() else []
+            # Parse new speaker from regex match
+            current_speaker = speaker_match.group(1).strip()
+            # Extract content after the colon
+            content_after_colon = line[speaker_match.end():].strip()
+            current_content = [content_after_colon] if content_after_colon else []
         else:
             # Continuation of current speaker's dialogue
             current_content.append(line.strip())
@@ -374,6 +377,8 @@ def score_synth_response(gold_answer: Any, model_answer_str: str, answer_type: s
             model_date = dateutil.parser.parse(model_answer)
             if isinstance(gold_answer, datetime):
                 return 1.0 if model_date.date() == gold_answer.date() else 0.0
+            elif isinstance(gold_answer, date):
+                return 1.0 if model_date.date() == gold_answer else 0.0
             return 0.0
         except (ValueError, TypeError):
             return 0.0

@@ -50,7 +50,7 @@ Optional arguments:
 --pool-size: Number of Honcho instances in the pool (default: 1)
 --batch-size: Number of questions to run concurrently (default: 5)
 --json-output: Path to write JSON summary results (auto-generated if not provided)
---merge-sessions: Merge all context into a single session (default: True)
+--no-merge-sessions: Disable merging of contexts into a single session (default: enabled)
 --cleanup-workspace: Delete workspace after each question (default: False)
 --use-dialectic-agentic: Use agentic dialectic mode for answering (default: False)
 
@@ -703,10 +703,11 @@ async def main():
         help="Path to write JSON summary (auto-generated if not provided)",
     )
     parser.add_argument(
-        "--merge-sessions",
-        action="store_true",
+        "--no-merge-sessions",
+        action="store_false",
+        dest="merge_sessions",
         default=True,
-        help="Merge all context into a single session (default: True)",
+        help="Disable merging of contexts into a single session (default: enabled)",
     )
     parser.add_argument(
         "--cleanup-workspace",
