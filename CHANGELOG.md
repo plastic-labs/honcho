@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Agentic Dreamer for intelligent memory consolidation using LLM agents
 - Agentic Dialectic for query answering using LLM agents with tool use
-- Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `extra-high`)
+- Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `max`)
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
 
