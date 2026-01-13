@@ -1,4 +1,4 @@
-"""Hooks for revision f1a2b3c4d5e6 (support_external_embeddings)."""
+"""Hooks for revision 119a52b73c60 (support_external_embeddings)."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ INDEXES = (
 )
 
 
-@register_before_upgrade("f1a2b3c4d5e6")
+@register_before_upgrade("119a52b73c60")
 def prepare_support_external_embeddings(
     verifier: MigrationVerifier,
 ) -> None:
-    """Seed state and assertions before upgrading to f1a2b3c4d5e6."""
+    """Seed state and assertions before upgrading to 119a52b73c60."""
     # Embedding columns should be NOT NULL before migration
     verifier.assert_column_exists("message_embeddings", "embedding", nullable=False)
     verifier.assert_column_exists("documents", "embedding", nullable=False)
@@ -41,11 +41,11 @@ def prepare_support_external_embeddings(
     verifier.assert_indexes_not_exist(INDEXES)
 
 
-@register_after_upgrade("f1a2b3c4d5e6")
+@register_after_upgrade("119a52b73c60")
 def verify_support_external_embeddings(
     verifier: MigrationVerifier,
 ) -> None:
-    """Add assertions validating the effects of f1a2b3c4d5e6."""
+    """Add assertions validating the effects of 119a52b73c60."""
     # Embedding columns should now be nullable
     verifier.assert_column_exists("message_embeddings", "embedding", nullable=True)
     verifier.assert_column_exists("documents", "embedding", nullable=True)

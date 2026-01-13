@@ -8,8 +8,8 @@ This migration:
 3. Adds sync_state, last_sync_at, and sync_attempts columns to documents and
    message_embeddings tables for tracking vector store synchronization status.
 
-Revision ID: f1a2b3c4d5e6
-Revises: 110bdf470272
+Revision ID: 119a52b73c60
+Revises: 7c0d9a4e3b1f
 Create Date: 2025-11-24 12:00:00.000000
 
 """
@@ -23,8 +23,8 @@ from pgvector.sqlalchemy import Vector
 from migrations.utils import column_exists, get_schema, index_exists
 
 # revision identifiers, used by Alembic.
-revision: str = "f1a2b3c4d5e6"
-down_revision: str | None = "110bdf470272"
+revision: str = "119a52b73c60"
+down_revision: str | None = "7c0d9a4e3b1f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

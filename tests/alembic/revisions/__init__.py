@@ -10,6 +10,7 @@ from . import (
     test_76ffba56fe8c_add_error_field_to_queueitem,
     test_88b0fb10906f_add_webhooks_table,
     test_110bdf470272_rename_deriver_disabled_to_deriver_,
+    test_119a52b73c60_support_external_embeddings,
     test_556a16564f50_add_user_id_and_app_id_to_tables,
     test_564ba40505c5_add_session_name_column_to_documents,
     test_917195d9b5e9_add_messageembedding_table,
@@ -22,7 +23,6 @@ from . import (
     test_d429de0e5338_adopt_peer_paradigm,
     test_e9b705f9adf9_add_server_defaults_to_timestamp_,
     test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
-    test_f1a2b3c4d5e6_support_external_embeddings,
 )
 
 __all__ = [
@@ -47,5 +47,5 @@ __all__ = [
     "test_d429de0e5338_adopt_peer_paradigm",
     "test_e9b705f9adf9_add_server_defaults_to_timestamp_",
     "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
-    "test_f1a2b3c4d5e6_support_external_embeddings",
+    "test_119a52b73c60_support_external_embeddings",
 ]
