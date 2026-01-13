@@ -1,6 +1,6 @@
 import type HonchoCore from '@honcho-ai/core'
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
-import { ObservationScope } from './observations'
+import { ConclusionScope } from './conclusions'
 import { Page } from './pagination'
 import {
   Representation,
@@ -16,7 +16,7 @@ import {
   LimitSchema,
   MessageContentSchema,
   MessageMetadataSchema,
-  PeerWorkingRepParamsSchema,
+  PeerGetRepresentationParamsSchema,
   SearchQuerySchema,
   type MessageCreate as ValidatedMessageCreate,
 } from './validation'
@@ -111,6 +111,8 @@ export class Peer {
    * @param session - Optional session to scope the query to. If provided, only
    *                  information from that session is considered. Can be a session
    *                  ID string or a Session object.
+   * @param reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
+   *                         "high", or "extra-high". Defaults to "low" if not provided.
    * @returns Promise resolving to:
    *          - For non-streaming: response string or null if no relevant information
    *          - For streaming: DialecticStreamResponse that can be iterated over
@@ -121,6 +123,7 @@ export class Peer {
       stream?: boolean
       target?: string | Peer
       session?: string | Session
+      reasoningLevel?: string
     }
   ): Promise<string | DialecticStreamResponse | null> {
     const targetId = options?.target
@@ -139,6 +142,7 @@ export class Peer {
       stream: options?.stream,
       target: targetId,
       session: resolvedSessionId,
+      reasoningLevel: options?.reasoningLevel,
     })
 
     if (chatParams.stream) {
@@ -147,6 +151,7 @@ export class Peer {
         stream: true,
         target: chatParams.target,
         session_id: chatParams.session,
+        reasoning_level: chatParams.reasoningLevel,
       }
 
       const url = `${this._client.baseURL}/v2/workspaces/${this.workspaceId}/peers/${this.id}/chat`
@@ -223,6 +228,7 @@ export class Peer {
         stream: false,
         target: chatParams.target,
         session_id: chatParams.session,
+        reasoning_level: chatParams.reasoningLevel,
       }
     )
     if (!response.content || response.content === 'None') {
@@ -264,7 +270,7 @@ export class Peer {
    *
    * @param content - The text content for the message
    * @param options.metadata - Optional metadata to associate with the message
-   * @param options.configuration - Optional message-level configuration (e.g., deriver settings)
+   * @param options.configuration - Optional message-level configuration (e.g., reasoning settings)
    * @param options.created_at - Optional ISO 8601 timestamp for the message
    * @returns A new message object with this peer's ID and the provided content
    */
@@ -481,75 +487,69 @@ export class Peer {
   }
 
   /**
-   * Get a working representation for this peer.
+   * Get a subset of Honcho's Representation of a peer.
    *
-   * Makes an API call to retrieve the working representation for this peer.
+   * Makes an API call to retrieve the representation for this peer.
    *
    * @param session - Optional session to scope the representation to.
    * @param target - Optional target peer to get the representation of. If provided,
    *                 returns the representation of the target from the perspective of this peer.
    * @param options - Optional representation options to filter and configure the results
-   * @returns Promise resolving to a Representation object containing explicit and deductive observations
+   * @returns Promise resolving to a Representation object containing explicit and deductive conclusions
    *
    * @example
    * ```typescript
    * // Get global representation
-   * const globalRep = await peer.workingRep()
+   * const globalRep = await peer.getRepresentation()
    * console.log(globalRep.toString())
    *
    * // Get representation scoped to a session
-   * const sessionRep = await peer.workingRep('session-123')
+   * const sessionRep = await peer.getRepresentation('session-123')
    *
    * // Get representation with semantic search
-   * const searchedRep = await peer.workingRep(undefined, undefined, {
+   * const searchedRep = await peer.getRepresentation(undefined, undefined, {
    *   searchQuery: 'preferences',
    *   searchTopK: 10,
-   *   maxObservations: 50
+   *   maxConclusions: 50
    * })
    * ```
    */
-  async workingRep(
+  async getRepresentation(
     session?: string | Session,
     target?: string | Peer,
     options?: RepresentationOptions
-  ): Promise<Representation> {
-    const workingRepParams = PeerWorkingRepParamsSchema.parse({
+  ): Promise<string> {
+    const getRepresentationParams = PeerGetRepresentationParamsSchema.parse({
       session,
       target,
       options,
     })
-    const sessionId = workingRepParams.session
-      ? typeof workingRepParams.session === 'string'
-        ? workingRepParams.session
-        : workingRepParams.session.id
+    const sessionId = getRepresentationParams.session
+      ? typeof getRepresentationParams.session === 'string'
+        ? getRepresentationParams.session
+        : getRepresentationParams.session.id
       : undefined
-    const targetId = workingRepParams.target
-      ? typeof workingRepParams.target === 'string'
-        ? workingRepParams.target
-        : workingRepParams.target.id
+    const targetId = getRepresentationParams.target
+      ? typeof getRepresentationParams.target === 'string'
+        ? getRepresentationParams.target
+        : getRepresentationParams.target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.workingRepresentation(
+    const response = await this._client.workspaces.peers.representation(
       this.workspaceId,
       this.id,
       {
         session_id: sessionId,
         target: targetId,
-        search_query: workingRepParams.options?.searchQuery,
-        search_top_k: workingRepParams.options?.searchTopK,
-        search_max_distance: workingRepParams.options?.searchMaxDistance,
-        include_most_derived: workingRepParams.options?.includeMostDerived,
-        max_observations: workingRepParams.options?.maxObservations,
+        search_query: getRepresentationParams.options?.searchQuery,
+        search_top_k: getRepresentationParams.options?.searchTopK,
+        search_max_distance: getRepresentationParams.options?.searchMaxDistance,
+        include_most_frequent:
+          getRepresentationParams.options?.includeMostFrequent,
+        max_conclusions: getRepresentationParams.options?.maxConclusions,
       }
     )
-    const maybe = response as
-      | RepresentationData
-      | { representation?: RepresentationData | null }
-      | null
-    const rep = (maybe && typeof maybe === 'object' && 'representation' in maybe
-      ? (maybe as { representation?: RepresentationData | null }).representation
-      : maybe) ?? { explicit: [], deductive: [] }
-    return Representation.fromData(rep as RepresentationData)
+    return response.representation
   }
 
   /**
@@ -590,7 +590,7 @@ export class Peer {
         : target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.getContext(
+    const response = await this._client.workspaces.peers.context(
       this.workspaceId,
       this.id,
       {
@@ -598,8 +598,8 @@ export class Peer {
         search_query: options?.searchQuery,
         search_top_k: options?.searchTopK,
         search_max_distance: options?.searchMaxDistance,
-        include_most_derived: options?.includeMostDerived,
-        max_observations: options?.maxObservations,
+        include_most_frequent: options?.includeMostFrequent,
+        max_conclusions: options?.maxConclusions,
       }
     )
 
@@ -609,61 +609,56 @@ export class Peer {
   }
 
   /**
-   * Access this peer's self-observations (where observer == observed == self).
+   * Access this peer's self-conclusions (where observer == observed == self).
    *
-   * This property provides a convenient way to access observations that this peer
-   * has made about themselves. Use this for self-observation scenarios.
+   * This property provides a convenient way to access conclusions that this peer
+   * has made about themselves. Use this for self-conclusion scenarios.
    *
-   * @returns An ObservationScope scoped to this peer's self-observations
+   * @returns A ConclusionScope scoped to this peer's self-conclusions
    *
    * @example
    * ```typescript
-   * // List self-observations
-   * const obsList = await peer.observations.list()
+   * // List self-conclusions
+   * const obsList = await peer.conclusions.list()
    *
-   * // Search self-observations
-   * const results = await peer.observations.query('preferences')
+   * // Search self-conclusions
+   * const results = await peer.conclusions.query('preferences')
    *
-   * // Delete a self-observation
-   * await peer.observations.delete('obs-123')
+   * // Delete a self-conclusion
+   * await peer.conclusions.delete('obs-123')
    * ```
    */
-  get observations(): ObservationScope {
-    return new ObservationScope(
-      this._client,
-      this.workspaceId,
-      this.id,
-      this.id
-    )
+  get conclusions(): ConclusionScope {
+    return new ConclusionScope(this._client, this.workspaceId, this.id, this.id)
   }
 
   /**
-   * Access observations this peer has made about another peer.
+   * Access conclusions this peer has made about another peer.
    *
-   * This method provides scoped access to observations where this peer is the
+   * This method provides scoped access to conclusions where this peer is the
    * observer and the target is the observed peer.
    *
    * @param target - The target peer (either a Peer object or peer ID string)
-   * @returns An ObservationScope scoped to this peer's observations of the target
+   * @returns A ConclusionScope scoped to this peer's conclusions of the target
    *
    * @example
    * ```typescript
-   * // Get observations about another peer
-   * const bobObservations = peer.observationsOf('bob')
+   * // Get conclusions about another peer
+   * const bobConclusions = peer.conclusionsOf('bob')
    *
-   * // List observations
-   * const obsList = await bobObservations.list()
+   * // List conclusions
+   * const obsList = await bobConclusions.list()
    *
-   * // Search observations
-   * const results = await bobObservations.query('work history')
+   * // Search conclusions
+   * const results = await bobConclusions.query('work history')
    *
-   * // Get the representation from these observations
-   * const rep = await bobObservations.getRepresentation()
+   * // Get the representation from these conclusions
+   * const rep = await bobConclusions.getRepresentation()
    * ```
    */
-  observationsOf(target: string | Peer): ObservationScope {
+  conclusionsOf(target: string | Peer): ConclusionScope {
     const targetId = typeof target === 'string' ? target : target.id
-    return new ObservationScope(
+    return new ConclusionScope(
       this._client,
       this.workspaceId,
       this.id,
@@ -699,7 +694,7 @@ export class PeerContext {
   readonly targetId: string
 
   /**
-   * The working representation (may be null if no observations exist).
+   * The working representation (may be null if no conclusions exist).
    */
   readonly representation: Representation | null
 

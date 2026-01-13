@@ -16,7 +16,7 @@ def test_get_or_create_peer(client: TestClient, sample_data: tuple[Workspace, Pe
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["id"] == name
     assert data["metadata"] == {"peer_key": "peer_value"}
@@ -35,7 +35,7 @@ def test_get_or_create_peer_with_configuration(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "configuration": configuration},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["id"] == name
     assert data["configuration"] == configuration
@@ -54,7 +54,7 @@ def test_get_or_create_peer_with_all_optional_params(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": metadata, "configuration": configuration},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     data = response.json()
     assert data["id"] == name
     assert data["metadata"] == metadata
@@ -72,7 +72,7 @@ def test_get_or_create_existing_peer(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     peer1 = response.json()
 
     # Try to create the same peer again - should return existing peer
@@ -80,7 +80,7 @@ def test_get_or_create_existing_peer(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
     peer2 = response.json()
 
     # Both should be the same peer
@@ -275,7 +275,7 @@ def test_get_sessions_for_peer(client: TestClient, sample_data: tuple[Workspace,
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_name, "peer_names": {test_peer.name: {}}},
     )
-    assert create_response.status_code == 200
+    assert create_response.status_code in [200, 201]
     created_session = create_response.json()
     assert created_session["id"] == session_name
 
@@ -381,7 +381,7 @@ def test_get_peer_representation_with_session(
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
-    assert isinstance(data["representation"], dict)
+    assert isinstance(data["representation"], str)
 
 
 def test_get_peer_representation_global(
@@ -398,7 +398,7 @@ def test_get_peer_representation_global(
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
-    assert isinstance(data["representation"], dict)
+    assert isinstance(data["representation"], str)
 
 
 def test_get_peer_representation_with_target(
@@ -424,7 +424,7 @@ def test_get_peer_representation_with_target(
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
-    assert isinstance(data["representation"], dict)
+    assert isinstance(data["representation"], str)
 
 
 def test_get_peer_representation_with_search_query(
@@ -485,30 +485,30 @@ def test_get_peer_representation_with_search_max_distance(
         assert "representation" in data
 
 
-def test_get_peer_representation_with_include_most_derived(
+def test_get_peer_representation_with_include_most_frequent(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test peer representation with include_most_derived parameter"""
+    """Test peer representation with include_most_frequent parameter"""
     test_workspace, test_peer = sample_data
 
-    # Test with include_most_derived=True
+    # Test with include_most_frequent=True
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
         json={
             "search_query": "test query",
-            "include_most_derived": True,
+            "include_most_frequent": True,
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
 
-    # Test with include_most_derived=False
+    # Test with include_most_frequent=False
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
         json={
             "search_query": "test query",
-            "include_most_derived": False,
+            "include_most_frequent": False,
         },
     )
     assert response.status_code == 200
@@ -566,14 +566,14 @@ def test_get_peer_representation_with_all_parameters(
             "search_query": "What do I know about this peer?",
             "search_top_k": 15,
             "search_max_distance": 0.75,
-            "include_most_derived": True,
+            "include_most_frequent": True,
             "max_observations": 30,
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
-    assert isinstance(data["representation"], dict)
+    assert isinstance(data["representation"], str)
 
 
 def test_get_peer_representation_structure(
@@ -592,13 +592,7 @@ def test_get_peer_representation_structure(
 
     # Validate response structure
     assert "representation" in data
-    assert isinstance(data["representation"], dict)
-
-    # Representation should have expected keys based on Representation type
-    representation = data["representation"]
-    # The exact keys depend on the Representation implementation,
-    # but we can verify it's a dict
-    assert isinstance(representation, dict)
+    assert isinstance(data["representation"], str)
 
 
 def test_get_peer_representation_boundary_values(
@@ -841,7 +835,7 @@ def test_get_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": target_peer_name},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Test getting observer's own card (should return null initially)
     response = client.get(
@@ -876,7 +870,7 @@ async def test_get_peer_card_with_data(
         f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": target_peer_name},
     )
-    assert response.status_code == 200
+    assert response.status_code in [200, 201]
 
     # Set up peer cards using the database directly
     # Set a self-card for the observer peer

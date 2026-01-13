@@ -3,7 +3,6 @@ import { Peer } from '../src/peer'
 import { Session } from '../src/session'
 import { SessionContext } from '../src/session_context'
 import { Page } from '../src/pagination'
-import { Representation } from '../src/representation'
 
 // Mock the @honcho-ai/core module
 let mockWorkspacesApi: any
@@ -26,7 +25,7 @@ describe('Honcho SDK Integration Tests', () => {
           getOrCreate: jest.fn(),
           update: jest.fn(),
           search: jest.fn(),
-          workingRepresentation: jest.fn(),
+          representation: jest.fn(),
         },
         sessions: {
           list: jest.fn(),
@@ -39,7 +38,7 @@ describe('Honcho SDK Integration Tests', () => {
           messages: { create: jest.fn(), list: jest.fn() },
           getOrCreate: jest.fn(),
           update: jest.fn(),
-          getContext: jest.fn(),
+          context: jest.fn(),
           search: jest.fn(),
         },
         getOrCreate: jest.fn(),
@@ -91,7 +90,7 @@ describe('Honcho SDK Integration Tests', () => {
       mockWorkspacesApi.workspaces.sessions.messages.create.mockResolvedValue(
         {}
       )
-      mockWorkspacesApi.workspaces.sessions.getContext.mockResolvedValue(
+      mockWorkspacesApi.workspaces.sessions.context.mockResolvedValue(
         mockContextData
       )
       mockWorkspacesApi.workspaces.peers.chat.mockResolvedValue({
@@ -285,7 +284,7 @@ describe('Honcho SDK Integration Tests', () => {
       mockWorkspacesApi.workspaces.peers.chat.mockRejectedValue(
         new Error('Chat API failed')
       )
-      mockWorkspacesApi.workspaces.sessions.getContext.mockRejectedValue(
+      mockWorkspacesApi.workspaces.sessions.context.mockRejectedValue(
         new Error('Context API failed')
       )
 
@@ -370,34 +369,11 @@ describe('Honcho SDK Integration Tests', () => {
     })
 
     it('should handle working representation queries', async () => {
-      const mockWorkingRepData = {
-        explicit: [
-          {
-            content: 'Alice likes coffee',
-            created_at: '2024-01-01T00:00:00Z',
-            message_ids: [[1, 2]],
-            session_name: 'working-rep-session',
-          },
-          {
-            content: 'Alice works as a developer',
-            created_at: '2024-01-01T00:01:00Z',
-            message_ids: [[3, 4]],
-            session_name: 'working-rep-session',
-          },
-        ],
-        deductive: [
-          {
-            conclusion: 'Alice is a coffee-drinking developer',
-            premises: ['Alice likes coffee', 'Alice works as a developer'],
-            created_at: '2024-01-01T00:02:00Z',
-            message_ids: [[5, 6]],
-            session_name: 'working-rep-session',
-          },
-        ],
-      }
+      const mockRepresentation =
+        'Alice likes coffee\nAlice works as a developer\nAlice is a coffee-drinking developer'
 
-      mockWorkspacesApi.workspaces.peers.workingRepresentation.mockResolvedValue({
-        representation: mockWorkingRepData,
+      mockWorkspacesApi.workspaces.peers.representation.mockResolvedValue({
+        representation: mockRepresentation,
       })
 
       const session = await honcho.session('working-rep-session')
@@ -405,28 +381,33 @@ describe('Honcho SDK Integration Tests', () => {
       const bob = await honcho.peer('bob')
 
       // Test working representation without target
-      const globalRep = await session.workingRep('alice')
-      expect(globalRep).toBeInstanceOf(Representation)
-      expect(globalRep.explicit).toHaveLength(2)
-      expect(globalRep.explicit[0].content).toBe('Alice likes coffee')
-      expect(globalRep.explicit[1].content).toBe('Alice works as a developer')
-      expect(globalRep.deductive).toHaveLength(1)
-      expect(globalRep.deductive[0].conclusion).toBe('Alice is a coffee-drinking developer')
+      const globalRep = await session.getRepresentation('alice')
+      expect(globalRep).toBe(mockRepresentation)
       expect(
-        mockWorkspacesApi.workspaces.peers.workingRepresentation
+        mockWorkspacesApi.workspaces.peers.representation
       ).toHaveBeenCalledWith('integration-test-workspace', 'alice', {
         session_id: 'working-rep-session',
         target: undefined,
+        search_query: undefined,
+        search_top_k: undefined,
+        search_max_distance: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       })
 
       // Test working representation with target
-      const targetRep = await session.workingRep(alice, bob)
-      expect(targetRep).toBeInstanceOf(Representation)
+      const targetRep = await session.getRepresentation(alice, bob)
+      expect(targetRep).toBe(mockRepresentation)
       expect(
-        mockWorkspacesApi.workspaces.peers.workingRepresentation
+        mockWorkspacesApi.workspaces.peers.representation
       ).toHaveBeenCalledWith('integration-test-workspace', 'alice', {
         session_id: 'working-rep-session',
         target: 'bob',
+        search_query: undefined,
+        search_top_k: undefined,
+        search_max_distance: undefined,
+        include_most_frequent: undefined,
+        max_conclusions: undefined,
       })
     })
   })
@@ -442,7 +423,7 @@ describe('Honcho SDK Integration Tests', () => {
         total: 0,
         hasNextPage: false,
       })
-      mockWorkspacesApi.workspaces.sessions.getContext.mockResolvedValue({
+      mockWorkspacesApi.workspaces.sessions.context.mockResolvedValue({
         messages: [],
       })
 
@@ -480,7 +461,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(typeof message.metadata).toBe('object')
 
       // Mock successful operations
-      mockWorkspacesApi.workspaces.sessions.getContext.mockResolvedValue({
+      mockWorkspacesApi.workspaces.sessions.context.mockResolvedValue({
         messages: [{ id: 'msg1', content: 'Hello', peer_id: 'typed-peer' }],
         summary: {
           content: 'Test summary',

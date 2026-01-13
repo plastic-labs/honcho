@@ -1,4 +1,4 @@
-import { Honcho, Message } from '../src';
+import { Honcho, type MessageCreate } from '../src';
 
 /**
  * Example demonstrating how to get peer representations.
@@ -27,7 +27,7 @@ async function main() {
 
   console.log('Generating random messages...');
   // Generate some random messages from alice, bob, and charlie and add them to the session
-  const messages: Message[] = [];
+  const messages: MessageCreate[] = [];
   for (let i = 0; i < 10; i++) {
     const randomPeer = peers[Math.floor(Math.random() * peers.length)];
     messages.push(
@@ -43,13 +43,13 @@ async function main() {
 
   console.log('Getting alice\'s working representation in session...');
   // Get alice's working representation in the session
-  const workingRepresentation = await session.workingRep(alice);
-  console.log('Working representation returned:', workingRepresentation);
+  const representation = await session.getRepresentation(alice);
+  console.log('Representation returned:', representation);
 
   console.log('Getting alice\'s working representation *of bob* in session...');
   // Get alice's working representation *of bob* in the session
-  const workingRepresentationOfBob = await session.workingRep(alice, bob);
-  console.log('Working representation returned:', workingRepresentationOfBob);
+  const representationOfBob = await session.getRepresentation(alice, bob);
+  console.log('Representation returned:', representationOfBob);
 
   console.log('Example completed successfully!');
 }

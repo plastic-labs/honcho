@@ -16,11 +16,13 @@ jest.mock('@honcho-ai/core', () => {
         list: jest.fn(),
         getOrCreate: jest.fn(),
       },
+      queue: {
+        status: jest.fn(),
+      },
       getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
       update: jest.fn(),
       list: jest.fn(),
       search: jest.fn(),
-      deriverStatus: jest.fn(),
     },
   }));
 });
@@ -408,8 +410,8 @@ describe('Honcho Client', () => {
     });
   });
 
-  describe('getDeriverStatus', () => {
-    it('should return deriver status without options', async () => {
+  describe('getQueueStatus', () => {
+    it('should return queue status without options', async () => {
       const mockStatus = {
         total_work_units: 10,
         completed_work_units: 5,
@@ -417,9 +419,9 @@ describe('Honcho Client', () => {
         pending_work_units: 2,
         sessions: { 'session1': { status: 'active' } },
       };
-      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus);
 
-      const status = await honcho.getDeriverStatus();
+      const status = await honcho.getQueueStatus();
 
       expect(status).toEqual({
         totalWorkUnits: 10,
@@ -428,19 +430,22 @@ describe('Honcho Client', () => {
         pendingWorkUnits: 2,
         sessions: { 'session1': { status: 'active' } },
       });
-      expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith('test-workspace', {});
+      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
+        'test-workspace',
+        {}
+      );
     });
 
-    it('should return deriver status with options', async () => {
+    it('should return queue status with options', async () => {
       const mockStatus = {
         total_work_units: 5,
         completed_work_units: 3,
         in_progress_work_units: 1,
         pending_work_units: 1,
       };
-      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus);
 
-      const status = await honcho.getDeriverStatus({
+      const status = await honcho.getQueueStatus({
         observer: 'observer1',
         sender: 'sender1',
         session: 'session1',
@@ -453,15 +458,18 @@ describe('Honcho Client', () => {
         pendingWorkUnits: 1,
         sessions: undefined,
       });
-      expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith('test-workspace', {
-        observer_id: 'observer1',
-        sender_id: 'sender1',
-        session_id: 'session1',
-      });
+      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
+        'test-workspace',
+        {
+          observer_id: 'observer1',
+          sender_id: 'sender1',
+          session_id: 'session1',
+        }
+      );
     });
   });
 
-  describe('pollDeriverStatus', () => {
+  describe('pollQueueStatus', () => {
     it('should poll until processing is complete', async () => {
       const mockStatusComplete = {
         total_work_units: 5,
@@ -469,9 +477,9 @@ describe('Honcho Client', () => {
         in_progress_work_units: 0,
         pending_work_units: 0,
       };
-      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatusComplete);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatusComplete);
 
-      const status = await honcho.pollDeriverStatus();
+      const status = await honcho.pollQueueStatus();
 
       expect(status).toEqual({
         totalWorkUnits: 5,
@@ -489,9 +497,9 @@ describe('Honcho Client', () => {
         in_progress_work_units: 2,
         pending_work_units: 1,
       };
-      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatusPending);
+      mockClient.workspaces.queue.status.mockResolvedValue(mockStatusPending);
 
-      await expect(honcho.pollDeriverStatus({ timeoutMs: 100 })).rejects.toThrow();
+      await expect(honcho.pollQueueStatus({ timeoutMs: 0 })).rejects.toThrow();
     });
   });
 
