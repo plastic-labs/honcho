@@ -51,9 +51,9 @@
       "session_id": "session_uni_b_to_a",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Bob's local representation of Alice contains information about Alice playing guitar in a band and playing rock and blues.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "guitar",
+          "case_sensitive": false
         }
       ]
     },
@@ -65,11 +65,12 @@
       "session_id": "session_uni_b_to_a",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     }

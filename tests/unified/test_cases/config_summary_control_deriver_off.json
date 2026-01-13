@@ -1,7 +1,7 @@
 {
-  "description": "Test summary generation control with deriver disabled",
+  "description": "Test summary generation control with reasoning disabled",
   "workspace_config": {
-    "deriver": {
+    "reasoning": {
       "enabled": false
     },
     "summary": {

@@ -1,7 +1,7 @@
 {
   "description": "Test that local representations are isolated between sessions - same peers in different sessions have different local reps",
   "workspace_config": {
-    "deriver": {
+    "reasoning": {
       "enabled": true
     }
   },

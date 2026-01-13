@@ -492,9 +492,8 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 
-    # LLM settings for dream processing - upgraded for extended reasoning
     PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-sonnet-4-20250514"  # Upgraded from haiku for reasoning
+    MODEL: str = "claude-sonnet-4-20250514"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
 
@@ -506,17 +505,12 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         16_384
     )
 
-    # Observation limits for orchestrated dreaming prescan
-    # Higher = more context for reasoning but slower prescan
-    PRESCAN_OBSERVATIONS_PER_LEVEL: Annotated[
-        int, Field(default=200, gt=0, le=1000)
-    ] = 200
+    ## NOTE: specialist models use the same provider as the main model
 
-    # Specialist model settings (OpenRouter format: provider/model)
-    # DeductionSpecialist: handles logical inference + temporal reasoning
-    DEDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
-    # InductionSpecialist: identifies patterns across observations
-    INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+    # Deduction Specialist: handles logical inference
+    DEDUCTION_MODEL: str = "claude-haiku-4-5"
+    # Induction Specialist: identifies patterns across observations
+    INDUCTION_MODEL: str = "claude-haiku-4-5"
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)

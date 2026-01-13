@@ -51,11 +51,12 @@
       "session_id": "session_default",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -67,11 +68,12 @@
       "session_id": "session_default",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -82,9 +84,9 @@
       "session_id": "session_default",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if there are facts about hiking and mountains in Alice's global representation.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "hiking",
+          "case_sensitive": false
         }
       ]
     },
@@ -95,9 +97,9 @@
       "session_id": "session_default",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if there are facts about swimming and beach in Bob's global representation.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "swimming",
+          "case_sensitive": false
         }
       ]
     }
