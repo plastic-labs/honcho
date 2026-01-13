@@ -209,7 +209,7 @@ async def fake_cache_session():
         # Setup cache for tests that don't use TestClient (direct CRUD tests)
         # For TestClient tests, the app's lifespan handler will also call cache.setup()
         # The ContextVar patch above handles any context issues
-        cache.setup(  # pyright: ignore[reportUnknownMemberType]
+        cache.setup(
             "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
         )
 
@@ -352,6 +352,26 @@ def mock_langfuse():
                 logging.getLogger().removeHandler(handler)
 
 
+def _content_to_embedding(content: str) -> list[float]:
+    """Generate a deterministic embedding from content hash.
+
+    This ensures different content produces different embeddings,
+    which is critical for deduplication logic to work correctly in tests.
+    """
+    import hashlib
+
+    # Hash the content to get a deterministic seed
+    content_hash = hashlib.sha256(content.encode()).digest()
+    # Use hash bytes to generate 1536 floats between -1 and 1
+    embedding: list[float] = []
+    for i in range(1536):
+        # Use different bytes from hash (cycling through)
+        byte_val = content_hash[i % len(content_hash)]
+        # Normalize to [-1, 1] range
+        embedding.append((byte_val / 255.0) * 2 - 1)
+    return embedding
+
+
 @pytest.fixture(autouse=True)
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
@@ -359,17 +379,20 @@ def mock_openai_embeddings():
         patch("src.embedding_client.embedding_client.embed") as mock_embed,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
-        # Mock the embed method to return a fake embedding vector
-        mock_embed.return_value = [0.1] * 1536
+        # Mock the embed method to return content-dependent embedding
+        def embed_side_effect(content: str) -> list[float]:
+            return _content_to_embedding(content)
 
-        # Mock the batch_embed method to return a dict of fake embedding vectors
-        # Updated to support chunking - each text_id maps to a list of embedding vectors
+        mock_embed.side_effect = embed_side_effect
+
+        # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
             id_resource_dict: dict[str, tuple[str, list[int]]],
         ) -> dict[str, list[list[float]]]:
             return {
-                text_id: [[0.1] * 1536] for text_id in id_resource_dict
-            }  # Single chunk per text
+                text_id: [_content_to_embedding(resource[0])]
+                for text_id, resource in id_resource_dict.items()
+            }
 
         mock_batch_embed.side_effect = mock_batch_embed_func
 
@@ -381,6 +404,8 @@ def mock_llm_call_functions():
     """Mock LLM functions to avoid needing API keys during tests"""
 
     # Create mock responses for different function types
+    # Note: critical_analysis_call was removed as the deriver now uses agentic approach
+    # Note: dialectic_call/dialectic_stream were replaced with agentic_chat
     with (
         patch(
             "src.utils.summarizer.create_short_summary", new_callable=AsyncMock
@@ -389,64 +414,30 @@ def mock_llm_call_functions():
             "src.utils.summarizer.create_long_summary", new_callable=AsyncMock
         ) as mock_long_summary,
         patch(
-            "src.deriver.deriver.critical_analysis_call", new_callable=AsyncMock
-        ) as mock_critical_analysis,
-        patch(
-            "src.dialectic.chat.dialectic_call", new_callable=AsyncMock
-        ) as mock_dialectic_call,
-        patch(
-            "src.dialectic.chat.dialectic_stream", new_callable=AsyncMock
-        ) as mock_dialectic_stream,
+            "src.routers.peers.agentic_chat", new_callable=AsyncMock
+        ) as mock_agentic_chat,
     ):
-        # Import the required models for proper mocking
-        from src.utils.representation import (
-            DeductiveObservationBase,
-            ExplicitObservationBase,
-            PromptRepresentation,
-        )
-
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
 
-        # Mock critical_analysis_call to return a proper object with _response attribute
-        _rep = PromptRepresentation(
-            explicit=[ExplicitObservationBase(content="Test explicit observation")],
-            deductive=[
-                DeductiveObservationBase(
-                    conclusion="Test deductive conclusion",
-                    premises=["Test premise 1", "Test premise 2"],
-                )
-            ],
-        )
-        mock_critical_analysis_result = MagicMock(wraps=_rep)
-        # Add the _response attribute that contains thinking (used in the actual code)
-        mock_response = MagicMock()
-        mock_response.thinking = "Test thinking content"
-        mock_critical_analysis_result._response = mock_response
-        mock_critical_analysis.return_value = mock_critical_analysis_result
-
-        # Mock dialectic_call to return a string (matching actual return type)
-        mock_dialectic_call.return_value = "Test dialectic response"
-
-        mock_dialectic_stream.return_value = AsyncMock()
+        # Mock agentic_chat to return a string (matching actual return type)
+        mock_agentic_chat.return_value = "Test dialectic response"
 
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
-            "critical_analysis": mock_critical_analysis,
-            "dialectic_call": mock_dialectic_call,
-            "dialectic_stream": mock_dialectic_stream,
+            "agentic_chat": mock_agentic_chat,
         }
 
 
 @pytest.fixture(autouse=True)
 def mock_honcho_llm_call():
     """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
 
     from src.utils.representation import (
-        DeductiveObservationBase,
+        # DeductiveObservationBase,
         ExplicitObservationBase,
         PromptRepresentation,
     )
@@ -469,12 +460,12 @@ def mock_honcho_llm_call():
                     explicit=[
                         ExplicitObservationBase(content="Test explicit observation")
                     ],
-                    deductive=[
-                        DeductiveObservationBase(
-                            conclusion="Test deductive conclusion",
-                            premises=["Test premise 1", "Test premise 2"],
-                        ),
-                    ],
+                    # deductive=[
+                    #     DeductiveObservationBase(
+                    #         conclusion="Test deductive conclusion",
+                    #         premises=["Test premise 1", "Test premise 2"],
+                    #     ),
+                    # ],
                 )
                 mock_response = MagicMock(wraps=_rep)
                 # Add the _response attribute that contains thinking (used in the actual code)
@@ -564,17 +555,30 @@ def mock_tracked_db(db_session: AsyncSession):
 
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.deriver.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.consolidate.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.dreamer.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
+        patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def enable_deriver_for_tests():
+    """Enable deriver globally for tests that need queue processing"""
+    from src.config import settings
+
+    original_value = settings.DERIVER.ENABLED
+    settings.DERIVER.ENABLED = True
+    yield
+    settings.DERIVER.ENABLED = original_value
 
 
 @pytest.fixture(autouse=True)

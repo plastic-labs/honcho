@@ -1,8 +1,8 @@
+import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Body, Depends, Path, Query
-from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, prometheus, schemas
 from src.config import settings
 from src.dependencies import db, tracked_db
-from src.dialectic import chat as dialectic_chat
+from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 from src.utils.search import search
@@ -168,63 +168,55 @@ async def chat(
             peers=[schemas.PeerCreate(name=peer_id)],
         )
 
-    if not options.stream:
-        response = await dialectic_chat(
-            workspace_name=workspace_id,
-            session_name=options.session_id,
-            query=options.query,
-            stream=options.stream,
-            observer=peer_id,
-            # if target is given, that's the observed peer. otherwise, observer==observed
-            # and it's answered from the omniscient Honcho perspective
-            observed=options.target if options.target is not None else peer_id,
-        )
+    if options.stream:
+        # Stream the response using Server-Sent Events
+
+        async def format_sse_stream(
+            chunks: AsyncIterator[str],
+        ) -> AsyncIterator[str]:
+            """Format chunks as SSE events."""
+            async for chunk in chunks:
+                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
 
         if prometheus.METRICS_ENABLED:
             prometheus.DIALECTIC_CALLS.labels(
                 workspace_name=workspace_id,
+                reasoning_level=options.reasoning_level,
             ).inc()
 
-        return schemas.DialecticResponse(content=str(response))
-
-    async def parse_stream() -> AsyncGenerator[str, None]:
-        try:
-            stream = await dialectic_chat(
-                workspace_name=workspace_id,
-                session_name=options.session_id,
-                query=options.query,
-                stream=options.stream,
-                observer=peer_id,
-                observed=options.target if options.target is not None else peer_id,
-            )
-
-            if prometheus.METRICS_ENABLED:
-                prometheus.DIALECTIC_CALLS.labels(
+        return StreamingResponse(
+            format_sse_stream(
+                agentic_chat_stream(
                     workspace_name=workspace_id,
-                ).inc()
-
-            if isinstance(stream, AsyncIterator):
-                async for chunk in stream:
-                    if chunk.content:
-                        # Send each chunk as JSON with nested delta object
-                        stream_chunk = schemas.DialecticStreamChunk(
-                            delta=schemas.DialecticStreamDelta(content=chunk.content)
-                        )
-                        yield f"data: {stream_chunk.model_dump_json()}\n\n"
-                # Send final done message
-                final_chunk = schemas.DialecticStreamChunk(
-                    delta=schemas.DialecticStreamDelta(), done=True
+                    session_name=options.session_id,
+                    query=options.query,
+                    observer=peer_id,
+                    observed=options.target if options.target is not None else peer_id,
+                    reasoning_level=options.reasoning_level,
                 )
-                yield f"data: {final_chunk.model_dump_json()}\n\n"
-            else:
-                raise HTTPException(status_code=500, detail="Invalid stream type")
-        except Exception as e:
-            logger.error(f"Error in stream: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            ),
+            media_type="text/event-stream",
+        )
 
-    return StreamingResponse(
-        content=parse_stream(), media_type="text/event-stream", status_code=200
+    response = await agentic_chat(
+        workspace_name=workspace_id,
+        session_name=options.session_id,
+        query=options.query,
+        observer=peer_id,
+        # if target is given, that's the observed peer. otherwise, observer==observed
+        # and it's answered from the omniscient Honcho perspective
+        observed=options.target if options.target is not None else peer_id,
+        reasoning_level=options.reasoning_level,
     )
+
+    if prometheus.METRICS_ENABLED:
+        prometheus.DIALECTIC_CALLS.labels(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        ).inc()
+
+    return schemas.DialecticResponse(content=str(response))
 
 
 @router.post(

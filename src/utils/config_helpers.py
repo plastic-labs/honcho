@@ -51,7 +51,7 @@ def get_configuration(
     """
     # Start with defaults
     config_dict: dict[str, Any] = {
-        "deriver": {"enabled": True},
+        "deriver": {"enabled": settings.DERIVER.ENABLED},
         "peer_card": {
             "use": settings.PEER_CARD.ENABLED,
             "create": settings.PEER_CARD.ENABLED,

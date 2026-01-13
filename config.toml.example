@@ -15,6 +15,8 @@ MAX_EMBEDDING_TOKENS = 8192
 MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
+# COLLECT_METRICS_LOCAL = false
+# LOCAL_METRICS_FILE = "metrics.jsonl"
 NAMESPACE="honcho"
 
 # Database settings
@@ -48,6 +50,9 @@ PROFILES_SAMPLE_RATE = 0.1
 # LLM settings
 [llm]
 DEFAULT_MAX_TOKENS = 2500
+EMBEDDING_PROVIDER = "openai"
+MAX_TOOL_OUTPUT_CHARS = 30000  # Max chars for tool output (~7500 tokens)
+MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
 # API Keys for LLM providers
 # ANTHROPIC_API_KEY = "your-api-key"
@@ -57,46 +62,72 @@ DEFAULT_MAX_TOKENS = 2500
 # GROQ_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
 
+# Separate vLLM endpoint (for local models)
+# VLLM_API_KEY = "your-api-key"
+# VLLM_BASE_URL = "your-base-url"
+
 # Deriver settings
 [deriver]
+ENABLED = true
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
 STALE_SESSION_TIMEOUT_MINUTES = 5
+# QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 PROVIDER = "google"
 MODEL = "gemini-2.5-flash-lite"
+# BACKUP_PROVIDER = "anthropic"
+# BACKUP_MODEL = "claude-haiku-4-5"
 DEDUPLICATE = true
-MAX_OUTPUT_TOKENS = 2500
-THINKING_BUDGET_TOKENS = 1024 # only applied when using Anthropic
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash-lite"
-
+MAX_OUTPUT_TOKENS = 4096
+THINKING_BUDGET_TOKENS = 1024
+LOG_OBSERVATIONS = false
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 4096
-MAX_INPUT_TOKENS = 23000
 
 # Peer card settings
 [peer_card]
 ENABLED = true
-PROVIDER = "openai"
-MODEL = "gpt-5-nano-2025-08-07"
-MAX_OUTPUT_TOKENS = 4000
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash-lite"
 
 # Dialectic settings
 [dialectic]
+MAX_OUTPUT_TOKENS = 8192
+MAX_INPUT_TOKENS = 100000
+HISTORY_TOKEN_LIMIT = 8192
+SESSION_HISTORY_MAX_TOKENS = 16384
+
+# Per-level settings for reasoning levels
+[dialectic.levels.minimal]
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 2
+
+[dialectic.levels.low]
+PROVIDER = "google"
+MODEL = "gemini-3-flash"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 5
+
+[dialectic.levels.medium]
 PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
-PERFORM_QUERY_GENERATION = false
-QUERY_GENERATION_PROVIDER = "groq"
-QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
-MAX_OUTPUT_TOKENS = 2500
-SEMANTIC_SEARCH_TOP_K = 10
-SEMANTIC_SEARCH_MAX_DISTANCE = 0.85
-THINKING_BUDGET_TOKENS = 1024
-CONTEXT_WINDOW_SIZE = 100000
+MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 512
+MAX_TOOL_ITERATIONS = 4
+
+[dialectic.levels.high]
+PROVIDER = "anthropic"
+MODEL = "claude-opus-4-5"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 4
+
+[dialectic.levels.extra-high]
+PROVIDER = "anthropic"
+MODEL = "claude-opus-4-5"
+THINKING_BUDGET_TOKENS = 512
+MAX_TOOL_ITERATIONS = 10
+# Backup provider example (optional, must set both or neither):
 # BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash"
+# BACKUP_MODEL = "gemini-2.5-pro"
 
 # Summary settings
 [summary]
@@ -106,7 +137,7 @@ MESSAGES_PER_LONG_SUMMARY = 60
 PROVIDER = "google"
 MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
-MAX_TOKENS_LONG = 2000
+MAX_TOKENS_LONG = 4000
 THINKING_BUDGET_TOKENS = 512
 # BACKUP_PROVIDER = "google"
 # BACKUP_MODEL = "gemini-2.5-flash"
@@ -117,10 +148,10 @@ ENABLED = true
 DOCUMENT_THRESHOLD = 50
 IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
-ENABLED_TYPES = ["consolidate"]
-PROVIDER = "openai"
-MODEL = "gpt-4o-mini-2024-07-18"
-MAX_OUTPUT_TOKENS = 2000
+ENABLED_TYPES = ["omni"]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+MAX_OUTPUT_TOKENS = 4000
 # BACKUP_PROVIDER = "google"
 # BACKUP_MODEL = "gemini-2.5-flash"
 
@@ -132,12 +163,12 @@ MAX_WORKSPACE_LIMIT = 10
 # Metrics settings
 [metrics]
 ENABLED = false
-NAMESPACE = "honcho"
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 
 # Cache settings
 [cache]
 ENABLED = false
-URL = "redis://localhost:6379/0"
-NAMESPACE="honcho"
+URL = "redis://localhost:6379/0?suppress=false"
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5

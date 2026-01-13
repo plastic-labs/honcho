@@ -47,8 +47,7 @@ Optional arguments:
 ```
 --context-length: Context length subset to test (100K, 500K, 1M, 10M) (default: 100K)
 --conversation-ids: Comma-separated list of conversation IDs to test (default: all in context length)
---anthropic-api-key: Anthropic API key for response judging (can be set in .env as LLM_ANTHROPIC_API_KEY)
-    --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))
+--timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))
 --base-api-port: Base port for Honcho API instances (default: 8000)
 --pool-size: Number of Honcho instances in the pool (default: 1)
 --batch-size: Number of conversations to run concurrently in each batch (default: 1)
@@ -58,14 +57,14 @@ Optional arguments:
 ```
 
 ## Other notes
-- Judge is Claude Sonnet 4.5
+- Judge uses OpenRouter (configured via LLM_OPENAI_COMPATIBLE_API_KEY and LLM_OPENAI_COMPATIBLE_BASE_URL in tests/bench/.env)
+- Default judge model is anthropic/claude-sonnet-4.5 (can be overridden with BEAM_JUDGE_MODEL env var)
 - Evaluation follows the paper's nugget-based methodology with 0/0.5/1 scoring
 - Event ordering uses Kendall tau-b coefficient
 """
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import time
@@ -73,53 +72,33 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-import tiktoken
-from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam, ToolParam
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig
 from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
-from scipy.stats import kendalltau  # pyright: ignore[reportUnknownVariableType]
-from typing_extensions import TypedDict
+from openai import AsyncOpenAI
 
 from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
 
-load_dotenv()
+from .beam_common import (
+    ConversationResult,
+    QuestionResult,
+    calculate_ability_scores,
+    format_duration,
+    generate_json_summary,
+    judge_event_ordering,
+    judge_nugget_based,
+    list_conversations,
+    load_conversation,
+    print_summary,
+)
 
-
-class QuestionResult(TypedDict):
-    """Type definition for question evaluation results."""
-
-    question: str
-    answer: str | None
-    actual_response: str
-    memory_ability: str
-    rubric: list[str]
-    nugget_scores: list[dict[str, Any]] | None
-    score: float
-    passed: bool
-    reasoning: str
-
-
-class ConversationResult(TypedDict):
-    """Type definition for conversation execution results."""
-
-    conversation_id: str
-    context_length: str
-    workspace_id: str
-    total_turns: int
-    total_messages: int
-    question_results: list[QuestionResult]
-    ability_scores: dict[str, float]
-    overall_score: float
-    error: str | None
-    start_time: float
-    end_time: float
-    duration_seconds: float
+# Load .env from bench directory
+bench_dir = Path(__file__).parent
+load_dotenv(bench_dir / ".env")
 
 
 class BEAMRunner:
@@ -132,7 +111,6 @@ class BEAMRunner:
         data_dir: Path,
         base_api_port: int = 8000,
         pool_size: int = 1,
-        anthropic_api_key: str | None = None,
         timeout_seconds: int | None = None,
         cleanup_workspace: bool = True,
         use_get_context: bool = False,
@@ -144,7 +122,6 @@ class BEAMRunner:
             data_dir: Path to the BEAM data directory
             base_api_port: Base port for Honcho API instances (default: 8000)
             pool_size: Number of Honcho instances in the pool (default: 1)
-            anthropic_api_key: Anthropic API key for judging responses
             timeout_seconds: Timeout for deriver queue in seconds
             cleanup_workspace: If True, delete workspace after executing conversation
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
@@ -152,7 +129,6 @@ class BEAMRunner:
         self.data_dir: Path = data_dir
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
-        self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 600
         )
@@ -175,15 +151,26 @@ class BEAMRunner:
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("httpcore").setLevel(logging.ERROR)
 
-        if self.anthropic_api_key:
-            self.anthropic_client: AsyncAnthropic = AsyncAnthropic(
-                api_key=self.anthropic_api_key
+        # Initialize OpenRouter client for judging
+        openrouter_api_key = os.getenv("LLM_OPENAI_COMPATIBLE_API_KEY")
+        openrouter_base_url = os.getenv(
+            "LLM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1"
+        )
+
+        if not openrouter_api_key:
+            raise ValueError(
+                "LLM_OPENAI_COMPATIBLE_API_KEY is not set in tests/bench/.env"
             )
-        else:
-            api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
-            self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+        self.openrouter_client: AsyncOpenAI = AsyncOpenAI(
+            api_key=openrouter_api_key,
+            base_url=openrouter_base_url,
+        )
+
+        # Model to use for judging (OpenRouter format)
+        self.judge_model: str = os.getenv(
+            "BEAM_JUDGE_MODEL", "anthropic/claude-sonnet-4.5"
+        )
 
     def get_honcho_url_for_index(self, conversation_index: int) -> str:
         """
@@ -198,76 +185,6 @@ class BEAMRunner:
         instance_id = conversation_index % self.pool_size
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
-
-    def _format_duration(self, total_seconds: float) -> str:
-        """Format a duration in seconds into a human-readable string."""
-        minutes = int(total_seconds // 60)
-        if minutes > 0:
-            seconds_rounded = int(round(total_seconds - minutes * 60))
-            if seconds_rounded == 60:
-                minutes += 1
-                seconds_rounded = 0
-            return f"{minutes}m{seconds_rounded:02d}s"
-        return f"{total_seconds:.2f}s"
-
-    def _calculate_tokens(self, text: str) -> int:
-        """Calculate tokens for a given text."""
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        try:
-            return len(
-                tokenizer.encode(
-                    text,
-                    disallowed_special=(
-                        tokenizer.special_tokens_set - {"<|endoftext|>"}
-                    ),
-                )
-            )
-        except Exception:
-            return len(text) // 4
-
-    def load_conversation(
-        self, context_length: str, conversation_id: str
-    ) -> dict[str, Any]:
-        """
-        Load a BEAM conversation from the data directory.
-
-        Args:
-            context_length: Context length (100K, 500K, 1M, 10M)
-            conversation_id: Conversation ID
-
-        Returns:
-            Dictionary containing conversation data and probing questions
-        """
-        conv_dir = self.data_dir / context_length / conversation_id
-
-        # Load chat data
-        chat_file = conv_dir / "chat.json"
-        with open(chat_file) as f:
-            chat_data = json.load(f)
-
-        # Load probing questions
-        questions_file = conv_dir / "probing_questions" / "probing_questions.json"
-        with open(questions_file) as f:
-            questions_data = json.load(f)
-
-        return {"chat": chat_data, "questions": questions_data}
-
-    def list_conversations(self, context_length: str) -> list[str]:
-        """
-        List all conversation IDs for a given context length.
-
-        Args:
-            context_length: Context length (100K, 500K, 1M, 10M)
-
-        Returns:
-            List of conversation ID strings
-        """
-        context_dir = self.data_dir / context_length
-        return [
-            d.name
-            for d in sorted(context_dir.iterdir())
-            if d.is_dir() and d.name.isdigit()
-        ]
 
     async def create_honcho_client(
         self, workspace_id: str, honcho_url: str
@@ -311,269 +228,69 @@ class BEAMRunner:
                 return False
             await asyncio.sleep(1)
 
-    async def judge_nugget_based(
+    async def trigger_dream_and_wait(
         self,
-        question: str,
-        rubric: list[str],
-        actual_response: str,
-        memory_ability: str,
-    ) -> dict[str, Any]:
+        honcho_client: AsyncHoncho,
+        workspace_id: str,
+        observer: str,
+        observed: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
         """
-        Use an LLM to judge a response using nugget-based evaluation.
+        Trigger a dream task and wait for it to complete.
 
         Args:
-            question: The question asked
-            rubric: List of nuggets (atomic criteria) to check
-            actual_response: Actual response from Honcho
-            memory_ability: The memory ability being tested
+            honcho_client: Honcho client instance
+            workspace_id: Workspace identifier
+            observer: Observer peer name
+            observed: Observed peer name (defaults to observer)
+            session_id: Session ID to scope the dream to
 
         Returns:
-            Judgment result with nugget scores and overall score
+            True if dream completed successfully, False on timeout
         """
+        import httpx
+
+        observed = observed or observer
+        honcho_url = self.get_honcho_url_for_index(0)
+
+        url = f"{honcho_url}/v2/workspaces/{workspace_id}/trigger_dream"
+        payload: dict[str, Any] = {
+            "observer": observer,
+            "observed": observed,
+            "dream_type": "omni",
+            "session_id": session_id or f"{workspace_id}_session",
+        }
+
+        # Trigger the dream via API
         try:
-            # Build the nugget evaluation prompt
-            nuggets_formatted = "\n".join(
-                [f"{i + 1}. {nugget}" for i, nugget in enumerate(rubric)]
-            )
-
-            system_prompt = f"""You are an expert judge evaluating AI responses for the {memory_ability} memory ability in the BEAM benchmark.
-
-Your task is to evaluate whether the AI's response satisfies each atomic criterion (nugget) from the rubric.
-
-SCORING INSTRUCTIONS:
-For each nugget, assign a score:
-- 1.0: The response fully satisfies this criterion
-- 0.5: The response partially satisfies this criterion
-- 0.0: The response does not satisfy this criterion
-
-Be strict but fair in your evaluation. Focus on whether the response contains the required information or demonstrates the required behavior.
-
-Use the `evaluate_response` tool to submit your evaluation."""
-
-            user_prompt = f"""Question: "{question}"
-
-Rubric (atomic criteria to check):
-{nuggets_formatted}
-
-Actual Response: "{actual_response}"
-
-Evaluate the response against each nugget in the rubric. Provide a score for each nugget and calculate the overall score as the average of all nugget scores."""
-
-            tool_definition: ToolParam = {
-                "name": "evaluate_response",
-                "description": "Submit the evaluation results for the response based on the rubric.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "nugget_scores": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "nugget_index": {"type": "integer"},
-                                    "score": {"type": "number"},
-                                    "reasoning": {"type": "string"},
-                                },
-                                "required": ["nugget_index", "score", "reasoning"],
-                            },
-                        },
-                        "overall_score": {"type": "number"},
-                        "overall_reasoning": {"type": "string"},
-                    },
-                    "required": ["nugget_scores", "overall_score", "overall_reasoning"],
-                },
-            }
-
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=2000,
-                temperature=0.0,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
-                ],
-                tools=[tool_definition],
-                tool_choice={"type": "tool", "name": "evaluate_response"},
-            )
-
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
-
-            # Find the tool use block
-            tool_use_block = next(
-                (block for block in response.content if block.type == "tool_use"), None
-            )
-
-            if not tool_use_block:
-                raise ValueError("No tool use block found in response")
-
-            judgment: object = tool_use_block.input
-            if not isinstance(judgment, dict):
-                raise ValueError(f"Tool input is not a dictionary: {type(judgment)}")
-
-            return cast(dict[str, Any], judgment)
-
-        except Exception as e:
-            self.logger.error(f"Error judging response: {e}")
-            # Fallback to simple 0 score
-            return {
-                "nugget_scores": [
-                    {"nugget_index": i + 1, "score": 0.0, "reasoning": f"Error: {e}"}
-                    for i in range(len(rubric))
-                ],
-                "overall_score": 0.0,
-                "overall_reasoning": f"Evaluation failed due to error: {e}",
-            }
-
-    async def judge_event_ordering(
-        self, question: str, rubric: list[str], actual_response: str
-    ) -> dict[str, Any]:
-        """
-        Judge event ordering questions using Kendall tau-b coefficient.
-
-        Args:
-            question: The question asked
-            rubric: List of expected events in correct order
-            actual_response: Actual response from Honcho
-
-        Returns:
-            Judgment with Kendall tau-b score
-        """
-        try:
-            # First, extract the events mentioned in the response
-            system_prompt = """You are an expert at extracting ordered lists of events or items from text.
-
-Your task is to extract the ordered list of events/items mentioned in a response.
-
-Use the `extract_ordered_events` tool to submit the extracted list."""
-
-            user_prompt = f"""Question: "{question}"
-
-Response: "{actual_response}"
-
-Extract the ordered list of events or items mentioned in the response. Preserve the order as stated in the response."""
-
-            tool_definition: ToolParam = {
-                "name": "extract_ordered_events",
-                "description": "Submit the ordered list of events extracted from the response.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "extracted_events": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["extracted_events"],
-                },
-            }
-
-            response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=1000,
-                temperature=0.0,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
-                ],
-                tools=[tool_definition],
-                tool_choice={"type": "tool", "name": "extract_ordered_events"},
-            )
-
-            if not response.content:
-                raise ValueError("Anthropic returned empty response")
-
-            # Find the tool use block
-            tool_use_block = next(
-                (block for block in response.content if block.type == "tool_use"), None
-            )
-
-            if not tool_use_block:
-                raise ValueError("No tool use block found in response")
-
-            extracted = tool_use_block.input
-            if not isinstance(extracted, dict):
-                raise ValueError(f"Tool input is not a dictionary: {type(extracted)}")
-
-            extracted_dict = cast(dict[str, Any], extracted)
-            raw_events: list[str] = extracted_dict.get("extracted_events", [])
-            extracted_events = [str(e) for e in raw_events]
-
-            # Now compute alignment and Kendall tau-b
-            # Match extracted events to rubric events using LLM equivalence
-            alignment = self._align_events(rubric, extracted_events)
-
-            # Compute Kendall tau-b
-            tau: float
-            if kendalltau is None:
-                self.logger.warning(
-                    "scipy not installed, cannot compute Kendall tau-b. Install with: uv pip install scipy"
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    timeout=30.0,
                 )
-                tau = 0.0
-            elif len(alignment) < 2:
-                tau = 0.0
-            else:
-                # Create rank lists
-                expected_ranks = list(range(len(alignment)))
-                actual_ranks = [alignment[i] for i in range(len(alignment))]
-                result_tuple: Any = kendalltau(expected_ranks, actual_ranks)
-                # kendalltau returns a tuple, first element is the tau coefficient
-                tau_value: Any = result_tuple[0]
-                # Handle the return type properly - convert to float
-                try:
-                    tau = float(tau_value)
-                    if tau != tau:  # Check for NaN
-                        tau = 0.0
-                except (TypeError, ValueError):
-                    tau = 0.0
-
-            return {
-                "kendall_tau_b": tau,
-                "extracted_events": extracted_events,
-                "alignment": alignment,
-                "overall_score": (tau + 1) / 2,  # Normalize to [0, 1]
-                "overall_reasoning": f"Kendall tau-b coefficient: {tau:.3f}. Extracted {len(extracted_events)} events from response.",
-            }
-
+                if response.status_code != 204:
+                    print(
+                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
+                    )
+                    print(f"[{workspace_id}] Response body: {response.text}")
+                    return False
         except Exception as e:
-            self.logger.error(f"Error in event ordering evaluation: {e}")
-            return {
-                "kendall_tau_b": 0.0,
-                "extracted_events": [],
-                "alignment": [],
-                "overall_score": 0.0,
-                "overall_reasoning": f"Evaluation failed due to error: {e}",
-            }
+            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
+            return False
 
-    def _align_events(
-        self, expected_events: list[str], extracted_events: list[str]
-    ) -> list[int]:
-        """
-        Align extracted events with expected events using LLM equivalence detection.
+        print(f"[{workspace_id}] Dream triggered for {observer}/{observed}")
 
-        Returns a list of indices mapping extracted events to expected events.
-        """
-        # For each extracted event, find the best match in expected events
-        alignment: list[int] = []
-        for extracted in extracted_events:
-            best_match_idx: int = -1
-            for i, expected in enumerate(expected_events):
-                # Use simple string matching for now (can be enhanced with LLM)
-                if (
-                    expected.lower() in extracted.lower()
-                    or extracted.lower() in expected.lower()
-                ):
-                    best_match_idx = i
-                    break
-            if best_match_idx >= 0:
-                alignment.append(best_match_idx)
-        return alignment
+        # Wait for dream queue to empty
+        print(f"[{workspace_id}] Waiting for dream to complete...")
+        await asyncio.sleep(2)  # Give time for dream to be enqueued
+        success = await self.wait_for_deriver_queue_empty(honcho_client)
+        if success:
+            print(f"[{workspace_id}] Dream queue empty")
+        else:
+            print(f"[{workspace_id}] Dream queue timeout")
+        return success
 
     async def _process_single_question(
         self,
@@ -597,26 +314,48 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             print(f"  [{ability}] Q{q_idx + 1}: {question[:100]}...")
 
             # Execute question using dialectic
-            if self.use_get_context:
+            # For instruction_following, always use get_context + OpenRouter API
+            # so the LLM can follow user-specified instructions from Honcho context
+            if self.use_get_context or ability == "instruction_following":
                 context = await session.get_context(
                     summary=True,
                     peer_target="user",
                     last_user_message=question,
                 )
-                context_messages = context.to_anthropic(assistant="assistant")
+                context_messages = context.to_openai(assistant="assistant")
                 context_messages.append({"role": "user", "content": question})
 
-                response = await self.anthropic_client.messages.create(
-                    model="claude-sonnet-4-5",
-                    max_tokens=2048,
-                    messages=cast(list[MessageParam], context_messages),
+                # For instruction_following, add a system prompt that tells the LLM
+                # to follow any stored user preferences/instructions in the context
+                system_prompt = None
+                if ability == "instruction_following":
+                    system_prompt = """You are a helpful assistant with memory of the user's preferences and instructions from previous conversations.
+
+The context provided includes observations about the user, which may contain their stated preferences, instructions, or requirements for how you should respond.
+
+IMPORTANT: You MUST follow any instructions or preferences the user has previously stated. For example:
+- If the user said "always include X when discussing Y", you must include X when discussing Y
+- If the user said "I prefer responses that are Z", format your response accordingly
+- If the user gave any standing instructions, follow them
+
+Review the context carefully for any such instructions before responding."""
+
+                # Prepare messages: OpenAI format uses system role in messages array
+                messages: list[dict[str, Any]] = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.extend(cast(list[dict[str, Any]], context_messages))
+
+                response = await self.openrouter_client.chat.completions.create(
+                    model=self.judge_model,
+                    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                    messages=cast(Any, messages),  # type: ignore[arg-type]
                 )
 
-                if not response.content:
+                if not response.choices or not response.choices[0].message:
                     actual_response = ""
                 else:
-                    content_block = response.content[0]
-                    actual_response = getattr(content_block, "text", "")
+                    actual_response = response.choices[0].message.content or ""
             else:
                 actual_response = await user_peer.chat(question)
                 actual_response = (
@@ -625,13 +364,21 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
 
             # Judge response based on memory ability
             if ability == "event_ordering":
-                judgment = await self.judge_event_ordering(
-                    question, rubric, actual_response
+                judgment = await judge_event_ordering(
+                    self.openrouter_client,
+                    self.judge_model,
+                    question,
+                    rubric,
+                    actual_response,
                 )
                 nugget_scores = None
             else:
-                judgment = await self.judge_nugget_based(
-                    question, rubric, actual_response, ability
+                judgment = await judge_nugget_based(
+                    self.openrouter_client,
+                    self.judge_model,
+                    question,
+                    rubric,
+                    actual_response,
                 )
                 nugget_scores = judgment.get("nugget_scores")
 
@@ -652,6 +399,15 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
 
             status = "PASS" if score >= 0.5 else "FAIL"
             print(f"    [{ability}] Q{q_idx + 1} Score: {score:.2f} [{status}]")
+            if score < 0.5 and reasoning:
+                print(f"      Reasoning: {reasoning}")
+                if rubric:
+                    print("      Rubric:")
+                    for i, rubric_item in enumerate(rubric, 1):
+                        print(f"        {i}. {rubric_item}")
+                if answer:
+                    print(f"      Ideal Response: {answer}")
+                print(f"      Our Response: {actual_response}")
 
             return question_result
 
@@ -698,7 +454,9 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
 
         try:
             # Load conversation data
-            conv_data = self.load_conversation(context_length, conversation_id)
+            conv_data = load_conversation(
+                self.data_dir, context_length, conversation_id
+            )
             chat_data = conv_data["chat"]
             questions_data = conv_data["questions"]
 
@@ -812,11 +570,22 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
                     f"\n[{workspace_id}] ERROR: Deriver queue timeout after {self.timeout_seconds}s"
                 )
                 print(
-                    f"[{workspace_id}] Failed to complete in {self._format_duration(result['duration_seconds'])}"
+                    f"[{workspace_id}] Failed to complete in {format_duration(result['duration_seconds'])}"
                 )
                 return result
 
-            print(f"[{workspace_id}] Deriver queue empty. Executing questions...")
+            print(f"[{workspace_id}] Deriver queue empty. Triggering dream...")
+
+            # Single orchestrated dream handles all reasoning types
+            dream_success = await self.trigger_dream_and_wait(
+                honcho_client,
+                workspace_id,
+                observer="user",
+                session_id=session_id,
+            )
+            if not dream_success:
+                print(f"[{workspace_id}] Warning: Dream did not complete")
+            print(f"[{workspace_id}] Dream completed. Executing questions...")
 
             # Execute questions for each memory ability
             question_tasks: list[Any] = []
@@ -843,15 +612,9 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             result["question_results"] = list(results)
 
             # Calculate ability scores
-            ability_totals: dict[str, list[float]] = {}
-            for qr in result["question_results"]:
-                ability = qr["memory_ability"]
-                if ability not in ability_totals:
-                    ability_totals[ability] = []
-                ability_totals[ability].append(qr["score"])
-
-            for ability, scores in ability_totals.items():
-                result["ability_scores"][ability] = sum(scores) / len(scores)
+            result["ability_scores"] = calculate_ability_scores(
+                result["question_results"]
+            )
 
             # Calculate overall score
             if result["ability_scores"]:
@@ -871,7 +634,7 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
             result["duration_seconds"] = result["end_time"] - result["start_time"]
 
             print(
-                f"\n[{workspace_id}] Completed in {self._format_duration(result['duration_seconds'])}"
+                f"\n[{workspace_id}] Completed in {format_duration(result['duration_seconds'])}"
             )
             print(f"Overall Score: {result['overall_score']:.3f}")
 
@@ -942,102 +705,6 @@ Extract the ordered list of events or items mentioned in the response. Preserve 
 
         return all_results, overall_duration
 
-    def print_summary(
-        self, results: list[ConversationResult], total_elapsed_seconds: float
-    ) -> None:
-        """Print a summary of all test results."""
-        print(f"\n{'=' * 80}")
-        print("BEAM BENCHMARK EXECUTION SUMMARY")
-        print(f"{'=' * 80}")
-
-        total_conversations = len(results)
-        total_questions = sum(len(r["question_results"]) for r in results)
-
-        print(f"Total Conversations: {total_conversations}")
-        print(f"Total Questions: {total_questions}")
-        print(f"Total Test Time: {self._format_duration(total_elapsed_seconds)}")
-
-        # Calculate average scores by ability
-        ability_scores: dict[str, list[float]] = {}
-        for result in results:
-            for ability, score in result["ability_scores"].items():
-                if ability not in ability_scores:
-                    ability_scores[ability] = []
-                ability_scores[ability].append(score)
-
-        print("\nAverage Scores by Memory Ability:")
-        for ability, scores in sorted(ability_scores.items()):
-            avg_score = sum(scores) / len(scores)
-            print(f"  {ability:30s}: {avg_score:.3f}")
-
-        # Overall average
-        overall_scores = [r["overall_score"] for r in results]
-        overall_avg = (
-            sum(overall_scores) / len(overall_scores) if overall_scores else 0.0
-        )
-        print(f"\n{'Overall Average Score':30s}: {overall_avg:.3f}")
-
-        print(f"{'=' * 80}")
-
-    def generate_json_summary(
-        self,
-        results: list[ConversationResult],
-        context_length: str,
-        total_elapsed_seconds: float,
-        output_file: Path,
-    ) -> None:
-        """Generate a comprehensive JSON summary of test results."""
-        # Calculate summary statistics
-        total_conversations = len(results)
-        total_questions = sum(len(r["question_results"]) for r in results)
-
-        # Calculate average scores by ability
-        ability_scores: dict[str, list[float]] = {}
-        for result in results:
-            for ability, score in result["ability_scores"].items():
-                if ability not in ability_scores:
-                    ability_scores[ability] = []
-                ability_scores[ability].append(score)
-
-        ability_averages = {
-            ability: sum(scores) / len(scores)
-            for ability, scores in ability_scores.items()
-        }
-
-        # Overall average
-        overall_scores = [r["overall_score"] for r in results]
-        overall_avg = (
-            sum(overall_scores) / len(overall_scores) if overall_scores else 0.0
-        )
-
-        summary = {
-            "metadata": {
-                "context_length": context_length,
-                "execution_timestamp": datetime.now().isoformat(),
-                "runner_version": "1.0.0",
-                "base_api_port": self.base_api_port,
-                "pool_size": self.pool_size,
-                "timeout_seconds": self.timeout_seconds,
-                "deriver_settings": settings.DERIVER.model_dump(),
-                "dialectic_settings": settings.DIALECTIC.model_dump(),
-            },
-            "summary_statistics": {
-                "total_conversations": total_conversations,
-                "total_questions": total_questions,
-                "overall_average_score": overall_avg,
-                "ability_averages": ability_averages,
-            },
-            "timing": {
-                "total_duration_seconds": total_elapsed_seconds,
-            },
-            "detailed_results": results,
-        }
-
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
-        print(f"\nJSON summary written to: {output_file}")
-
 
 async def main() -> int:
     """Main entry point for the BEAM test runner."""
@@ -1050,7 +717,7 @@ async def main() -> int:
         "--context-length",
         type=str,
         default="100K",
-        choices=["100K", "500K", "1M", "10M"],
+        choices=["1K", "100K", "500K", "1M", "10M"],
         help="Context length subset to test (default: 100K)",
     )
 
@@ -1072,12 +739,6 @@ async def main() -> int:
         type=int,
         default=1,
         help="Number of Honcho instances in the pool (default: 1)",
-    )
-
-    parser.add_argument(
-        "--anthropic-api-key",
-        type=str,
-        help="Anthropic API key for response judging (optional)",
     )
 
     parser.add_argument(
@@ -1125,7 +786,6 @@ async def main() -> int:
         data_dir=data_dir,
         base_api_port=args.base_api_port,
         pool_size=args.pool_size,
-        anthropic_api_key=args.anthropic_api_key,
         timeout_seconds=args.timeout,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
@@ -1136,14 +796,14 @@ async def main() -> int:
         if args.conversation_ids:
             conversation_ids = args.conversation_ids.split(",")
         else:
-            conversation_ids = runner.list_conversations(args.context_length)
+            conversation_ids = list_conversations(data_dir, args.context_length)
 
         # Run conversations
         results, total_elapsed = await runner.run_conversations(
             args.context_length, conversation_ids, args.batch_size
         )
 
-        runner.print_summary(results, total_elapsed)
+        print_summary(results, total_elapsed)
 
         # Generate JSON output
         if args.json_output:
@@ -1153,8 +813,19 @@ async def main() -> int:
                 f"tests/bench/eval_results/beam_{args.context_length}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
-        runner.generate_json_summary(
-            results, args.context_length, total_elapsed, output_file
+        generate_json_summary(
+            results,
+            args.context_length,
+            total_elapsed,
+            output_file,
+            metadata_extra={
+                "base_api_port": runner.base_api_port,
+                "pool_size": runner.pool_size,
+                "timeout_seconds": runner.timeout_seconds,
+                "deriver_settings": settings.DERIVER.model_dump(),
+                "dialectic_settings": settings.DIALECTIC.model_dump(),
+                "dream_settings": settings.DREAM.model_dump(),
+            },
         )
 
         # Export metrics

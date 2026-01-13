@@ -15,10 +15,11 @@ from src.config import settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
+from src.models import Message
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric, conditional_observe
-from src.utils.tokens import estimate_tokens, track_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .. import crud, models
 
@@ -275,9 +276,11 @@ async def summarize_if_needed(
                     db_session,
                     workspace_name,
                     session_name,
-                    message_id,
-                    SummaryType.LONG,
-                    message_public_id,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.LONG,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -292,9 +295,11 @@ async def summarize_if_needed(
                     db_session,
                     workspace_name,
                     session_name,
-                    message_id,
-                    SummaryType.SHORT,
-                    message_public_id,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.SHORT,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -316,9 +321,11 @@ async def summarize_if_needed(
                     db,
                     workspace_name,
                     session_name,
-                    message_id,
-                    SummaryType.LONG,
-                    message_public_id,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.LONG,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -331,9 +338,11 @@ async def summarize_if_needed(
                     db,
                     workspace_name,
                     session_name,
-                    message_id,
-                    SummaryType.SHORT,
-                    message_public_id,
+                    message_id=message_id,
+                    message_seq_in_session=message_seq_in_session,
+                    message_public_id=message_public_id,
+                    summary_type=SummaryType.SHORT,
+                    configuration=configuration,
                 )
                 accumulate_metric(
                     f"summary_{workspace_name}_{message_id}",
@@ -347,9 +356,12 @@ async def _create_and_save_summary(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
+    *,
     message_id: int,
-    summary_type: SummaryType,
+    message_seq_in_session: int,
     message_public_id: str,
+    summary_type: SummaryType,
+    configuration: schemas.ResolvedConfiguration,
 ) -> None:
     """
     Create a new summary and save it to the database.
@@ -364,16 +376,33 @@ async def _create_and_save_summary(
     summary_start = time.perf_counter()
 
     latest_summary = await get_summary(db, workspace_name, session_name, summary_type)
+    if latest_summary:
+        latest_summary_message_id = latest_summary["message_id"]
+        # Skip if latest summary already covers message.
+        if latest_summary_message_id >= message_id:
+            return
 
     previous_summary_text = latest_summary["content"] if latest_summary else None
 
-    messages = await crud.get_messages_id_range(
+    # Calculate the sequence range for messages to summarize
+    # We want to get the last N messages where N is the configured summary interval
+    messages_per_summary = (
+        configuration.summary.messages_per_long_summary
+        if summary_type == SummaryType.LONG
+        else configuration.summary.messages_per_short_summary
+    )
+    start_seq = max(message_seq_in_session - messages_per_summary + 1, 1)
+
+    messages: list[Message] = await crud.get_messages_by_seq_range(
         db,
         workspace_name,
         session_name,
-        start_id=latest_summary["message_id"] if latest_summary else 0,
-        end_id=message_id,
+        start_seq=start_seq,
+        end_seq=message_seq_in_session,
     )
+    if not messages:
+        logger.warning("No messages to summarize for message %s", message_id)
+        return
 
     messages_tokens = sum([message.token_count for message in messages])
     previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
@@ -395,20 +424,20 @@ async def _create_and_save_summary(
         else:
             prompt_tokens = estimate_long_summary_prompt_tokens()
 
-        track_input_tokens(
-            task_type="summary",
+        track_deriver_input_tokens(
+            task_type=prometheus.DeriverTaskTypes.SUMMARY,
             components={
-                "prompt": prompt_tokens,
-                "messages": messages_tokens,
-                "previous_summary": previous_summary_tokens,
+                prometheus.DeriverComponents.PROMPT: prompt_tokens,
+                prometheus.DeriverComponents.MESSAGES: messages_tokens,
+                prometheus.DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
             },
         )
 
         # Track output tokens
         prometheus.DERIVER_TOKENS_PROCESSED.labels(
-            task_type="summary",
-            token_type="output",  # nosec B106
-            component="total",
+            task_type=prometheus.DeriverTaskTypes.SUMMARY.value,
+            token_type=prometheus.TokenTypes.OUTPUT.value,
+            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
         ).inc(new_summary["token_count"])
 
         # Save summary to database

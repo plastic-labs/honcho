@@ -2,7 +2,6 @@ import logging
 
 import sentry_sdk
 from pydantic import ValidationError
-from rich.console import Console
 from sqlalchemy import select
 
 from src import crud, models
@@ -24,8 +23,6 @@ from src.webhooks import webhook_delivery
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-console = Console(markup=True)
 
 
 async def process_item(queue_item: models.QueueItem) -> None:
@@ -133,9 +130,12 @@ async def process_representation_batch(
     observer: str | None,
     observed: str | None,
 ) -> None:
-    """Prepares and processes a batch of messages for representation tasks.
+    """
+    Prepares and processes a batch of messages for representation tasks.
+
     Args:
         messages: List of messages to process
+        message_level_configuration: Resolved configuration for this batch
         observer: The observer of the messages
         observed: The observed of the messages
     """
@@ -145,11 +145,6 @@ async def process_representation_batch(
 
     if observed is None or observer is None:
         raise ValueError("observed and observer are required for representation tasks")
-
-    logger.debug(
-        "process_representation_batch received %s messages",
-        len(messages),
-    )
 
     await process_representation_tasks_batch(
         messages,

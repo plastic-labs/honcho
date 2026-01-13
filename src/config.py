@@ -4,7 +4,7 @@ from typing import Annotated, Any, ClassVar, Literal, Protocol
 
 import tomllib
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -136,8 +136,8 @@ class BackupLLMSettingsMixin:
     both fields are set together or both are None.
     """
 
-    BACKUP_PROVIDER: SupportedProviders | None = "custom"
-    BACKUP_MODEL: str | None = "x-ai/grok-4-fast"
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self):
@@ -206,14 +206,33 @@ class LLMSettings(HonchoSettings):
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini"] = "openai"
+    # Separate vLLM endpoint (for local models)
+    VLLM_API_KEY: str | None = None
+    VLLM_BASE_URL: str | None = None
+
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
+    # Maximum characters for tool output to prevent token explosion.
+    # Set to 30,000 chars (~7,500 tokens at 4 chars/token) to stay well under
+    # typical context limits while providing substantial tool output.
+    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=30000, gt=0, le=100_000)] = (
+        30000
+    )
+
+    # Maximum characters for individual message content in tool results.
+    # Keeps each message preview concise while preserving key context.
+    MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
+        2000
+    )
+
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -228,29 +247,28 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
+    TEMPERATURE: float | None = None
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
-    # Thinking budget tokens are only applied when using Anthropic as provider
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+
+    LOG_OBSERVATIONS: bool = False
+
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
-        int, Field(default=50, gt=0, le=500)
-    ] = 50
+        int, Field(default=100, gt=0, le=1000)
+    ] = 100
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
-        Field(
-            default=4096,
-            ge=1,
-        ),
+        Field(default=4096, ge=128, le=16_384),
     ] = 4096
-
-    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -261,39 +279,122 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         return self
 
 
-class PeerCardSettings(BackupLLMSettingsMixin, HonchoSettings):
+class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
 
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-5-nano-2025-08-07"
-    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=1000, le=10_000)] = 4000
+
+# Reasoning levels for dialectic - defined here to avoid circular imports with schemas
+ReasoningLevel = Literal["minimal", "low", "medium", "high", "extra-high"]
+REASONING_LEVELS: list[ReasoningLevel] = [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "extra-high",
+]
 
 
-class DialecticSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
+class DialecticLevelSettings(BaseModel):
+    """Settings for a specific reasoning level in the dialectic."""
 
-    PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-sonnet-4-20250514"
+    model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
 
-    PERFORM_QUERY_GENERATION: bool = False
-    QUERY_GENERATION_PROVIDER: SupportedProviders = "groq"
-    QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
+    PROVIDER: Annotated[SupportedProviders, Field(validation_alias="provider")]
+    MODEL: Annotated[str, Field(validation_alias="model")]
+    BACKUP_PROVIDER: Annotated[
+        SupportedProviders | None, Field(validation_alias="backup_provider")
+    ] = None
+    BACKUP_MODEL: Annotated[str | None, Field(validation_alias="backup_model")] = None
+    THINKING_BUDGET_TOKENS: Annotated[
+        int, Field(ge=0, le=100_000, validation_alias="thinking_budget_tokens")
+    ]
+    MAX_TOOL_ITERATIONS: Annotated[
+        int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
+    ]
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    @model_validator(mode="after")
+    def _validate_backup_configuration(self) -> "DialecticLevelSettings":
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
 
-    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
-    SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
-        float, Field(default=0.85, ge=0.0, le=1.0)
-    ] = 0.85  # Max distance for semantic search relevance
 
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+class DialecticSettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
+    )
 
-    CONTEXT_WINDOW_SIZE: Annotated[
-        int, Field(default=100_000, gt=10_000, le=200_000)
-    ] = 100_000
+    # Per-level settings for provider, model, thinking budget, and tool iterations
+    # TODO: Fill in appropriate values for each reasoning level
+    LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
+        default_factory=lambda: {
+            "minimal": DialecticLevelSettings(
+                PROVIDER="google",
+                MODEL="gemini-2.5-flash-lite",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=2,
+            ),
+            "low": DialecticLevelSettings(
+                PROVIDER="google",
+                MODEL="gemini-3-flash",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=5,
+            ),
+            "medium": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-haiku-4-5",
+                THINKING_BUDGET_TOKENS=512,
+                MAX_TOOL_ITERATIONS=4,
+            ),
+            "high": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-opus-4-5",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=4,
+            ),
+            "extra-high": DialecticLevelSettings(
+                PROVIDER="anthropic",
+                MODEL="claude-opus-4-5",
+                THINKING_BUDGET_TOKENS=512,
+                MAX_TOOL_ITERATIONS=10,
+            ),
+        }
+    )
+
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
+
+    # Token limit for get_recent_history tool within the agent
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
+
+    # Session history injection: max tokens of recent messages to include when session_id is specified.
+    # Set to 0 to disable automatic session history injection.
+    SESSION_HISTORY_MAX_TOKENS: Annotated[
+        int, Field(default=16_384, ge=0, le=100_000)
+    ] = 16_384
+
+    @model_validator(mode="after")
+    def _validate_token_budgets(self) -> "DialecticSettings":
+        """Ensure the output token limit exceeds all thinking budgets."""
+        for level, level_settings in self.LEVELS.items():
+            if self.MAX_OUTPUT_TOKENS <= level_settings.THINKING_BUDGET_TOKENS:
+                raise ValueError(
+                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_all_levels_present(self) -> "DialecticSettings":
+        """Ensure all reasoning levels are configured."""
+        missing = set(REASONING_LEVELS) - set(self.LEVELS.keys())
+        if missing:
+            raise ValueError(f"Missing configuration for reasoning levels: {missing}")
+        return self
 
 
 class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
@@ -304,8 +405,8 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: SupportedProviders = "openai"
-    MODEL: str = "gpt-4o-mini-2024-07-18"
+    PROVIDER: SupportedProviders = "google"
+    MODEL: str = "gemini-2.5-flash"
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
@@ -341,19 +442,80 @@ class CacheSettings(HonchoSettings):
     )
 
 
+class SurprisalSettings(BaseModel):
+    """Settings for tree-based surprisal sampling during dreams."""
+
+    ENABLED: bool = False
+
+    # Tree configuration
+    TREE_TYPE: Literal[
+        "kdtree", "balltree", "rptree", "covertree", "lsh", "graph", "prototype"
+    ] = "kdtree"
+    TREE_K: Annotated[int, Field(default=5, gt=0, le=20)] = 5  # k for kNN-based trees
+
+    # Sampling strategy
+    SAMPLING_STRATEGY: Literal["recent", "random", "all"] = "recent"
+    SAMPLE_SIZE: Annotated[int, Field(default=200, gt=0, le=2000)] = 200
+
+    # Surprisal filtering (normalized scores: 0.0 = lowest, 1.0 = highest)
+    TOP_PERCENT_SURPRISAL: Annotated[float, Field(default=0.10, gt=0.0, le=1.0)] = (
+        0.10  # Top 10% of observations
+    )
+    # Hybrid mode: min high-surprisal observations to replace standard questions
+    MIN_HIGH_SURPRISAL_FOR_REPLACE: Annotated[int, Field(default=10, gt=0)] = 10
+
+    # Observation level filtering
+    INCLUDE_LEVELS: list[str] = ["explicit", "deductive"]
+
+
 class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
+    )
 
     ENABLED: bool = True
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
-    ENABLED_TYPES: list[str] = ["consolidate"]
+    ENABLED_TYPES: list[str] = ["omni"]
 
-    # LLM settings for dream processing
-    PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash"
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+    # LLM settings for dream processing - upgraded for extended reasoning
+    PROVIDER: SupportedProviders = "anthropic"
+    MODEL: str = "claude-sonnet-4-20250514"  # Upgraded from haiku for reasoning
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
+
+    # Agent iteration limit - increased for extended reasoning workflow
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
+
+    # Token limit for get_recent_history tool within the agent
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
+        16_384
+    )
+
+    # Observation limits for orchestrated dreaming prescan
+    # Higher = more context for reasoning but slower prescan
+    PRESCAN_OBSERVATIONS_PER_LEVEL: Annotated[
+        int, Field(default=200, gt=0, le=1000)
+    ] = 200
+
+    # Specialist model settings (OpenRouter format: provider/model)
+    # DeductionSpecialist: handles logical inference + temporal reasoning
+    DEDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+    # InductionSpecialist: identifies patterns across observations
+    INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+
+    # Surprisal-based sampling subsystem
+    SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
+
+    @model_validator(mode="after")
+    def _validate_token_budgets(self) -> "DreamSettings":
+        """Ensure the output token limit exceeds the thinking budget."""
+        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
+            raise ValueError(
+                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
+            )
+        return self
 
 
 class AppSettings(HonchoSettings):
@@ -381,6 +543,7 @@ class AppSettings(HonchoSettings):
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
+    REASONING_TRACES_FILE: str | None = None  # Path to JSONL file for reasoning traces
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 

@@ -3,8 +3,8 @@ import logging
 import sentry_sdk
 
 from src.config import settings
-from src.dreamer.agent import process_agent_dream
-from src.dreamer.consolidate import process_consolidate_dream
+from src.dependencies import tracked_db
+from src.dreamer.orchestrator import run_dream
 from src.schemas import DreamType
 from src.utils.queue_payload import DreamPayload
 
@@ -31,10 +31,15 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
 
     try:
         match payload.dream_type:
-            case DreamType.CONSOLIDATE:
-                await process_consolidate_dream(payload, workspace_name)
-            case DreamType.AGENT:
-                await process_agent_dream(payload, workspace_name)
+            case DreamType.OMNI:
+                async with tracked_db("dream_orchestrator") as db:
+                    await run_dream(
+                        db=db,
+                        workspace_name=workspace_name,
+                        observer=payload.observer,
+                        observed=payload.observed,
+                        session_name=payload.session_name,
+                    )
 
     except Exception as e:
         logger.error(

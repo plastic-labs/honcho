@@ -13,7 +13,7 @@ import { z } from 'zod'
  */
 export const HonchoConfigSchema = z.object({
   apiKey: z.string().optional(),
-  environment: z.enum(['local', 'production', 'demo']).optional(),
+  environment: z.enum(['local', 'production']).optional(),
   baseURL: z.string().url('Base URL must be a valid URL').optional(),
   workspaceId: z
     .string()

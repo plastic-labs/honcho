@@ -1,9 +1,6 @@
 {
   "description": "Test bidirectional observation - both peers observe each other",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    }
   },
   "steps": [
     {

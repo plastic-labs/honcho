@@ -1,9 +1,6 @@
 {
   "description": "LongMemEval test: single-session-user question",
   "workspace_config": {
-    "deriver": {
-      "enabled": true
-    },
     "peer_card": {
       "create": false
     }
@@ -3835,7 +3832,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "timeout": 600
     },
     {
       "step_type": "query",
@@ -3848,8 +3846,7 @@
           "prompt": "Does the response correctly answer the question based on the expected answer: 'Business Administration'? Accept responses that convey this information even if worded differently.",
           "pass_if": true
         }
-      ],
-      "observed_peer_id": "assistant"
+      ]
     }
   ]
 }
