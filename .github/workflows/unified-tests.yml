@@ -3,6 +3,9 @@ name: Unified Tests (Fly Runner)
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
 
 permissions:
   contents: read
@@ -58,7 +61,7 @@ jobs:
           which python3.12
 
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --all-extras
 
       - name: Run unified tests
         run: uv run python -m tests.unified.run

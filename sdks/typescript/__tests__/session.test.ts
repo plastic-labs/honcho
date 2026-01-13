@@ -290,7 +290,7 @@ describe('Session', () => {
         ],
         total: 2,
         size: 2,
-        hasNextPage: false,
+        hasNextPage: () => false,
       }
       mockClient.workspaces.sessions.peers.list.mockResolvedValue(mockPeersData)
 
@@ -311,7 +311,7 @@ describe('Session', () => {
         items: [],
         total: 0,
         size: 0,
-        hasNextPage: false,
+        hasNextPage: () => false,
       }
       mockClient.workspaces.sessions.peers.list.mockResolvedValue(mockPeersData)
 
@@ -638,7 +638,7 @@ describe('Session', () => {
         ],
         total: 2,
         size: 2,
-        hasNextPage: false,
+        hasNextPage: () => false,
       }
       mockClient.workspaces.sessions.messages.list.mockResolvedValue(
         mockMessagesData
@@ -659,7 +659,7 @@ describe('Session', () => {
         items: [],
         total: 0,
         size: 0,
-        hasNextPage: false,
+        hasNextPage: () => false,
       }
       mockClient.workspaces.sessions.messages.list.mockResolvedValue(
         mockMessagesData

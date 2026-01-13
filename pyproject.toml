@@ -37,8 +37,8 @@ dependencies = [
     "cashews[redis]==7.4.4",
     "scikit-learn>=1.6.0",
 ]
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
