@@ -220,8 +220,7 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
             current_content = [parts[1].strip()] if len(parts) > 1 and parts[1].strip() else []
         else:
             # Continuation of current speaker's dialogue
-            if current_content is not None:
-                current_content.append(line.strip())
+            current_content.append(line.strip())
 
     # Save last message
     if current_speaker and current_content:

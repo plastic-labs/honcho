@@ -69,15 +69,12 @@ python -m tests.bench.oolong --variant synth --context-size 16384
 
 import argparse
 import asyncio
-import json
 import logging
-import os
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig
@@ -86,7 +83,6 @@ from honcho_core.types.workspaces.sessions.message_create_param import (
 )
 from typing_extensions import TypedDict
 
-from src.config import settings
 from src.utils.metrics_collector import MetricsCollector
 
 from .oolong_common import (
@@ -254,7 +250,7 @@ class OolongBenchmarkRunner:
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_deriver_status(session=session_id)
+                status = await honcho_client.get_queue_status(session=session_id)
             except Exception:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -271,14 +267,14 @@ class OolongBenchmarkRunner:
             await asyncio.sleep(1)
 
     async def execute_question(
-        self, example_data: dict[str, Any], question_index: int, honcho_url: str
+        self, example_data: dict[str, Any], _question_index: int, honcho_url: str
     ) -> TestResult:
         """
         Execute a single OOLONG benchmark question.
 
         Args:
             example_data: Dictionary containing example from dataset
-            question_index: Index of this question
+            _question_index: Index of this question (unused, URL already computed)
             honcho_url: URL of the Honcho instance to use
 
         Returns:
@@ -576,7 +572,7 @@ class OolongBenchmarkRunner:
             print(f"\nTask Group Statistics:")
             for task_name, stats in task_stats.items():
                 print(
-                    f"  {task_name}: avg={stats['average_score']:.3f}, "
+                    f"  {task_name}: avg={stats['average_score']:.3f}, " +
                     f"perfect={stats['perfect_score_rate']:.1f}%"
                 )
         else:
@@ -652,9 +648,11 @@ async def main():
         "--context-size",
         type=str,
         default=None,
-        help="Discrete context size (e.g., '8K', '16K', '32K', or exact token count like '16384'). "
-             "Overrides --min-context-len and --max-context-len. "
-             "Available sizes: 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M, 2M, 4M",
+        help=(
+            "Discrete context size (e.g., '8K', '16K', '32K', or exact token count like '16384'). "
+            "Overrides --min-context-len and --max-context-len. "
+            "Available sizes: 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M, 2M, 4M"
+        ),
     )
     parser.add_argument(
         "--max-context-len",
