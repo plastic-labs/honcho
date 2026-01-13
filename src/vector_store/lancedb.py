@@ -14,6 +14,7 @@ import pyarrow as pa
 from lancedb import AsyncConnection, AsyncTable
 
 from src.config import settings
+from src.exceptions import VectorStoreError
 
 from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
 
@@ -167,11 +168,13 @@ class LanceDBVectorStore(VectorStore):
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
             return VectorUpsertResult(ok=True)
-        except Exception:
+        except Exception as e:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
             )
-            raise
+            raise VectorStoreError(
+                f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
+            ) from e
 
     async def query(
         self,
@@ -341,7 +344,8 @@ class LanceDBVectorStore(VectorStore):
     async def close(self) -> None:
         """Close the LanceDB connection and release resources."""
         if self._db is not None:
-            # LanceDB AsyncConnection doesn't have an explicit close method,
-            # but we clear the reference to allow garbage collection
+            # AsyncConnection provides an explicit close() method (synchronous)
+            # which we invoke to ensure proper cleanup of resources
+            self._db.close()
             self._db = None
             logger.debug("LanceDB connection closed")

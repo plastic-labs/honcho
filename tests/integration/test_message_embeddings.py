@@ -12,26 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.config import settings
 from src.crud import create_messages
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
 from src.utils.search import search
 
 
-def _stores_embeddings_in_postgres() -> bool:
-    """Check if current config stores MessageEmbedding rows in postgres."""
-    return settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
-
-
-# Skip tests that depend on MessageEmbedding rows when using external store in migrated mode
-requires_postgres_embeddings = pytest.mark.skipif(
-    not _stores_embeddings_in_postgres(),
-    reason="MessageEmbedding rows not created when TYPE != 'pgvector' and MIGRATED=true",
-)
-
-
-@requires_postgres_embeddings
 @pytest.mark.asyncio
 async def test_message_embedding_created_when_setting_enabled(
     db_session: AsyncSession,
@@ -137,7 +123,6 @@ async def test_message_embedding_not_created_when_setting_disabled(
     assert embedding_record is None
 
 
-@requires_postgres_embeddings
 @pytest.mark.asyncio
 async def test_multiple_message_embeddings_created_when_setting_enabled(
     db_session: AsyncSession,
@@ -197,7 +182,6 @@ async def test_multiple_message_embeddings_created_when_setting_enabled(
         assert embedding_record.peer_name == test_peer.name
 
 
-@requires_postgres_embeddings
 @pytest.mark.asyncio
 async def test_semantic_search_when_embeddings_enabled(
     db_session: AsyncSession,
@@ -273,7 +257,6 @@ async def test_semantic_search_when_embeddings_enabled(
     assert created_message.public_id in found_message_ids
 
 
-@requires_postgres_embeddings
 @pytest.mark.asyncio
 async def test_message_chunking_creates_multiple_embeddings(
     db_session: AsyncSession,

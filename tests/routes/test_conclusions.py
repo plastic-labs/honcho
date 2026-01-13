@@ -346,11 +346,11 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create test observations via API (this populates the vector store)
+        # Create test conclusions via API (this populates the vector store)
         _create_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/observations",
+            f"/v2/workspaces/{test_workspace.name}/conclusions",
             json={
-                "observations": [
+                "conclusions": [
                     {
                         "content": "User loves pizza and pasta",
                         "observer_id": test_peer.name,

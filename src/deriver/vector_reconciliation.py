@@ -91,12 +91,14 @@ async def _get_message_embeddings_needing_sync(
     """
     Get message embeddings that need to be synced to the vector store.
 
-    Finds embeddings where:
-    - has an embedding stored in the database
-    - sync_state is "pending" (never synced or retry needed)
-    - Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
+    Selects models.MessageEmbedding records where sync_state is "pending",
+    regardless of whether an embedding vector exists in the database.
+    Records missing embeddings will be re-embedded during reconciliation.
 
-    Uses FOR UPDATE SKIP LOCKED to prevent concurrent processing.
+    Uses FOR UPDATE SKIP LOCKED to prevent concurrent processing and
+    orders by last_sync_at (nulls first) to prioritize never-synced records.
+
+    Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
     stmt = (
         select(models.MessageEmbedding)
@@ -357,17 +359,19 @@ async def _sync_message_embeddings(
         )
         by_namespace.setdefault(namespace, []).append(emb)
 
-    # Compute chunk_index for each embedding based on message_id ordering
-    # Group embeddings by message_id and assign chunk_index
-    message_chunks: dict[str, list[models.MessageEmbedding]] = {}
+    # Compute chunk position for each embedding within its parent message.
+    # Messages can be split into multiple embedding chunks; we need to track
+    # which chunk position (0, 1, 2, ...) each MessageEmbedding represents.
+    embeddings_by_message_id: dict[str, list[models.MessageEmbedding]] = {}
     for emb in embeddings:
-        message_chunks.setdefault(emb.message_id, []).append(emb)
+        embeddings_by_message_id.setdefault(emb.message_id, []).append(emb)
 
-    # Sort each message's chunks by id and assign chunk_index
-    for chunks in message_chunks.values():
-        chunks.sort(key=lambda e: e.id)
-        for chunk_idx, chunk in enumerate(chunks):
-            chunk._chunk_index = chunk_idx
+    # Sort each message's embeddings by id and build position mapping
+    chunk_position_by_emb_id: dict[int, int] = {}
+    for msg_embeddings in embeddings_by_message_id.values():
+        msg_embeddings.sort(key=lambda e: e.id)
+        for position, msg_emb in enumerate(msg_embeddings):
+            chunk_position_by_emb_id[msg_emb.id] = position
 
     # Sync each namespace batch
     for namespace, embs in by_namespace.items():
@@ -384,8 +388,8 @@ async def _sync_message_embeddings(
                 if embedding is None:
                     continue
 
-                # Use {message_id}_{chunk_index} as vector ID (consistent with creation)
-                vector_id = f"{emb.message_id}_{emb._chunk_index}"
+                # Use {message_id}_{chunk_position} as vector ID (consistent with creation)
+                vector_id = f"{emb.message_id}_{chunk_position_by_emb_id[emb.id]}"
 
                 vector_records.append(
                     VectorRecord(
@@ -543,8 +547,8 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
                 did_work = True
 
             if not did_work:
-                print("No work done, breaking")
+                logger.debug("No work done, breaking reconciliation loop")
                 break
-    print("Vector reconciliation cycle completed")
+    logger.info("Vector reconciliation cycle completed")
 
     return metrics

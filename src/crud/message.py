@@ -221,9 +221,11 @@ async def create_messages(
 
             # Create MessageEmbedding entries
             embedding_objects: list[models.MessageEmbedding] = []
+            # Maps emb index -> (chunk_position, embedding vector)
+            pending_embedding_data: dict[int, tuple[int, list[float]]] = {}
             for message_obj in message_objects:
                 embeddings = embedding_dict.get(message_obj.public_id, [])
-                for chunk_idx, embedding in enumerate(embeddings):
+                for chunk_position, embedding in enumerate(embeddings):
                     embedding_obj = models.MessageEmbedding(
                         content=message_obj.content,
                         message_id=message_obj.public_id,
@@ -233,13 +235,14 @@ async def create_messages(
                         sync_state="pending",
                         embedding=embedding if store_embeddings_in_postgres else None,
                     )
-                    embedding_obj._chunk_index = chunk_idx
-                    embedding_obj._pending_embedding = embedding
+                    emb_idx = len(embedding_objects)
+                    pending_embedding_data[emb_idx] = (chunk_position, embedding)
                     embedding_objects.append(embedding_obj)
 
-            # Add MessageEmbedding rows to database only if storing in postgres
+            # Always create MessageEmbedding rows so reconciliation can track sync state
+            # even when embeddings aren't stored in postgres
             embedding_ids: list[int] = []
-            if embedding_objects and store_embeddings_in_postgres:
+            if embedding_objects:
                 db.add_all(embedding_objects)
                 await db.flush()
                 embedding_ids = [emb.id for emb in embedding_objects]
@@ -265,15 +268,15 @@ async def create_messages(
                     "message", workspace_name
                 )
 
-                # Build vector records with {message_id}_{chunk_index} as vector ID
+                # Build vector records with {message_id}_{chunk_position} as vector ID
                 vector_records: list[VectorRecord] = []
-                for emb in embedding_objects:
-                    vector_id = f"{emb.message_id}_{emb._chunk_index}"
-                    embedding_data = list(emb._pending_embedding)
+                for emb_idx, emb in enumerate(embedding_objects):
+                    chunk_position, embedding = pending_embedding_data[emb_idx]
+                    vector_id = f"{emb.message_id}_{chunk_position}"
                     vector_records.append(
                         VectorRecord(
                             id=vector_id,
-                            embedding=embedding_data,
+                            embedding=list(embedding),
                             metadata={
                                 "message_id": emb.message_id,
                                 "session_name": emb.session_name,
@@ -301,10 +304,10 @@ async def create_messages(
                             )
                             await db.commit()
 
-                    except Exception as e:
+                    except Exception:
                         # Failed after retries - increment sync_attempts for reconciliation
-                        logger.error(
-                            f"Failed to upsert message vectors after retries: {e}"
+                        logger.exception(
+                            "Failed to upsert message vectors after retries"
                         )
                         if embedding_ids:
                             await db.execute(

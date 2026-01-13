@@ -79,7 +79,9 @@ def upgrade() -> None:
                 "sync_state",
                 sa.TEXT(),
                 nullable=False,
-                server_default="pending",  # Existing records need reconciliation
+                server_default=sa.text(
+                    "'pending'"
+                ),  # Existing records need reconciliation
             ),
             schema=schema,
         )
@@ -108,7 +110,7 @@ def upgrade() -> None:
                 "sync_attempts",
                 sa.Integer(),
                 nullable=False,
-                server_default="0",
+                server_default=sa.text("0"),
             ),
             schema=schema,
         )
@@ -131,7 +133,9 @@ def upgrade() -> None:
                 "sync_state",
                 sa.TEXT(),
                 nullable=False,
-                server_default="pending",  # Existing records need reconciliation
+                server_default=sa.text(
+                    "'pending'"
+                ),  # Existing records need reconciliation
             ),
             schema=schema,
         )
@@ -160,7 +164,7 @@ def upgrade() -> None:
                 "sync_attempts",
                 sa.Integer(),
                 nullable=False,
-                server_default="0",
+                server_default=sa.text("0"),
             ),
             schema=schema,
         )
@@ -182,13 +186,18 @@ def downgrade() -> None:
     """Remove deleted_at columns and revert embedding columns."""
     inspector = sa.inspect(op.get_bind())
 
-    if column_exists("message_embeddings", "sync_state", inspector):
-        # Drop composite index first
+    # Drop message_embeddings indexes if they exist
+    if index_exists(
+        "message_embeddings", "ix_message_embeddings_sync_state_last_sync_at", inspector
+    ):
         op.drop_index(
             "ix_message_embeddings_sync_state_last_sync_at",
             table_name="message_embeddings",
             schema=schema,
         )
+    if index_exists(
+        "message_embeddings", "ix_message_embeddings_sync_state", inspector
+    ):
         op.drop_index(
             "ix_message_embeddings_sync_state",
             table_name="message_embeddings",
@@ -204,13 +213,14 @@ def downgrade() -> None:
     if column_exists("message_embeddings", "last_sync_at", inspector):
         op.drop_column("message_embeddings", "last_sync_at", schema=schema)
 
-    if column_exists("documents", "sync_state", inspector):
-        # Drop composite index first
+    # Drop documents indexes if they exist
+    if index_exists("documents", "ix_documents_sync_state_last_sync_at", inspector):
         op.drop_index(
             "ix_documents_sync_state_last_sync_at",
             table_name="documents",
             schema=schema,
         )
+    if index_exists("documents", "ix_documents_sync_state", inspector):
         op.drop_index("ix_documents_sync_state", table_name="documents", schema=schema)
 
     if column_exists("documents", "sync_state", inspector):
@@ -224,8 +234,9 @@ def downgrade() -> None:
         op.drop_column("documents", "last_sync_at", schema=schema)
 
     # Remove deleted_at column and index from documents
-    if column_exists("documents", "deleted_at", inspector):
+    if index_exists("documents", "ix_documents_deleted_at", inspector):
         op.drop_index("ix_documents_deleted_at", table_name="documents", schema=schema)
+    if column_exists("documents", "deleted_at", inspector):
         op.drop_column("documents", "deleted_at", schema=schema)
 
     # NOTE: This downgrade does NOT restore the NOT NULL constraint on embedding columns

@@ -467,9 +467,9 @@ async def create_documents(
                     )
                     await db.commit()
 
-                except Exception as e:
+                except Exception:
                     # Failed after retries - increment sync_attempts for reconciliation
-                    logger.error(f"Failed to upsert vectors after retries: {e}")
+                    logger.exception("Failed to upsert vectors after retries")
                     await db.execute(
                         update(models.Document)
                         .where(models.Document.id.in_(doc_ids))
@@ -752,10 +752,10 @@ async def create_observations(
                     )
                     await db.commit()
 
-                except Exception as e:
+                except Exception:
                     # Failed after retries - increment sync_attempts for reconciliation
-                    logger.error(
-                        f"Failed to upsert vectors for {namespace} after retries: {e}"
+                    logger.exception(
+                        f"Failed to upsert vectors for {namespace} after retries"
                     )
                     await db.execute(
                         update(models.Document)
@@ -925,6 +925,8 @@ async def cleanup_soft_deleted_documents(
         return len(successfully_deleted_ids)
 
     # No documents were successfully deleted from vector store
+    # Release FOR UPDATE locks by rolling back the transaction
+    await db.rollback()
     return 0
 
 

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.config import settings
 from src.utils.agent_tools import (
     ToolContext,
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
@@ -318,7 +319,7 @@ class TestSearchMemory:
     ):
         """Returns observations matching semantic query."""
         # Force pgvector queries since test documents are created directly in postgres
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", False)
 
         ctx = make_tool_context()
 
