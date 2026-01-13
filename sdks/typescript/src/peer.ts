@@ -1,5 +1,7 @@
 import type HonchoCore from '@honcho-ai/core'
-import type { PeerContextResponse } from '@honcho-ai/core/resources/workspaces'
+import type { PeerContextResponse } from '@honcho-ai/core/resources/workspaces/peers'
+export type { PeerContextResponse }
+
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { ConclusionScope } from './conclusions'
 import { Page } from './pagination'

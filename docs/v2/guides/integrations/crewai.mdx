@@ -53,7 +53,7 @@ This tutorial uses the Honcho demo server at https://demo.honcho.dev which runs 
 The `honcho_crewai` package provides `HonchoStorage`, a storage provider that implements CrewAI's `Storage` interface using Honcho's session-based memory.
 
 <Note>
-Before proceeding, it's important to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v2.6.0-alpha/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
+Before proceeding, it's important to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v2/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
 </Note>
 
 `HonchoStorage` implements CrewAI's `Storage` interface using Honcho's `peer` and `session` primitives.
@@ -97,7 +97,7 @@ results = storage.search("query", filters={
 })
 ```
 
-For the full filter syntax including logical operators (AND, OR, NOT), comparison operators, and metadata filtering, see the [Using Filters](https://docs.honcho.dev/v2.6.0-alpha/documentation/core-concepts/features/using-filters) documentation.
+For the full filter syntax including logical operators (AND, OR, NOT), comparison operators, and metadata filtering, see the [Using Filters](https://docs.honcho.dev/v2/documentation/core-concepts/features/using-filters) documentation.
 
 <Note>
 For comprehensive details about CrewAI's memory system, see the [official CrewAI Memory documentation](https://docs.crewai.com/en/concepts/memory).
@@ -279,16 +279,16 @@ Now that you have a working CrewAI integration with Honcho, you can:
 ## Related Resources
 
 <CardGroup cols={2}>
-  <Card title="Honcho Architecture" icon="sitemap" href="/v2.6.0-alpha/documentation/core-concepts/architecture">
+  <Card title="Honcho Architecture" icon="sitemap" href="/v2/documentation/core-concepts/architecture">
     Understand Honcho's peer-based model and core primitives
   </Card>
-  <Card title="Get Context" icon="messages" href="/v2.6.0-alpha/documentation/core-concepts/features/get-context">
+  <Card title="Get Context" icon="messages" href="/v2/documentation/core-concepts/features/get-context">
     Learn about retrieving and formatting conversation context
   </Card>
-  <Card title="Dialectic API" icon="brain" href="/v2.6.0-alpha/documentation/core-concepts/features/dialectic">
+  <Card title="Dialectic API" icon="brain" href="/v2/documentation/core-concepts/features/dialectic">
     Query `peer` representations for deeper understanding
   </Card>
-  <Card title="LangGraph Integration" icon="diagram-project" href="/v2.6.0-alpha/integrations/langgraph">
+  <Card title="LangGraph Integration" icon="diagram-project" href="/v2/integrations/langgraph">
     Build stateful agents with LangGraph and Honcho
   </Card>
 </CardGroup>

@@ -11,7 +11,7 @@ Let's get started with Honcho. In this quickstart, you will:
 - Query the reasoning Honcho produces to get synthesized insights about the user
 
 <Note>
-Running the code below requires an API key. Create and account and get your API key at [app.honcho.dev](https://app.honcho.dev) under "API KEYS".
+Running the code below requires an API key. Create an account and get your API key at [app.honcho.dev](https://app.honcho.dev) under "API KEYS".
 
 Every new tenant gets \$100.00 in free credits on sign up. The code below costs ~\$0.04 to run, so don't worry--still plenty of free credits for iterating.
 </Note>
@@ -57,7 +57,7 @@ honcho = Honcho(workspace="first-honcho-test", api_key=HONCHO_API_KEY)
 import { Honcho } from '@honcho-ai/sdk';
 
 // Initialize client
-const honcho = new Honcho({ workspace = "first-honcho-test", apiKey = HONCHO_API_KEY });
+const honcho = new Honcho({ workspace: "first-honcho-test", apiKey: HONCHO_API_KEY });
 ```
 </CodeGroup>
 
@@ -200,14 +200,14 @@ import * as fs from 'fs';
 const data = JSON.parse(fs.readFileSync("conversation.json", "utf-8"));
 
 for (const sessionData of data.sessions) {
-    const session = honcho.session(sessionData.id);
-    session.addPeers([user, assistant]);
+    const session = await honcho.session(sessionData.id);
+    await session.addPeers([user, assistant]);
 
     const messages = sessionData.messages.map((msg: any) =>
         msg.role === "user" ? user.message(msg.content) : assistant.message(msg.content)
     );
 
-    session.addMessages(messages);
+    await session.addMessages(messages);
 }
 ```
 </CodeGroup>
@@ -223,14 +223,13 @@ print(response)
 ```
 
 ```typescript TypeScript
-user.chat("What should I know about this user? 3 sentences max").then((response) => {
-  console.log(response);
-})
+const response = await user.chat("What should I know about this user? 3 sentences max");
+console.log(response);
 ```
 </CodeGroup>
 
 <Tip>
-Honcho needs a short amount of time to process messages you write to it. There are several utilities to [check the status](/v2.6.0-alpha/documentation/features/advanced/queue-status) of the queue. Honcho also offers numerous ways to query reasoning to fit latency needs: see the [Get Context](/v2.6.0-alpha/documentation/features/get-context) page.
+Honcho needs a short amount of time to process messages you write to it. There are several utilities to [check the status](/v2/documentation/features/advanced/queue-status) of the queue. Honcho also offers numerous ways to query reasoning to fit latency needs: see the [Get Context](/v2/documentation/features/get-context) page.
 </Tip>
 
 The response will look something like this:
@@ -389,16 +388,16 @@ console.log(response);
 From here, you can explore how to use Honcho's features in your own applications:
 
 <CardGroup cols={2}>
-  <Card title="Get Context" icon="messages" href="/v2.6.0-alpha/documentation/features/get-context">
+  <Card title="Get Context" icon="messages" href="/v2/documentation/features/get-context">
     Learn how to fetch the right context for your agent's next response
   </Card>
-  <Card title="Architecture" icon="sitemap" href="/v2.6.0-alpha/documentation/core-concepts/architecture">
+  <Card title="Architecture" icon="sitemap" href="/v2/documentation/core-concepts/architecture">
     Deep dive into how Honcho's primitives fit together
   </Card>
-  <Card title="Chat Endpoint" icon="comments" href="/v2.6.0-alpha/documentation/features/chat">
+  <Card title="Chat Endpoint" icon="comments" href="/v2/documentation/features/chat">
     Query representations with natural language
   </Card>
-  <Card title="Guides" icon="book" href="/v2.6.0-alpha/guides/overview">
+  <Card title="Guides" icon="book" href="/v2/guides/overview">
     Integration patterns and advanced use cases
   </Card>
 </CardGroup>
