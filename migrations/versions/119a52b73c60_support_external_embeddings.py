@@ -7,6 +7,8 @@ This migration:
    hybrid sync/soft delete pattern for vector store consistency.
 3. Adds sync_state, last_sync_at, and sync_attempts columns to documents and
    message_embeddings tables for tracking vector store synchronization status.
+4. Adds partial unique index on queue table for reconciler task deduplication,
+   ensuring only one pending reconciler task exists per work_unit_key.
 
 Revision ID: 119a52b73c60
 Revises: 7c0d9a4e3b1f
@@ -181,10 +183,30 @@ def upgrade() -> None:
             schema=schema,
         )
 
+    # Add partial unique index on queue table for reconciler task deduplication
+    # This ensures only one pending reconciler task exists per work_unit_key
+    if not index_exists("queue", "uq_queue_work_unit_key", inspector):
+        op.create_index(
+            "uq_queue_work_unit_key",
+            "queue",
+            ["work_unit_key"],
+            unique=True,
+            schema=schema,
+            postgresql_where=sa.text("task_type = 'reconciler' AND processed = false"),
+        )
+
 
 def downgrade() -> None:
     """Remove deleted_at columns and revert embedding columns."""
     inspector = sa.inspect(op.get_bind())
+
+    # Drop reconciler queue index if it exists
+    if index_exists("queue", "uq_queue_work_unit_key", inspector):
+        op.drop_index(
+            "uq_queue_work_unit_key",
+            table_name="queue",
+            schema=schema,
+        )
 
     # Drop message_embeddings indexes if they exist
     if index_exists(

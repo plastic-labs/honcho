@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.deriver.vector_reconciliation import (
+from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]

@@ -563,6 +563,10 @@ class VectorStoreSettings(HonchoSettings):
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
 
+    RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
+        300  # 5 minutes
+    )
+
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
         if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
