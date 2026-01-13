@@ -211,8 +211,8 @@ describe("Page", () => {
       expect(page.hasNextPage).toBe(true);
     });
 
-    it("should return false when hasNextPage is false", () => {
-      const lastPage = { ...mockOriginalPage, hasNextPage: false };
+    it("should return false when hasNextPage function returns false", () => {
+      const lastPage = { ...mockOriginalPage, hasNextPage: () => false };
       const page = new Page(lastPage);
 
       expect(page.hasNextPage).toBe(false);
@@ -246,7 +246,7 @@ describe("Page", () => {
         total: 10,
         page: 2,
         pages: 4,
-        hasNextPage: false,
+        hasNextPage: () => false,
         [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item;

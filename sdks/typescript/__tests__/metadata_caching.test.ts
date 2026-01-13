@@ -273,7 +273,7 @@ describe('Metadata and Configuration Caching', () => {
           ],
           total: 2,
           size: 2,
-          hasNextPage: false,
+          hasNextPage: () => false,
         };
         mockClient.workspaces.peers.list.mockResolvedValue(mockPeersData);
 
@@ -297,7 +297,7 @@ describe('Metadata and Configuration Caching', () => {
           ],
           total: 1,
           size: 1,
-          hasNextPage: false,
+          hasNextPage: () => false,
         };
         mockClient.workspaces.peers.list.mockResolvedValue(mockPeersData);
 
@@ -444,7 +444,7 @@ describe('Metadata and Configuration Caching', () => {
           ],
           total: 2,
           size: 2,
-          hasNextPage: false,
+          hasNextPage: () => false,
         };
         mockClient.workspaces.sessions.list.mockResolvedValue(mockSessionsData);
 
@@ -468,7 +468,7 @@ describe('Metadata and Configuration Caching', () => {
           ],
           total: 1,
           size: 1,
-          hasNextPage: false,
+          hasNextPage: () => false,
         };
         mockClient.workspaces.sessions.list.mockResolvedValue(mockSessionsData);
 

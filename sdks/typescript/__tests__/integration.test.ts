@@ -182,7 +182,7 @@ describe('Honcho SDK Integration Tests', () => {
         ],
         total: 2,
         size: 2,
-        hasNextPage: false,
+        hasNextPage: () => false,
         [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item
@@ -422,7 +422,7 @@ describe('Honcho SDK Integration Tests', () => {
       mockWorkspacesApi.workspaces.peers.list.mockResolvedValue({
         items: [],
         total: 0,
-        hasNextPage: false,
+        hasNextPage: () => false,
       })
       mockWorkspacesApi.workspaces.sessions.context.mockResolvedValue({
         messages: [],

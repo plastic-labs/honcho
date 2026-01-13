@@ -165,7 +165,7 @@ describe('Peer', () => {
         ],
         total: 2,
         size: 2,
-        hasNextPage: false,
+        hasNextPage: () => false,
       };
       mockClient.workspaces.peers.sessions.list.mockResolvedValue(mockSessionsData);
 
@@ -184,7 +184,7 @@ describe('Peer', () => {
         items: [],
         total: 0,
         size: 0,
-        hasNextPage: false,
+        hasNextPage: () => false,
       };
       mockClient.workspaces.peers.sessions.list.mockResolvedValue(mockSessionsData);
 
