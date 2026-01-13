@@ -482,7 +482,7 @@ def mock_vector_store():
         patch("src.crud.session.get_external_vector_store", return_value=mock_vs),
         patch("src.crud.message.get_external_vector_store", return_value=mock_vs),
         patch(
-            "src.deriver.vector_reconciliation.get_external_vector_store",
+            "src.reconciler.sync_vectors.get_external_vector_store",
             return_value=mock_vs,
         ),
         patch("src.utils.search.get_external_vector_store", return_value=mock_vs),

@@ -425,9 +425,7 @@ class TestReEmbedding:
             await db_session.refresh(doc)
 
         # Mock embedding client
-        with patch(
-            "src.deriver.vector_reconciliation.embedding_client"
-        ) as mock_embed_client:
+        with patch("src.reconciler.sync_vectors.embedding_client") as mock_embed_client:
             mock_embed_client.simple_batch_embed = AsyncMock(
                 return_value=[[float(i)] * 1536 for i in range(3)]
             )
@@ -501,9 +499,7 @@ class TestReEmbedding:
             batch_call_count += 1
             return [[1.0] * 1536 for _ in contents]
 
-        with patch(
-            "src.deriver.vector_reconciliation.embedding_client"
-        ) as mock_embed_client:
+        with patch("src.reconciler.sync_vectors.embedding_client") as mock_embed_client:
             mock_embed_client.simple_batch_embed = track_batch_embed
 
             # Mock vector store
@@ -785,13 +781,13 @@ class TestEndToEndReconciliation:
         # This would be an integration test with the full cycle
         # For now, we verify the function signature and return type
         with (
-            patch("src.deriver.vector_reconciliation.tracked_db") as mock_tracked_db,
-            patch("src.deriver.vector_reconciliation.get_external_vector_store"),
+            patch("src.reconciler.sync_vectors.tracked_db") as mock_tracked_db,
+            patch("src.reconciler.sync_vectors.get_external_vector_store"),
             patch(
-                "src.deriver.vector_reconciliation._get_documents_needing_sync"
+                "src.reconciler.sync_vectors._get_documents_needing_sync"
             ) as mock_get_docs,
             patch(
-                "src.deriver.vector_reconciliation._get_message_embeddings_needing_sync"
+                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync"
             ) as mock_get_embs,
             patch("src.crud.document.cleanup_soft_deleted_documents") as mock_cleanup,
         ):

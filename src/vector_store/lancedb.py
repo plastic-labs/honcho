@@ -6,6 +6,7 @@ This module provides a LanceDB-based implementation of the VectorStore interface
 
 import asyncio
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -19,6 +20,9 @@ from src.exceptions import VectorStoreError
 from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
 
 logger = logging.getLogger(__name__)
+
+# Pattern for valid SQL identifiers (alphanumeric + underscore, not starting with digit)
+_VALID_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 # Schema for LanceDB tables
 # id: string, vector: fixed_size_list of float32 (1536 dimensions for OpenAI embeddings)
@@ -84,6 +88,8 @@ class LanceDBVectorStore(VectorStore):
             return await db.open_table(namespace)
 
         # Create empty table with base schema
+        # Handle race condition: another worker may have created the table
+        # between our check and create_table call
         fields: list[pa.Field] = [
             pa.field("id", pa.string()),
             pa.field(
@@ -92,8 +98,12 @@ class LanceDBVectorStore(VectorStore):
         ]
         fields.extend(self._metadata_fields_for_namespace(namespace))
         schema = pa.schema(fields)
-        table = await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
-        return table
+        try:
+            table = await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
+            return table
+        except Exception:
+            # Table may have been created by another worker, try to open it
+            return await db.open_table(namespace)
 
     def _metadata_fields_for_namespace(self, namespace: str) -> list[pa.Field]:
         """
@@ -263,12 +273,19 @@ class LanceDBVectorStore(VectorStore):
 
         Returns:
             SQL WHERE clause string or None if no filters
+
+        Raises:
+            ValueError: If a filter key is not a valid SQL identifier
         """
         if not filters:
             return None
 
         conditions: list[str] = []
         for key, value in filters.items():
+            # Validate key is a safe SQL identifier to prevent injection
+            if not _VALID_IDENTIFIER_PATTERN.match(key):
+                raise ValueError(f"Invalid filter key: {key!r}")
+
             # Check if value is a dict with "in" operator
             if isinstance(value, dict) and "in" in value:
                 # IN clause for list membership
