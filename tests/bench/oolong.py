@@ -28,10 +28,15 @@ python -m tests.bench.harness
 2. Run this file with dataset selection:
 ```
 # For OOLONG-synth (default)
-python -m tests.bench.oolong --variant synth
+python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth
 
 # For OOLONG-real (D&D transcripts)
-python -m tests.bench.oolong --variant real
+python -m tests.bench.oolong --variant real --data-dir /path/to/oolong-real
+```
+
+Required arguments:
+```
+--data-dir: Path to the dataset directory (e.g., /path/to/oolong-synth or /path/to/oolong-real)
 ```
 
 Optional arguments:
@@ -57,13 +62,13 @@ Optional arguments:
 Examples:
 ```bash
 # Test at exact 16K context length
-python -m tests.bench.oolong --variant synth --context-size 16K
+python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth --context-size 16K
 
 # Test at exact 128K context length
-python -m tests.bench.oolong --variant synth --context-size 128K
+python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth --context-size 128K
 
 # Test with exact token count
-python -m tests.bench.oolong --variant synth --context-size 16384
+python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth --context-size 16384
 ```
 """
 
@@ -167,6 +172,7 @@ class OolongBenchmarkRunner:
     def __init__(
         self,
         variant: str = "synth",
+        data_dir: str | Path | None = None,
         base_api_port: int = 8000,
         pool_size: int = 1,
         timeout_seconds: int = 600,
@@ -179,6 +185,7 @@ class OolongBenchmarkRunner:
 
         Args:
             variant: Which OOLONG variant to run ("synth" or "real")
+            data_dir: Path to the dataset directory (required)
             base_api_port: Base port for Honcho API instances
             pool_size: Number of Honcho instances in the pool
             timeout_seconds: Timeout for deriver queue in seconds
@@ -187,6 +194,7 @@ class OolongBenchmarkRunner:
             use_dialectic_agentic: If True, use agentic=true mode for dialectic
         """
         self.variant: str = variant
+        self.data_dir: str | Path | None = data_dir
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
         self.timeout_seconds: int = timeout_seconds
@@ -498,9 +506,9 @@ class OolongBenchmarkRunner:
         # Load dataset
         print(f"Loading OOLONG-{self.variant} dataset (split: {split})...")
         if self.variant == "synth":
-            dataset = load_oolong_synth_dataset(split)
+            dataset = load_oolong_synth_dataset(split, data_dir=self.data_dir)
         else:
-            dataset = load_oolong_real_dataset(split)
+            dataset = load_oolong_real_dataset(split, data_dir=self.data_dir)
 
         # Filter dataset
         dataset = filter_dataset(
@@ -632,6 +640,12 @@ async def main():
         help="Which OOLONG variant to run (default: synth)",
     )
     parser.add_argument(
+        "--data-dir",
+        type=str,
+        required=True,
+        help="Path to the dataset directory (e.g., /path/to/oolong-synth or /path/to/oolong-real)",
+    )
+    parser.add_argument(
         "--split",
         type=str,
         default="test",
@@ -738,6 +752,7 @@ async def main():
     # Create runner
     runner = OolongBenchmarkRunner(
         variant=args.variant,
+        data_dir=args.data_dir,
         base_api_port=args.base_api_port,
         pool_size=args.pool_size,
         timeout_seconds=args.timeout,

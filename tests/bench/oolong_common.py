@@ -141,16 +141,28 @@ def calculate_context_length(text: str) -> int:
         return len(text) // 4
 
 
-def load_oolong_synth_dataset(split: str = "test") -> SimpleDataset:
+def load_oolong_synth_dataset(
+    split: str = "test", data_dir: str | Path | None = None
+) -> SimpleDataset:
     """Load the OOLONG-synth dataset from filesystem.
 
     Args:
         split: Dataset split to load (default: "test")
+        data_dir: Path to the oolong-synth dataset directory (must contain a 'data' subdirectory)
 
     Returns:
         SimpleDataset object
+
+    Raises:
+        ValueError: If data_dir is not provided
+        FileNotFoundError: If no parquet files found for the split
     """
-    dataset_path = Path("/raid/datasets/benchmark/oolong/oolong-synth/data")
+    if data_dir is None:
+        raise ValueError(
+            "data_dir parameter is required. Please provide the path to the oolong-synth dataset."
+        )
+
+    dataset_path = Path(data_dir) / "data"
 
     # Find all parquet files for the given split
     parquet_files = sorted(dataset_path.glob(f"{split}-*.parquet"))
@@ -168,16 +180,28 @@ def load_oolong_synth_dataset(split: str = "test") -> SimpleDataset:
     return SimpleDataset(all_data)
 
 
-def load_oolong_real_dataset(split: str = "test") -> SimpleDataset:
+def load_oolong_real_dataset(
+    split: str = "test", data_dir: str | Path | None = None
+) -> SimpleDataset:
     """Load the OOLONG-real dataset from filesystem.
 
     Args:
         split: Dataset split to load (default: "test")
+        data_dir: Path to the oolong-real dataset directory (must contain a 'dnd' subdirectory)
 
     Returns:
         SimpleDataset object
+
+    Raises:
+        ValueError: If data_dir is not provided
+        FileNotFoundError: If JSONL file not found
     """
-    dataset_path = Path("/raid/datasets/benchmark/oolong/oolong-real/dnd")
+    if data_dir is None:
+        raise ValueError(
+            "data_dir parameter is required. Please provide the path to the oolong-real dataset."
+        )
+
+    dataset_path = Path(data_dir) / "dnd"
     jsonl_file = dataset_path / f"{split}.jsonl"
 
     if not jsonl_file.exists():
