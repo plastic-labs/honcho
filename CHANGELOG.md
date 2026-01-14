@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Removed
 
-- Peer card configuration from message configuration; peers cards no longer created/updated in deriver process
+- Peer card configuration from message configuration; peer cards no longer created/updated in deriver process
 
 ## [2.5.1] - 2025-12-15
 
