@@ -661,7 +661,7 @@ from honcho import SessionPeerConfig
 # Configure peer observation settings
 config = SessionPeerConfig(
     observe_others=False,  # Form theory-of-mind of other peers -- False by default
-    observe_me=True        # Don't let others form theory-of-mind of me -- True by default
+    observe_me=True        # Let others form theory-of-mind of me -- True by default
 )
 
 session.add_peers([(alice, config)])
@@ -669,12 +669,9 @@ session.add_peers([(alice, config)])
 
 ```typescript TypeScript
 // Configure peer observation settings
-const config = new SessionPeerConfig({
-    observeOthers: false,  // Form theory-of-mind of other peers -- False by default
-    observeMe: true        // Don't let others form theory-of-mind of me -- True by default
-});
-
-await session.addPeers([alice, config]);
+// observe_me: true lets others form theory-of-mind of me -- true by default
+// observe_others: false means this peer won't form theory-of-mind of others -- false by default
+await session.addPeers([[alice, { observe_me: true, observe_others: false }]]);
 ```
 </CodeGroup>
 
