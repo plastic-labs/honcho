@@ -51,7 +51,7 @@ from .types import (
     DialecticStreamResponse,
 )
 
-__version__ = "1.6.0"
+__version__ = "2.0.0"
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
