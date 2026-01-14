@@ -231,16 +231,18 @@ def downgrade() -> None:
     batch_size = 5000
 
     # Delete active_queue_sessions for queue items with NULL workspace_name
+    # Use CTE-based delete since PostgreSQL doesn't support DELETE ... LIMIT
     while True:
         result = conn.execute(
             sa.text(
                 f"""
-                DELETE FROM "{schema}".active_queue_sessions
-                WHERE work_unit_key IN (
+                WITH del AS (
                     SELECT work_unit_key FROM "{schema}".queue
                     WHERE workspace_name IS NULL
+                    LIMIT :batch_size
                 )
-                LIMIT :batch_size
+                DELETE FROM "{schema}".active_queue_sessions
+                WHERE work_unit_key IN (SELECT work_unit_key FROM del)
                 """
             ),
             {"batch_size": batch_size},
@@ -249,13 +251,18 @@ def downgrade() -> None:
             break
 
     # Delete queue items with NULL workspace_name
+    # Use CTE with ctid for safe batched delete in PostgreSQL
     while True:
         result = conn.execute(
             sa.text(
                 f"""
+                WITH del AS (
+                    SELECT ctid FROM "{schema}".queue
+                    WHERE workspace_name IS NULL
+                    LIMIT :batch_size
+                )
                 DELETE FROM "{schema}".queue
-                WHERE workspace_name IS NULL
-                LIMIT :batch_size
+                WHERE ctid IN (SELECT ctid FROM del)
                 """
             ),
             {"batch_size": batch_size},
