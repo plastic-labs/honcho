@@ -473,6 +473,12 @@ class QueueItem(Base):
             "processed",
             "id",
         ),
+        Index(
+            "ux_queue_dream_pending_work_unit_key",
+            "work_unit_key",
+            unique=True,
+            postgresql_where=text("task_type = 'dream' AND processed = false"),
+        ),
     )
 
     def __repr__(self) -> str:
