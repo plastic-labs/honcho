@@ -49,7 +49,7 @@ The Honcho client is the main entry point for interacting with Honcho's API. It 
 from honcho import Honcho
 
 # Initialize client
-honcho = Honcho(workspace="first-honcho-test", api_key=HONCHO_API_KEY)
+honcho = Honcho(workspace_id="first-honcho-test", api_key=HONCHO_API_KEY)
 
 ```
 
@@ -57,7 +57,7 @@ honcho = Honcho(workspace="first-honcho-test", api_key=HONCHO_API_KEY)
 import { Honcho } from '@honcho-ai/sdk';
 
 // Initialize client
-const honcho = new Honcho({ workspace: "first-honcho-test", apiKey: HONCHO_API_KEY });
+const honcho = new Honcho({ workspaceId: "first-honcho-test", apiKey: HONCHO_API_KEY });
 ```
 </CodeGroup>
 
@@ -329,56 +329,61 @@ import { Honcho } from '@honcho-ai/sdk';
 
 dotenv.config();
 
-// Initialize Honcho client with a unique workspace
-const workspaceId = `docs-example-${randomUUID().slice(0, 8)}`;
-const honcho = new Honcho({
-  environment: "production",
-  workspaceId,
-});
+/**
+ * Load a conversation JSON export, import it into Honcho, then ask for a short
+ * set of user insights derived from that history.
+ *
+ * This is intentionally wrapped in `main()` (no top-level await) so it works
+ * with the default CommonJS `ts-node` setup.
+ */
+async function main(): Promise<void> {
+  // Initialize Honcho client with a unique workspace
+  const workspaceId = `docs-example-${randomUUID().slice(0, 8)}`;
+  const honcho = new Honcho({
+    environment: "production",
+    workspaceId,
+  });
 
-// Create peers to represent the user and assistant
-const user = await honcho.peer("user");
-const assistant = await honcho.peer("assistant");
+  // Create peers to represent the user and assistant
+  const user = await honcho.peer("user");
+  const assistant = await honcho.peer("assistant");
 
-// Load conversation data from JSON file
-const conversationData = JSON.parse(fs.readFileSync("conversation.json", "utf-8"));
+  // Load conversation data from JSON file
+  const conversationData = JSON.parse(fs.readFileSync("conversation.json", "utf-8"));
 
-// Import historical conversation sessions
-for (const sessionData of conversationData.sessions) {
-  const session = await honcho.session(sessionData.id);
-  await session.addPeers([user, assistant]);
+  // Import historical conversation sessions
+  for (const sessionData of conversationData.sessions) {
+    const session = await honcho.session(sessionData.id);
+    await session.addPeers([user, assistant]);
 
-  // Convert messages to peer messages with correct attribution
-  const messages = [];
-  for (const msg of sessionData.messages) {
-    if (msg.role === "user") {
-      messages.push(user.message(msg.content));
-    } else if (msg.role === "assistant") {
-      messages.push(assistant.message(msg.content));
+    // Convert messages to peer messages with correct attribution
+    const messages = [];
+    for (const msg of sessionData.messages) {
+      if (msg.role === "user") {
+        messages.push(user.message(msg.content));
+      } else if (msg.role === "assistant") {
+        messages.push(assistant.message(msg.content));
+      }
     }
+
+    await session.addMessages(messages);
   }
 
-  await session.addMessages(messages);
+  console.log("Processing conversation history...");
+  const startTime = Date.now();
+  await honcho.pollQueueStatus();
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  console.log(`Done in ${elapsed}s! Querying user insights...\n`);
+
+  // Query insights about the user based on conversation history
+  const response = await user.chat("What should I know about this user? 3 sentences max");
+  console.log(response);
 }
 
-// Wait for Honcho to process the conversation history
-async function waitForProcessing() {
-  let status = await honcho.getDeriverStatus();
-  while (status.pendingWorkUnits > 0 || status.inProgressWorkUnits > 0) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    status = await honcho.pollDeriverStatus();
-  }
-}
-
-console.log("Processing conversation history...");
-const startTime = Date.now();
-await waitForProcessing();
-const elapsed = Math.floor((Date.now() - startTime) / 1000);
-console.log(`Done in ${elapsed}s! Querying user insights...\n`);
-
-// Query insights about the user based on conversation history
-const response = await user.chat("What should I know about this user? 3 sentences max");
-console.log(response);
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});
 
 ```
 </CodeGroup>

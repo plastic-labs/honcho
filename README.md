@@ -89,8 +89,8 @@ response = client.chat.completions.create(
 ### 3. Search for similar messages
 results = alice.search("Math Homework")
 
-### 4. Get a cached representation of a Peer for the Session
-alice_representation = session.working_rep("alice")
+### 4. Get a representation of a Peer for the Session
+alice_representation = session.representation("alice")
 
 ```
 

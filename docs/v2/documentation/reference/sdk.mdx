@@ -602,7 +602,7 @@ const richContext = await session.getContext({
   limitToSession: true,
   searchTopK: 10,
   searchMaxDistance: 0.8,
-  includeMostDerived: true,
+  includeMostFrequent: true,
   maxConclusions: 25
 });
 
@@ -615,7 +615,7 @@ const targetedRep = await session.getRepresentation(alice, { target: bob });
 const searchedRep = await session.getRepresentation("alice", undefined, {
   searchQuery: "preferences",
   searchTopK: 10,
-  includeMostDerived: true
+  includeMostFrequent: true
 });
 
 // Upload a file to create messages
