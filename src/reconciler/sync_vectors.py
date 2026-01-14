@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, bindparam, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.functions import func
 
@@ -62,7 +62,6 @@ async def _get_documents_needing_sync(
     Finds documents where:
     - not soft-deleted (deleted_at is NULL)
     - sync_state is "pending" (never synced or retry needed)
-    - embedding may be NULL (will be re-embedded during reconciliation)
     - Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
 
     Uses FOR UPDATE SKIP LOCKED to prevent concurrent processing.
@@ -160,7 +159,12 @@ async def _sync_documents(
     external_vector_store: VectorStore,
 ) -> tuple[int, int]:
     """
-    Sync a batch of documents to the external vector store.
+    Sync a batch of pending documents to the external vector store.
+
+    Handles three cases for each document:
+    1. Embedding exists in postgres → use it for external upsert
+    2. Embedding missing + need postgres storage → re-embed, write to both stores
+    3. Embedding missing + external-only mode → re-embed, write to external only
 
     Returns (synced_count, failed_count).
     """
@@ -170,125 +174,108 @@ async def _sync_documents(
     synced_count = 0
     failed_count = 0
 
-    # Determine if we need to persist embeddings to postgres
-    # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
-    store_embeddings_in_postgres = (
+    # True when using pgvector OR during migration (dual-write to both stores)
+    store_in_postgres = (
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
-    missing_docs: list[models.Document] = []
-    for doc in documents:
-        if cast(list[float] | None, doc.embedding) is None:
-            missing_docs.append(doc)
-    reembedded_by_id: dict[str, list[float]] = {}
+    # Step 1: Re-embed documents missing embeddings in postgres (cases 2 & 3)
+    docs_needing_embed = [
+        doc for doc in documents if cast(list[float] | None, doc.embedding) is None
+    ]
+    freshly_embedded: dict[str, list[float]] = {}
 
-    if missing_docs:
+    if docs_needing_embed:
         try:
-            # Re-embed all missing documents in one batch
-            contents = [doc.content for doc in missing_docs]
-            embeddings = await embedding_client.simple_batch_embed(contents)
+            contents = [doc.content for doc in docs_needing_embed]
+            new_embeddings = await embedding_client.simple_batch_embed(contents)
 
-            if len(embeddings) != len(missing_docs):
+            if len(new_embeddings) != len(docs_needing_embed):
                 logger.warning(
                     "Re-embedded %s/%s documents; remaining will be retried",
-                    len(embeddings),
-                    len(missing_docs),
+                    len(new_embeddings),
+                    len(docs_needing_embed),
                 )
 
-            for doc, embedding in zip(missing_docs, embeddings, strict=False):
-                reembedded_by_id[doc.id] = embedding
+            for doc, emb in zip(docs_needing_embed, new_embeddings, strict=False):
+                freshly_embedded[doc.id] = emb
 
-            # Write re-embedded vectors to postgres if needed
-            if store_embeddings_in_postgres and reembedded_by_id:
-                for doc_id, embedding in reembedded_by_id.items():
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id == doc_id)
-                        .values(embedding=embedding)
-                    )
+            # Case 2: Write to postgres if needed
+            if store_in_postgres and freshly_embedded:
+                stmt = (
+                    update(models.Document)
+                    .where(models.Document.id == bindparam("doc_id"))
+                    .values(embedding=bindparam("emb"))
+                )
+                await db.execute(
+                    stmt,
+                    [
+                        {"doc_id": doc_id, "emb": emb}
+                        for doc_id, emb in freshly_embedded.items()
+                    ],
+                )
         except Exception:
-            logger.exception(
-                "Failed to re-embed %s documents for reconciliation", len(missing_docs)
-            )
+            logger.exception("Failed to re-embed %s documents", len(docs_needing_embed))
 
-    missing_after_embed: list[models.Document] = []
-    for doc in documents:
-        if (
-            cast(list[float] | None, doc.embedding) is None
-            and doc.id not in reembedded_by_id
-        ):
-            missing_after_embed.append(doc)
-    if missing_after_embed:
-        await _bump_document_sync_attempts(db, missing_after_embed)
-        failed_count += len(missing_after_embed)
+    # Mark documents that failed to get an embedding
+    failed_to_embed = [
+        doc for doc in docs_needing_embed if doc.id not in freshly_embedded
+    ]
+    if failed_to_embed:
+        await _bump_document_sync_attempts(db, failed_to_embed)
+        failed_count += len(failed_to_embed)
 
-    # Group documents by namespace (workspace/observer/observed)
+    # Step 2: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.Document]] = {}
     for doc in documents:
-        namespace = external_vector_store.get_vector_namespace(
+        ns = external_vector_store.get_vector_namespace(
             "document", doc.workspace_name, doc.observer, doc.observed
         )
-        by_namespace.setdefault(namespace, []).append(doc)
+        by_namespace.setdefault(ns, []).append(doc)
 
-    # Sync each namespace batch
     for namespace, docs in by_namespace.items():
-        docs_with_vectors: list[models.Document] = []
-        try:
-            # Build vector records
-            vector_records: list[VectorRecord] = []
-            for doc in docs:
-                doc_embedding = cast(list[float] | None, doc.embedding)
-                embedding = (
-                    doc_embedding
-                    if doc_embedding is not None
-                    else reembedded_by_id.get(doc.id)
-                )
-                if embedding is None:
-                    continue
+        docs_to_sync: list[models.Document] = []
+        vector_records: list[VectorRecord] = []
 
-                vector_records.append(
-                    VectorRecord(
-                        id=doc.id,
-                        embedding=[float(x) for x in embedding],
-                        metadata={
-                            "workspace_name": doc.workspace_name,
-                            "observer": doc.observer,
-                            "observed": doc.observed,
-                            "session_name": doc.session_name,
-                            "level": doc.level,
-                        },
-                    )
-                )
-                docs_with_vectors.append(doc)
-
-            if not vector_records:
+        for doc in docs:
+            # Case 1: use existing embedding, Cases 2&3: use freshly embedded
+            existing = cast(list[float] | None, doc.embedding)
+            embedding = (
+                existing if existing is not None else freshly_embedded.get(doc.id)
+            )
+            if embedding is None:
                 continue
 
-            doc_ids = [doc.id for doc in docs_with_vectors]
-
-            if vector_records:
-                await external_vector_store.upsert_many(namespace, vector_records)
-
-            # Mark as synced
-            await db.execute(
-                update(models.Document)
-                .where(models.Document.id.in_(doc_ids))
-                .values(
-                    sync_state="synced",
-                    last_sync_at=func.now(),
-                    sync_attempts=0,
+            vector_records.append(
+                VectorRecord(
+                    id=doc.id,
+                    embedding=[float(x) for x in embedding],
+                    metadata={
+                        "workspace_name": doc.workspace_name,
+                        "observer": doc.observer,
+                        "observed": doc.observed,
+                        "session_name": doc.session_name,
+                        "level": doc.level,
+                    },
                 )
             )
-            synced_count += len(docs_with_vectors)
+            docs_to_sync.append(doc)
 
-        except Exception:
-            logger.exception(
-                "Failed to sync documents to external vector store %s",
-                namespace,
+        if not vector_records:
+            continue
+
+        try:
+            await external_vector_store.upsert_many(namespace, vector_records)
+            await db.execute(
+                update(models.Document)
+                .where(models.Document.id.in_([d.id for d in docs_to_sync]))
+                .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
-            # Increment attempts and mark as failed if we've hit max attempts
-            await _bump_document_sync_attempts(db, docs_with_vectors)
-            failed_count += len(docs_with_vectors)
+            synced_count += len(docs_to_sync)
+        except Exception:
+            logger.exception("Failed to sync documents to namespace %s", namespace)
+            await _bump_document_sync_attempts(db, docs_to_sync)
+            failed_count += len(docs_to_sync)
 
     return synced_count, failed_count
 
@@ -301,10 +288,10 @@ async def _sync_message_embeddings(
     """
     Sync a batch of pending message embeddings to the external vector store.
 
-    Args:
-        db: Database session
-        embeddings: List of pending MessageEmbedding records to sync
-        external_vector_store: External vector store to sync to
+    Handles three cases for each embedding:
+    1. Embedding exists in postgres → use it for external upsert
+    2. Embedding missing + need postgres storage → re-embed, write to both stores
+    3. Embedding missing + external-only mode → re-embed, write to external only
 
     Returns (synced_count, failed_count).
     """
@@ -314,135 +301,127 @@ async def _sync_message_embeddings(
     synced_count = 0
     failed_count = 0
 
-    # Determine if we need to persist embeddings to postgres
-    # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
-    store_embeddings_in_postgres = (
+    # True when using pgvector OR during migration (dual-write to both stores)
+    store_in_postgres = (
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
-    # Re-embed embeddings that are missing their vector payload
-    missing_embs = [emb for emb in embeddings if emb.embedding is None]
-    reembedded_by_id: dict[int, list[float]] = {}
+    # Step 1: Re-embed message embeddings missing vectors in postgres (cases 2 & 3)
+    embs_needing_embed: list[models.MessageEmbedding] = [
+        emb for emb in embeddings if emb.embedding is None
+    ]
+    freshly_embedded: dict[int, list[float]] = {}
 
-    if missing_embs:
+    if embs_needing_embed:
         try:
-            for emb in missing_embs:
-                new_embedding = await embedding_client.embed(emb.content)
-                reembedded_by_id[emb.id] = new_embedding
+            contents = [emb.content for emb in embs_needing_embed]
+            new_embeddings = await embedding_client.simple_batch_embed(contents)
 
-                # Only persist embeddings to postgres when needed
-                if store_embeddings_in_postgres:
-                    await db.execute(
-                        update(models.MessageEmbedding)
-                        .where(models.MessageEmbedding.id == emb.id)
-                        .values(embedding=new_embedding)
-                    )
+            if len(new_embeddings) != len(embs_needing_embed):
+                logger.warning(
+                    "Re-embedded %s/%s message embeddings; remaining will be retried",
+                    len(new_embeddings),
+                    len(embs_needing_embed),
+                )
+
+            for emb, new_emb in zip(embs_needing_embed, new_embeddings, strict=False):
+                freshly_embedded[emb.id] = new_emb
+
+            # Case 2: Write to postgres if needed
+            if store_in_postgres and freshly_embedded:
+                stmt = (
+                    update(models.MessageEmbedding)
+                    .where(models.MessageEmbedding.id == bindparam("emb_id"))
+                    .values(embedding=bindparam("emb"))
+                )
+                await db.execute(
+                    stmt,
+                    [
+                        {"emb_id": emb_id, "emb": emb}
+                        for emb_id, emb in freshly_embedded.items()
+                    ],
+                )
         except Exception:
             logger.exception(
-                "Failed to re-embed %s message embeddings for reconciliation",
-                len(missing_embs),
+                "Failed to re-embed %s message embeddings", len(embs_needing_embed)
             )
 
-    # Track embeddings that still don't have an embedding after re-embed attempt
-    missing_after_embed: list[models.MessageEmbedding] = []
-    for emb in embeddings:
-        if emb.embedding is None and emb.id not in reembedded_by_id:
-            missing_after_embed.append(emb)
-    if missing_after_embed:
-        await _bump_message_embedding_sync_attempts(db, missing_after_embed)
-        failed_count += len(missing_after_embed)
+    # Mark embeddings that failed to get a vector
+    failed_to_embed: list[models.MessageEmbedding] = [
+        emb for emb in embs_needing_embed if emb.id not in freshly_embedded
+    ]
+    if failed_to_embed:
+        await _bump_message_embedding_sync_attempts(db, failed_to_embed)
+        failed_count += len(failed_to_embed)
 
-    # Compute chunk position for each embedding within its parent message.
-    # Messages can be split into multiple embedding chunks; we need to track
-    # which chunk position (0, 1, 2, ...) each MessageEmbedding represents.
-    # Fetch sibling embedding IDs (lightweight query) to compute correct positions.
+    # Step 2: Compute chunk positions for vector IDs
+    # Messages can be split into multiple chunks; we need {message_id}_{chunk_position}
     message_ids = list({emb.message_id for emb in embeddings})
     sibling_stmt = (
         select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
         .where(models.MessageEmbedding.message_id.in_(message_ids))
         .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
     )
-    sibling_result = await db.execute(sibling_stmt)
-    sibling_rows = sibling_result.all()
+    sibling_rows = (await db.execute(sibling_stmt)).all()
 
-    # Build position mapping from sibling IDs
-    embeddings_by_message_id: dict[str, list[int]] = {}
+    embs_by_message: dict[str, list[int]] = {}
     for emb_id, msg_id in sibling_rows:
-        embeddings_by_message_id.setdefault(msg_id, []).append(emb_id)
+        embs_by_message.setdefault(msg_id, []).append(emb_id)
 
-    chunk_position_by_emb_id: dict[int, int] = {}
-    for emb_ids in embeddings_by_message_id.values():
-        # IDs are already sorted by the query
-        for position, emb_id in enumerate(emb_ids):
-            chunk_position_by_emb_id[emb_id] = position
+    chunk_position: dict[int, int] = {}
+    for emb_ids in embs_by_message.values():
+        for pos, emb_id in enumerate(emb_ids):
+            chunk_position[emb_id] = pos
 
-    # Group embeddings by namespace (workspace)
+    # Step 3: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
     for emb in embeddings:
-        namespace = external_vector_store.get_vector_namespace(
-            "message", emb.workspace_name
-        )
-        by_namespace.setdefault(namespace, []).append(emb)
+        ns = external_vector_store.get_vector_namespace("message", emb.workspace_name)
+        by_namespace.setdefault(ns, []).append(emb)
 
-    # Sync each namespace batch
     for namespace, embs in by_namespace.items():
-        embs_with_vectors: list[models.MessageEmbedding] = []
-        try:
-            # Build vector records with {message_id}_{chunk_index} format
-            vector_records: list[VectorRecord] = []
-            for emb in embs:
-                embedding = (
-                    emb.embedding
-                    if emb.embedding is not None
-                    else reembedded_by_id.get(emb.id)
-                )
-                if embedding is None:
-                    continue
+        embs_to_sync: list[models.MessageEmbedding] = []
+        vector_records: list[VectorRecord] = []
 
-                # Use {message_id}_{chunk_position} as vector ID (consistent with creation)
-                vector_id = f"{emb.message_id}_{chunk_position_by_emb_id[emb.id]}"
-
-                vector_records.append(
-                    VectorRecord(
-                        id=vector_id,
-                        embedding=[float(x) for x in embedding],
-                        metadata={
-                            "message_id": emb.message_id,
-                            "session_name": emb.session_name,
-                            "peer_name": emb.peer_name,
-                        },
-                    )
-                )
-                embs_with_vectors.append(emb)
-
-            if not vector_records:
+        for emb in embs:
+            # Case 1: use existing embedding, Cases 2&3: use freshly embedded
+            existing = emb.embedding
+            embedding = (
+                existing if existing is not None else freshly_embedded.get(emb.id)
+            )
+            if embedding is None:
                 continue
 
-            emb_ids = [emb.id for emb in embs_with_vectors]
-
-            if vector_records:
-                await external_vector_store.upsert_many(namespace, vector_records)
-
-            # Mark as synced
-            await db.execute(
-                update(models.MessageEmbedding)
-                .where(models.MessageEmbedding.id.in_(emb_ids))
-                .values(
-                    sync_state="synced",
-                    last_sync_at=func.now(),
-                    sync_attempts=0,
+            vector_records.append(
+                VectorRecord(
+                    id=f"{emb.message_id}_{chunk_position[emb.id]}",
+                    embedding=[float(x) for x in embedding],
+                    metadata={
+                        "message_id": emb.message_id,
+                        "session_name": emb.session_name,
+                        "peer_name": emb.peer_name,
+                    },
                 )
             )
-            synced_count += len(embs_with_vectors)
+            embs_to_sync.append(emb)
 
+        if not vector_records:
+            continue
+
+        try:
+            await external_vector_store.upsert_many(namespace, vector_records)
+            await db.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id.in_([e.id for e in embs_to_sync]))
+                .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
+            )
+            synced_count += len(embs_to_sync)
         except Exception:
             logger.exception(
-                "Failed to sync message embeddings to external vector store %s",
-                namespace,
+                "Failed to sync message embeddings to namespace %s", namespace
             )
-            # Increment attempts and mark as failed if we've hit max attempts
-            await _bump_message_embedding_sync_attempts(db, embs_with_vectors)
-            failed_count += len(embs_with_vectors)
+            await _bump_message_embedding_sync_attempts(db, embs_to_sync)
+            failed_count += len(embs_to_sync)
 
     return synced_count, failed_count
 
