@@ -10,7 +10,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -204,14 +204,40 @@ class QueueManager:
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
         Get available work units that aren't being processed.
+        For representation tasks, only returns work units with accumulated tokens
+        >= REPRESENTATION_BATCH_MAX_TOKENS (forced batching).
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
         if limit == 0:
             return {}
-        async with tracked_db(
-            "get_available_work_units"
-        ) as db:  # Get number of available workers
+
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        async with tracked_db("get_available_work_units") as db:
+            # Subquery: for representation work units, sum tokens of unprocessed items
+            # Also track max single message token count (for single-large-message case)
+            token_stats_subq = (
+                select(
+                    models.QueueItem.work_unit_key,
+                    func.coalesce(func.sum(models.Message.token_count), 0).label(
+                        "total_tokens"
+                    ),
+                    func.coalesce(func.max(models.Message.token_count), 0).label(
+                        "max_single_token"
+                    ),
+                )
+                .join(
+                    models.Message,
+                    models.QueueItem.message_id == models.Message.id,
+                )
+                .where(~models.QueueItem.processed)
+                .where(models.QueueItem.work_unit_key.isnot(None))
+                .where(models.QueueItem.message_id.isnot(None))
+                .group_by(models.QueueItem.work_unit_key)
+                .subquery()
+            )
+
             query = (
                 select(models.QueueItem.work_unit_key)
                 .limit(limit)
@@ -220,9 +246,24 @@ class QueueManager:
                     models.QueueItem.work_unit_key
                     == models.ActiveQueueSession.work_unit_key,
                 )
+                .outerjoin(
+                    token_stats_subq,
+                    models.QueueItem.work_unit_key == token_stats_subq.c.work_unit_key,
+                )
                 .where(~models.QueueItem.processed)
                 .where(models.QueueItem.work_unit_key.isnot(None))
                 .where(models.ActiveQueueSession.work_unit_key.is_(None))
+                # Forced batching: only claim representation work units if ready
+                .where(
+                    or_(
+                        # Non-representation tasks: process immediately
+                        ~models.QueueItem.work_unit_key.startswith("representation:"),
+                        # Accumulated tokens >= threshold
+                        token_stats_subq.c.total_tokens >= batch_max_tokens,
+                        # Single message >= threshold (prevents infinite wait)
+                        token_stats_subq.c.max_single_token >= batch_max_tokens,
+                    )
+                )
                 .distinct()
             )
 

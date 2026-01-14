@@ -267,8 +267,8 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
-        Field(default=4096, ge=128, le=16_384),
-    ] = 4096
+        Field(default=1024, ge=128, le=16_384),
+    ] = 1024
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -361,6 +361,7 @@ class DialecticSettings(HonchoSettings):
                 MODEL="gemini-3-flash-preview",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=5,
+                TOOL_CHOICE="any",
             ),
             "medium": DialecticLevelSettings(
                 PROVIDER="anthropic",

@@ -1061,3 +1061,286 @@ class TestQueueProcessing:
             processed_batches[1]["payload_count"] == 1
         )  # Third message (exceeds limit)
         assert all(b["task_type"] == "representation" for b in processed_batches)
+
+    @pytest.mark.asyncio
+    async def test_forced_batching_waits_for_threshold(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that representation work units below token threshold are not claimed"""
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        # Create messages with tokens BELOW the threshold
+        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        token_counts = [100, 100, 100]  # Total 300, way below 4096
+
+        messages: list[models.Message] = []
+        for i, token_count in enumerate(token_counts):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Short message {i}",
+                token_count=token_count,
+                seq_in_session=i + 1,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+        for message in messages:
+            await db_session.refresh(message)
+
+        # Create queue items
+        queue_items: list[models.QueueItem] = []
+        for message in messages:
+            payload = create_queue_payload(
+                message=message,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
+            )
+            db_session.add(queue_item)
+            queue_items.append(queue_item)
+
+        await db_session.commit()
+
+        qm = QueueManager()
+
+        # Try to claim work units - should NOT return the representation work unit
+        claimed = await qm.get_and_claim_work_units()
+
+        # The representation work unit should NOT be claimed (tokens below threshold)
+        rep_work_unit_key = queue_items[0].work_unit_key
+        assert rep_work_unit_key not in claimed
+
+        # Now add more messages to exceed the threshold
+        more_messages: list[models.Message] = []
+        for i in range(10):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Longer message {i}",
+                token_count=limit // 2,  # Each message is half the limit
+                seq_in_session=len(messages) + i + 1,
+            )
+            db_session.add(message)
+            more_messages.append(message)
+
+        await db_session.commit()
+        for message in more_messages:
+            await db_session.refresh(message)
+
+        # Add queue items for new messages
+        for message in more_messages:
+            payload = create_queue_payload(
+                message=message,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=rep_work_unit_key,  # Same work unit
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
+            )
+            db_session.add(queue_item)
+
+        await db_session.commit()
+
+        # Now the work unit should be claimable (tokens exceed threshold)
+        claimed2 = await qm.get_and_claim_work_units()
+        assert rep_work_unit_key in claimed2
+
+    @pytest.mark.asyncio
+    async def test_forced_batching_single_large_message(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that a single message >= threshold is immediately claimable"""
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        # Create a single message that exceeds the threshold
+        message = models.Message(
+            session_name=session.name,
+            workspace_name=session.workspace_name,
+            peer_name=peer.name,
+            content="A very long message",
+            token_count=limit + 1000,  # Exceeds threshold
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+        await db_session.refresh(message)
+
+        # Create queue item
+        payload = create_queue_payload(
+            message=message,
+            task_type="representation",
+            observed=peer.name,
+            observer=peer.name,
+        )
+        work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+
+        queue_item = models.QueueItem(
+            session_id=session.id,
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            payload=payload,
+            processed=False,
+            workspace_name=session.workspace_name,
+            message_id=message.id,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+
+        qm = QueueManager()
+
+        # Single large message should be immediately claimable
+        claimed = await qm.get_and_claim_work_units()
+        assert work_unit_key in claimed
+
+    @pytest.mark.asyncio
+    async def test_forced_batching_bypassed_for_summary(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that summary tasks are processed immediately regardless of tokens"""
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        # Create a message with very few tokens
+        message = models.Message(
+            session_name=session.name,
+            workspace_name=session.workspace_name,
+            peer_name=peer.name,
+            content="Short",
+            token_count=10,  # Way below threshold
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+        await db_session.refresh(message)
+
+        # Create a SUMMARY queue item (not representation)
+        payload = create_queue_payload(
+            message=message,
+            task_type="summary",
+            message_seq_in_session=1,
+        )
+        work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+
+        queue_item = models.QueueItem(
+            session_id=session.id,
+            task_type="summary",
+            work_unit_key=work_unit_key,
+            payload=payload,
+            processed=False,
+            workspace_name=session.workspace_name,
+            message_id=message.id,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+
+        qm = QueueManager()
+
+        # Summary should be claimable regardless of token count
+        claimed = await qm.get_and_claim_work_units()
+        assert work_unit_key in claimed
+        assert work_unit_key.startswith("summary:")
+
+    @pytest.mark.asyncio
+    async def test_forced_batching_exact_threshold(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that work units exactly at the threshold are claimable"""
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        # Create messages that sum to exactly the threshold
+        token_counts = [limit // 2, limit // 2]
+
+        messages: list[models.Message] = []
+        for i, token_count in enumerate(token_counts):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Message {i}",
+                token_count=token_count,
+                seq_in_session=i + 1,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+        for message in messages:
+            await db_session.refresh(message)
+
+        # Create queue items
+        work_unit_key = None
+        for message in messages:
+            payload = create_queue_payload(
+                message=message,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+            if work_unit_key is None:
+                work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
+            )
+            db_session.add(queue_item)
+
+        await db_session.commit()
+
+        qm = QueueManager()
+
+        # Work unit exactly at threshold should be claimable
+        claimed = await qm.get_and_claim_work_units()
+        assert work_unit_key is not None
+        assert work_unit_key in claimed
