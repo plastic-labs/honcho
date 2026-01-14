@@ -38,6 +38,9 @@ def prepare_support_external_embeddings(
     verifier.assert_column_exists("message_embeddings", "last_sync_at", exists=False)
     verifier.assert_column_exists("message_embeddings", "sync_attempts", exists=False)
 
+    # Queue workspace_name should be NOT NULL before migration
+    verifier.assert_column_exists("queue", "workspace_name", nullable=False)
+
     # Indexes should not exist
     verifier.assert_indexes_not_exist(INDEXES)
 
@@ -63,6 +66,9 @@ def verify_support_external_embeddings(
     verifier.assert_column_exists("message_embeddings", "sync_state", nullable=False)
     verifier.assert_column_exists("message_embeddings", "last_sync_at", nullable=True)
     verifier.assert_column_exists("message_embeddings", "sync_attempts", nullable=False)
+
+    # Queue workspace_name should now be nullable for system-level tasks
+    verifier.assert_column_exists("queue", "workspace_name", nullable=True)
 
     # All indexes should exist
     verifier.assert_indexes_exist(INDEXES)

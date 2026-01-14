@@ -468,7 +468,10 @@ class QueueManager:
                 if removed and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        if work_unit.task_type in ["representation", "summary"]:
+                        if (
+                            work_unit.task_type in ["representation", "summary"]
+                            and work_unit.workspace_name is not None
+                        ):
                             logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
                             )
@@ -730,7 +733,10 @@ class QueueManager:
             )
             await db.commit()
 
-            if work_unit.task_type in ["representation", "summary"]:
+            if (
+                work_unit.task_type in ["representation", "summary"]
+                and work_unit.workspace_name is not None
+            ):
                 prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,

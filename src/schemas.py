@@ -206,13 +206,6 @@ class WorkspaceCreate(WorkspaceBase):
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
-    @field_validator("name")
-    @classmethod
-    def validate_not_reserved(cls, v: str) -> str:
-        if v == "__system__":
-            raise ValueError("Workspace name is reserved.")
-        return v
-
 
 class WorkspaceGet(WorkspaceBase):
     filters: dict[str, Any] | None = None

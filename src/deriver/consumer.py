@@ -34,6 +34,25 @@ async def process_item(queue_item: models.QueueItem) -> None:
     queue_payload = queue_item.payload
     workspace_name = queue_item.workspace_name
 
+    # Handle reconciler first - it's the only task type that doesn't require workspace_name
+    if task_type == "reconciler":
+        with sentry_sdk.start_transaction(name="process_reconciler_task", op="deriver"):
+            try:
+                validated = ReconcilerPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid reconciler payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_reconciler(validated)
+        return
+
+    # All other task types require a workspace_name
+    if workspace_name is None:
+        raise ValueError(f"{task_type} tasks require a workspace_name")
+
     if task_type == "webhook":
         try:
             validated = WebhookPayload(**queue_payload)
@@ -121,19 +140,6 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_deletion(validated, workspace_name)
-
-    elif task_type == "reconciler":
-        with sentry_sdk.start_transaction(name="process_reconciler_task", op="deriver"):
-            try:
-                validated = ReconcilerPayload(**queue_payload)
-            except ValidationError as e:
-                logger.error(
-                    "Invalid reconciler payload received: %s. Payload: %s",
-                    str(e),
-                    queue_payload,
-                )
-                raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_reconciler(validated)
 
     else:
         raise ValueError(f"Invalid task type: {task_type}")

@@ -9,7 +9,7 @@ class ParsedWorkUnit(BaseModel):
     """Parsed work unit components."""
 
     task_type: str
-    workspace_name: str
+    workspace_name: str | None
     session_name: str | None
     observer: str | None
     observed: str | None
@@ -149,7 +149,7 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             )
         return ParsedWorkUnit(
             task_type=task_type,
-            workspace_name="__system__",
+            workspace_name=None,
             session_name=None,
             observer=None,
             observed=None,

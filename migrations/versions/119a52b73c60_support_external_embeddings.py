@@ -9,6 +9,8 @@ This migration:
    message_embeddings tables for tracking vector store synchronization status.
 4. Adds partial unique index on queue table for reconciler task deduplication,
    ensuring only one pending reconciler task exists per work_unit_key.
+5. Makes workspace_name nullable on queue table for system-level tasks (e.g., reconciler)
+   that don't belong to any specific workspace.
 
 Revision ID: 119a52b73c60
 Revises: 7c0d9a4e3b1f
@@ -22,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
 
-from migrations.utils import column_exists, get_schema, index_exists
+from migrations.utils import column_exists, constraint_exists, get_schema, index_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "119a52b73c60"
@@ -195,10 +197,92 @@ def upgrade() -> None:
             postgresql_where=sa.text("task_type = 'reconciler' AND processed = false"),
         )
 
+    # Make workspace_name nullable on queue table for system-level tasks
+    # This requires dropping and recreating the FK constraint
+    if constraint_exists("queue", "fk_queue_workspace_name", "foreignkey", inspector):
+        op.drop_constraint(
+            "fk_queue_workspace_name", "queue", type_="foreignkey", schema=schema
+        )
+    op.alter_column(
+        "queue",
+        "workspace_name",
+        existing_type=sa.TEXT(),
+        nullable=True,
+        schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_queue_workspace_name",
+        "queue",
+        "workspaces",
+        ["workspace_name"],
+        ["name"],
+        source_schema=schema,
+        referent_schema=schema,
+    )
+
 
 def downgrade() -> None:
     """Remove deleted_at columns and revert embedding columns."""
     inspector = sa.inspect(op.get_bind())
+    conn = op.get_bind()
+
+    # Delete system-level queue items (with NULL workspace_name) before reverting to NOT NULL
+    # First delete any active_queue_sessions referencing these queue items
+    batch_size = 5000
+
+    # Delete active_queue_sessions for queue items with NULL workspace_name
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                DELETE FROM "{schema}".active_queue_sessions
+                WHERE work_unit_key IN (
+                    SELECT work_unit_key FROM "{schema}".queue
+                    WHERE workspace_name IS NULL
+                )
+                LIMIT :batch_size
+                """
+            ),
+            {"batch_size": batch_size},
+        )
+        if result.rowcount == 0:
+            break
+
+    # Delete queue items with NULL workspace_name
+    while True:
+        result = conn.execute(
+            sa.text(
+                f"""
+                DELETE FROM "{schema}".queue
+                WHERE workspace_name IS NULL
+                LIMIT :batch_size
+                """
+            ),
+            {"batch_size": batch_size},
+        )
+        if result.rowcount == 0:
+            break
+
+    # Revert workspace_name to NOT NULL on queue table
+    op.drop_constraint(
+        "fk_queue_workspace_name", "queue", type_="foreignkey", schema=schema
+    )
+    op.alter_column(
+        "queue",
+        "workspace_name",
+        existing_type=sa.TEXT(),
+        nullable=False,
+        schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_queue_workspace_name",
+        "queue",
+        "workspaces",
+        ["workspace_name"],
+        ["name"],
+        source_schema=schema,
+        referent_schema=schema,
+    )
 
     # Drop reconciler queue index if it exists
     if index_exists("queue", "uq_queue_work_unit_key", inspector):

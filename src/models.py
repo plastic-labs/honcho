@@ -478,8 +478,8 @@ class QueueItem(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
+    workspace_name: Mapped[str | None] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=True, index=True
     )
     message_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("messages.id"), nullable=True

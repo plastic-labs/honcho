@@ -15,9 +15,7 @@ from datetime import datetime, timedelta, timezone
 import sentry_sdk
 from pydantic import BaseModel
 from sqlalchemy import exists, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
@@ -25,9 +23,6 @@ from src.dependencies import tracked_db
 from src.models import QueueItem
 
 logger = logging.getLogger(__name__)
-
-# System workspace used for global reconciler tasks
-SYSTEM_WORKSPACE_NAME = "__system__"
 
 
 class ReconcilerTask(BaseModel):
@@ -216,9 +211,6 @@ class ReconcilerScheduler:
             True if a task was enqueued, False if skipped
         """
         async with tracked_db("reconciler_enqueue") as db:
-            # Ensure the system workspace exists (for FK constraint)
-            await self._ensure_system_workspace(db)
-
             # Check if task is already in progress
             in_progress_check = select(
                 exists(
@@ -258,7 +250,7 @@ class ReconcilerScheduler:
                 },
                 session_id=None,
                 task_type="reconciler",
-                workspace_name=SYSTEM_WORKSPACE_NAME,
+                workspace_name=None,
                 message_id=None,
             )
             db.add(queue_item)
@@ -274,10 +266,3 @@ class ReconcilerScheduler:
 
             logger.info("Enqueued reconciler task: %s", task.name)
             return True
-
-    async def _ensure_system_workspace(self, db: AsyncSession) -> None:
-        """Ensure the system workspace exists for reconciler tasks."""
-        # Use upsert to create workspace if it doesn't exist
-        stmt = pg_insert(models.Workspace).values(name=SYSTEM_WORKSPACE_NAME)
-        stmt = stmt.on_conflict_do_nothing(index_elements=["name"])
-        await db.execute(stmt)
