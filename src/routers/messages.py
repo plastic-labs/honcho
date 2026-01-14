@@ -80,6 +80,9 @@ async def parse_upload_form(
 
 
 @router.post("", response_model=list[schemas.Message], status_code=201)
+@router.post(
+    "/", response_model=list[schemas.Message], status_code=201, include_in_schema=False
+)  # backwards compatibility with pre-2.6.0 faulty route endpoint
 async def create_messages_for_session(
     background_tasks: BackgroundTasks,
     messages: schemas.MessageBatchCreate,
