@@ -215,56 +215,53 @@ class QueueManager:
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
 
         async with tracked_db("get_available_work_units") as db:
-            # Subquery: for representation work units, sum tokens of unprocessed items
-            # Also track max single message token count (for single-large-message case)
+            representation_prefix = "representation:"
             token_stats_subq = (
                 select(
                     models.QueueItem.work_unit_key,
-                    func.coalesce(func.sum(models.Message.token_count), 0).label(
-                        "total_tokens"
-                    ),
-                    func.coalesce(func.max(models.Message.token_count), 0).label(
-                        "max_single_token"
-                    ),
+                    func.sum(models.Message.token_count).label("total_tokens"),
                 )
                 .join(
                     models.Message,
                     models.QueueItem.message_id == models.Message.id,
                 )
                 .where(~models.QueueItem.processed)
-                .where(models.QueueItem.work_unit_key.isnot(None))
-                .where(models.QueueItem.message_id.isnot(None))
+                .where(models.QueueItem.work_unit_key.startswith(representation_prefix))
+                .group_by(models.QueueItem.work_unit_key)
+                .subquery()
+            )
+
+            work_units_subq = (
+                select(models.QueueItem.work_unit_key)
+                .where(~models.QueueItem.processed)
                 .group_by(models.QueueItem.work_unit_key)
                 .subquery()
             )
 
             query = (
-                select(models.QueueItem.work_unit_key)
+                select(work_units_subq.c.work_unit_key)
                 .limit(limit)
                 .outerjoin(
-                    models.ActiveQueueSession,
-                    models.QueueItem.work_unit_key
-                    == models.ActiveQueueSession.work_unit_key,
-                )
-                .outerjoin(
                     token_stats_subq,
-                    models.QueueItem.work_unit_key == token_stats_subq.c.work_unit_key,
+                    work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
                 )
-                .where(~models.QueueItem.processed)
-                .where(models.QueueItem.work_unit_key.isnot(None))
-                .where(models.ActiveQueueSession.work_unit_key.is_(None))
-                # Forced batching: only claim representation work units if ready
+                .where(
+                    ~select(models.ActiveQueueSession.id)
+                    .where(
+                        models.ActiveQueueSession.work_unit_key
+                        == work_units_subq.c.work_unit_key
+                    )
+                    .exists()
+                )
                 .where(
                     or_(
-                        # Non-representation tasks: process immediately
-                        ~models.QueueItem.work_unit_key.startswith("representation:"),
-                        # Accumulated tokens >= threshold
-                        token_stats_subq.c.total_tokens >= batch_max_tokens,
-                        # Single message >= threshold (prevents infinite wait)
-                        token_stats_subq.c.max_single_token >= batch_max_tokens,
+                        ~work_units_subq.c.work_unit_key.startswith(
+                            representation_prefix
+                        ),
+                        func.coalesce(token_stats_subq.c.total_tokens, 0)
+                        >= batch_max_tokens,
                     )
                 )
-                .distinct()
             )
 
             result = await db.execute(query)
