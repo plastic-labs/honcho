@@ -5,7 +5,7 @@ export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/mess
 export { Honcho } from './client'
 export { Conclusion, ConclusionScope } from './conclusions'
 export { Page } from './pagination'
-export { Peer, PeerContext } from './peer'
+export { Peer, type PeerContextResponse } from './peer'
 export { Session, SessionPeerConfig } from './session'
 export {
   SessionContext,

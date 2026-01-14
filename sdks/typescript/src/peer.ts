@@ -1,12 +1,11 @@
 import type HonchoCore from '@honcho-ai/core'
+import type { PeerContextResponse } from '@honcho-ai/core/resources/workspaces/peers'
+export type { PeerContextResponse }
+
 import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { ConclusionScope } from './conclusions'
 import { Page } from './pagination'
-import {
-  Representation,
-  type RepresentationData,
-  type RepresentationOptions,
-} from './representation'
+import type { RepresentationOptions } from './representation'
 import { Session } from './session'
 import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
 import {
@@ -583,14 +582,14 @@ export class Peer {
   async getContext(
     target?: string | Peer,
     options?: RepresentationOptions
-  ): Promise<PeerContext> {
+  ): Promise<PeerContextResponse> {
     const targetId = target
       ? typeof target === 'string'
         ? target
         : target.id
       : undefined
 
-    const response = await this._client.workspaces.peers.context(
+    return await this._client.workspaces.peers.context(
       this.workspaceId,
       this.id,
       {
@@ -601,10 +600,6 @@ export class Peer {
         include_most_frequent: options?.includeMostFrequent,
         max_conclusions: options?.maxConclusions,
       }
-    )
-
-    return PeerContext.fromApiResponse(
-      response as unknown as Record<string, unknown>
     )
   }
 
@@ -673,78 +668,5 @@ export class Peer {
    */
   toString(): string {
     return `Peer(id='${this.id}')`
-  }
-}
-
-/**
- * Context for a peer, including representation and peer card.
- *
- * This class holds both the working representation and peer card for a peer,
- * typically returned from the getContext API call.
- */
-export class PeerContext {
-  /**
-   * The ID of the observer peer.
-   */
-  readonly peerId: string
-
-  /**
-   * The ID of the target peer being observed.
-   */
-  readonly targetId: string
-
-  /**
-   * The working representation (may be null if no conclusions exist).
-   */
-  readonly representation: Representation | null
-
-  /**
-   * List of peer card strings (may be null if no card exists).
-   */
-  readonly peerCard: string[] | null
-
-  constructor(
-    peerId: string,
-    targetId: string,
-    representation: Representation | null,
-    peerCard: string[] | null
-  ) {
-    this.peerId = peerId
-    this.targetId = targetId
-    this.representation = representation
-    this.peerCard = peerCard
-  }
-
-  /**
-   * Create a PeerContext from an API response.
-   *
-   * @param response - API response object with peer_id, target_id, representation, and peer_card
-   * @returns A new PeerContext instance
-   */
-  static fromApiResponse(response: Record<string, unknown>): PeerContext {
-    const peerId = (response.peer_id as string | undefined) ?? ''
-    const targetId = (response.target_id as string | undefined) ?? ''
-
-    let representation: Representation | null = null
-    if (response.representation) {
-      representation = Representation.fromData(
-        response.representation as RepresentationData
-      )
-    }
-
-    const peerCard = (response.peer_card as string[] | undefined) ?? null
-
-    return new PeerContext(peerId, targetId, representation, peerCard)
-  }
-
-  /**
-   * Return a string representation of the PeerContext.
-   *
-   * @returns A string representation suitable for debugging
-   */
-  toString(): string {
-    const hasRep = this.representation !== null
-    const hasCard = this.peerCard !== null && this.peerCard.length > 0
-    return `PeerContext(peerId='${this.peerId}', targetId='${this.targetId}', hasRepresentation=${hasRep}, hasPeerCard=${hasCard})`
   }
 }
