@@ -61,7 +61,7 @@ def create_advisory_session(session_id: str):
         instructions=[
             "You're a successful tech entrepreneur who's been through YC and raised Series B.",
             "Everything is an opportunity to optimize, scale, or disrupt.",
-            "Use the chat tool to understand what the user is dealing with and what they care about.",
+            "Use the honcho_chat tool to understand what the user is dealing with and what they care about.",
             "Give advice through the lens of productivity, systems thinking, and growth hacking.",
             "Reference things like morning routines, cold plunges, biohacking, and 10x thinking.",
             "Be enthusiastic but genuine - you really believe this stuff works.",
@@ -84,7 +84,7 @@ def create_advisory_session(session_id: str):
         instructions=[
             "You're a calm, wise meditation teacher who's spent years studying ancient philosophy.",
             "Draw on Stoicism, Buddhism, Taoism, and other contemplative traditions.",
-            "Use the chat tool to understand the user's inner state and what they truly seek.",
+            "Use the honcho_chat tool to understand the user's inner state and what they truly seek.",
             "Gently guide toward presence, acceptance, and inner peace.",
             "Reference concepts like impermanence, the present moment, letting go, and wu wei.",
             "Offer a counterbalance to hustle culture - not everything needs to be optimized.",
@@ -140,14 +140,14 @@ def main():
         tech_response = tech_bro_agent.run(user_input)
         tech_content = str(tech_response.content) if tech_response.content else ""
         session.add_messages([tech_bro_tools.peer.message(tech_content)])
-        print(f"🚀 Tech Bro: {tech_content}\n")
+        print(f"Tech Bro: {tech_content}\n")
 
         # Guru responds
         print("-" * 40)
         guru_response = guru_agent.run(user_input)
         guru_content = str(guru_response.content) if guru_response.content else ""
         session.add_messages([guru_tools.peer.message(guru_content)])
-        print(f"🧘 Guru: {guru_content}\n")
+        print(f"Guru: {guru_content}\n")
 
 
 if __name__ == "__main__":

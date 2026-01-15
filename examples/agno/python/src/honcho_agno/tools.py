@@ -91,12 +91,12 @@ class HonchoTools(Toolkit):
         # Create or get session
         self.session: Session = self.honcho.session(self.session_id)
 
-        # Register tools
-        self.register(self.get_context)
-        self.register(self.search_messages)
-        self.register(self.chat)
+        # Register tools with honcho_ prefix to avoid conflicts with other toolkits
+        self.register(self.honcho_get_context)
+        self.register(self.honcho_search_messages)
+        self.register(self.honcho_chat)
 
-    def get_context(
+    def honcho_get_context(
         self,
         tokens: int | None = None,
         include_summary: bool = True,
@@ -122,7 +122,7 @@ class HonchoTools(Toolkit):
             logger.exception("Error retrieving context")
             return f"Error retrieving context: {e!s}"
 
-    def search_messages(
+    def honcho_search_messages(
         self,
         query: str,
         limit: int = 10,
@@ -158,7 +158,7 @@ class HonchoTools(Toolkit):
             logger.exception("Error searching messages")
             return f"Error searching messages: {e!s}"
 
-    def chat(self, query: str) -> str:
+    def honcho_chat(self, query: str) -> str:
         """
         Ask a question about what was discussed in this conversation.
 

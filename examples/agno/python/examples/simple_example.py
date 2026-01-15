@@ -47,8 +47,8 @@ def main():
         tools=[honcho_tools],
         description="A programming mentor that remembers user interests and progress.",
         instructions=[
-            "Use the chat tool to understand the user's preferences and interests",
-            "Use get_context if you need raw conversation history",
+            "Use the honcho_chat tool to understand the user's preferences and interests",
+            "Use honcho_get_context if you need raw conversation history",
         ],
     )
 
@@ -63,7 +63,7 @@ def main():
     print("\nAsking the agent for recommendations...")
     response = agent.run(
         "Based on what you know about the user, what should they learn next? "
-        "Use the chat tool to understand their interests first."
+        "Use the honcho_chat tool to understand their interests first."
     )
 
     # Save the assistant's response to Honcho
@@ -80,7 +80,7 @@ def main():
     print("\n" + "=" * 60)
     print("SESSION CONTEXT")
     print("=" * 60)
-    print(honcho_tools.get_context())
+    print(honcho_tools.honcho_get_context())
 
 
 if __name__ == "__main__":

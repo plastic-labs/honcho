@@ -59,9 +59,9 @@ The `HonchoTools` toolkit provides three memory tools:
 
 | Tool | Description |
 |------|-------------|
-| `get_context` | Retrieve conversation context within token limits |
-| `search_messages` | Semantic search through past messages |
-| `chat` | Query Honcho for synthesized insights about the conversation |
+| `honcho_get_context` | Retrieve conversation context within token limits |
+| `honcho_search_messages` | Semantic search through past messages |
+| `honcho_chat` | Query Honcho for synthesized insights about the conversation |
 
 ## Configuration
 
@@ -114,34 +114,34 @@ Configure via `.env` file in the root honcho directory:
 
 ## Tool Details
 
-### get_context
+### honcho_get_context
 
 Retrieve recent conversation context.
 
 ```python
-context = honcho_tools.get_context(
+context = honcho_tools.honcho_get_context(
     tokens=2000,           # Max tokens to include (optional)
     include_summary=True,  # Include session summary (default: True)
 )
 ```
 
-### search_messages
+### honcho_search_messages
 
 Search through past messages semantically.
 
 ```python
-results = honcho_tools.search_messages(
+results = honcho_tools.honcho_search_messages(
     query="programming preferences",
     limit=10,  # Max results (default: 10)
 )
 ```
 
-### chat
+### honcho_chat
 
 Ask questions about the conversation using Honcho's reasoning.
 
 ```python
-insights = honcho_tools.chat(
+insights = honcho_tools.honcho_chat(
     query="What programming languages does the user prefer?"
 )
 ```
@@ -213,10 +213,7 @@ uv run pytest
 
 ### Run Examples
 
-Examples require additional dependencies:
-
 ```bash
-uv sync --extra examples
 uv run python examples/simple_example.py
 ```
 
