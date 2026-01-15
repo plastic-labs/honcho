@@ -82,10 +82,6 @@ export interface PeerRepresentationParams {
   max_conclusions?: number
 }
 
-export interface RepresentationResponse {
-  representation: string
-}
-
 export interface PeerCardParams {
   target?: string
 }
@@ -189,6 +185,10 @@ export interface SessionSummariesResponse {
 // Message Types
 // =============================================================================
 
+/**
+ * Raw API response for a message (snake_case).
+ * Use the Message class for SDK consumers.
+ */
 export interface MessageResponse {
   id: string
   content: string
@@ -266,10 +266,48 @@ export interface ConclusionQueryParams {
 }
 
 // =============================================================================
+// Representation Types
+// =============================================================================
+
+export interface RepresentationResponse {
+  representation: string
+}
+
+/**
+ * Options for representation retrieval.
+ */
+export interface RepresentationOptions {
+  /**
+   * Semantic search query to filter relevant conclusions.
+   */
+  searchQuery?: string
+
+  /**
+   * Number of semantically relevant conclusions to return.
+   */
+  searchTopK?: number
+
+  /**
+   * Maximum semantic distance for search results (0.0-1.0).
+   */
+  searchMaxDistance?: number
+
+  /**
+   * Whether to include the most frequent conclusions.
+   */
+  includeMostFrequent?: boolean
+
+  /**
+   * Maximum number of conclusions to include.
+   */
+  maxConclusions?: number
+}
+
+// =============================================================================
 // Queue Types
 // =============================================================================
 
-export interface SessionQueueStatus {
+export interface SessionQueueStatusResponse {
   session_id: string | null
   total_work_units: number
   completed_work_units: number
@@ -282,13 +320,35 @@ export interface QueueStatusResponse {
   completed_work_units: number
   in_progress_work_units: number
   pending_work_units: number
-  sessions?: Record<string, SessionQueueStatus>
+  sessions?: Record<string, SessionQueueStatusResponse>
 }
 
 export interface QueueStatusParams {
   observer_id?: string
   sender_id?: string
   session_id?: string
+}
+
+/**
+ * Session queue status with camelCase properties for SDK consumers.
+ */
+export interface SessionQueueStatus {
+  sessionId: string | null
+  totalWorkUnits: number
+  completedWorkUnits: number
+  inProgressWorkUnits: number
+  pendingWorkUnits: number
+}
+
+/**
+ * Queue status with camelCase properties for SDK consumers.
+ */
+export interface QueueStatus {
+  totalWorkUnits: number
+  completedWorkUnits: number
+  inProgressWorkUnits: number
+  pendingWorkUnits: number
+  sessions?: Record<string, SessionQueueStatus>
 }
 
 // =============================================================================

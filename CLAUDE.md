@@ -84,6 +84,23 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - Typechecking: `uv run basedpyright`
 - Format code: `uv run ruff format src/`
 
+### SDK Testing
+
+**IMPORTANT: Never run `bun test` directly for TypeScript SDK tests.** The SDK tests require a running server and are orchestrated via pytest from the monorepo root.
+
+To run TypeScript SDK tests:
+
+```bash
+# From the monorepo root (not from sdks/typescript/)
+uv run pytest tests/ -k typescript
+```
+
+To type-check the TypeScript SDK without running tests:
+
+```bash
+cd sdks/typescript && bun run tsc --noEmit
+```
+
 ### Code Style
 
 - Follow isort conventions with absolute imports preferred

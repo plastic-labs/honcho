@@ -4,7 +4,7 @@
  * Tests for Server-Sent Events (SSE) streaming responses.
  *
  * Endpoints covered:
- * - POST /v1/workspaces/:id/peers/:id/chat (with stream=true)
+ * - POST /v1/workspaces/:id/peers/:id/chat (via chatStream())
  *
  * These tests verify:
  * - Streaming responses are properly parsed
@@ -15,7 +15,6 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { Honcho } from '../src'
-import type { DialecticStreamResponse } from '../src/http/streaming'
 import { createTestClient, requireServer } from './setup'
 import { collectStream } from './helpers'
 
@@ -39,7 +38,7 @@ describe('Streaming', () => {
   // ===========================================================================
 
   describe('POST /peers/:id/chat (streaming)', () => {
-    test('chat with stream=true returns async iterable', async () => {
+    test('chatStream() returns async iterable', async () => {
       const peer = await client.peer('stream-basic-peer')
       const session = await client.session('stream-basic-session')
       await session.addPeers([peer.id])
@@ -47,19 +46,11 @@ describe('Streaming', () => {
         peer.message('I enjoy playing chess and reading mystery novels'),
       ])
 
-      const response = await peer.chat('What are this user\'s hobbies?', {
-        stream: true,
-      })
+      const response = await peer.chatStream("What are this user's hobbies?")
 
-      // Should return an async iterable, not a string
+      // Should return an async iterable
       expect(response).not.toBeNull()
-      expect(typeof response).not.toBe('string')
-
-      // Type narrowing
-      if (response !== null && typeof response !== 'string') {
-        // Should be async iterable
-        expect(Symbol.asyncIterator in response).toBe(true)
-      }
+      expect(Symbol.asyncIterator in response).toBe(true)
     })
 
     test('streaming response yields chunks', async () => {
@@ -70,21 +61,16 @@ describe('Streaming', () => {
         peer.message('My favorite programming language is TypeScript'),
       ])
 
-      const response = await peer.chat('What programming language?', {
-        stream: true,
-      })
+      const response = await peer.chatStream('What programming language?')
 
-      if (response !== null && typeof response !== 'string') {
-        const chunks: string[] = []
-
-        for await (const chunk of response) {
-          chunks.push(chunk)
-        }
-
-        // Should have received some chunks
-        // (The actual content depends on the server/model behavior)
-        expect(Array.isArray(chunks)).toBe(true)
+      const chunks: string[] = []
+      for await (const chunk of response) {
+        chunks.push(chunk)
       }
+
+      // Should have received some chunks
+      // (The actual content depends on the server/model behavior)
+      expect(Array.isArray(chunks)).toBe(true)
     })
 
     test('streaming chunks combine to full response', async () => {
@@ -95,16 +81,11 @@ describe('Streaming', () => {
         peer.message('I live in San Francisco and work as a software engineer'),
       ])
 
-      const response = await peer.chat('Where does this user live?', {
-        stream: true,
-      })
+      const response = await peer.chatStream('Where does this user live?')
+      const fullResponse = await collectStream(response)
 
-      if (response !== null && typeof response !== 'string') {
-        const fullResponse = await collectStream(response)
-
-        // Should be a non-empty string when combined
-        expect(typeof fullResponse).toBe('string')
-      }
+      // Should be a non-empty string when combined
+      expect(typeof fullResponse).toBe('string')
     })
 
     test('streaming with session scope', async () => {
@@ -115,18 +96,15 @@ describe('Streaming', () => {
         peer.message('In this session, I am discussing project planning'),
       ])
 
-      const response = await peer.chat('What is being discussed?', {
-        stream: true,
+      const response = await peer.chatStream('What is being discussed?', {
         session: session,
       })
 
-      if (response !== null && typeof response !== 'string') {
-        const chunks: string[] = []
-        for await (const chunk of response) {
-          chunks.push(chunk)
-        }
-        expect(Array.isArray(chunks)).toBe(true)
+      const chunks: string[] = []
+      for await (const chunk of response) {
+        chunks.push(chunk)
       }
+      expect(Array.isArray(chunks)).toBe(true)
     })
 
     test('streaming with target peer', async () => {
@@ -138,15 +116,13 @@ describe('Streaming', () => {
         target.message('I am the target peer sharing information'),
       ])
 
-      const response = await observer.chat('What do you know about this user?', {
-        stream: true,
-        target: target,
-      })
+      const response = await observer.chatStream(
+        'What do you know about this user?',
+        { target: target }
+      )
 
-      if (response !== null && typeof response !== 'string') {
-        const collected = await collectStream(response)
-        expect(typeof collected).toBe('string')
-      }
+      const collected = await collectStream(response)
+      expect(typeof collected).toBe('string')
     })
 
     test('streaming with reasoning level', async () => {
@@ -155,18 +131,15 @@ describe('Streaming', () => {
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Complex information here')])
 
-      const response = await peer.chat('Analyze this user', {
-        stream: true,
+      const response = await peer.chatStream('Analyze this user', {
         reasoningLevel: 'medium',
       })
 
-      if (response !== null && typeof response !== 'string') {
-        const chunks: string[] = []
-        for await (const chunk of response) {
-          chunks.push(chunk)
-        }
-        expect(Array.isArray(chunks)).toBe(true)
+      const chunks: string[] = []
+      for await (const chunk of response) {
+        chunks.push(chunk)
       }
+      expect(Array.isArray(chunks)).toBe(true)
     })
   })
 
@@ -181,25 +154,23 @@ describe('Streaming', () => {
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Test content')])
 
-      const response = await peer.chat('Test query', { stream: true })
+      const response = await peer.chatStream('Test query')
 
-      if (response !== null && typeof response !== 'string') {
-        // First consumption
-        const first: string[] = []
-        for await (const chunk of response) {
-          first.push(chunk)
-        }
-
-        // Second consumption should yield nothing (stream exhausted)
-        const second: string[] = []
-        for await (const chunk of response) {
-          second.push(chunk)
-        }
-
-        // Note: Behavior depends on implementation
-        // Some streams throw, others just return empty
-        expect(Array.isArray(second)).toBe(true)
+      // First consumption
+      const first: string[] = []
+      for await (const chunk of response) {
+        first.push(chunk)
       }
+
+      // Second consumption should yield nothing (stream exhausted)
+      const second: string[] = []
+      for await (const chunk of response) {
+        second.push(chunk)
+      }
+
+      // Note: Behavior depends on implementation
+      // Some streams throw, others just return empty
+      expect(Array.isArray(second)).toBe(true)
     })
 
     test('early break from stream', async () => {
@@ -208,20 +179,18 @@ describe('Streaming', () => {
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Long content here')])
 
-      const response = await peer.chat('Query', { stream: true })
+      const response = await peer.chatStream('Query')
 
-      if (response !== null && typeof response !== 'string') {
-        let chunkCount = 0
-        for await (const chunk of response) {
-          chunkCount++
-          if (chunkCount >= 2) {
-            break // Exit early
-          }
+      let chunkCount = 0
+      for await (const chunk of response) {
+        chunkCount++
+        if (chunkCount >= 2) {
+          break // Exit early
         }
-
-        // Should have exited early without error
-        expect(chunkCount).toBeLessThanOrEqual(2)
       }
+
+      // Should have exited early without error
+      expect(chunkCount).toBeLessThanOrEqual(2)
     })
   })
 
@@ -230,30 +199,28 @@ describe('Streaming', () => {
   // ===========================================================================
 
   describe('Streaming vs non-streaming', () => {
-    test('non-streaming returns string directly', async () => {
+    test('chat() returns string directly', async () => {
       const peer = await client.peer('nonstream-peer')
       const session = await client.session('nonstream-session')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Some user preferences')])
 
-      const response = await peer.chat('What are the preferences?', {
-        stream: false,
-      })
+      const response = await peer.chat('What are the preferences?')
 
       // Non-streaming returns string or null directly
       expect(response === null || typeof response === 'string').toBe(true)
     })
 
-    test('default is non-streaming', async () => {
-      const peer = await client.peer('default-stream-peer')
-      const session = await client.session('default-stream-session')
+    test('chatStream() returns async iterable', async () => {
+      const peer = await client.peer('stream-method-peer')
+      const session = await client.session('stream-method-session')
       await session.addPeers([peer.id])
-      await session.addMessages([peer.message('Default behavior test')])
+      await session.addMessages([peer.message('Stream method test')])
 
-      const response = await peer.chat('Query without stream option')
+      const response = await peer.chatStream('Query with stream method')
 
-      // Default should be non-streaming (string or null)
-      expect(response === null || typeof response === 'string').toBe(true)
+      // Streaming returns async iterable
+      expect(Symbol.asyncIterator in response).toBe(true)
     })
   })
 
@@ -266,34 +233,27 @@ describe('Streaming', () => {
       const peer = await client.peer('stream-minimal-peer')
 
       // No session data, representation will be empty
-      const response = await peer.chat('What do you know?', { stream: true })
+      const response = await peer.chatStream('What do you know?')
 
       // Should still return an iterable (might yield empty or null-like content)
-      if (response !== null && typeof response !== 'string') {
-        const chunks: string[] = []
-        for await (const chunk of response) {
-          chunks.push(chunk)
-        }
-        expect(Array.isArray(chunks)).toBe(true)
+      const chunks: string[] = []
+      for await (const chunk of response) {
+        chunks.push(chunk)
       }
+      expect(Array.isArray(chunks)).toBe(true)
     })
 
-    test('streaming response type narrowing', async () => {
+    test('separate methods have distinct return types', async () => {
       const peer = await client.peer('stream-typing-peer')
 
-      const streamResponse = await peer.chat('Query', { stream: true })
-      const nonStreamResponse = await peer.chat('Query', { stream: false })
+      const streamResponse = await peer.chatStream('Query')
+      const nonStreamResponse = await peer.chat('Query')
 
-      // Type narrowing should work
-      if (streamResponse !== null && typeof streamResponse !== 'string') {
-        // This is DialecticStreamResponse
-        expect(Symbol.asyncIterator in streamResponse).toBe(true)
-      }
+      // chatStream() returns DialecticStreamResponse (async iterable)
+      expect(Symbol.asyncIterator in streamResponse).toBe(true)
 
-      if (nonStreamResponse !== null) {
-        // This should be string
-        expect(typeof nonStreamResponse).toBe('string')
-      }
+      // chat() returns string | null
+      expect(nonStreamResponse === null || typeof nonStreamResponse === 'string').toBe(true)
     })
   })
 })

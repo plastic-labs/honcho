@@ -134,7 +134,8 @@ describe('Conclusions', () => {
         { content: 'Conclusion B', sessionId: session },
       ])
 
-      const conclusions = await peer.conclusions.list()
+      const page = await peer.conclusions.list()
+      const conclusions = page.items
 
       expect(conclusions.length).toBeGreaterThanOrEqual(2)
       // All should be self-conclusions
@@ -156,10 +157,10 @@ describe('Conclusions', () => {
         }))
       )
 
-      // Get with small page size
-      const page1 = await peer.conclusions.list(1, 2)
+      // Get with small page size using options object
+      const page1 = await peer.conclusions.list({ page: 1, size: 2 })
 
-      expect(page1.length).toBeLessThanOrEqual(2)
+      expect(page1.items.length).toBeLessThanOrEqual(2)
     })
 
     test('list scoped to session', async () => {
@@ -172,7 +173,8 @@ describe('Conclusions', () => {
         { content: 'Session 2 conclusion', sessionId: session2 },
       ])
 
-      const conclusions = await peer.conclusions.list(1, 50, session1)
+      const page = await peer.conclusions.list({ page: 1, size: 50, session: session1 })
+      const conclusions = page.items
 
       // All results should be from session1
       for (const c of conclusions) {
@@ -190,7 +192,8 @@ describe('Conclusions', () => {
         sessionId: session,
       })
 
-      const conclusions = await observer.conclusionsOf(target).list()
+      const page = await observer.conclusionsOf(target).list()
+      const conclusions = page.items
 
       expect(conclusions.length).toBeGreaterThanOrEqual(1)
       for (const c of conclusions) {
@@ -293,8 +296,8 @@ describe('Conclusions', () => {
       await peer.conclusions.delete(conclusion.id)
 
       // Should not appear in list
-      const remaining = await peer.conclusions.list()
-      const ids = remaining.map((c) => c.id)
+      const page = await peer.conclusions.list()
+      const ids = page.items.map((c) => c.id)
       expect(ids).not.toContain(conclusion.id)
     })
   })
@@ -303,7 +306,7 @@ describe('Conclusions', () => {
   // Representation from Scope
   // ===========================================================================
 
-  describe('getRepresentation from scope', () => {
+  describe('representation from scope', () => {
     test('returns representation for self-scope', async () => {
       const peer = await client.peer('repr-self-scope-peer', { metadata: {} })
       const session = await client.session('repr-self-scope-session', { metadata: {} })
@@ -313,7 +316,7 @@ describe('Conclusions', () => {
         sessionId: session,
       })
 
-      const representation = await peer.conclusions.getRepresentation()
+      const representation = await peer.conclusions.representation()
 
       expect(typeof representation).toBe('string')
     })
@@ -330,7 +333,7 @@ describe('Conclusions', () => {
 
       const representation = await observer
         .conclusionsOf(target)
-        .getRepresentation()
+        .representation()
 
       expect(typeof representation).toBe('string')
     })
@@ -338,7 +341,7 @@ describe('Conclusions', () => {
     test('representation with options', async () => {
       const peer = await client.peer('repr-options-scope-peer', { metadata: {} })
 
-      const representation = await peer.conclusions.getRepresentation({
+      const representation = await peer.conclusions.representation({
         searchQuery: 'preferences',
         searchTopK: 5,
         maxConclusions: 20,

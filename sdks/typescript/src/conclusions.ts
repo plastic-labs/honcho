@@ -1,16 +1,23 @@
+import { API_VERSION } from './api-version'
 import type { HonchoHTTPClient } from './http/client'
-import type { RepresentationOptions } from './representation'
+import { Page } from './pagination'
 import type { Session } from './session'
-import type { ConclusionCreateParam } from './types'
-import {
-  API_VERSION,
-  type ConclusionResponse,
-  type PageResponse,
-  type RepresentationResponse,
-} from './types'
+import type {
+  ConclusionResponse,
+  PageResponse,
+  RepresentationOptions,
+  RepresentationResponse,
+} from './types/api'
 
-// Re-export for consumers who import from this module
-export type { RepresentationOptions, ConclusionCreateParam }
+/**
+ * Parameters for creating a conclusion.
+ */
+export interface ConclusionCreateParam {
+  /** The conclusion content/text */
+  content: string
+  /** The session this conclusion relates to (ID string or Session object) */
+  sessionId: string | Session
+}
 
 /**
  * A conclusion from Honcho's reasoning system.
@@ -44,12 +51,12 @@ export class Conclusion {
 
   static fromApiResponse(data: ConclusionResponse): Conclusion {
     return new Conclusion(
-      data.id ?? '',
-      data.content ?? '',
-      data.observer_id ?? '',
-      data.observed_id ?? '',
-      data.session_id ?? '',
-      data.created_at ?? ''
+      data.id,
+      data.content,
+      data.observer_id,
+      data.observed_id,
+      data.session_id,
+      data.created_at
     )
   }
 
@@ -156,16 +163,22 @@ export class ConclusionScope {
 
   /**
    * List conclusions in this scope.
+   *
+   * @param options - Optional configuration for the list request
+   * @param options.page - Page number (1-indexed, default: 1)
+   * @param options.size - Number of items per page (default: 50)
+   * @param options.session - Optional session (ID string or Session object) to filter by
+   * @returns Promise resolving to a Page of Conclusion objects
    */
-  async list(
-    page: number = 1,
-    size: number = 50,
+  async list(options?: {
+    page?: number
+    size?: number
     session?: string | Session
-  ): Promise<Conclusion[]> {
-    const resolvedSessionId = session
-      ? typeof session === 'string'
-        ? session
-        : session.id
+  }): Promise<Page<Conclusion, ConclusionResponse>> {
+    const resolvedSessionId = options?.session
+      ? typeof options.session === 'string'
+        ? options.session
+        : options.session.id
       : undefined
     const filters: Record<string, unknown> = {
       observer_id: this.observer,
@@ -175,10 +188,23 @@ export class ConclusionScope {
       filters.session_id = resolvedSessionId
     }
 
-    const response = await this._list({ filters, page, size })
+    const response = await this._list({
+      filters,
+      page: options?.page ?? 1,
+      size: options?.size ?? 50,
+    })
 
-    return (response.items ?? []).map((item) =>
-      Conclusion.fromApiResponse(item)
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<ConclusionResponse>> => {
+      return this._list({ filters, page, size })
+    }
+
+    return new Page(
+      response,
+      (item) => Conclusion.fromApiResponse(item),
+      fetchNextPage
     )
   }
 
@@ -238,7 +264,7 @@ export class ConclusionScope {
   /**
    * Get the computed representation for this scope.
    */
-  async getRepresentation(options?: RepresentationOptions): Promise<string> {
+  async representation(options?: RepresentationOptions): Promise<string> {
     const response = await this._getRepresentation(this.observer, {
       target: this.observed,
       search_query: options?.searchQuery,

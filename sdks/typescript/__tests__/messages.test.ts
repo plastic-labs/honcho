@@ -46,8 +46,8 @@ describe('Messages', () => {
       expect(messages.length).toBe(1)
       assertMessageShape(messages[0])
       expect(messages[0].content).toBe('Hello world')
-      expect(messages[0].peer_id).toBe(peer.id)
-      expect(messages[0].session_id).toBe(session.id)
+      expect(messages[0].peerId).toBe(peer.id)
+      expect(messages[0].sessionId).toBe(session.id)
     })
 
     test('creates batch of messages', async () => {
@@ -94,18 +94,18 @@ describe('Messages', () => {
       // Configuration is used server-side, may not be returned
     })
 
-    test('message with custom created_at', async () => {
+    test('message with custom createdAt', async () => {
       const session = await client.session('timestamp-msg-session', { metadata: {} })
       const peer = await client.peer('timestamp-msg-peer')
       await session.addPeers([peer.id])
 
       const customDate = new Date('2024-01-15T10:30:00Z')
       const messages = await session.addMessages(
-        peer.message('Custom timestamp', { created_at: customDate })
+        peer.message('Custom timestamp', { createdAt: customDate })
       )
 
       // Server should use our timestamp
-      expect(new Date(messages[0].created_at).toISOString()).toBe(
+      expect(new Date(messages[0].createdAt).toISOString()).toBe(
         customDate.toISOString()
       )
     })
@@ -122,9 +122,9 @@ describe('Messages', () => {
         alice.message('Nice to meet you'),
       ])
 
-      expect(messages[0].peer_id).toBe(alice.id)
-      expect(messages[1].peer_id).toBe(bob.id)
-      expect(messages[2].peer_id).toBe(alice.id)
+      expect(messages[0].peerId).toBe(alice.id)
+      expect(messages[1].peerId).toBe(bob.id)
+      expect(messages[2].peerId).toBe(alice.id)
     })
 
     test('batch up to 100 messages', async () => {
@@ -143,7 +143,7 @@ describe('Messages', () => {
       expect(messages[49].content).toBe('Message 50')
     })
 
-    test('token_count is calculated', async () => {
+    test('tokenCount is calculated', async () => {
       const session = await client.session('token-count-session', { metadata: {} })
       const peer = await client.peer('token-count-peer')
       await session.addPeers([peer.id])
@@ -152,7 +152,7 @@ describe('Messages', () => {
         peer.message('This is a test message with several words')
       )
 
-      expect(messages[0].token_count).toBeGreaterThan(0)
+      expect(messages[0].tokenCount).toBeGreaterThan(0)
     })
   })
 
@@ -171,7 +171,7 @@ describe('Messages', () => {
         peer.message('Three'),
       ])
 
-      const page = await session.getMessages()
+      const page = await session.messages()
 
       expect(page.items.length).toBe(3)
       expect(page.page).toBe(1)
@@ -190,7 +190,7 @@ describe('Messages', () => {
       await session.addMessages(batch)
 
       // Get first page with small size
-      const page = await session.getMessages()
+      const page = await session.messages()
 
       expect(page.total).toBe(15)
     })
@@ -205,7 +205,7 @@ describe('Messages', () => {
         peer.message('C'),
       ])
 
-      const page = await session.getMessages()
+      const page = await session.messages()
       const contents = await collectAll(page)
 
       expect(contents.map((m) => m.content)).toContain('A')
@@ -223,10 +223,10 @@ describe('Messages', () => {
         bob.message('From Bob'),
       ])
 
-      const page = await session.getMessages({ peer_id: alice.id })
+      const page = await session.messages({ peer_id: alice.id })
 
       expect(page.items.length).toBe(1)
-      expect(page.items[0].peer_id).toBe(alice.id)
+      expect(page.items[0].peerId).toBe(alice.id)
     })
 
     test('filter by metadata', async () => {
@@ -238,7 +238,7 @@ describe('Messages', () => {
         peer.message('Untagged'),
       ])
 
-      const page = await session.getMessages({ metadata: { category: 'important' } })
+      const page = await session.messages({ metadata: { category: 'important' } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].metadata.category).toBe('important')
@@ -257,7 +257,7 @@ describe('Messages', () => {
 
       const [message] = await session.addMessages(peer.message('Original'))
 
-      const updated = await client.updateMessage(message, {
+      const updated = await session.updateMessage(message, {
         status: 'reviewed',
         reviewedAt: Date.now(),
       })
@@ -273,11 +273,7 @@ describe('Messages', () => {
 
       const [message] = await session.addMessages(peer.message('To update'))
 
-      const updated = await client.updateMessage(
-        message.id,
-        { flag: true },
-        session
-      )
+      const updated = await session.updateMessage(message.id, { flag: true })
 
       expect(updated.metadata.flag).toBe(true)
     })
@@ -291,7 +287,7 @@ describe('Messages', () => {
         peer.message('With meta', { metadata: { old: 'value' } })
       )
 
-      const updated = await client.updateMessage(message, { new: 'value' })
+      const updated = await session.updateMessage(message, { new: 'value' })
 
       expect(updated.metadata).toEqual({ new: 'value' })
       expect(updated.metadata.old).toBeUndefined()
@@ -378,16 +374,16 @@ describe('Messages', () => {
       expect(typeof message.id).toBe('string')
       expect(message.id.length).toBeGreaterThan(0)
       expect(typeof message.content).toBe('string')
-      expect(typeof message.peer_id).toBe('string')
-      expect(typeof message.session_id).toBe('string')
-      expect(typeof message.workspace_id).toBe('string')
+      expect(typeof message.peerId).toBe('string')
+      expect(typeof message.sessionId).toBe('string')
+      expect(typeof message.workspaceId).toBe('string')
       expect(typeof message.metadata).toBe('object')
-      expect(typeof message.created_at).toBe('string')
-      expect(typeof message.token_count).toBe('number')
+      expect(typeof message.createdAt).toBe('string')
+      expect(typeof message.tokenCount).toBe('number')
 
       // Validate date format
-      expect(() => new Date(message.created_at)).not.toThrow()
-      const date = new Date(message.created_at)
+      expect(() => new Date(message.createdAt)).not.toThrow()
+      const date = new Date(message.createdAt)
       expect(date.getTime()).toBeGreaterThan(0)
     })
 

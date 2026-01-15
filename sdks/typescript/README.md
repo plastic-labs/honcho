@@ -37,3 +37,20 @@ console.log(response);
 ```
 
 See `examples/` for more.
+
+## Development
+
+### Type checking
+
+```bash
+bun run typecheck
+```
+
+### Testing
+
+Tests for the SDK live in `tests/` at the monorepo root and are run via pytest, which orchestrates a test server. Do not run `bun test` directly.
+
+```bash
+# From the monorepo root
+uv run pytest tests/ -k typescript
+```

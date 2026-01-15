@@ -9,21 +9,31 @@ import type { MessageResponse } from './types/api'
  */
 
 /**
+ * Schema for workspace ID validation.
+ */
+export const WorkspaceIdSchema = z
+  .string()
+  .min(1, 'Workspace ID must be a non-empty string')
+  .regex(
+    /^[a-zA-Z0-9_-]+$/,
+    'Workspace ID may only contain letters, numbers, underscores, and hyphens'
+  )
+  .max(100, 'Workspace ID can be at most 100 characters')
+
+/**
  * Schema for Honcho client configuration options.
  */
 export const HonchoConfigSchema = z.object({
   apiKey: z.string().optional(),
   environment: z.enum(['local', 'production']).optional(),
   baseURL: z.url('Base URL must be a valid URL').optional(),
-  workspaceId: z
-    .string()
-    .min(1, 'Workspace ID must be a non-empty string')
-    .optional(),
+  workspaceId: WorkspaceIdSchema.optional(),
   timeout: z.number().positive('Timeout must be a positive number').optional(),
   maxRetries: z
     .number()
     .int()
     .min(0, 'Max retries must be a non-negative integer')
+    .max(3, 'Max retries must be at most 3')
     .optional(),
   defaultHeaders: z.record(z.string(), z.string()).optional(),
   defaultQuery: z.record(z.string(), z.unknown()).optional(),
@@ -45,6 +55,11 @@ export const PeerConfigSchema = z.record(z.string(), z.unknown())
 export const PeerIdSchema = z
   .string()
   .min(1, 'Peer ID must be a non-empty string')
+  .regex(
+    /^[a-zA-Z0-9_-]+$/,
+    'Peer ID may only contain letters, numbers, underscores, and hyphens'
+  )
+  .max(100, 'Peer ID can be at most 100 characters')
 
 /**
  * Schema for session metadata.
@@ -62,13 +77,18 @@ export const SessionConfigSchema = z.record(z.string(), z.unknown())
 export const SessionIdSchema = z
   .string()
   .min(1, 'Session ID must be a non-empty string')
+  .regex(
+    /^[a-zA-Z0-9_-]+$/,
+    'Session ID may only contain letters, numbers, underscores, and hyphens'
+  )
+  .max(100, 'Session ID can be at most 100 characters')
 
 /**
  * Schema for session peer configuration.
  */
 export const SessionPeerConfigSchema = z.object({
-  observe_me: z.boolean().nullable().optional(),
-  observe_others: z.boolean().nullable().optional(),
+  observeMe: z.boolean().nullable().optional(),
+  observeOthers: z.boolean().nullable().optional(),
 })
 
 /**
@@ -98,14 +118,14 @@ export const MessageConfigurationSchema = z
   .optional()
 
 /**
- * Schema for message creation.
+ * Schema for message input (camelCase, user-facing).
  */
-export const MessageCreateSchema = z.object({
-  peer_id: PeerIdSchema,
+export const MessageInputSchema = z.object({
+  peerId: PeerIdSchema,
   content: MessageContentSchema,
   metadata: MessageMetadataSchema,
   configuration: MessageConfigurationSchema,
-  created_at: z.string().nullable().optional(),
+  createdAt: z.string().nullable().optional(),
 })
 
 /**
@@ -129,15 +149,14 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
  */
 export const ChatQuerySchema = z.object({
   query: SearchQuerySchema,
-  stream: z.boolean().optional().default(false),
   target: z
-    .union([z.string(), z.object({ id: z.string() })])
+    .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
     .optional()
     .transform((val) =>
       val ? (typeof val === 'string' ? val : val.id) : undefined
     ),
   session: z
-    .union([z.string(), z.object({ id: z.string() })])
+    .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
     .optional()
     .transform((val) =>
       val ? (typeof val === 'string' ? val : val.id) : undefined
@@ -148,16 +167,16 @@ export const ChatQuerySchema = z.object({
 })
 
 /**
- * Schema for validating Message objects.
+ * Schema for validating Message API responses (snake_case).
  */
-const MessageSchema: z.ZodType<MessageResponse> = z.object({
+const MessageResponseSchema: z.ZodType<MessageResponse> = z.object({
   id: z.string(),
   content: z.string(),
   created_at: z.string(),
-  peer_id: z.string(),
-  session_id: z.string(),
+  peer_id: PeerIdSchema,
+  session_id: SessionIdSchema,
   token_count: z.number(),
-  workspace_id: z.string(),
+  workspace_id: WorkspaceIdSchema,
   metadata: z.record(z.string(), z.unknown()),
 }) as z.ZodType<MessageResponse>
 
@@ -165,6 +184,14 @@ const MessageSchema: z.ZodType<MessageResponse> = z.object({
  * Schema for representation options.
  */
 export const RepresentationOptionsSchema = z.object({
+  searchQuery: z
+    .string()
+    .min(1, 'searchQuery must be a non-empty string')
+    .refine(
+      (query: string) => query.trim().length > 0,
+      'searchQuery cannot be only whitespace'
+    )
+    .optional(),
   searchTopK: z
     .number()
     .int()
@@ -191,14 +218,11 @@ export const RepresentationOptionsSchema = z.object({
 export const ContextParamsSchema = z
   .object({
     summary: z.boolean().optional(),
-    tokens: z
-      .number()
-      .positive('Token limit must be a positive number')
-      .optional(),
+    tokens: z.int('Token limit must be an integer').optional(),
     lastUserMessage: z
       .union([
         z.string().min(1, 'Last user message must be a non-empty string'),
-        MessageSchema,
+        MessageResponseSchema,
       ])
       .optional(),
     peerTarget: PeerIdSchema.optional(),
@@ -228,9 +252,11 @@ export const ContextParamsSchema = z
  * Schema for deriver status options.
  */
 export const QueueStatusOptionsSchema = z.object({
-  observer: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  sender: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  observer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+  sender: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+  session: z
+    .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
+    .optional(),
   timeoutMs: z
     .number()
     .positive('Timeout must be a positive number')
@@ -265,7 +291,7 @@ export const FileUploadSchema = z.object({
         'File must not be null or undefined'
       ),
   ]),
-  peer: z.union([PeerIdSchema, z.object({ id: z.string() })]),
+  peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
   metadata: MessageMetadataSchema,
   configuration: z.record(z.string(), z.unknown()).optional(),
   created_at: z.string().nullable().optional(),
@@ -275,62 +301,165 @@ export const FileUploadSchema = z.object({
  * Schema for get representation parameters.
  */
 export const GetRepresentationParamsSchema = z.object({
-  peer: z.union([z.string(), z.object({ id: z.string() })]),
-  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  options: RepresentationOptionsSchema.extend({
-    searchQuery: SearchQuerySchema.optional(),
-  }).optional(),
+  peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
+  target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+  options: RepresentationOptionsSchema.optional(),
 })
 
 /**
  * Schema for peer get representation parameters.
  */
 export const PeerGetRepresentationParamsSchema = z.object({
-  session: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-  options: RepresentationOptionsSchema.extend({
-    searchQuery: SearchQuerySchema.optional(),
-  }).optional(),
+  session: z
+    .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
+    .optional(),
+  target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+  options: RepresentationOptionsSchema.optional(),
 })
+
+/**
+ * Schema for peer card target parameter.
+ */
+export const CardTargetSchema = z
+  .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
+  .optional()
+  .transform((val) =>
+    val ? (typeof val === 'string' ? val : val.id) : undefined
+  )
 
 /**
  * Schema for peer addition to session.
  */
 export const PeerAdditionSchema = z.union([
-  z.string(),
-  z.object({ id: z.string() }),
+  PeerIdSchema,
+  z.object({ id: PeerIdSchema }),
   z.array(
     z.union([
-      z.string(),
-      z.object({ id: z.string() }),
+      PeerIdSchema,
+      z.object({ id: PeerIdSchema }),
       z.tuple([
-        z.union([z.string(), z.object({ id: z.string() })]),
+        z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
         SessionPeerConfigSchema,
       ]),
     ])
   ),
   z.tuple([
-    z.union([z.string(), z.object({ id: z.string() })]),
+    z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
     SessionPeerConfigSchema,
   ]),
 ])
 
 /**
+ * API format for session peer config.
+ */
+export type SessionPeerConfigApi = {
+  observe_me?: boolean | null
+  observe_others?: boolean | null
+}
+
+/**
+ * Check if a value is a config object (has observeMe or observeOthers).
+ */
+function isSessionPeerConfig(
+  val: unknown
+): val is { observeMe?: boolean | null; observeOthers?: boolean | null } {
+  return (
+    typeof val === 'object' &&
+    val !== null &&
+    !('id' in val) &&
+    ('observeMe' in val || 'observeOthers' in val)
+  )
+}
+
+/**
+ * Check if input is a tuple [peer, config].
+ */
+function isTuple(
+  input: unknown
+): input is
+  | [string, { observeMe?: boolean | null; observeOthers?: boolean | null }]
+  | [
+      { id: string },
+      { observeMe?: boolean | null; observeOthers?: boolean | null },
+    ] {
+  return (
+    Array.isArray(input) && input.length === 2 && isSessionPeerConfig(input[1])
+  )
+}
+
+/**
+ * Schema that validates and transforms peer addition input to API format.
+ * Handles all input variations and outputs a dictionary ready for the API.
+ */
+export const PeerAdditionToApiSchema = PeerAdditionSchema.transform(
+  (input): Record<string, SessionPeerConfigApi> => {
+    const result: Record<string, SessionPeerConfigApi> = {}
+
+    // Helper to process a single peer entry
+    const processEntry = (entry: unknown): void => {
+      if (typeof entry === 'string') {
+        result[entry] = {}
+      } else if (isTuple(entry)) {
+        const [peer, config] = entry
+        const id = typeof peer === 'string' ? peer : peer.id
+        result[id] = {
+          observe_me: config.observeMe,
+          observe_others: config.observeOthers,
+        }
+      } else if (typeof entry === 'object' && entry !== null && 'id' in entry) {
+        result[(entry as { id: string }).id] = {}
+      }
+    }
+
+    // Handle single tuple specially (it's an array but represents one entry)
+    if (isTuple(input)) {
+      processEntry(input)
+    } else if (Array.isArray(input)) {
+      // Array of entries
+      for (const item of input) {
+        processEntry(item)
+      }
+    } else {
+      // Single string or object
+      processEntry(input)
+    }
+
+    return result
+  }
+)
+
+/**
  * Schema for peer removal from session.
  */
 export const PeerRemovalSchema = z.union([
-  z.string(),
-  z.object({ id: z.string() }),
-  z.array(z.union([z.string(), z.object({ id: z.string() })])),
+  PeerIdSchema,
+  z.object({ id: PeerIdSchema }),
+  z.array(z.union([PeerIdSchema, z.object({ id: PeerIdSchema })])),
 ])
 
 /**
- * Schema for message addition to session.
+ * Schema for message addition to session (camelCase input).
  */
 export const MessageAdditionSchema = z.union([
-  MessageCreateSchema,
-  z.array(MessageCreateSchema),
+  MessageInputSchema,
+  z.array(MessageInputSchema),
 ])
+
+/**
+ * Schema that validates and transforms message addition to API format.
+ */
+export const MessageAdditionToApiSchema = MessageAdditionSchema.transform(
+  (input) => {
+    const messages = Array.isArray(input) ? input : [input]
+    return messages.map((msg) => ({
+      peer_id: msg.peerId,
+      content: msg.content,
+      metadata: msg.metadata,
+      configuration: msg.configuration,
+      created_at: msg.createdAt,
+    }))
+  }
+)
 
 /**
  * Schema for workspace metadata.
@@ -379,7 +508,7 @@ export type PeerConfig = z.infer<typeof PeerConfigSchema>
 export type SessionMetadata = z.infer<typeof SessionMetadataSchema>
 export type SessionConfig = z.infer<typeof SessionConfigSchema>
 export type SessionPeerConfig = z.infer<typeof SessionPeerConfigSchema>
-export type MessageCreate = z.infer<typeof MessageCreateSchema>
+export type MessageInput = z.infer<typeof MessageInputSchema>
 export type Filters = z.infer<typeof FilterSchema>
 export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>
@@ -392,6 +521,7 @@ export type PeerGetRepresentationParams = z.infer<
   typeof PeerGetRepresentationParamsSchema
 >
 export type PeerAddition = z.infer<typeof PeerAdditionSchema>
+export type PeerAdditionApi = z.infer<typeof PeerAdditionToApiSchema>
 export type PeerRemoval = z.infer<typeof PeerRemovalSchema>
 export type MessageAddition = z.infer<typeof MessageAdditionSchema>
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>

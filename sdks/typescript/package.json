@@ -15,9 +15,7 @@
     "lint:fix": "biome check src/ --write",
     "format": "biome format src/ --write",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
-    "test:coverage": "bun test --coverage"
+    "test": "echo 'Error: Tests must be run from the monorepo root via pytest. See tests/README.md' && exit 1"
   },
   "dependencies": {
     "@types/node": "^24.0.1",

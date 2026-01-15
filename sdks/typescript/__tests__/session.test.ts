@@ -15,6 +15,9 @@
  * - GET /v1/workspaces/:id/sessions/:id/peers (list peers)
  * - GET /v1/workspaces/:id/sessions/:id/peers/:id/config (get peer config)
  * - PUT /v1/workspaces/:id/sessions/:id/peers/:id/config (set peer config)
+ * - POST /v1/workspaces/:id/sessions/:id/messages (add messages)
+ * - PUT /v1/workspaces/:id/sessions/:id/messages/:id (update message)
+ * - POST /v1/workspaces/:id/sessions/:id/messages/list (list messages)
  * - POST /v1/workspaces/:id/sessions/:id/context (get context)
  * - GET /v1/workspaces/:id/sessions/:id/summaries (get summaries)
  * - POST /v1/workspaces/:id/sessions/:id/search (search)
@@ -64,7 +67,7 @@ describe('Session', () => {
       const config = { summary: { enabled: true } }
       const session = await client.session('session-with-config', { config })
 
-      expect(session.configuration).toEqual(config)
+      expect(session.config).toEqual(config)
     })
 
     test('get-or-create is idempotent', async () => {
@@ -85,11 +88,11 @@ describe('Session', () => {
   // ===========================================================================
 
   describe('POST /sessions/list', () => {
-    test('getSessions returns paginated list', async () => {
+    test('sessions returns paginated list', async () => {
       await client.session('list-session-a', { metadata: {} })
       await client.session('list-session-b', { metadata: {} })
 
-      const page = await client.getSessions()
+      const page = await client.sessions()
 
       expect(page.items.length).toBeGreaterThanOrEqual(2)
       const ids = page.items.map((s) => s.id)
@@ -97,11 +100,11 @@ describe('Session', () => {
       expect(ids).toContain('list-session-b')
     })
 
-    test('getSessions with filter', async () => {
+    test('sessions with filter', async () => {
       const tag = `tag-${Date.now()}`
       await client.session('filtered-session', { metadata: { tag } })
 
-      const page = await client.getSessions({ metadata: { tag } })
+      const page = await client.sessions({ metadata: { tag } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-session')
@@ -160,7 +163,7 @@ describe('Session', () => {
       await session.delete()
 
       // Session should not appear in list
-      const page = await client.getSessions()
+      const page = await client.sessions()
       const ids = page.items.map((s) => s.id)
       expect(ids).not.toContain('delete-me-session')
     })
@@ -183,7 +186,7 @@ describe('Session', () => {
 
       expect(cloned.id).not.toBe(original.id)
       // Cloned session should have same messages
-      const messages = await cloned.getMessages()
+      const messages = await cloned.messages()
       expect(messages.items.length).toBe(1)
     })
 
@@ -201,7 +204,7 @@ describe('Session', () => {
       // Clone up to second message
       const cloned = await original.clone(messages[1].id)
 
-      const clonedMessages = await cloned.getMessages()
+      const clonedMessages = await cloned.messages()
       expect(clonedMessages.items.length).toBe(2)
     })
   })
@@ -217,7 +220,7 @@ describe('Session', () => {
 
         await session.addPeers(['peer-a', 'peer-b'])
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
         const ids = peers.map((p) => p.id)
         expect(ids).toContain('peer-a')
         expect(ids).toContain('peer-b')
@@ -230,7 +233,7 @@ describe('Session', () => {
 
         await session.addPeers([peerA, peerB])
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
         const ids = peers.map((p) => p.id)
         expect(ids).toContain('obj-peer-a')
         expect(ids).toContain('obj-peer-b')
@@ -240,13 +243,13 @@ describe('Session', () => {
         const session = await client.session('add-peers-config', { metadata: {} })
 
         await session.addPeers([
-          ['config-peer-a', { observe_me: true, observe_others: false }],
-          ['config-peer-b', { observe_me: false }],
+          ['config-peer-a', { observeMe: true, observeOthers: false }],
+          ['config-peer-b', { observeMe: false }],
         ])
 
-        const configA = await session.getPeerConfig('config-peer-a')
-        expect(configA.observe_me).toBe(true)
-        expect(configA.observe_others).toBe(false)
+        const configA = await session.peerConfig('config-peer-a')
+        expect(configA.observeMe).toBe(true)
+        expect(configA.observeOthers).toBe(false)
       })
 
       test('addPeers with single peer', async () => {
@@ -254,7 +257,7 @@ describe('Session', () => {
 
         await session.addPeers('single-peer')
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
         expect(peers.map((p) => p.id)).toContain('single-peer')
       })
     })
@@ -266,7 +269,7 @@ describe('Session', () => {
 
         await session.setPeers(['new-peer-a', 'new-peer-b'])
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
         const ids = peers.map((p) => p.id)
         expect(ids).toContain('new-peer-a')
         expect(ids).toContain('new-peer-b')
@@ -281,7 +284,7 @@ describe('Session', () => {
 
         await session.removePeers(['remove-peer'])
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
         const ids = peers.map((p) => p.id)
         expect(ids).toContain('keep-peer')
         expect(ids).not.toContain('remove-peer')
@@ -294,17 +297,17 @@ describe('Session', () => {
 
         await session.removePeers([peer])
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
         expect(peers.map((p) => p.id)).not.toContain('peer-to-remove')
       })
     })
 
     describe('GET /sessions/:id/peers', () => {
-      test('getPeers returns Peer instances', async () => {
+      test('peers returns Peer instances', async () => {
         const session = await client.session('get-peers-session', { metadata: {} })
         await session.addPeers(['list-peer-1', 'list-peer-2'])
 
-        const peers = await session.getPeers()
+        const peers = await session.peers()
 
         expect(peers.length).toBe(2)
         expect(peers[0].workspaceId).toBe(client.workspaceId)
@@ -312,16 +315,16 @@ describe('Session', () => {
     })
 
     describe('GET/PUT /sessions/:id/peers/:id/config', () => {
-      test('getPeerConfig returns config', async () => {
+      test('peerConfig returns config', async () => {
         const session = await client.session('get-peer-config-session', { metadata: {} })
         await session.addPeers([
-          ['peer-with-config', { observe_me: true, observe_others: false }],
+          ['peer-with-config', { observeMe: true, observeOthers: false }],
         ])
 
-        const config = await session.getPeerConfig('peer-with-config')
+        const config = await session.peerConfig('peer-with-config')
 
-        expect(config.observe_me).toBe(true)
-        expect(config.observe_others).toBe(false)
+        expect(config.observeMe).toBe(true)
+        expect(config.observeOthers).toBe(false)
       })
 
       test('setPeerConfig updates config', async () => {
@@ -330,12 +333,12 @@ describe('Session', () => {
 
         await session.setPeerConfig(
           'peer-update-config',
-          new SessionPeerConfig(false, true)
+          { observeMe: false, observeOthers: true }
         )
 
-        const config = await session.getPeerConfig('peer-update-config')
-        expect(config.observe_me).toBe(false)
-        expect(config.observe_others).toBe(true)
+        const config = await session.peerConfig('peer-update-config')
+        expect(config.observeMe).toBe(false)
+        expect(config.observeOthers).toBe(true)
       })
 
       test('setPeerConfig with Peer object', async () => {
@@ -343,10 +346,10 @@ describe('Session', () => {
         const peer = await client.peer('config-obj-peer')
         await session.addPeers([peer])
 
-        await session.setPeerConfig(peer, new SessionPeerConfig(true))
+        await session.setPeerConfig(peer, { observeMe: true })
 
-        const config = await session.getPeerConfig(peer)
-        expect(config.observe_me).toBe(true)
+        const config = await session.peerConfig(peer)
+        expect(config.observeMe).toBe(true)
       })
     })
   })
@@ -384,8 +387,42 @@ describe('Session', () => {
       })
     })
 
+    describe('PUT /sessions/:id/messages/:id', () => {
+      test('updateMessage updates message metadata', async () => {
+        const session = await client.session('update-msg-session', { metadata: {} })
+        const peer = await client.peer('update-msg-peer')
+        await session.addPeers([peer.id])
+        const [message] = await session.addMessages([
+          peer.message('Message to update'),
+        ])
+
+        const updated = await session.updateMessage(message, {
+          updated: true,
+          timestamp: Date.now(),
+        })
+
+        expect(updated.metadata.updated).toBe(true)
+        expect(updated.metadata.timestamp).toBeDefined()
+      })
+
+      test('updateMessage with string ID', async () => {
+        const session = await client.session('update-msg-string-session', {
+          metadata: {},
+        })
+        const peer = await client.peer('update-msg-string-peer')
+        await session.addPeers([peer.id])
+        const [message] = await session.addMessages([
+          peer.message('Another message'),
+        ])
+
+        const updated = await session.updateMessage(message.id, { fromId: true })
+
+        expect(updated.metadata.fromId).toBe(true)
+      })
+    })
+
     describe('POST /sessions/:id/messages/list', () => {
-      test('getMessages returns paginated list', async () => {
+      test('messages returns paginated list', async () => {
         const session = await client.session('list-messages-session', { metadata: {} })
         const peer = await client.peer('list-messages-peer')
         await session.addPeers([peer.id])
@@ -394,13 +431,13 @@ describe('Session', () => {
           peer.message('Msg 2'),
         ])
 
-        const page = await session.getMessages()
+        const page = await session.messages()
 
         expect(page.items.length).toBe(2)
         assertMessageShape(page.items[0])
       })
 
-      test('getMessages with filters', async () => {
+      test('messages with filters', async () => {
         const session = await client.session('filter-messages-session', { metadata: {} })
         const peer = await client.peer('filter-messages-peer')
         await session.addPeers([peer.id])
@@ -409,7 +446,7 @@ describe('Session', () => {
           peer.message('Not this one'),
         ])
 
-        const page = await session.getMessages({ metadata: { tag: 'special' } })
+        const page = await session.messages({ metadata: { tag: 'special' } })
 
         expect(page.items.length).toBe(1)
         expect(page.items[0].metadata.tag).toBe('special')
@@ -422,26 +459,26 @@ describe('Session', () => {
   // ===========================================================================
 
   describe('POST /sessions/:id/context', () => {
-    test('getContext returns context object', async () => {
+    test('context returns context object', async () => {
       const session = await client.session('context-session', { metadata: {} })
       const peer = await client.peer('context-peer')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Context content')])
 
-      const context = await session.getContext()
+      const context = await session.context()
 
       expect(context).toBeDefined()
       expect(context.sessionId).toBe(session.id)
       expect(Array.isArray(context.messages)).toBe(true)
     })
 
-    test('getContext with options object', async () => {
+    test('context with options object', async () => {
       const session = await client.session('context-options-session', { metadata: {} })
       const peer = await client.peer('context-options-peer')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Some content')])
 
-      const context = await session.getContext({
+      const context = await session.context({
         summary: true,
         tokens: 1000,
         peerTarget: peer.id,
@@ -450,22 +487,22 @@ describe('Session', () => {
       expect(context).toBeDefined()
     })
 
-    test('getContext with positional args (legacy)', async () => {
-      const session = await client.session('context-positional-session', { metadata: {} })
-      const peer = await client.peer('context-positional-peer')
+    test('context with summary and tokens options', async () => {
+      const session = await client.session('context-options-2-session', { metadata: {} })
+      const peer = await client.peer('context-options-2-peer')
       await session.addPeers([peer.id])
 
-      const context = await session.getContext(true, 500)
+      const context = await session.context({ summary: true, tokens: 500 })
 
       expect(context).toBeDefined()
     })
   })
 
   describe('GET /sessions/:id/summaries', () => {
-    test('getSummaries returns summary object', async () => {
+    test('summaries returns summary object', async () => {
       const session = await client.session('summaries-session', { metadata: {} })
 
-      const summaries = await session.getSummaries()
+      const summaries = await session.summaries()
 
       expect(summaries).toBeDefined()
       expect(summaries.sessionId).toBe(session.id)
@@ -494,7 +531,7 @@ describe('Session', () => {
       expect(Array.isArray(results)).toBe(true)
       // Results are from this session
       for (const msg of results) {
-        expect(msg.session_id).toBe(session.id)
+        expect(msg.sessionId).toBe(session.id)
       }
     })
 
@@ -512,21 +549,21 @@ describe('Session', () => {
   // ===========================================================================
 
   describe('Queue status', () => {
-    test('getQueueStatus returns status for session', async () => {
+    test('queueStatus returns status for session', async () => {
       const session = await client.session('queue-status-session', { metadata: {} })
 
-      const status = await session.getQueueStatus()
+      const status = await session.queueStatus()
 
       expect(typeof status.totalWorkUnits).toBe('number')
       expect(typeof status.completedWorkUnits).toBe('number')
       expect(typeof status.pendingWorkUnits).toBe('number')
     })
 
-    test('getQueueStatus with observer filter', async () => {
+    test('queueStatus with observer filter', async () => {
       const session = await client.session('queue-observer-session', { metadata: {} })
       const peer = await client.peer('queue-observer-peer')
 
-      const status = await session.getQueueStatus({ observer: peer })
+      const status = await session.queueStatus({ observer: peer })
 
       expect(typeof status.totalWorkUnits).toBe('number')
     })
@@ -537,24 +574,24 @@ describe('Session', () => {
   // ===========================================================================
 
   describe('POST /peers/:id/representation (session-scoped)', () => {
-    test('getRepresentation returns string', async () => {
+    test('representation returns string', async () => {
       const session = await client.session('repr-session', { metadata: {} })
       const peer = await client.peer('repr-peer')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Learning TypeScript')])
 
-      const representation = await session.getRepresentation(peer)
+      const representation = await session.representation(peer)
 
       expect(typeof representation).toBe('string')
     })
 
-    test('getRepresentation with target', async () => {
+    test('representation with target', async () => {
       const session = await client.session('repr-target-session', { metadata: {} })
       const observer = await client.peer('repr-observer')
       const target = await client.peer('repr-target')
       await session.addPeers([observer.id, target.id])
 
-      const representation = await session.getRepresentation(observer, target)
+      const representation = await session.representation(observer, { target })
 
       expect(typeof representation).toBe('string')
     })

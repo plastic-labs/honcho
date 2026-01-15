@@ -1,24 +1,26 @@
+import { API_VERSION } from './api-version'
 import { HonchoHTTPClient } from './http/client'
+import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
-import {
-  API_VERSION,
-  type MessageResponse,
-  type PageResponse,
-  type PeerResponse,
-  type QueueStatusParams,
-  type QueueStatusResponse,
-  type SessionResponse,
-  type WorkspaceResponse,
-} from './types'
+import type {
+  MessageResponse,
+  PageResponse,
+  PeerResponse,
+  QueueStatus,
+  QueueStatusParams,
+  QueueStatusResponse,
+  SessionResponse,
+  WorkspaceResponse,
+} from './types/api'
+import { pollUntilComplete, transformQueueStatus } from './utils'
 import {
   FilterSchema,
   type Filters,
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
-  MessageMetadataSchema,
   type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
@@ -71,9 +73,9 @@ export class Honcho {
    */
   private _metadata?: Record<string, unknown>
   /**
-   * Private cached configuration for this workspace.
+   * Private cached config for this workspace.
    */
-  private _configuration?: Record<string, unknown>
+  private _config?: Record<string, unknown>
 
   /**
    * Cached metadata for this workspace. May be stale if the workspace
@@ -87,14 +89,14 @@ export class Honcho {
   }
 
   /**
-   * Cached configuration for this workspace. May be stale if the workspace
+   * Cached config for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
    *
-   * Call getConfig() to get the latest configuration from the server,
+   * Call getConfig() to get the latest config from the server,
    * which will also update this cached value.
    */
-  get configuration(): Record<string, unknown> | undefined {
-    return this._configuration
+  get config(): Record<string, unknown> | undefined {
+    return this._config
   }
 
   /**
@@ -306,18 +308,6 @@ export class Honcho {
     )
   }
 
-  private async _updateMessage(
-    workspaceId: string,
-    sessionId: string,
-    messageId: string,
-    params: { metadata: Record<string, unknown> }
-  ): Promise<MessageResponse> {
-    return this._http.put<MessageResponse>(
-      `/${API_VERSION}/workspaces/${workspaceId}/sessions/${sessionId}/messages/${messageId}`,
-      { body: params }
-    )
-  }
-
   // ===========================================================================
   // Public Methods
   // ===========================================================================
@@ -381,10 +371,10 @@ export class Honcho {
    * Makes an API call to retrieve all peers that have been created or used
    * within the current workspace. Returns a paginated result.
    *
-   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
+   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async getPeers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
+  async peers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const peersPage = await this._listPeers(this.workspaceId, {
       filters: validatedFilter,
@@ -475,13 +465,11 @@ export class Honcho {
    * Makes an API call to retrieve all sessions that have been created within
    * the current workspace.
    *
-   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
+   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async getSessions(
-    filters?: Filters
-  ): Promise<Page<Session, SessionResponse>> {
+  async sessions(filters?: Filters): Promise<Page<Session, SessionResponse>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const sessionsPage = await this._listSessions(this.workspaceId, {
       filters: validatedFilter,
@@ -559,8 +547,8 @@ export class Honcho {
    */
   async getConfig(): Promise<Record<string, unknown>> {
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
-    this._configuration = workspace.configuration || {}
-    return this._configuration
+    this._config = workspace.configuration || {}
+    return this._config
   }
 
   /**
@@ -578,7 +566,7 @@ export class Honcho {
     await this._updateWorkspace(this.workspaceId, {
       configuration: validatedConfig,
     })
-    this._configuration = validatedConfig
+    this._config = validatedConfig
   }
 
   /**
@@ -590,7 +578,7 @@ export class Honcho {
   async refresh(): Promise<void> {
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
-    this._configuration = workspace.configuration || {}
+    this._config = workspace.configuration || {}
   }
 
   /**
@@ -599,11 +587,13 @@ export class Honcho {
    * Makes an API call to retrieve all workspace IDs that the authenticated
    * user has access to.
    *
-   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
-   * @returns Promise resolving to a list of workspace ID strings. Returns an empty
-   *          list if no workspaces are accessible or none exist
+   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @returns Promise resolving to a Page of workspace ID strings. Returns an empty
+   *          page if no workspaces are accessible or none exist
    */
-  async getWorkspaces(filters?: Filters): Promise<string[]> {
+  async workspaces(
+    filters?: Filters
+  ): Promise<Page<string, WorkspaceResponse>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
@@ -620,12 +610,7 @@ export class Honcho {
       })
     }
 
-    const ids: string[] = []
-    const page = Page.from<WorkspaceResponse>(workspacesPage, fetchNextPage)
-    for await (const workspace of page) {
-      ids.push(workspace.id)
-    }
-    return ids
+    return new Page(workspacesPage, (workspace) => workspace.id, fetchNextPage)
   }
 
   /**
@@ -646,7 +631,7 @@ export class Honcho {
    * Makes an API call to search for messages in the current workspace.
    *
    * @param query - The search query to use
-   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @param limit - Number of results to return (1-100, default: 10).
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
@@ -658,7 +643,7 @@ export class Honcho {
       filters?: Filters
       limit?: number
     }
-  ): Promise<MessageResponse[]> {
+  ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedFilters = options?.filters
       ? FilterSchema.parse(options.filters)
@@ -666,11 +651,12 @@ export class Honcho {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._searchWorkspace(this.workspaceId, {
+    const response = await this._searchWorkspace(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,
       limit: validatedLimit,
     })
+    return response.map(Message.fromApiResponse)
   }
 
   /**
@@ -685,7 +671,7 @@ export class Honcho {
    * @param options.session - Optional session (ID string or Session object) to scope the status to
    * @returns Promise resolving to the queue status information including work unit counts
    */
-  async getQueueStatus(
+  async queueStatus(
     options?: Omit<
       QueueStatusOptions,
       'observerId' | 'senderId' | 'sessionId'
@@ -694,21 +680,7 @@ export class Honcho {
       sender?: string | Peer
       session?: string | Session
     }
-  ): Promise<{
-    totalWorkUnits: number
-    completedWorkUnits: number
-    inProgressWorkUnits: number
-    pendingWorkUnits: number
-    sessions?: Record<
-      string,
-      {
-        total_work_units: number
-        completed_work_units: number
-        in_progress_work_units: number
-        pending_work_units: number
-      }
-    >
-  }> {
+  ): Promise<QueueStatus> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
         ? options.observer
@@ -731,18 +703,11 @@ export class Honcho {
     if (resolvedSessionId) queryParams.session_id = resolvedSessionId
 
     const status = await this._getQueueStatus(this.workspaceId, queryParams)
-
-    return {
-      totalWorkUnits: status.total_work_units,
-      completedWorkUnits: status.completed_work_units,
-      inProgressWorkUnits: status.in_progress_work_units,
-      pendingWorkUnits: status.pending_work_units,
-      sessions: status.sessions || undefined,
-    }
+    return transformQueueStatus(status)
   }
 
   /**
-   * Poll getQueueStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
+   * Poll queueStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
    * This allows you to guarantee that all messages have been processed by the queue for
    * use with the dialectic endpoint.
    *
@@ -765,92 +730,9 @@ export class Honcho {
       sender?: string | Peer
       session?: string | Session
     }
-  ): Promise<{
-    totalWorkUnits: number
-    completedWorkUnits: number
-    inProgressWorkUnits: number
-    pendingWorkUnits: number
-    sessions?: Record<
-      string,
-      {
-        total_work_units: number
-        completed_work_units: number
-        in_progress_work_units: number
-        pending_work_units: number
-      }
-    >
-  }> {
+  ): Promise<QueueStatus> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
-    const startTime = Date.now()
-
-    while (true) {
-      const status = await this.getQueueStatus(options)
-      if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
-        return status
-      }
-
-      // Check if timeout has been exceeded
-      const elapsedTime = Date.now() - startTime
-      if (elapsedTime >= timeoutMs) {
-        throw new Error(
-          `Polling timeout exceeded after ${timeoutMs}ms. ` +
-            `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
-        )
-      }
-
-      // Sleep for the expected time to complete all current work units
-      // Assuming each pending and in-progress work unit takes 1 second
-      const totalWorkUnits =
-        status.pendingWorkUnits + status.inProgressWorkUnits
-      const sleepMs = Math.max(1000, totalWorkUnits * 1000) // Sleep at least 1 second
-
-      // Ensure we don't sleep past the timeout
-      const remainingTime = timeoutMs - elapsedTime
-      const actualSleepMs = Math.min(sleepMs, remainingTime)
-
-      if (actualSleepMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, actualSleepMs))
-      }
-    }
-  }
-
-  /**
-   * Update the metadata of a message.
-   *
-   * Makes an API call to update the metadata of a specific message within a session.
-   *
-   * @param message - Either a Message object or a message ID string
-   * @param metadata - The metadata to update for the message
-   * @param session - The session (ID string or Session object) - required if message is a string ID, ignored if message is a Message object
-   * @returns Promise resolving to the updated Message object
-   * @throws Error if message is a string ID but session is not provided
-   */
-  async updateMessage(
-    message: MessageResponse | string,
-    metadata: Record<string, unknown>,
-    session?: string | Session
-  ): Promise<MessageResponse> {
-    const validatedMetadata = MessageMetadataSchema.parse(metadata)
-    let messageId: string
-    let resolvedSessionId: string
-
-    if (typeof message === 'string') {
-      messageId = message
-      if (!session) {
-        throw new Error('session is required when message is a string ID')
-      }
-      resolvedSessionId = typeof session === 'string' ? session : session.id
-    } else {
-      messageId = message.id
-      resolvedSessionId = message.session_id
-    }
-
-    return await this._updateMessage(
-      this.workspaceId,
-      resolvedSessionId,
-      messageId,
-      { metadata: validatedMetadata ?? {} }
-    )
+    return pollUntilComplete(() => this.queueStatus(options), timeoutMs)
   }
 
   /**

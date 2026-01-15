@@ -5,14 +5,14 @@
  */
 
 import { expect } from 'bun:test'
+import type { Message } from '../src/message'
 import type {
-  MessageResponse,
   PeerResponse,
   SessionResponse,
   WorkspaceResponse,
   ConclusionResponse,
   PageResponse,
-} from '../src/types'
+} from '../src/types/api'
 
 // =============================================================================
 // Response Shape Assertions
@@ -62,21 +62,21 @@ export function assertSessionShape(session: SessionResponse): void {
 }
 
 /**
- * Assert that a response matches the MessageResponse schema.
+ * Assert that a response matches the Message schema.
  */
-export function assertMessageShape(message: MessageResponse): void {
+export function assertMessageShape(message: Message): void {
   expect(message).toBeDefined()
   expect(typeof message.id).toBe('string')
   expect(message.id.length).toBeGreaterThan(0)
   expect(typeof message.content).toBe('string')
-  expect(typeof message.peer_id).toBe('string')
-  expect(typeof message.session_id).toBe('string')
-  expect(typeof message.workspace_id).toBe('string')
+  expect(typeof message.peerId).toBe('string')
+  expect(typeof message.sessionId).toBe('string')
+  expect(typeof message.workspaceId).toBe('string')
   expect(typeof message.metadata).toBe('object')
-  expect(typeof message.created_at).toBe('string')
-  expect(typeof message.token_count).toBe('number')
-  expect(message.token_count).toBeGreaterThanOrEqual(0)
-  expect(() => new Date(message.created_at)).not.toThrow()
+  expect(typeof message.createdAt).toBe('string')
+  expect(typeof message.tokenCount).toBe('number')
+  expect(message.tokenCount).toBeGreaterThanOrEqual(0)
+  expect(() => new Date(message.createdAt)).not.toThrow()
 }
 
 /**

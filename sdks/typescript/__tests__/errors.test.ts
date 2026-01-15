@@ -254,13 +254,15 @@ describe('Client-side validation (unit)', () => {
     // Create a peer directly without HTTP client to test validation
     const peer = new Peer('test-peer', 'workspace', {} as never)
 
-    await expect(peer.card('')).rejects.toThrow('cannot be empty')
+    // Zod validation requires non-empty string (PeerIdSchema)
+    await expect(peer.card('')).rejects.toThrow()
   })
 
   test('peer card with invalid target type throws', async () => {
     const peer = new Peer('test-peer', 'workspace', {} as never)
 
-    await expect(peer.card(123 as never)).rejects.toThrow(TypeError)
+    // Zod throws on invalid type
+    await expect(peer.card(123 as never)).rejects.toThrow()
   })
 })
 

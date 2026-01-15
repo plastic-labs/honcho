@@ -101,13 +101,13 @@ describe('Honcho Client', () => {
 
       // Before refresh, cache is empty
       expect(freshClient.metadata).toBeUndefined()
-      expect(freshClient.configuration).toBeUndefined()
+      expect(freshClient.config).toBeUndefined()
 
       // After refresh, cache is populated
       // Note: server may add default configuration values like reasoning.enabled
       await freshClient.refresh()
       expect(freshClient.metadata).toEqual({ a: 1 })
-      expect(freshClient.configuration).toMatchObject({ b: 2 })
+      expect(freshClient.config).toMatchObject({ b: 2 })
     })
   })
 
@@ -116,14 +116,15 @@ describe('Honcho Client', () => {
   // ===========================================================================
 
   describe('POST /workspaces/list', () => {
-    test('getWorkspaces returns array of workspace IDs', async () => {
-      const workspaces = await client.getWorkspaces()
+    test('workspaces returns Page with workspace IDs', async () => {
+      const page = await client.workspaces()
 
-      expect(Array.isArray(workspaces)).toBe(true)
-      expect(workspaces).toContain(client.workspaceId)
+      // workspaces() now returns Page<string>
+      expect(Array.isArray(page.items)).toBe(true)
+      expect(page.items).toContain(client.workspaceId)
     })
 
-    test('getWorkspaces with filter narrows results', async () => {
+    test('workspaces with filter narrows results', async () => {
       // Create a workspace with specific metadata
       const uniqueValue = `filter-test-${Date.now()}`
       const testClient = new Honcho({
@@ -136,11 +137,11 @@ describe('Honcho Client', () => {
         await testClient.setMetadata({ filterKey: uniqueValue })
 
         // Filter should find this workspace
-        const filtered = await client.getWorkspaces({
+        const page = await client.workspaces({
           metadata: { filterKey: uniqueValue },
         })
 
-        expect(filtered).toContain(testClient.workspaceId)
+        expect(page.items).toContain(testClient.workspaceId)
       } finally {
         await testClient.deleteWorkspace(testClient.workspaceId)
       }
@@ -168,8 +169,8 @@ describe('Honcho Client', () => {
       await client.deleteWorkspace(tempWorkspaceId)
 
       // Verify it's gone from list
-      const workspaces = await client.getWorkspaces()
-      expect(workspaces).not.toContain(tempWorkspaceId)
+      const page = await client.workspaces()
+      expect(page.items).not.toContain(tempWorkspaceId)
     })
   })
 
@@ -194,12 +195,12 @@ describe('Honcho Client', () => {
       expect(peer.metadata).toEqual({ created: true })
     })
 
-    test('getPeers returns paginated list', async () => {
+    test('peers returns paginated list', async () => {
       // Create some peers
       await client.peer('list-peer-1', { metadata: {} })
       await client.peer('list-peer-2', { metadata: {} })
 
-      const page = await client.getPeers()
+      const page = await client.peers()
 
       expect(page.items.length).toBeGreaterThanOrEqual(2)
       expect(page.total).toBeGreaterThanOrEqual(2)
@@ -227,12 +228,12 @@ describe('Honcho Client', () => {
       expect(session.metadata).toEqual({ created: true })
     })
 
-    test('getSessions returns paginated list', async () => {
+    test('sessions returns paginated list', async () => {
       // Create some sessions
       await client.session('list-session-1', { metadata: {} })
       await client.session('list-session-2', { metadata: {} })
 
-      const page = await client.getSessions()
+      const page = await client.sessions()
 
       expect(page.items.length).toBeGreaterThanOrEqual(2)
 
@@ -280,7 +281,7 @@ describe('Honcho Client', () => {
 
       // All results should be from the specified session
       for (const msg of results) {
-        expect(msg.session_id).toBe(session.id)
+        expect(msg.sessionId).toBe(session.id)
       }
     })
 
@@ -296,8 +297,8 @@ describe('Honcho Client', () => {
   // ===========================================================================
 
   describe('GET /workspaces/:id/queue/status', () => {
-    test('getQueueStatus returns status object', async () => {
-      const status = await client.getQueueStatus()
+    test('queueStatus returns status object', async () => {
+      const status = await client.queueStatus()
 
       expect(typeof status.totalWorkUnits).toBe('number')
       expect(typeof status.completedWorkUnits).toBe('number')
@@ -305,72 +306,24 @@ describe('Honcho Client', () => {
       expect(typeof status.pendingWorkUnits).toBe('number')
     })
 
-    test('getQueueStatus with observer filter', async () => {
+    test('queueStatus with observer filter', async () => {
       const peer = await client.peer('queue-observer')
 
-      const status = await client.getQueueStatus({
+      const status = await client.queueStatus({
         observer: peer,
       })
 
       expect(typeof status.totalWorkUnits).toBe('number')
     })
 
-    test('getQueueStatus with session filter', async () => {
+    test('queueStatus with session filter', async () => {
       const session = await client.session('queue-session', { metadata: {} })
 
-      const status = await client.getQueueStatus({
+      const status = await client.queueStatus({
         session: session,
       })
 
       expect(typeof status.totalWorkUnits).toBe('number')
-    })
-  })
-
-  // ===========================================================================
-  // Message Updates
-  // ===========================================================================
-
-  describe('PUT /sessions/:id/messages/:id', () => {
-    test('updateMessage updates message metadata', async () => {
-      const session = await client.session('update-msg-session', { metadata: {} })
-      const peer = await client.peer('update-msg-peer')
-
-      await session.addPeers([peer.id])
-      const [message] = await session.addMessages([
-        peer.message('Message to update'),
-      ])
-
-      const updated = await client.updateMessage(
-        message,
-        { updated: true, timestamp: Date.now() }
-      )
-
-      expect(updated.metadata.updated).toBe(true)
-      expect(updated.metadata.timestamp).toBeDefined()
-    })
-
-    test('updateMessage with string ID requires session', async () => {
-      const session = await client.session('update-msg-session-2', { metadata: {} })
-      const peer = await client.peer('update-msg-peer-2')
-
-      await session.addPeers([peer.id])
-      const [message] = await session.addMessages([
-        peer.message('Another message'),
-      ])
-
-      const updated = await client.updateMessage(
-        message.id,
-        { fromId: true },
-        session
-      )
-
-      expect(updated.metadata.fromId).toBe(true)
-    })
-
-    test('updateMessage throws without session when using string ID', async () => {
-      await expect(
-        client.updateMessage('some-message-id', { foo: 'bar' })
-      ).rejects.toThrow('session is required')
     })
   })
 

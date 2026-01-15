@@ -3,7 +3,11 @@
 
 // Domain classes
 export { Honcho } from './client'
-export { Conclusion, ConclusionScope } from './conclusions'
+export {
+  Conclusion,
+  type ConclusionCreateParam,
+  ConclusionScope,
+} from './conclusions'
 // HTTP infrastructure
 export {
   AuthenticationError,
@@ -21,9 +25,10 @@ export {
   type DialecticStreamChunk,
   DialecticStreamResponse,
 } from './http/streaming'
+export { Message, type MessageInput } from './message'
 export { Page } from './pagination'
-export { Peer, type PeerContextResponse } from './peer'
-export { Session, SessionPeerConfig } from './session'
+export { Peer, PeerContext } from './peer'
+export { Session } from './session'
 export {
   SessionContext,
   SessionSummaries,
@@ -31,20 +36,19 @@ export {
   type SummaryData,
 } from './session_context'
 
-// Internal types
+// API types (snake_case, for advanced usage)
 export type {
-  Conclusion as ConclusionData,
   ConclusionQueryParams,
-  DialecticStreamDelta,
-} from './types'
-// API types from our hand-written types
-export type {
   ConclusionResponse,
   MessageResponse,
   PageResponse,
+  PeerContextResponse,
   PeerResponse,
+  QueueStatus,
   QueueStatusResponse,
+  RepresentationOptions,
   SessionContextResponse,
+  SessionQueueStatus,
   SessionResponse,
   SessionSummariesResponse,
   SummaryResponse,
@@ -60,7 +64,6 @@ export type {
   GetRepresentationParams,
   HonchoConfig,
   MessageAddition,
-  MessageCreate,
   PeerAddition,
   PeerConfig,
   PeerGetRepresentationParams,
@@ -69,6 +72,7 @@ export type {
   QueueStatusOptions,
   SessionConfig,
   SessionMetadata,
+  SessionPeerConfig,
   WorkspaceConfig,
   WorkspaceMetadata,
 } from './validation'
