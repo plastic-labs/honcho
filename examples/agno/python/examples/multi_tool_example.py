@@ -16,6 +16,7 @@ Environment Variables:
 """
 
 import os
+import uuid
 
 from dotenv import load_dotenv
 
@@ -41,9 +42,10 @@ def main():
     honcho = Honcho(workspace_id="travel-app")
 
     # Setup Honcho tools - creates peer and session internally
+    # Generate unique session ID to avoid message accumulation across runs
     honcho_tools = HonchoTools(
         peer_id="travel-assistant",
-        session_id="trip-planning-session",
+        session_id=str(uuid.uuid4()),
         honcho_client=honcho,
     )
 

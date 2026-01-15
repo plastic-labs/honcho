@@ -33,7 +33,7 @@ classifiers = [
     "Framework :: Pydantic",
 ]
 dependencies = [
-    "agno>=1.4.0",
+    "agno>=2.3.26",
     "honcho-ai>=1.6.0",
     ]
 
