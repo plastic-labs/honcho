@@ -28,7 +28,7 @@ async def _create_test_session(
 
 def _get_upload_url(workspace_name: str, session_name: str) -> str:
     """Helper function to get the session upload URL"""
-    return f"/v2/workspaces/{workspace_name}/sessions/{session_name}/messages/upload"
+    return f"/v3/workspaces/{workspace_name}/sessions/{session_name}/messages/upload"
 
 
 @pytest.mark.asyncio

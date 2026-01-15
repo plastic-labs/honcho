@@ -296,7 +296,7 @@ class LoCoMoRunner:
         observed = observed or observer
         honcho_url = self.get_honcho_url_for_index(0)
 
-        url = f"{honcho_url}/v2/workspaces/{workspace_id}/schedule_dream"
+        url = f"{honcho_url}/v3/workspaces/{workspace_id}/schedule_dream"
         payload = {
             "observer": observer,
             "observed": observed,
