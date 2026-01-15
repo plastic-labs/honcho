@@ -36,7 +36,7 @@ async def test_client_init(
     page = 1
 
     while not found_workspace:
-        res = client.post("/v2/workspaces/list", json={}, params={"page": page})
+        res = client.post("/v3/workspaces/list", json={}, params={"page": page})
         assert res.status_code == 200
 
         data = res.json()

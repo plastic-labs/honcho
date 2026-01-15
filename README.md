@@ -134,7 +134,7 @@ for Python and TypeScript.
 - [TypeScript](https://www.npmjs.com/package/@honcho-ai/sdk)
 
 Examples on how to use the SDK are located within each SDK folder and in the
-[SDK Reference](https://docs.honcho.dev/v2/documentation/tutorial/SDK)
+[SDK Reference](https://docs.honcho.dev/v3/documentation/tutorial/SDK)
 
 There are also documented examples of how to use the core SDKs in the
 [API Reference](https://docs.honcho.dev/api-reference/introduction) section of

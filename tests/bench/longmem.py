@@ -310,7 +310,7 @@ class LongMemEvalRunner:
         observed = observed or observer
         honcho_url = self.get_honcho_url_for_index(0)
 
-        url = f"{honcho_url}/v2/workspaces/{workspace_id}/schedule_dream"
+        url = f"{honcho_url}/v3/workspaces/{workspace_id}/schedule_dream"
         payload: dict[str, Any] = {
             "observer": observer,
             "observed": observed,
