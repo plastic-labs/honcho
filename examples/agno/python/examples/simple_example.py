@@ -2,7 +2,7 @@
 Simple Honcho + Agno Example
 
 Environment Variables:
-    OPENAI_API_KEY or LLM_OPENAI_API_KEY: OpenAI API key
+    LLM_OPENAI_API_KEY: OpenAI API key (matches honcho .env)
     HONCHO_API_KEY: Required for Honcho API access
 """
 
@@ -19,27 +19,27 @@ from honcho_agno import HonchoTools
 
 load_dotenv()
 
-# Support both OPENAI_API_KEY and LLM_OPENAI_API_KEY
-if not os.getenv("OPENAI_API_KEY") and (llm_key := os.getenv("LLM_OPENAI_API_KEY")):
+# Use LLM_OPENAI_API_KEY from honcho .env
+if llm_key := os.getenv("LLM_OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = llm_key
 
 
 def main():
-    # Create shared session
     session_id = f"simple-{uuid.uuid4().hex[:8]}"
 
-    # Initialize Honcho directly for managing user messages
+    # Initialize Honcho client
     honcho = Honcho(workspace_id="agno-demo")
-    session = honcho.session(session_id)
-    user_peer = honcho.peer("user")
 
-    # Initialize HonchoTools - this IS the assistant's identity
+    # Initialize HonchoTools - creates peer and session internally
     honcho_tools = HonchoTools(
         app_id="agno-demo",
-        peer_id="assistant",  # The toolkit speaks as "assistant"
-        session_id=session_id,  # Same session as user
-        honcho_client=honcho,  # Reuse client
+        peer_id="assistant",
+        session_id=session_id,
+        honcho_client=honcho,
     )
+
+    # Create user peer (toolkit's peer is "assistant")
+    user_peer = honcho.peer("user")
 
     # Create an agent with memory tools
     agent = Agent(
@@ -48,15 +48,14 @@ def main():
         tools=[honcho_tools],
         description="A programming mentor that remembers user interests and progress.",
         instructions=[
-            "Use get_context to understand the conversation history",
-            "Use query_peer to ask about the user's preferences",
-            "Use add_message to save your responses to the conversation",
+            "Use the chat tool to understand the user's preferences and interests",
+            "Use get_context if you need raw conversation history",
         ],
     )
 
-    # Add user messages via Honcho directly
+    # Add user messages
     print("Adding user messages to conversation...")
-    session.add_messages([
+    honcho_tools.session.add_messages([
         user_peer.message("I'm learning Python programming"),
         user_peer.message("I'm also interested in web development with FastAPI"),
     ])
@@ -65,8 +64,13 @@ def main():
     print("\nAsking the agent for recommendations...")
     response = agent.run(
         "Based on what you know about the user, what should they learn next? "
-        "Use get_context to see the conversation history first."
+        "Use the chat tool to understand their interests first."
     )
+
+    # Save the assistant's response to Honcho
+    assistant_response = str(response.content) if response.content else ""
+    if assistant_response:
+        honcho_tools.session.add_messages([honcho_tools.peer.message(assistant_response)])
 
     print("\n" + "=" * 60)
     print("RESPONSE")

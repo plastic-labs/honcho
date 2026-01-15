@@ -1,14 +1,16 @@
 """
 Multi-Peer Honcho + Agno Example
 
-A realistic multi-agent scenario using Agno's patterns:
-- A coordinator agent routes questions to specialists
-- Each specialist has its own HonchoTools (identity)
-- All share the same session for conversation continuity
-- The coordinator uses specialists as tools
+A three-way conversation between:
+- User: asking questions about life, work, and meaning
+- Tech Bro Advisor: startup culture, hustle, optimization mindset
+- Philosophy Guru: mindfulness, ancient wisdom, inner peace
+
+All three peers observe each other and build representations on each other,
+creating a rich understanding of each participant's perspective over time.
 
 Environment Variables:
-    OPENAI_API_KEY or LLM_OPENAI_API_KEY: OpenAI API key
+    LLM_OPENAI_API_KEY: OpenAI API key (matches honcho .env)
     HONCHO_API_KEY: Required for Honcho API access
 """
 
@@ -19,155 +21,110 @@ from dotenv import load_dotenv
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools import tool
 
 from honcho import Honcho
+from honcho.session import SessionPeerConfig
 from honcho_agno import HonchoTools
 
 load_dotenv()
 
-if not os.getenv("OPENAI_API_KEY") and (llm_key := os.getenv("LLM_OPENAI_API_KEY")):
+# Use LLM_OPENAI_API_KEY from honcho .env
+if llm_key := os.getenv("LLM_OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = llm_key
 
 
-def create_advisor_system(session_id: str):
+def create_advisory_session(session_id: str):
     """
-    Creates a multi-agent advisory system where:
-    - Each specialist agent has its own identity (HonchoTools)
-    - A coordinator routes to specialists and synthesizes responses
-    - All agents share the same conversation session
+    Creates a three-peer advisory system where:
+    - User asks questions
+    - Tech Bro gives startup/optimization perspective
+    - Philosophy Guru gives mindfulness/wisdom perspective
+    - All three observe each other and build representations
     """
     model_id = os.getenv("OPENAI_MODEL", "gpt-4o")
 
-    # Shared Honcho client and session
-    honcho = Honcho(workspace_id="advisory-system")
-    session = honcho.session(session_id)
+    # Shared Honcho client
+    honcho = Honcho(workspace_id="advisory-trio")
+
+    # === TECH BRO ADVISOR ===
+    tech_bro_tools = HonchoTools(
+        app_id="advisory-trio",
+        peer_id="tech-bro",
+        session_id=session_id,
+        honcho_client=honcho,
+    )
+
+    tech_bro_agent = Agent(
+        name="Tech Bro Advisor",
+        model=OpenAIChat(id=model_id),
+        tools=[tech_bro_tools],
+        description="Startup founder vibes, optimization mindset, hustle culture perspective.",
+        instructions=[
+            "You're a successful tech entrepreneur who's been through YC and raised Series B.",
+            "Everything is an opportunity to optimize, scale, or disrupt.",
+            "Use the chat tool to understand what the user is dealing with and what they care about.",
+            "Give advice through the lens of productivity, systems thinking, and growth hacking.",
+            "Reference things like morning routines, cold plunges, biohacking, and 10x thinking.",
+            "Be enthusiastic but genuine - you really believe this stuff works.",
+            "Keep responses conversational and punchy.",
+        ],
+    )
+
+    # === PHILOSOPHY MEDITATION GURU ===
+    guru_tools = HonchoTools(
+        app_id="advisory-trio",
+        peer_id="philosophy-guru",
+        session_id=session_id,
+        honcho_client=honcho,
+    )
+
+    guru_agent = Agent(
+        name="Philosophy Guru",
+        model=OpenAIChat(id=model_id),
+        tools=[guru_tools],
+        description="Meditation teacher, draws on Stoicism, Buddhism, and Taoism.",
+        instructions=[
+            "You're a calm, wise meditation teacher who's spent years studying ancient philosophy.",
+            "Draw on Stoicism, Buddhism, Taoism, and other contemplative traditions.",
+            "Use the chat tool to understand the user's inner state and what they truly seek.",
+            "Gently guide toward presence, acceptance, and inner peace.",
+            "Reference concepts like impermanence, the present moment, letting go, and wu wei.",
+            "Offer a counterbalance to hustle culture - not everything needs to be optimized.",
+            "Speak slowly and thoughtfully. Use metaphors from nature.",
+        ],
+    )
+
+    # Create user peer and configure session observation
     user_peer = honcho.peer("user")
+    session = tech_bro_tools.session  # Use session from toolkit
 
-    # === SPECIALIST AGENTS ===
-    # Each has its own identity via HonchoTools
+    # Add all peers to session and configure observation
+    session.add_peers([user_peer, tech_bro_tools.peer, guru_tools.peer])
 
-    tech_tools = HonchoTools(
-        app_id="advisory-system",
-        peer_id="tech-specialist",
-        session_id=session_id,
-        honcho_client=honcho,
+    full_observation = SessionPeerConfig(
+        observe_me=True,
+        observe_others=True
     )
+    session.set_peer_config(user_peer, full_observation)
+    session.set_peer_config(tech_bro_tools.peer, full_observation)
+    session.set_peer_config(guru_tools.peer, full_observation)
 
-    tech_agent = Agent(
-        name="Tech Specialist",
-        model=OpenAIChat(id=model_id),
-        tools=[tech_tools],
-        description="Technical advisor for architecture, implementation, and technology choices.",
-        instructions=[
-            "Focus on technical feasibility and implementation details.",
-            "Use get_context to understand what's been discussed.",
-            "Save key technical recommendations with add_message.",
-            "Be concise - you're part of a team.",
-        ],
-    )
-
-    business_tools = HonchoTools(
-        app_id="advisory-system",
-        peer_id="business-specialist",
-        session_id=session_id,
-        honcho_client=honcho,
-    )
-
-    business_agent = Agent(
-        name="Business Specialist",
-        model=OpenAIChat(id=model_id),
-        tools=[business_tools],
-        description="Business advisor for strategy, market fit, and ROI.",
-        instructions=[
-            "Focus on business viability and market considerations.",
-            "Use get_context to understand what's been discussed.",
-            "Save key business insights with add_message.",
-            "Be concise - you're part of a team.",
-        ],
-    )
-
-    # === COORDINATOR TOOLS ===
-    # Wrap specialists as tools the coordinator can invoke
-
-    @tool
-    def consult_tech_specialist(question: str) -> str:
-        """
-        Consult the technical specialist for architecture, implementation,
-        or technology-related questions.
-
-        Args:
-            question: The technical question to ask.
-
-        Returns:
-            Technical specialist's response.
-        """
-        response = tech_agent.run(question)
-        return str(response.content) if response.content else ""
-
-    @tool
-    def consult_business_specialist(question: str) -> str:
-        """
-        Consult the business specialist for strategy, market fit,
-        or ROI-related questions.
-
-        Args:
-            question: The business question to ask.
-
-        Returns:
-            Business specialist's response.
-        """
-        response = business_agent.run(question)
-        return str(response.content) if response.content else ""
-
-    # Coordinator has its own identity too
-    coordinator_tools = HonchoTools(
-        app_id="advisory-system",
-        peer_id="coordinator",
-        session_id=session_id,
-        honcho_client=honcho,
-    )
-
-    coordinator = Agent(
-        name="Advisory Coordinator",
-        model=OpenAIChat(id=model_id),
-        tools=[coordinator_tools, consult_tech_specialist, consult_business_specialist],
-        description="Coordinates between specialists to provide comprehensive advice.",
-        instructions=[
-            "Use get_context to understand the full conversation history.",
-            "Route technical questions to the tech specialist.",
-            "Route business questions to the business specialist.",
-            "Synthesize specialist inputs into actionable recommendations.",
-            "Save your final synthesis with add_message.",
-        ],
-    )
-
-    return coordinator, session, user_peer
+    return session, user_peer, tech_bro_tools, guru_tools, tech_bro_agent, guru_agent
 
 
-def main(test_mode: bool = False):
-    session_id = f"advisory-{uuid.uuid4().hex[:8]}"
+def main():
+    session_id = f"trio-{uuid.uuid4().hex[:8]}"
 
     print(f"Session: {session_id}")
     print("=" * 60)
 
-    coordinator, session, user_peer = create_advisor_system(session_id)
+    session, user_peer, tech_bro_tools, guru_tools, tech_bro_agent, guru_agent = (
+        create_advisory_session(session_id)
+    )
 
-    if test_mode:
-        # Non-interactive test
-        test_question = "I want to build a SaaS product for small businesses. What should I consider?"
-        print(f"\n[TEST MODE] User: {test_question}\n")
-
-        session.add_messages([user_peer.message(test_question)])
-        response = coordinator.run(test_question)
-        print(f"Advisor: {response.content}\n")
-        print("=" * 60)
-        print("Test completed successfully!")
-        return
-
-    # Interactive chat loop
-    print("\nAdvisory System Ready")
-    print("Ask questions about building a product. Type 'quit' to exit.\n")
+    print("\nAdvisory Trio Ready")
+    print("Ask about life, work, meaning - get two very different perspectives.")
+    print("Type 'quit' to exit.\n")
 
     while True:
         user_input = input("You: ").strip()
@@ -176,15 +133,24 @@ def main(test_mode: bool = False):
         if user_input.lower() in ("quit", "exit", "q"):
             break
 
-        # Save user message to session
+        # Save user message
         session.add_messages([user_peer.message(user_input)])
 
-        # Coordinator handles routing and synthesis
-        response = coordinator.run(user_input)
-        print(f"\nAdvisor: {response.content}\n")
+        # Tech Bro responds
+        print()
+        print("-" * 40)
+        tech_response = tech_bro_agent.run(user_input)
+        tech_content = str(tech_response.content) if tech_response.content else ""
+        session.add_messages([tech_bro_tools.peer.message(tech_content)])
+        print(f"🚀 Tech Bro: {tech_content}\n")
+
+        # Guru responds
+        print("-" * 40)
+        guru_response = guru_agent.run(user_input)
+        guru_content = str(guru_response.content) if guru_response.content else ""
+        session.add_messages([guru_tools.peer.message(guru_content)])
+        print(f"🧘 Guru: {guru_content}\n")
 
 
 if __name__ == "__main__":
-    import sys
-    test_mode = "--test" in sys.argv
-    main(test_mode=test_mode)
+    main()

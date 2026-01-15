@@ -1,20 +1,17 @@
 """
 Honcho Multi-Tool Example
 
-Demonstrates using all Honcho tools with an Agno agent:
-- add_message: Store agent responses (attributed to the toolkit's peer)
-- get_context: Retrieve session context
-- search_messages: Semantic search
-- query_peer: Dialectic API queries about any peer
+Demonstrates using Honcho tools with an Agno agent:
+- chat: Ask questions about the conversation (recommended)
+- get_context: Retrieve raw session context
+- search_messages: Semantic search through messages
 
-Pattern: toolkit = agent identity
-- HonchoTools represents the assistant's identity
-- User messages are added via Honcho directly
-- The agent uses tools to query context and save its responses
+The chat tool is the recommended way to understand users
+It reasons over conversation context and provides synthesized insights.
 
 Environment Variables:
-    OPENAI_API_KEY or LLM_OPENAI_API_KEY: OpenAI API key
-    OPENAI_MODEL: Model to use (default: gpt-4o)
+    LLM_OPENAI_API_KEY: OpenAI API key (matches honcho .env)
+    OPENAI_MODEL: Model to use
     HONCHO_API_KEY: Required for Honcho API access
 """
 
@@ -30,8 +27,8 @@ from honcho_agno import HonchoTools
 
 load_dotenv()
 
-# Support both OPENAI_API_KEY and LLM_OPENAI_API_KEY
-if not os.getenv("OPENAI_API_KEY") and (llm_key := os.getenv("LLM_OPENAI_API_KEY")):
+# Use LLM_OPENAI_API_KEY from honcho .env
+if llm_key := os.getenv("LLM_OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = llm_key
 
 
@@ -40,20 +37,21 @@ def main():
     print("HONCHO TOOLS + AGNO EXAMPLE")
     print("=" * 70 + "\n")
 
-    # Initialize Honcho for managing the session and user peer
+    # Initialize Honcho client
     honcho = Honcho(workspace_id="travel-app")
-    session = honcho.session("trip-planning-session")
-    user_peer = honcho.peer("traveler-42")
 
-    # Setup Honcho tools - this IS the assistant's identity
+    # Setup Honcho tools - creates peer and session internally
     honcho_tools = HonchoTools(
         app_id="travel-app",
-        peer_id="travel-assistant",  # The toolkit speaks as "travel-assistant"
+        peer_id="travel-assistant",
         session_id="trip-planning-session",
         honcho_client=honcho,
     )
 
-    # Pre-populate with user's travel preferences (via Honcho directly)
+    # Create user peer (the toolkit's peer is "travel-assistant")
+    user_peer = honcho.peer("traveler-42")
+
+    # Pre-populate with user's travel preferences
     print("Adding user's travel preferences to memory...")
     messages = [
         "I'm planning a trip to Japan in March",
@@ -64,7 +62,7 @@ def main():
     ]
 
     for msg in messages:
-        session.add_messages([user_peer.message(msg)])
+        honcho_tools.session.add_messages([user_peer.message(msg)])
         print(f"  [traveler-42]: {msg[:50]}...")
 
     print("\n" + "-" * 70 + "\n")
@@ -75,42 +73,54 @@ def main():
         model=OpenAIChat(id=os.getenv("OPENAI_MODEL", "gpt-4o")),
         tools=[honcho_tools],
         description=(
-            "A travel planning expert with access to memory tools. "
-            "Use get_context for recent conversation, search_messages to find "
-            "specific preferences, and query_peer to understand the traveler."
+            "A travel planning expert with access to Honcho memory tools. "
+            "Use chat to understand the traveler's preferences and travel style."
         ),
         instructions=[
-            "Always retrieve relevant context before making recommendations",
-            "Use search to find specific preferences mentioned",
-            "Use query_peer with target_peer_id='traveler-42' to understand their travel style",
+            "Use the chat tool to understand the user's preferences and travel style",
+            "Ask both broad and specific questions like 'What is their travel style?' or 'What is their budget?'",
+            "Only use get_context or search_messages if you need raw message history",
             "Be specific and actionable in your recommendations",
-            "Use add_message to save your recommendations to the conversation",
         ],
     )
 
     # Run the agent with a planning request
     print("Asking agent to create a personalized itinerary...\n")
     response = agent.run(
-        "Create a 3-day Tokyo itinerary for me. First, use the memory tools to "
-        "understand my preferences (budget, accommodation style, interests), "
-        "then create a personalized plan that matches what I've told you."
+        "Create a 3-day Tokyo itinerary for me. Use the chat tool to ask about "
+        "my budget, accommodation preferences, and interests, then create "
+        "a personalized plan that matches my travel style."
     )
+
+    # Save the assistant's response to Honcho (using toolkit's peer and session)
+    assistant_response = str(response.content) if response.content else ""
+    if assistant_response:
+        honcho_tools.session.add_messages([honcho_tools.peer.message(assistant_response)])
 
     print("=" * 70)
     print("RESPONSE")
     print("=" * 70)
     print(response.content)
 
+    # Demonstrate chat (recommended)
+    print("\n" + "=" * 70)
+    print("DIRECT TOOL USAGE: chat (recommended)")
+    print("=" * 70)
+    chat_result = honcho_tools.chat(
+        "What are the traveler's key preferences and constraints?"
+    )
+    print(chat_result)
+
     # Demonstrate search capability
     print("\n" + "=" * 70)
-    print("DIRECT TOOL USAGE: Searching for budget info...")
+    print("DIRECT TOOL USAGE: search_messages")
     print("=" * 70)
     search_result = honcho_tools.search_messages("budget money cost", limit=5)
     print(search_result)
 
     # Show full conversation context
     print("\n" + "=" * 70)
-    print("FULL SESSION CONTEXT")
+    print("DIRECT TOOL USAGE: get_context")
     print("=" * 70)
     print(honcho_tools.get_context())
 
