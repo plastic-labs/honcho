@@ -64,15 +64,15 @@ class HonchoTools(Toolkit):
         Initialize the Honcho toolkit for a specific agent identity.
 
         Args:
-            app_id: Application/workspace ID for scoping operations.
-                Maps to Honcho's workspace_id.
+            app_id: Workspace ID for creating an internal Honcho client.
+                Ignored if honcho_client is provided.
             peer_id: The identity this toolkit represents. This is who
                 the agent "is" when querying peer knowledge.
             session_id: Optional session ID. If not provided, a new UUID
                 will be generated. Share this across toolkits for multi-peer
                 conversations.
             honcho_client: Optional pre-configured Honcho client instance.
-                If provided, app_id is ignored.
+                When provided, uses this client directly (app_id is ignored).
         """
         super().__init__(name="honcho")
 
@@ -82,8 +82,6 @@ class HonchoTools(Toolkit):
         else:
             self.honcho = Honcho(workspace_id=app_id)
 
-        # Store identifiers
-        self.app_id: str = app_id
         self.peer_id: str = peer_id
         self.session_id: str = session_id or str(uuid.uuid4())
 
@@ -188,21 +186,3 @@ class HonchoTools(Toolkit):
         except Exception as e:
             logger.exception("Error querying conversation")
             return f"Error querying conversation: {e!s}"
-
-    def reset_session(self) -> str:
-        """
-        Create a new session, clearing the conversation history.
-
-        Use this tool to start a fresh conversation while maintaining
-        the user's long-term memory and representation.
-
-        Returns:
-            Confirmation with the new session ID.
-        """
-        try:
-            self.session_id = str(uuid.uuid4())
-            self.session = self.honcho.session(self.session_id)
-            return f"Session reset. New session ID: {self.session_id}"
-        except Exception as e:
-            logger.exception("Error resetting session")
-            return f"Error resetting session: {e!s}"

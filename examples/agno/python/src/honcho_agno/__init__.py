@@ -5,19 +5,24 @@ This package provides seamless integration between Honcho and Agno,
 enabling AI agents to maintain persistent memory across conversations.
 
 Each HonchoTools instance represents ONE agent identity (peer). The toolkit
-speaks as that peer when adding messages or querying the dialectic.
+provides read access to Honcho for querying conversation context.
+Orchestration code handles saving messages to avoid duplicates.
 
 Example:
     ```python
     from agno.agent import Agent
     from agno.models.openai import OpenAIChat
+    from honcho import Honcho
     from honcho_agno import HonchoTools
 
-    # Create Honcho tools
+    # Shared Honcho client
+    honcho = Honcho(workspace_id="my-app")
+
+    # Create Honcho tools for the assistant
     honcho_tools = HonchoTools(
-        app_id="my-app",
-        peer_id="assistant",  # The identity for the agent using this toolkit
+        peer_id="assistant",
         session_id="session-123",
+        honcho_client=honcho,
     )
 
     # Create agent with memory
@@ -28,22 +33,17 @@ Example:
         description="An assistant with persistent memory powered by Honcho.",
     )
 
-    # Run the agent - messages saved via add_message() are attributed to "assistant"
+    # Run the agent
     response = agent.run("What do you know about the user?")
+
+    # Save messages via orchestration (not the toolkit)
+    honcho_tools.session.add_messages([honcho_tools.peer.message(str(response.content))])
     ```
 """
 
-from honcho_agno.exceptions import (
-    HonchoDependencyError,
-    HonchoSessionError,
-    HonchoToolError,
-)
 from honcho_agno.tools import HonchoTools
 
 __version__ = "0.1.0"
 __all__ = [
     "HonchoTools",
-    "HonchoDependencyError",
-    "HonchoSessionError",
-    "HonchoToolError",
 ]

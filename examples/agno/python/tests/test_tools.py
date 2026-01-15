@@ -5,7 +5,7 @@ Tests the Agno-Honcho tool integration layer using real Honcho SDK.
 Focuses on tool interface compliance and result formatting.
 
 Note: Each HonchoTools instance represents ONE agent identity (peer_id).
-Messages added via add_message() are attributed to that peer.
+The toolkit provides read access; orchestration code handles message saving.
 """
 
 import uuid
@@ -26,7 +26,6 @@ class TestHonchoToolsInitialization:
         assert tools.honcho is not None
         assert tools.session_id is not None
         assert tools.peer_id == "assistant"
-        assert tools.app_id == "default"
 
     def test_custom_initialization(self):
         """Test initialization with custom parameters."""
@@ -38,7 +37,6 @@ class TestHonchoToolsInitialization:
         )
 
         assert tools.peer_id == "custom-agent"
-        assert tools.app_id == "test-app"
         assert tools.session_id == custom_session
 
     def test_session_auto_generation(self):
@@ -63,42 +61,17 @@ class TestHonchoToolsInitialization:
         assert not hasattr(tools, "user")
         assert not hasattr(tools, "assistant")
 
-
-class TestAddMessage:
-    """Tests for add_message tool."""
-
-    def test_add_message_as_peer(self):
-        """Test adding a message attributed to the toolkit's peer."""
+    def test_honcho_client_used_directly(self):
+        """Test that honcho_client is used when provided."""
+        honcho = Honcho(workspace_id="client-workspace")
         tools = HonchoTools(
-            app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"session-{uuid.uuid4().hex[:8]}",
+            app_id="ignored-app",  # Ignored when honcho_client provided
+            peer_id="test-agent",
+            honcho_client=honcho,
         )
 
-        result = tools.add_message("Test message content")
-
-        assert isinstance(result, str)
-        assert "saved" in result.lower() or "success" in result.lower()
-        assert tools.peer_id in result  # Should mention the peer
-
-    def test_add_multiple_messages(self):
-        """Test adding multiple messages in sequence."""
-        tools = HonchoTools(
-            app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"session-{uuid.uuid4().hex[:8]}",
-        )
-
-        messages = [
-            "First message from agent",
-            "Second message from agent",
-            "Third message from agent",
-        ]
-
-        for content in messages:
-            result = tools.add_message(content)
-            assert isinstance(result, str)
-            assert "error" not in result.lower()
+        # The client should be the one we passed
+        assert tools.honcho is honcho
 
 
 class TestMultiPeerConversation:
@@ -124,37 +97,33 @@ class TestMultiPeerConversation:
             honcho_client=honcho,
         )
 
-        # Both add messages to the same session
-        result1 = agent1_tools.add_message("Message from Alpha")
-        result2 = agent2_tools.add_message("Message from Beta")
-
-        assert "agent-alpha" in result1
-        assert "agent-beta" in result2
+        # Both should share the same session
         assert agent1_tools.session_id == agent2_tools.session_id
+        # But have different peer identities
+        assert agent1_tools.peer_id != agent2_tools.peer_id
 
-    def test_user_messages_via_honcho_directly(self):
-        """Test adding user messages via Honcho while agent uses toolkit."""
-        session_id = f"mixed-session-{uuid.uuid4().hex[:8]}"
+    def test_messages_added_via_orchestration(self):
+        """Test that messages are added via session, not toolkit methods."""
+        session_id = f"orch-session-{uuid.uuid4().hex[:8]}"
         honcho = Honcho(workspace_id="test-app")
 
-        # User messages added directly via Honcho
-        session = honcho.session(session_id)
-        user_peer = honcho.peer("user")
-        session.add_messages([user_peer.message("Hello from user")])
-
-        # Agent uses toolkit
-        agent_tools = HonchoTools(
+        # Create toolkit
+        tools = HonchoTools(
             app_id="test-app",
             peer_id="assistant",
             session_id=session_id,
             honcho_client=honcho,
         )
 
-        result = agent_tools.add_message("Hello from assistant")
-        assert "assistant" in result
+        # User messages added directly via Honcho (orchestration pattern)
+        user_peer = honcho.peer("user")
+        tools.session.add_messages([user_peer.message("Hello from user")])
 
-        # Both should be in context
-        context = agent_tools.get_context()
+        # Agent messages also added via orchestration
+        tools.session.add_messages([tools.peer.message("Hello from assistant")])
+
+        # Context should show both messages
+        context = tools.get_context()
         assert isinstance(context, str)
 
 
@@ -175,15 +144,22 @@ class TestGetContext:
 
     def test_get_context_with_messages(self):
         """Test getting context after adding messages."""
+        session_id = f"context-session-{uuid.uuid4().hex[:8]}"
+        honcho = Honcho(workspace_id="test-app")
+
         tools = HonchoTools(
             app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"context-session-{uuid.uuid4().hex[:8]}",
+            peer_id="assistant",
+            session_id=session_id,
+            honcho_client=honcho,
         )
 
-        # Add messages first
-        tools.add_message("I like pizza")
-        tools.add_message("Great choice!")
+        # Add messages via orchestration
+        user = honcho.peer("user")
+        tools.session.add_messages([
+            user.message("I like pizza"),
+            tools.peer.message("Great choice!"),
+        ])
 
         result = tools.get_context()
 
@@ -192,13 +168,17 @@ class TestGetContext:
 
     def test_get_context_with_token_limit(self):
         """Test getting context with token limit."""
+        session_id = f"token-session-{uuid.uuid4().hex[:8]}"
+        honcho = Honcho(workspace_id="test-app")
+
         tools = HonchoTools(
             app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"token-session-{uuid.uuid4().hex[:8]}",
+            peer_id="assistant",
+            session_id=session_id,
+            honcho_client=honcho,
         )
 
-        tools.add_message("This is a test message")
+        tools.session.add_messages([tools.peer.message("This is a test message")])
 
         result = tools.get_context(tokens=1000)
 
@@ -206,13 +186,17 @@ class TestGetContext:
 
     def test_get_context_without_summary(self):
         """Test getting context without summary."""
+        session_id = f"nosummary-session-{uuid.uuid4().hex[:8]}"
+        honcho = Honcho(workspace_id="test-app")
+
         tools = HonchoTools(
             app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"nosummary-session-{uuid.uuid4().hex[:8]}",
+            peer_id="assistant",
+            session_id=session_id,
+            honcho_client=honcho,
         )
 
-        tools.add_message("Test message")
+        tools.session.add_messages([tools.peer.message("Test message")])
 
         result = tools.get_context(include_summary=False)
 
@@ -224,14 +208,20 @@ class TestSearchMessages:
 
     def test_search_returns_formatted_string(self):
         """Test that search returns formatted results."""
+        session_id = f"search-session-{uuid.uuid4().hex[:8]}"
+        honcho = Honcho(workspace_id="test-app")
+
         tools = HonchoTools(
             app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"search-session-{uuid.uuid4().hex[:8]}",
+            peer_id="assistant",
+            session_id=session_id,
+            honcho_client=honcho,
         )
 
         # Add searchable content
-        tools.add_message("I enjoy Python programming and data science")
+        tools.session.add_messages([
+            tools.peer.message("I enjoy Python programming and data science")
+        ])
 
         result = tools.search_messages("programming", limit=5)
 
@@ -240,15 +230,19 @@ class TestSearchMessages:
 
     def test_search_with_limit(self):
         """Test search with custom limit."""
+        session_id = f"search-limit-session-{uuid.uuid4().hex[:8]}"
+        honcho = Honcho(workspace_id="test-app")
+
         tools = HonchoTools(
             app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"search-limit-session-{uuid.uuid4().hex[:8]}",
+            peer_id="assistant",
+            session_id=session_id,
+            honcho_client=honcho,
         )
 
         # Add multiple messages
-        for i in range(5):
-            tools.add_message(f"Test message number {i} about coding")
+        messages = [tools.peer.message(f"Test message number {i} about coding") for i in range(5)]
+        tools.session.add_messages(messages)
 
         result = tools.search_messages("coding", limit=3)
 
@@ -269,52 +263,14 @@ class TestSearchMessages:
         assert "No messages found" in result or "0 found" in result.lower()
 
 
-class TestQueryPeer:
-    """Tests for query_peer tool."""
+class TestChat:
+    """Tests for chat tool."""
 
-    def test_query_returns_response(self):
-        """Test that query returns a response string."""
-        tools = HonchoTools(
-            app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"query-session-{uuid.uuid4().hex[:8]}",
-        )
-
-        # Add context first
-        tools.add_message("The user loves hiking and outdoor activities")
-        tools.add_message("They also enjoy photography")
-
-        result = tools.query_peer("What does this person enjoy?")
-
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-    def test_query_without_context(self):
-        """Test query with minimal context."""
-        tools = HonchoTools(
-            app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"query-empty-session-{uuid.uuid4().hex[:8]}",
-        )
-
-        result = tools.query_peer("What are the user's preferences?")
-
-        assert isinstance(result, str)
-
-    def test_query_specific_peer(self):
-        """Test querying about a specific peer by ID."""
-        session_id = f"query-peer-session-{uuid.uuid4().hex[:8]}"
+    def test_chat_returns_response(self):
+        """Test that chat returns a response string."""
+        session_id = f"chat-session-{uuid.uuid4().hex[:8]}"
         honcho = Honcho(workspace_id="test-app")
 
-        # Add user messages directly
-        session = honcho.session(session_id)
-        user_peer = honcho.peer("user")
-        session.add_messages([
-            user_peer.message("I love hiking"),
-            user_peer.message("Photography is my hobby"),
-        ])
-
-        # Agent queries about the user
         tools = HonchoTools(
             app_id="test-app",
             peer_id="assistant",
@@ -322,29 +278,29 @@ class TestQueryPeer:
             honcho_client=honcho,
         )
 
-        result = tools.query_peer("What are their interests?", target_peer_id="user")
+        # Add context first
+        user = honcho.peer("user")
+        tools.session.add_messages([
+            user.message("The user loves hiking and outdoor activities"),
+            user.message("They also enjoy photography"),
+        ])
+
+        result = tools.chat("What does this person enjoy?")
 
         assert isinstance(result, str)
+        assert len(result) > 0
 
-
-class TestResetSession:
-    """Tests for reset_session tool."""
-
-    def test_reset_creates_new_session(self):
-        """Test that reset creates a new session."""
+    def test_chat_without_context(self):
+        """Test chat with minimal context."""
         tools = HonchoTools(
             app_id="test-app",
             peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"original-session-{uuid.uuid4().hex[:8]}",
+            session_id=f"chat-empty-session-{uuid.uuid4().hex[:8]}",
         )
 
-        original_session = tools.session_id
-
-        result = tools.reset_session()
+        result = tools.chat("What are the user's preferences?")
 
         assert isinstance(result, str)
-        assert tools.session_id != original_session
-        assert "reset" in result.lower() or "new" in result.lower()
 
 
 class TestToolsIntegration:
@@ -352,16 +308,21 @@ class TestToolsIntegration:
 
     def test_all_tools_in_sequence(self):
         """Test using all tools in a realistic sequence."""
+        session_id = f"integration-session-{uuid.uuid4().hex[:8]}"
+        honcho = Honcho(workspace_id="test-app")
+
         tools = HonchoTools(
             app_id="test-app",
-            peer_id=f"agent-{uuid.uuid4().hex[:8]}",
-            session_id=f"integration-session-{uuid.uuid4().hex[:8]}",
+            peer_id="assistant",
+            session_id=session_id,
+            honcho_client=honcho,
         )
 
-        # Add message
-        add_result = tools.add_message("I'm interested in AI and machine learning")
-        assert isinstance(add_result, str)
-        assert "error" not in add_result.lower()
+        # Add message via orchestration
+        user = honcho.peer("user")
+        tools.session.add_messages([
+            user.message("I'm interested in AI and machine learning")
+        ])
 
         # Get context
         context_result = tools.get_context()
@@ -371,9 +332,9 @@ class TestToolsIntegration:
         search_result = tools.search_messages("AI", limit=10)
         assert isinstance(search_result, str)
 
-        # Query peer
-        query_result = tools.query_peer("What topics are mentioned?")
-        assert isinstance(query_result, str)
+        # Chat
+        chat_result = tools.chat("What topics are mentioned?")
+        assert isinstance(chat_result, str)
 
     def test_multi_agent_conversation(self):
         """Test realistic multi-agent conversation."""
@@ -399,10 +360,10 @@ class TestToolsIntegration:
             honcho_client=honcho,
         )
 
-        # Conversation flow
+        # Conversation flow via orchestration
         session.add_messages([user.message("I want to build a SaaS product")])
-        tech_agent.add_message("Consider microservices architecture")
-        biz_agent.add_message("Focus on a niche market first")
+        session.add_messages([tech_agent.peer.message("Consider microservices architecture")])
+        session.add_messages([biz_agent.peer.message("Focus on a niche market first")])
 
         # Both agents can see full context
         tech_context = tech_agent.get_context()
