@@ -1,13 +1,17 @@
-import HonchoCore from '@honcho-ai/core'
-import type { DefaultQuery } from '@honcho-ai/core/core'
-import type {
-  QueueStatusParams,
-  QueueStatusResponse,
-} from '@honcho-ai/core/resources/workspaces/queue'
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
+import { HonchoHTTPClient } from './http/client'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
+import {
+  API_VERSION,
+  type MessageResponse,
+  type PageResponse,
+  type PeerResponse,
+  type QueueStatusParams,
+  type QueueStatusResponse,
+  type SessionResponse,
+  type WorkspaceResponse,
+} from './types'
 import {
   FilterSchema,
   type Filters,
@@ -33,15 +37,14 @@ import {
   WorkspaceMetadataSchema,
 } from './validation'
 
+const DEFAULT_BASE_URL = 'https://api.honcho.dev'
+
 /**
  * Main client for the Honcho TypeScript SDK.
  *
  * Provides access to peers, sessions, and workspace operations with configuration
  * from environment variables or explicit parameters. This is the primary entry
  * point for interacting with the Honcho conversational memory platform.
- *
- * For advanced usage, the underlying @honcho-ai/core client can be accessed via the
- * `core` property to use functionality not exposed through this SDK.
  *
  * @example
  * ```typescript
@@ -60,9 +63,9 @@ export class Honcho {
    */
   readonly workspaceId: string
   /**
-   * Reference to the core Honcho client instance.
+   * Reference to the HTTP client instance.
    */
-  private _client: HonchoCore
+  private _http: HonchoHTTPClient
   /**
    * Private cached metadata for this workspace.
    */
@@ -95,22 +98,19 @@ export class Honcho {
   }
 
   /**
-   * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
-   * allowing users to access functionality that is not exposed through this SDK.
+   * Access the underlying HTTP client for advanced usage.
    *
-   * @returns The underlying HonchoCore client instance
-   *
-   * @example
-   * ```typescript
-   * import { Honcho } from '@honcho-ai/sdk';
-   *
-   * const client = new Honcho();
-   *
-   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace-id" });
-   * ```
+   * @returns The HTTP client instance
    */
-  get core(): InstanceType<typeof HonchoCore> {
-    return this._client
+  get http(): HonchoHTTPClient {
+    return this._http
+  }
+
+  /**
+   * Get the base URL for the API.
+   */
+  get baseURL(): string {
+    return this._http.baseURL
   }
 
   /**
@@ -129,28 +129,200 @@ export class Honcho {
    * @param options.timeout - Optional custom timeout for the HTTP client
    * @param options.maxRetries - Optional custom maximum number of retries for the HTTP client
    * @param options.defaultHeaders - Optional custom default headers for the HTTP client
-   * @param options.defaultQuery - Optional custom default query parameters for the HTTP client
    */
-  constructor(options: HonchoConfig) {
+  constructor(options: HonchoConfig = {}) {
     const validatedOptions = HonchoConfigSchema.parse(options)
     this.workspaceId =
       validatedOptions.workspaceId ||
       process.env.HONCHO_WORKSPACE_ID ||
       'default'
-    this._client = new HonchoCore({
+
+    // Resolve base URL
+    let baseURL = validatedOptions.baseURL || process.env.HONCHO_URL
+    if (validatedOptions.environment === 'local') {
+      baseURL = 'http://localhost:8000'
+    } else if (!baseURL) {
+      baseURL = DEFAULT_BASE_URL
+    }
+
+    this._http = new HonchoHTTPClient({
+      baseURL,
       apiKey: validatedOptions.apiKey || process.env.HONCHO_API_KEY,
-      environment: validatedOptions.environment,
-      baseURL: validatedOptions.baseURL || process.env.HONCHO_URL,
       timeout: validatedOptions.timeout,
       maxRetries: validatedOptions.maxRetries,
       defaultHeaders: validatedOptions.defaultHeaders,
-      defaultQuery: validatedOptions.defaultQuery as DefaultQuery,
     })
-    // Note: Constructor cannot be async, so we can't await here
-    // The workspace will be created on first use if it doesn't exist
-    // due to the upsert behavior of the API
-    this._client.workspaces.getOrCreate({ id: this.workspaceId })
+
+    // Fire and forget workspace creation
+    this._getOrCreateWorkspace(this.workspaceId)
   }
+
+  // ===========================================================================
+  // Private API Methods
+  // ===========================================================================
+
+  private async _getOrCreateWorkspace(
+    id: string,
+    params?: {
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+    }
+  ): Promise<WorkspaceResponse> {
+    return this._http.post<WorkspaceResponse>(`/${API_VERSION}/workspaces`, {
+      body: {
+        id,
+        metadata: params?.metadata,
+        configuration: params?.configuration,
+      },
+    })
+  }
+
+  private async _updateWorkspace(
+    workspaceId: string,
+    params: {
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+    }
+  ): Promise<WorkspaceResponse> {
+    return this._http.put<WorkspaceResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}`,
+      { body: params }
+    )
+  }
+
+  private async _deleteWorkspace(
+    workspaceId: string
+  ): Promise<WorkspaceResponse> {
+    return this._http.delete<WorkspaceResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}`
+    )
+  }
+
+  private async _listWorkspaces(params?: {
+    filters?: Record<string, unknown>
+    page?: number
+    size?: number
+  }): Promise<PageResponse<WorkspaceResponse>> {
+    return this._http.post<PageResponse<WorkspaceResponse>>(
+      `/${API_VERSION}/workspaces/list`,
+      {
+        body: {
+          filters: params?.filters,
+        },
+        query: {
+          page: params?.page,
+          size: params?.size,
+        },
+      }
+    )
+  }
+
+  private async _searchWorkspace(
+    workspaceId: string,
+    params: {
+      query: string
+      filters?: Record<string, unknown>
+      limit?: number
+    }
+  ): Promise<MessageResponse[]> {
+    return this._http.post<MessageResponse[]>(
+      `/${API_VERSION}/workspaces/${workspaceId}/search`,
+      { body: params }
+    )
+  }
+
+  private async _getQueueStatus(
+    workspaceId: string,
+    params?: QueueStatusParams
+  ): Promise<QueueStatusResponse> {
+    const query: Record<string, string | number | boolean | undefined> = {}
+    if (params?.observer_id) query.observer_id = params.observer_id
+    if (params?.sender_id) query.sender_id = params.sender_id
+    if (params?.session_id) query.session_id = params.session_id
+
+    return this._http.get<QueueStatusResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/queue/status`,
+      { query }
+    )
+  }
+
+  private async _listPeers(
+    workspaceId: string,
+    params?: {
+      filters?: Record<string, unknown>
+      page?: number
+      size?: number
+    }
+  ): Promise<PageResponse<PeerResponse>> {
+    return this._http.post<PageResponse<PeerResponse>>(
+      `/${API_VERSION}/workspaces/${workspaceId}/peers/list`,
+      {
+        body: { filters: params?.filters },
+        query: { page: params?.page, size: params?.size },
+      }
+    )
+  }
+
+  private async _getOrCreatePeer(
+    workspaceId: string,
+    params: {
+      id: string
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+    }
+  ): Promise<PeerResponse> {
+    return this._http.post<PeerResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/peers`,
+      { body: params }
+    )
+  }
+
+  private async _listSessions(
+    workspaceId: string,
+    params?: {
+      filters?: Record<string, unknown>
+      page?: number
+      size?: number
+    }
+  ): Promise<PageResponse<SessionResponse>> {
+    return this._http.post<PageResponse<SessionResponse>>(
+      `/${API_VERSION}/workspaces/${workspaceId}/sessions/list`,
+      {
+        body: { filters: params?.filters },
+        query: { page: params?.page, size: params?.size },
+      }
+    )
+  }
+
+  private async _getOrCreateSession(
+    workspaceId: string,
+    params: {
+      id: string
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+    }
+  ): Promise<SessionResponse> {
+    return this._http.post<SessionResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/sessions`,
+      { body: params }
+    )
+  }
+
+  private async _updateMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    params: { metadata: Record<string, unknown> }
+  ): Promise<MessageResponse> {
+    return this._http.put<MessageResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/sessions/${sessionId}/messages/${messageId}`,
+      { body: params }
+    )
+  }
+
+  // ===========================================================================
+  // Public Methods
+  // ===========================================================================
 
   /**
    * Get or create a peer with the given ID.
@@ -188,24 +360,21 @@ export class Honcho {
       : undefined
 
     if (validatedConfig || validatedMetadata) {
-      const peerData = await this._client.workspaces.peers.getOrCreate(
-        this.workspaceId,
-        {
-          id: validatedId,
-          configuration: validatedConfig,
-          metadata: validatedMetadata,
-        }
-      )
+      const peerData = await this._getOrCreatePeer(this.workspaceId, {
+        id: validatedId,
+        configuration: validatedConfig,
+        metadata: validatedMetadata,
+      })
       return new Peer(
         validatedId,
         this.workspaceId,
-        this._client,
+        this._http,
         peerData.metadata ?? undefined,
         peerData.configuration ?? undefined
       )
     }
 
-    return new Peer(validatedId, this.workspaceId, this._client)
+    return new Peer(validatedId, this.workspaceId, this._http)
   }
 
   /**
@@ -217,22 +386,34 @@ export class Honcho {
    * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async getPeers(filters?: Filters): Promise<Page<Peer>> {
+  async getPeers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const peersPage = await this._client.workspaces.peers.list(
-      this.workspaceId,
-      { filters: validatedFilter }
-    )
+    const peersPage = await this._listPeers(this.workspaceId, {
+      filters: validatedFilter,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<PeerResponse>> => {
+      return this._listPeers(this.workspaceId, {
+        filters: validatedFilter,
+        page,
+        size,
+      })
+    }
+
     return new Page(
       peersPage,
       (peer) =>
         new Peer(
           peer.id,
           this.workspaceId,
-          this._client,
+          this._http,
           peer.metadata ?? undefined,
           peer.configuration ?? undefined
-        )
+        ),
+      fetchNextPage
     )
   }
 
@@ -273,24 +454,21 @@ export class Honcho {
       : undefined
 
     if (validatedConfig || validatedMetadata) {
-      const sessionData = await this._client.workspaces.sessions.getOrCreate(
-        this.workspaceId,
-        {
-          id: validatedId,
-          configuration: validatedConfig,
-          metadata: validatedMetadata,
-        }
-      )
+      const sessionData = await this._getOrCreateSession(this.workspaceId, {
+        id: validatedId,
+        configuration: validatedConfig,
+        metadata: validatedMetadata,
+      })
       return new Session(
         validatedId,
         this.workspaceId,
-        this._client,
+        this._http,
         sessionData.metadata ?? undefined,
         sessionData.configuration ?? undefined
       )
     }
 
-    return new Session(validatedId, this.workspaceId, this._client)
+    return new Session(validatedId, this.workspaceId, this._http)
   }
 
   /**
@@ -303,22 +481,36 @@ export class Honcho {
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async getSessions(filters?: Filters): Promise<Page<Session>> {
+  async getSessions(
+    filters?: Filters
+  ): Promise<Page<Session, SessionResponse>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const sessionsPage = await this._client.workspaces.sessions.list(
-      this.workspaceId,
-      { filters: validatedFilter }
-    )
+    const sessionsPage = await this._listSessions(this.workspaceId, {
+      filters: validatedFilter,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<SessionResponse>> => {
+      return this._listSessions(this.workspaceId, {
+        filters: validatedFilter,
+        page,
+        size,
+      })
+    }
+
     return new Page(
       sessionsPage,
       (session) =>
         new Session(
           session.id,
           this.workspaceId,
-          this._client,
+          this._http,
           session.metadata ?? undefined,
           session.configuration ?? undefined
-        )
+        ),
+      fetchNextPage
     )
   }
 
@@ -334,9 +526,7 @@ export class Honcho {
    *          Returns an empty dictionary if no metadata is set
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
     return this._metadata
   }
@@ -353,7 +543,7 @@ export class Honcho {
    */
   async setMetadata(metadata: WorkspaceMetadata): Promise<void> {
     const validatedMetadata = WorkspaceMetadataSchema.parse(metadata)
-    await this._client.workspaces.update(this.workspaceId, {
+    await this._updateWorkspace(this.workspaceId, {
       metadata: validatedMetadata,
     })
     this._metadata = validatedMetadata
@@ -370,9 +560,7 @@ export class Honcho {
    *          Returns an empty dictionary if no configuration is set
    */
   async getConfig(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._configuration = workspace.configuration || {}
     return this._configuration
   }
@@ -389,7 +577,7 @@ export class Honcho {
    */
   async setConfig(configuration: WorkspaceConfig): Promise<void> {
     const validatedConfig = WorkspaceConfigSchema.parse(configuration)
-    await this._client.workspaces.update(this.workspaceId, {
+    await this._updateWorkspace(this.workspaceId, {
       configuration: validatedConfig,
     })
     this._configuration = validatedConfig
@@ -402,9 +590,7 @@ export class Honcho {
    * associated with the current workspace and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
     this._configuration = workspace.configuration || {}
   }
@@ -421,11 +607,13 @@ export class Honcho {
    */
   async getWorkspaces(filters?: Filters): Promise<string[]> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const workspacesPage = await this._client.workspaces.list({
+    const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
     })
+
     const ids: string[] = []
-    for await (const workspace of workspacesPage) {
+    const page = Page.from<WorkspaceResponse>(workspacesPage)
+    for await (const workspace of page) {
       ids.push(workspace.id)
     }
     return ids
@@ -439,10 +627,8 @@ export class Honcho {
    * @param workspaceId - The ID of the workspace to delete
    * @returns Promise resolving to the deleted Workspace object
    */
-  async deleteWorkspace(
-    workspaceId: string
-  ): Promise<Awaited<ReturnType<typeof this._client.workspaces.delete>>> {
-    return await this._client.workspaces.delete(workspaceId)
+  async deleteWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return await this._deleteWorkspace(workspaceId)
   }
 
   /**
@@ -463,7 +649,7 @@ export class Honcho {
       filters?: Filters
       limit?: number
     }
-  ): Promise<Message[]> {
+  ): Promise<MessageResponse[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedFilters = options?.filters
       ? FilterSchema.parse(options.filters)
@@ -471,7 +657,7 @@ export class Honcho {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.search(this.workspaceId, {
+    return await this._searchWorkspace(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,
       limit: validatedLimit,
@@ -504,7 +690,15 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, QueueStatusResponse.Sessions>
+    sessions?: Record<
+      string,
+      {
+        total_work_units: number
+        completed_work_units: number
+        in_progress_work_units: number
+        pending_work_units: number
+      }
+    >
   }> {
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
@@ -527,10 +721,7 @@ export class Honcho {
     if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
     if (resolvedSessionId) queryParams.session_id = resolvedSessionId
 
-    const status = await this._client.workspaces.queue.status(
-      this.workspaceId,
-      queryParams
-    )
+    const status = await this._getQueueStatus(this.workspaceId, queryParams)
 
     return {
       totalWorkUnits: status.total_work_units,
@@ -570,7 +761,15 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, QueueStatusResponse.Sessions>
+    sessions?: Record<
+      string,
+      {
+        total_work_units: number
+        completed_work_units: number
+        in_progress_work_units: number
+        pending_work_units: number
+      }
+    >
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
@@ -618,10 +817,10 @@ export class Honcho {
    * @throws Error if message is a string ID but session is not provided
    */
   async updateMessage(
-    message: Message | string,
+    message: MessageResponse | string,
     metadata: Record<string, unknown>,
     session?: string | Session
-  ): Promise<Message> {
+  ): Promise<MessageResponse> {
     const validatedMetadata = MessageMetadataSchema.parse(metadata)
     let messageId: string
     let resolvedSessionId: string
@@ -637,13 +836,11 @@ export class Honcho {
       resolvedSessionId = message.session_id
     }
 
-    return await this._client.workspaces.sessions.messages.update(
+    return await this._updateMessage(
       this.workspaceId,
       resolvedSessionId,
       messageId,
-      {
-        metadata: validatedMetadata,
-      }
+      { metadata: validatedMetadata ?? {} }
     )
   }
 
@@ -653,6 +850,6 @@ export class Honcho {
    * @returns A string representation suitable for debugging
    */
   toString(): string {
-    return `Honcho(workspaceId='${this.workspaceId}', baseURL='${this._client.baseURL}')`
+    return `Honcho(workspaceId='${this.workspaceId}', baseURL='${this._http.baseURL}')`
   }
 }

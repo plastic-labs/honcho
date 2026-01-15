@@ -1,5 +1,5 @@
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type { Peer } from './peer'
+import type { MessageResponse } from './types/api'
 
 export interface SummaryData {
   content: string
@@ -95,7 +95,7 @@ export class SessionContext {
   /**
    * List of Message objects representing the conversation context.
    */
-  readonly messages: Message[]
+  readonly messages: MessageResponse[]
 
   /**
    * Summary of the session history prior to the message cutoff.
@@ -123,7 +123,7 @@ export class SessionContext {
    */
   constructor(
     sessionId: string,
-    messages: Message[],
+    messages: MessageResponse[],
     summary: Summary | null = null,
     peerRepresentation: string | null = null,
     peerCard: string[] | null = null

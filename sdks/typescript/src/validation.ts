@@ -1,5 +1,5 @@
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { z } from 'zod'
+import type { MessageResponse } from './types/api'
 
 /**
  * Validation schemas for the Honcho TypeScript SDK.
@@ -148,9 +148,9 @@ export const ChatQuerySchema = z.object({
 })
 
 /**
- * Schema for validating Message objects from the core SDK.
+ * Schema for validating Message objects.
  */
-const MessageSchema: z.ZodType<Message> = z.object({
+const MessageSchema: z.ZodType<MessageResponse> = z.object({
   id: z.string(),
   content: z.string(),
   created_at: z.string(),
@@ -158,8 +158,8 @@ const MessageSchema: z.ZodType<Message> = z.object({
   session_id: z.string(),
   token_count: z.number(),
   workspace_id: z.string(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-}) as z.ZodType<Message>
+  metadata: z.record(z.string(), z.unknown()),
+}) as z.ZodType<MessageResponse>
 
 /**
  * Schema for representation options.

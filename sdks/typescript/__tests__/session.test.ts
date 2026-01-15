@@ -1,1200 +1,576 @@
-import { Session } from '../src/session'
-import { Peer } from '../src/peer'
-import { Page } from '../src/pagination'
-import { SessionContext } from '../src/session_context'
-import { Honcho } from '../src/client'
+/**
+ * Session Tests
+ *
+ * Tests for Session operations.
+ *
+ * Endpoints covered:
+ * - POST /v1/workspaces/:id/sessions (create/get session)
+ * - POST /v1/workspaces/:id/sessions/list (list sessions)
+ * - PUT /v1/workspaces/:id/sessions/:id (update session)
+ * - DELETE /v1/workspaces/:id/sessions/:id (delete session)
+ * - POST /v1/workspaces/:id/sessions/:id/clone (clone session)
+ * - POST /v1/workspaces/:id/sessions/:id/peers/add (add peers)
+ * - POST /v1/workspaces/:id/sessions/:id/peers/set (set peers)
+ * - POST /v1/workspaces/:id/sessions/:id/peers/remove (remove peers)
+ * - GET /v1/workspaces/:id/sessions/:id/peers (list peers)
+ * - GET /v1/workspaces/:id/sessions/:id/peers/:id/config (get peer config)
+ * - PUT /v1/workspaces/:id/sessions/:id/peers/:id/config (set peer config)
+ * - POST /v1/workspaces/:id/sessions/:id/context (get context)
+ * - GET /v1/workspaces/:id/sessions/:id/summaries (get summaries)
+ * - POST /v1/workspaces/:id/sessions/:id/search (search)
+ */
 
-// Mock the @honcho-ai/core module
-jest.mock('@honcho-ai/core', () => {
-  return jest.fn().mockImplementation(() => ({
-    workspaces: {
-      sessions: {
-        peers: {
-          add: jest.fn(),
-          set: jest.fn(),
-          remove: jest.fn(),
-          list: jest.fn(),
-          config: jest.fn(),
-          setConfig: jest.fn(),
-        },
-        messages: {
-          create: jest.fn(),
-          list: jest.fn(),
-          upload: jest.fn(),
-        },
-        getOrCreate: jest.fn(),
-        update: jest.fn(),
-        delete: jest.fn(),
-        clone: jest.fn(),
-        context: jest.fn(),
-        search: jest.fn(),
-      },
-      peers: {
-        representation: jest.fn(),
-      },
-      queue: {
-        status: jest.fn(),
-      },
-      getOrCreate: jest.fn(),
-      update: jest.fn(),
-      list: jest.fn(),
-      search: jest.fn(),
-    },
-  }))
-})
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import { Honcho, Session, SessionPeerConfig } from '../src'
+import { createTestClient, generateId, requireServer } from './setup'
+import { assertMessageShape, testMetadata } from './helpers'
 
 describe('Session', () => {
-  let honcho: Honcho
-  let session: Session
-  let mockClient: any
+  let client: Honcho
+  let cleanup: () => Promise<void>
 
-  beforeEach(() => {
-    jest.clearAllMocks()
-
-    honcho = new Honcho({
-      workspaceId: 'test-workspace',
-      apiKey: 'test-key',
-      environment: 'local',
-    })
-
-    session = new Session(
-      'test-session',
-      'test-workspace',
-      (honcho as any)._client
-    )
-    mockClient = (honcho as any)._client
+  beforeAll(async () => {
+    await requireServer()
+    const setup = await createTestClient('session')
+    client = setup.client
+    cleanup = setup.cleanup
   })
 
-  describe('constructor', () => {
-    it('should initialize with correct properties', () => {
-      const newSession = new Session('session-id', 'test-workspace', mockClient)
-
-      expect(newSession.id).toBe('session-id')
-      expect(newSession.workspaceId).toBe('test-workspace')
-      expect(newSession['_client']).toBe(mockClient)
-    })
+  afterAll(async () => {
+    await cleanup()
   })
 
-  describe('addPeers', () => {
-    it('should add single peer by string ID', async () => {
-      mockClient.workspaces.sessions.peers.add.mockResolvedValue({})
+  // ===========================================================================
+  // Session Creation (POST /sessions)
+  // ===========================================================================
 
-      await session.addPeers('peer1')
+  describe('POST /sessions (create/get)', () => {
+    test('creates session with just ID', async () => {
+      const session = await client.session('simple-session')
 
-      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { peer1: {} }
-      )
+      expect(session).toBeInstanceOf(Session)
+      expect(session.id).toBe('simple-session')
+      expect(session.workspaceId).toBe(client.workspaceId)
     })
 
-    it('should add single peer by Peer object', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      mockClient.workspaces.sessions.peers.add.mockResolvedValue({})
+    test('creates session with metadata', async () => {
+      const metadata = testMetadata({ topic: 'testing' })
+      const session = await client.session('session-with-meta', { metadata })
 
-      await session.addPeers(peer)
-
-      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { peer1: {} }
-      )
+      expect(session.metadata).toEqual(metadata)
     })
 
-    it('should add array of peer strings', async () => {
-      mockClient.workspaces.sessions.peers.add.mockResolvedValue({})
+    test('creates session with configuration', async () => {
+      const config = { summary: { enabled: true } }
+      const session = await client.session('session-with-config', { config })
 
-      await session.addPeers(['peer1', 'peer2', 'peer3'])
-
-      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        {
-          peer1: {},
-          peer2: {},
-          peer3: {},
-        }
-      )
+      expect(session.configuration).toEqual(config)
     })
 
-    it('should add array of Peer objects', async () => {
-      const peers = [
-        new Peer('peer1', 'test-workspace', mockClient),
-        new Peer('peer2', 'test-workspace', mockClient),
-        new Peer('peer3', 'test-workspace', mockClient),
-      ]
-      mockClient.workspaces.sessions.peers.add.mockResolvedValue({})
-
-      await session.addPeers(peers)
-
-      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        {
-          peer1: {},
-          peer2: {},
-          peer3: {},
-        }
-      )
-    })
-
-    it('should add mixed array of strings and Peer objects', async () => {
-      const peers = [
-        'string-peer',
-        new Peer('object-peer', 'test-workspace', mockClient),
-      ]
-      mockClient.workspaces.sessions.peers.add.mockResolvedValue({})
-
-      await session.addPeers(peers)
-
-      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        {
-          'string-peer': {},
-          'object-peer': {},
-        }
-      )
-    })
-
-    it('should add peer with SessionPeerConfig', async () => {
-      const { SessionPeerConfig } = require('../src/session')
-      const config = new SessionPeerConfig(false, true)
-      mockClient.workspaces.sessions.peers.add.mockResolvedValue({})
-
-      await session.addPeers([['peer1', config]])
-
-      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        {
-          peer1: { observe_me: false, observe_others: true },
-        }
-      )
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.peers.add.mockRejectedValue(
-        new Error('Failed to add peers')
-      )
-
-      await expect(session.addPeers('peer1')).rejects.toThrow()
-    })
-  })
-
-  describe('setPeers', () => {
-    it('should set single peer by string ID', async () => {
-      mockClient.workspaces.sessions.peers.set.mockResolvedValue({})
-
-      await session.setPeers('peer1')
-
-      expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { peer1: {} }
-      )
-    })
-
-    it('should set single peer by Peer object', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      mockClient.workspaces.sessions.peers.set.mockResolvedValue({})
-
-      await session.setPeers(peer)
-
-      expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { peer1: {} }
-      )
-    })
-
-    it('should set array of peers', async () => {
-      const peers = ['peer1', new Peer('peer2', 'test-workspace', mockClient)]
-      mockClient.workspaces.sessions.peers.set.mockResolvedValue({})
-
-      await session.setPeers(peers)
-
-      expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        {
-          peer1: {},
-          peer2: {},
-        }
-      )
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.peers.set.mockRejectedValue(
-        new Error('Failed to set peers')
-      )
-
-      await expect(session.setPeers(['peer1'])).rejects.toThrow()
-    })
-  })
-
-  describe('removePeers', () => {
-    it('should remove single peer by string ID', async () => {
-      mockClient.workspaces.sessions.peers.remove.mockResolvedValue({})
-
-      await session.removePeers('peer1')
-
-      expect(mockClient.workspaces.sessions.peers.remove).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        ['peer1']
-      )
-    })
-
-    it('should remove single peer by Peer object', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      mockClient.workspaces.sessions.peers.remove.mockResolvedValue({})
-
-      await session.removePeers(peer)
-
-      expect(mockClient.workspaces.sessions.peers.remove).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        ['peer1']
-      )
-    })
-
-    it('should remove array of peers', async () => {
-      const peers = ['peer1', new Peer('peer2', 'test-workspace', mockClient)]
-      mockClient.workspaces.sessions.peers.remove.mockResolvedValue({})
-
-      await session.removePeers(peers)
-
-      expect(mockClient.workspaces.sessions.peers.remove).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        ['peer1', 'peer2']
-      )
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.peers.remove.mockRejectedValue(
-        new Error('Failed to remove peers')
-      )
-
-      await expect(session.removePeers(['peer1'])).rejects.toThrow()
-    })
-  })
-
-  describe('getPeers', () => {
-    it('should return array of Peer instances', async () => {
-      const mockPeersData = {
-        items: [
-          { id: 'peer1', metadata: {} },
-          { id: 'peer2', metadata: {} },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: () => false,
-      }
-      mockClient.workspaces.sessions.peers.list.mockResolvedValue(mockPeersData)
-
-      const peers = await session.getPeers()
-
-      expect(peers).toBeInstanceOf(Array)
-      expect(peers).toHaveLength(2)
-      expect(peers[0]).toBeInstanceOf(Peer)
-      expect(peers[1]).toBeInstanceOf(Peer)
-      expect(mockClient.workspaces.sessions.peers.list).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session'
-      )
-    })
-
-    it('should handle empty peers list', async () => {
-      const mockPeersData = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: () => false,
-      }
-      mockClient.workspaces.sessions.peers.list.mockResolvedValue(mockPeersData)
-
-      const peers = await session.getPeers()
-
-      expect(peers).toBeInstanceOf(Array)
-      expect(peers.length).toBe(0)
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.peers.list.mockRejectedValue(
-        new Error('Failed to get peers')
-      )
-
-      await expect(session.getPeers()).rejects.toThrow()
-    })
-  })
-
-  describe('getPeerConfig', () => {
-    it('should return peer configuration', async () => {
-      const mockConfig = { observe_me: true, observe_others: false }
-      mockClient.workspaces.sessions.peers.config.mockResolvedValue(
-        mockConfig
-      )
-
-      const config = await session.getPeerConfig('peer1')
-
-      expect(config).toEqual(mockConfig)
-      expect(
-        mockClient.workspaces.sessions.peers.config
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', 'peer1')
-    })
-
-    it('should handle Peer object input', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      const mockConfig = { observe_me: false, observe_others: true }
-      mockClient.workspaces.sessions.peers.config.mockResolvedValue(
-        mockConfig
-      )
-
-      const config = await session.getPeerConfig(peer)
-
-      expect(config).toEqual(mockConfig)
-      expect(
-        mockClient.workspaces.sessions.peers.config
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', 'peer1')
-    })
-  })
-
-  describe('setPeerConfig', () => {
-    it('should set peer configuration', async () => {
-      const { SessionPeerConfig } = require('../src/session')
-      const config = new SessionPeerConfig(false, true)
-      mockClient.workspaces.sessions.peers.setConfig.mockResolvedValue({})
-
-      await session.setPeerConfig('peer1', config)
-
-      expect(
-        mockClient.workspaces.sessions.peers.setConfig
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', 'peer1', {
-        observe_me: false,
-        observe_others: true,
+    test('get-or-create is idempotent', async () => {
+      const session1 = await client.session('idempotent-session', {
+        metadata: { version: 1 },
       })
-    })
-
-    it('should handle Peer object input', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      const { SessionPeerConfig } = require('../src/session')
-      const config = new SessionPeerConfig(true, false)
-      mockClient.workspaces.sessions.peers.setConfig.mockResolvedValue({})
-
-      await session.setPeerConfig(peer, config)
-
-      expect(
-        mockClient.workspaces.sessions.peers.setConfig
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', 'peer1', {
-        observe_me: true,
-        observe_others: false,
+      const session2 = await client.session('idempotent-session', {
+        metadata: { version: 2 },
       })
+
+      expect(session1.id).toBe(session2.id)
+      expect(session2.metadata).toEqual({ version: 2 })
     })
   })
 
-  describe('addMessages', () => {
-    it('should add single message', async () => {
-      const message = {
-        peer_id: 'peer1',
-        content: 'Hello world',
-        metadata: { type: 'greeting' },
-      }
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
+  // ===========================================================================
+  // Session Listing (POST /sessions/list)
+  // ===========================================================================
 
-      await session.addMessages(message)
+  describe('POST /sessions/list', () => {
+    test('getSessions returns paginated list', async () => {
+      await client.session('list-session-a', { metadata: {} })
+      await client.session('list-session-b', { metadata: {} })
 
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        messages: [
-          {
-            peer_id: 'peer1',
-            content: 'Hello world',
-            metadata: { type: 'greeting' },
-          },
-        ],
-      })
+      const page = await client.getSessions()
+
+      expect(page.items.length).toBeGreaterThanOrEqual(2)
+      const ids = page.items.map((s) => s.id)
+      expect(ids).toContain('list-session-a')
+      expect(ids).toContain('list-session-b')
     })
 
-    it('should add array of messages', async () => {
-      const messages = [
-        { peer_id: 'peer1', content: 'Message 1', metadata: { order: 1 } },
-        { peer_id: 'peer2', content: 'Message 2', metadata: { order: 2 } },
-      ]
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
+    test('getSessions with filter', async () => {
+      const tag = `tag-${Date.now()}`
+      await client.session('filtered-session', { metadata: { tag } })
 
-      await session.addMessages(messages)
+      const page = await client.getSessions({ tag })
 
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        messages: [
-          { peer_id: 'peer1', content: 'Message 1', metadata: { order: 1 } },
-          { peer_id: 'peer2', content: 'Message 2', metadata: { order: 2 } },
-        ],
-      })
-    })
-
-    it('should handle messages without metadata', async () => {
-      const message = {
-        peer_id: 'peer1',
-        content: 'Simple message',
-      }
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
-
-      await session.addMessages(message)
-
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        messages: [{ peer_id: 'peer1', content: 'Simple message' }],
-      })
-    })
-
-    it('should handle empty array', async () => {
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
-
-      await session.addMessages([])
-
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', { messages: [] })
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.messages.create.mockRejectedValue(
-        new Error('Failed to add messages')
-      )
-
-      await expect(
-        session.addMessages({ peer_id: 'peer1', content: 'test' })
-      ).rejects.toThrow()
-    })
-
-    it('should add message with custom timestamp', async () => {
-      const message = {
-        peer_id: 'peer1',
-        content: 'Message with timestamp',
-        created_at: '2023-01-01T12:00:00Z',
-        metadata: { test: 'timestamp' },
-      }
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
-
-      await session.addMessages(message)
-
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        messages: [
-          {
-            peer_id: 'peer1',
-            content: 'Message with timestamp',
-            created_at: '2023-01-01T12:00:00Z',
-            metadata: { test: 'timestamp' },
-          },
-        ],
-      })
-    })
-
-    it('should add message with null timestamp', async () => {
-      const message = {
-        peer_id: 'peer1',
-        content: 'Message without timestamp',
-        created_at: null,
-        metadata: { test: 'no_timestamp' },
-      }
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
-
-      await session.addMessages(message)
-
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        messages: [
-          {
-            peer_id: 'peer1',
-            content: 'Message without timestamp',
-            created_at: null,
-            metadata: { test: 'no_timestamp' },
-          },
-        ],
-      })
-    })
-
-    it('should add mixed messages with and without timestamps', async () => {
-      const messages = [
-        {
-          peer_id: 'peer1',
-          content: 'Message with timestamp',
-          created_at: '2023-01-01T12:00:00Z',
-          metadata: { type: 'historical' },
-        },
-        {
-          peer_id: 'peer2',
-          content: 'Message without timestamp',
-          metadata: { type: 'current' },
-        },
-        {
-          peer_id: 'peer3',
-          content: 'Message with null timestamp',
-          created_at: null,
-          metadata: { type: 'default' },
-        },
-      ]
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue({})
-
-      await session.addMessages(messages)
-
-      expect(
-        mockClient.workspaces.sessions.messages.create
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        messages: [
-          {
-            peer_id: 'peer1',
-            content: 'Message with timestamp',
-            created_at: '2023-01-01T12:00:00Z',
-            metadata: { type: 'historical' },
-          },
-          {
-            peer_id: 'peer2',
-            content: 'Message without timestamp',
-            metadata: { type: 'current' },
-          },
-          {
-            peer_id: 'peer3',
-            content: 'Message with null timestamp',
-            created_at: null,
-            metadata: { type: 'default' },
-          },
-        ],
-      })
-    })
-
-    it('should return list of messages when created', async () => {
-      const mockMessages = [
-        {
-          id: 'msg1',
-          peer_id: 'peer1',
-          content: 'Hello',
-          created_at: '2023-01-01T00:00:00Z',
-          metadata: {},
-        },
-        {
-          id: 'msg2',
-          peer_id: 'peer2',
-          content: 'Hi there',
-          created_at: '2023-01-01T00:00:01Z',
-          metadata: {},
-        },
-      ]
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue(
-        mockMessages
-      )
-
-      const messages = [
-        { peer_id: 'peer1', content: 'Hello' },
-        { peer_id: 'peer2', content: 'Hi there' },
-      ]
-      const result = await session.addMessages(messages)
-
-      expect(result).toEqual(mockMessages)
-      expect(result).toHaveLength(2)
-      expect(result[0].id).toBe('msg1')
-      expect(result[0].content).toBe('Hello')
-      expect(result[1].id).toBe('msg2')
-      expect(result[1].content).toBe('Hi there')
-    })
-
-    it('should return single message when adding single message', async () => {
-      const mockMessage = {
-        id: 'msg1',
-        peer_id: 'peer1',
-        content: 'Hello',
-        created_at: '2023-01-01T00:00:00Z',
-        metadata: {},
-      }
-      mockClient.workspaces.sessions.messages.create.mockResolvedValue([
-        mockMessage,
-      ])
-
-      const message = { peer_id: 'peer1', content: 'Hello' }
-      const result = await session.addMessages(message)
-
-      expect(result).toHaveLength(1)
-      expect(result[0]).toEqual(mockMessage)
-      expect(result[0].id).toBe('msg1')
-      expect(result[0].content).toBe('Hello')
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].id).toBe('filtered-session')
     })
   })
 
-  describe('getMessages', () => {
-    it('should get messages without filter', async () => {
-      const mockMessagesData = {
-        items: [
-          { id: 'msg1', content: 'Message 1', peer_id: 'peer1' },
-          { id: 'msg2', content: 'Message 2', peer_id: 'peer2' },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: () => false,
-      }
-      mockClient.workspaces.sessions.messages.list.mockResolvedValue(
-        mockMessagesData
-      )
+  // ===========================================================================
+  // Session Update (PUT /sessions/:id)
+  // ===========================================================================
 
-      const messagesPage = await session.getMessages()
+  describe('PUT /sessions/:id (update)', () => {
+    test('setMetadata updates session metadata', async () => {
+      const session = await client.session('update-meta-session')
 
-      expect(messagesPage).toBeInstanceOf(Page)
-      expect(mockClient.workspaces.sessions.messages.list).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        undefined
-      )
-    })
-
-    it('should get messages with filter options', async () => {
-      const mockMessagesData = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: () => false,
-      }
-      mockClient.workspaces.sessions.messages.list.mockResolvedValue(
-        mockMessagesData
-      )
-
-      const filter = {
-        peer_id: { value: 'peer1' },
-        type: { value: 'important' },
-      }
-      await session.getMessages(filter)
-
-      expect(mockClient.workspaces.sessions.messages.list).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { peer_id: { value: 'peer1' }, type: { value: 'important' } }
-      )
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.messages.list.mockRejectedValue(
-        new Error('Failed to get messages')
-      )
-
-      await expect(session.getMessages()).rejects.toThrow()
-    })
-  })
-
-  describe('getMetadata', () => {
-    it('should return session metadata', async () => {
-      const mockSession = {
-        id: 'test-session',
-        metadata: { name: 'Test Session', active: true },
-      }
-      mockClient.workspaces.sessions.getOrCreate.mockResolvedValue(mockSession)
-
+      await session.setMetadata({ updated: true, step: 2 })
       const metadata = await session.getMetadata()
 
-      expect(metadata).toEqual({ name: 'Test Session', active: true })
-      expect(mockClient.workspaces.sessions.getOrCreate).toHaveBeenCalledWith(
-        'test-workspace',
-        { id: 'test-session' }
-      )
+      expect(metadata).toEqual({ updated: true, step: 2 })
     })
 
-    it('should return empty object when no metadata exists', async () => {
-      const mockSession = {
-        id: 'test-session',
-        metadata: null,
-      }
-      mockClient.workspaces.sessions.getOrCreate.mockResolvedValue(mockSession)
+    test('setConfig updates session configuration', async () => {
+      const session = await client.session('update-config-session')
 
-      const metadata = await session.getMetadata()
+      await session.setConfig({ summary: { enabled: false } })
+      const config = await session.getConfig()
 
-      expect(metadata).toEqual({})
+      expect(config).toEqual({ summary: { enabled: false } })
     })
 
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.getOrCreate.mockRejectedValue(
-        new Error('Session not found')
-      )
+    test('refresh updates cached values', async () => {
+      const session = await client.session('refresh-session', {
+        metadata: { initial: true },
+      })
 
-      await expect(session.getMetadata()).rejects.toThrow()
+      // Modify via another reference
+      const session2 = await client.session('refresh-session')
+      await session2.setMetadata({ modified: true })
+
+      // Original has stale cache
+      expect(session.metadata).toEqual({ initial: true })
+
+      // After refresh
+      await session.refresh()
+      expect(session.metadata).toEqual({ modified: true })
     })
   })
 
-  describe('setMetadata', () => {
-    it('should update session metadata', async () => {
-      const metadata = { name: 'Updated Session', status: 'active' }
-      mockClient.workspaces.sessions.update.mockResolvedValue({})
+  // ===========================================================================
+  // Session Deletion (DELETE /sessions/:id)
+  // ===========================================================================
 
-      await session.setMetadata(metadata)
-
-      expect(mockClient.workspaces.sessions.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { metadata }
-      )
-    })
-
-    it('should handle empty metadata', async () => {
-      mockClient.workspaces.sessions.update.mockResolvedValue({})
-
-      await session.setMetadata({})
-
-      expect(mockClient.workspaces.sessions.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { metadata: {} }
-      )
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.update.mockRejectedValue(
-        new Error('Update failed')
-      )
-
-      await expect(session.setMetadata({ key: 'value' })).rejects.toThrow()
-    })
-  })
-
-  describe('getContext', () => {
-    it('should get session context without options', async () => {
-      const mockContext = {
-        messages: [
-          { id: 'msg1', content: 'Hello', peer_id: 'peer1' },
-          { id: 'msg2', content: 'Hi there', peer_id: 'peer2' },
-        ],
-        summary: {
-          content: 'Conversation summary',
-          message_id: 10,
-          summary_type: 'short',
-          created_at: '2024-01-01T00:00:00Z',
-          token_count: 100,
-        },
-      }
-      mockClient.workspaces.sessions.context.mockResolvedValue(mockContext)
-
-      const context = await session.getContext()
-
-      expect(context).toBeInstanceOf(SessionContext)
-      expect(context.sessionId).toBe('test-session')
-      expect(context.messages).toEqual(mockContext.messages)
-      expect(context.summary?.content).toBe('Conversation summary')
-      expect(mockClient.workspaces.sessions.context).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { tokens: undefined, summary: undefined }
-      )
-    })
-
-    it('should get session context with options', async () => {
-      const mockContext = {
-        messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
-        summary: {
-          content: 'Brief summary',
-          message_id: 5,
-          summary_type: 'short',
-          created_at: '2024-01-01T00:00:00Z',
-          token_count: 50,
-        },
-      }
-      mockClient.workspaces.sessions.context.mockResolvedValue(mockContext)
-
-      const context = await session.getContext({ summary: true, tokens: 1000 })
-
-      expect(context).toBeInstanceOf(SessionContext)
-      expect(mockClient.workspaces.sessions.context).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { tokens: 1000, summary: true }
-      )
-    })
-
-    it('should handle context without summary', async () => {
-      const mockContext = {
-        messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
-      }
-      mockClient.workspaces.sessions.context.mockResolvedValue(mockContext)
-
-      const context = await session.getContext()
-
-      expect(context.summary).toBeNull()
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.context.mockRejectedValue(
-        new Error('Failed to get context')
-      )
-
-      await expect(session.getContext()).rejects.toThrow()
-    })
-  })
-
-  describe('search', () => {
-    it('should search session messages and return Page', async () => {
-      const mockSearchResults = [
-        { id: 'msg1', content: 'Hello world', peer_id: 'peer1' },
-        { id: 'msg2', content: 'Hello there', peer_id: 'peer2' },
-      ]
-      mockClient.workspaces.sessions.search.mockResolvedValue(mockSearchResults)
-
-      const results = await session.search('hello')
-
-      expect(Array.isArray(results)).toBe(true)
-      expect(mockClient.workspaces.sessions.search).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { query: 'hello', limit: undefined }
-      )
-    })
-
-    it('should handle empty search results', async () => {
-      const mockSearchResults: any[] = []
-      mockClient.workspaces.sessions.search.mockResolvedValue(mockSearchResults)
-
-      const results = await session.search('nonexistent')
-
-      expect(Array.isArray(results)).toBe(true)
-    })
-
-    it('should throw error for empty query', async () => {
-      await expect(session.search('')).rejects.toThrow()
-      await expect(session.search('   ')).rejects.toThrow()
-    })
-
-    it('should throw error for non-string query', async () => {
-      await expect(session.search(null as any)).rejects.toThrow()
-      await expect(session.search(undefined as any)).rejects.toThrow()
-      await expect(session.search(123 as any)).rejects.toThrow()
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.search.mockRejectedValue(
-        new Error('Search failed')
-      )
-
-      await expect(session.search('test')).rejects.toThrow()
-    })
-  })
-
-  describe('uploadFile', () => {
-    it('should upload file and return messages', async () => {
-      const mockFile = new File(['test content'], 'test.txt', {
-        type: 'text/plain',
-      })
-      const mockMessages = [
-        { id: 'msg1', content: 'test content', peer_id: 'peer1' },
-      ]
-      mockClient.workspaces.sessions.messages.upload.mockResolvedValue(
-        mockMessages
-      )
-
-      const messages = await session.uploadFile(mockFile, 'peer1')
-
-      expect(messages).toEqual(mockMessages)
-      expect(
-        mockClient.workspaces.sessions.messages.upload
-      ).toHaveBeenCalledWith('test-workspace', 'test-session', {
-        file: mockFile,
-        peer_id: 'peer1',
-      })
-    })
-  })
-
-  describe('getRepresentation', () => {
-    it('should get working representation with peer string', async () => {
-      const mockRepresentationString = 'Some knowledge about the peer'
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentationString,
-      })
-
-      const result = await session.getRepresentation('peer1')
-
-      expect(typeof result).toBe('string')
-      expect(result).toBe(mockRepresentationString)
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'peer1', {
-        session_id: 'test-session',
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      })
-    })
-
-    it('should get working representation with Peer object', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      const mockRepresentationString = 'Some knowledge'
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentationString,
-      })
-
-      const result = await session.getRepresentation(peer)
-
-      expect(typeof result).toBe('string')
-      expect(result).toBe(mockRepresentationString)
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'peer1', {
-        session_id: 'test-session',
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      })
-    })
-
-    it('should get working representation with target peer string', async () => {
-      const mockRepresentationString = 'What peer1 knows about target'
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentationString,
-      })
-
-      const result = await session.getRepresentation('peer1', 'target-peer')
-
-      expect(typeof result).toBe('string')
-      expect(result).toBe(mockRepresentationString)
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'peer1', {
-        session_id: 'test-session',
-        target: 'target-peer',
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      })
-    })
-
-    it('should get working representation with target Peer object', async () => {
-      const peer = new Peer('peer1', 'test-workspace', mockClient)
-      const target = new Peer('target-peer', 'test-workspace', mockClient)
-      const mockRepresentationString = 'What peer1 knows about target'
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentationString,
-      })
-
-      const result = await session.getRepresentation(peer, target)
-
-      expect(typeof result).toBe('string')
-      expect(result).toBe(mockRepresentationString)
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'peer1', {
-        session_id: 'test-session',
-        target: 'target-peer',
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      })
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.representation.mockRejectedValue(
-        new Error('Failed to get working representation')
-      )
-
-      await expect(session.getRepresentation('peer1')).rejects.toThrow()
-    })
-  })
-  describe('delete', () => {
-    it('should delete the session', async () => {
-      mockClient.workspaces.sessions.delete.mockResolvedValue({})
+  describe('DELETE /sessions/:id', () => {
+    test('delete removes session', async () => {
+      const session = await client.session('delete-me-session', { metadata: {} })
 
       await session.delete()
 
-      expect(mockClient.workspaces.sessions.delete).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session'
-      )
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.delete.mockRejectedValue(
-        new Error('Failed to delete session')
-      )
-
-      await expect(session.delete()).rejects.toThrow('Failed to delete session')
+      // Session should not appear in list
+      const page = await client.getSessions()
+      const ids = page.items.map((s) => s.id)
+      expect(ids).not.toContain('delete-me-session')
     })
   })
 
-  describe('clone', () => {
-    it('should clone the session without messageId', async () => {
-      const mockClonedSession = {
-        id: 'cloned-session-id',
-        workspace_id: 'test-workspace',
-        metadata: { cloned: true },
-        configuration: { test: 'config' },
-      }
-      mockClient.workspaces.sessions.clone.mockResolvedValue(mockClonedSession)
+  // ===========================================================================
+  // Session Clone (POST /sessions/:id/clone)
+  // ===========================================================================
 
-      const clonedSession = await session.clone()
+  describe('POST /sessions/:id/clone', () => {
+    test('clone creates copy of session', async () => {
+      const original = await client.session('original-session', {
+        metadata: { original: true },
+      })
+      const peer = await client.peer('clone-peer')
+      await original.addPeers([peer.id])
+      await original.addMessages([peer.message('Message 1')])
 
-      expect(clonedSession).toBeInstanceOf(Session)
-      expect(clonedSession.id).toBe('cloned-session-id')
-      expect(clonedSession.workspaceId).toBe('test-workspace')
-      expect(clonedSession.metadata).toEqual({ cloned: true })
-      expect(clonedSession.configuration).toEqual({ test: 'config' })
-      expect(mockClient.workspaces.sessions.clone).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        {}
-      )
+      const cloned = await original.clone()
+
+      expect(cloned.id).not.toBe(original.id)
+      // Cloned session should have same messages
+      const messages = await cloned.getMessages()
+      expect(messages.items.length).toBe(1)
     })
 
-    it('should clone the session with messageId cutoff', async () => {
-      const mockClonedSession = {
-        id: 'cloned-session-cutoff',
-        workspace_id: 'test-workspace',
-        metadata: null,
-        configuration: null,
-      }
-      mockClient.workspaces.sessions.clone.mockResolvedValue(mockClonedSession)
+    test('clone up to specific message', async () => {
+      const original = await client.session('clone-partial-session')
+      const peer = await client.peer('clone-partial-peer')
+      await original.addPeers([peer.id])
 
-      const clonedSession = await session.clone('msg-123')
+      const messages = await original.addMessages([
+        peer.message('First'),
+        peer.message('Second'),
+        peer.message('Third'),
+      ])
 
-      expect(clonedSession).toBeInstanceOf(Session)
-      expect(clonedSession.id).toBe('cloned-session-cutoff')
-      expect(mockClient.workspaces.sessions.clone).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        { message_id: 'msg-123' }
-      )
-    })
+      // Clone up to second message
+      const cloned = await original.clone(messages[1].id)
 
-    it('should handle null metadata and configuration', async () => {
-      const mockClonedSession = {
-        id: 'cloned-session-null',
-        workspace_id: 'test-workspace',
-        metadata: null,
-        configuration: null,
-      }
-      mockClient.workspaces.sessions.clone.mockResolvedValue(mockClonedSession)
-
-      const clonedSession = await session.clone()
-
-      expect(clonedSession.metadata).toBeUndefined()
-      expect(clonedSession.configuration).toBeUndefined()
-    })
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.clone.mockRejectedValue(
-        new Error('Failed to clone session')
-      )
-
-      await expect(session.clone()).rejects.toThrow('Failed to clone session')
+      const clonedMessages = await cloned.getMessages()
+      expect(clonedMessages.items.length).toBe(2)
     })
   })
 
-  describe('getQueueStatus', () => {
-    it('should return queue status without options', async () => {
-      const mockStatus = {
-        total_work_units: 10,
-        completed_work_units: 5,
-        in_progress_work_units: 3,
-        pending_work_units: 2,
-        sessions: { session1: { status: 'active' } },
+  // ===========================================================================
+  // Peer Management
+  // ===========================================================================
+
+  describe('Peer management', () => {
+    describe('POST /sessions/:id/peers/add', () => {
+      test('addPeers with string array', async () => {
+        const session = await client.session('add-peers-string')
+
+        await session.addPeers(['peer-a', 'peer-b'])
+
+        const peers = await session.getPeers()
+        const ids = peers.map((p) => p.id)
+        expect(ids).toContain('peer-a')
+        expect(ids).toContain('peer-b')
+      })
+
+      test('addPeers with Peer objects', async () => {
+        const session = await client.session('add-peers-objects')
+        const peerA = await client.peer('obj-peer-a')
+        const peerB = await client.peer('obj-peer-b')
+
+        await session.addPeers([peerA, peerB])
+
+        const peers = await session.getPeers()
+        const ids = peers.map((p) => p.id)
+        expect(ids).toContain('obj-peer-a')
+        expect(ids).toContain('obj-peer-b')
+      })
+
+      test('addPeers with config tuples', async () => {
+        const session = await client.session('add-peers-config')
+
+        await session.addPeers([
+          ['config-peer-a', { observe_me: true, observe_others: false }],
+          ['config-peer-b', { observe_me: false }],
+        ])
+
+        const configA = await session.getPeerConfig('config-peer-a')
+        expect(configA.observe_me).toBe(true)
+        expect(configA.observe_others).toBe(false)
+      })
+
+      test('addPeers with single peer', async () => {
+        const session = await client.session('add-single-peer')
+
+        await session.addPeers('single-peer')
+
+        const peers = await session.getPeers()
+        expect(peers.map((p) => p.id)).toContain('single-peer')
+      })
+    })
+
+    describe('POST /sessions/:id/peers/set', () => {
+      test('setPeers replaces all peers', async () => {
+        const session = await client.session('set-peers-session')
+        await session.addPeers(['old-peer-a', 'old-peer-b'])
+
+        await session.setPeers(['new-peer-a', 'new-peer-b'])
+
+        const peers = await session.getPeers()
+        const ids = peers.map((p) => p.id)
+        expect(ids).toContain('new-peer-a')
+        expect(ids).toContain('new-peer-b')
+        expect(ids).not.toContain('old-peer-a')
+      })
+    })
+
+    describe('POST /sessions/:id/peers/remove', () => {
+      test('removePeers removes specified peers', async () => {
+        const session = await client.session('remove-peers-session')
+        await session.addPeers(['keep-peer', 'remove-peer'])
+
+        await session.removePeers(['remove-peer'])
+
+        const peers = await session.getPeers()
+        const ids = peers.map((p) => p.id)
+        expect(ids).toContain('keep-peer')
+        expect(ids).not.toContain('remove-peer')
+      })
+
+      test('removePeers with Peer objects', async () => {
+        const session = await client.session('remove-peer-objects')
+        const peer = await client.peer('peer-to-remove')
+        await session.addPeers([peer])
+
+        await session.removePeers([peer])
+
+        const peers = await session.getPeers()
+        expect(peers.map((p) => p.id)).not.toContain('peer-to-remove')
+      })
+    })
+
+    describe('GET /sessions/:id/peers', () => {
+      test('getPeers returns Peer instances', async () => {
+        const session = await client.session('get-peers-session')
+        await session.addPeers(['list-peer-1', 'list-peer-2'])
+
+        const peers = await session.getPeers()
+
+        expect(peers.length).toBe(2)
+        expect(peers[0].workspaceId).toBe(client.workspaceId)
+      })
+    })
+
+    describe('GET/PUT /sessions/:id/peers/:id/config', () => {
+      test('getPeerConfig returns config', async () => {
+        const session = await client.session('get-peer-config-session')
+        await session.addPeers([
+          ['peer-with-config', { observe_me: true, observe_others: false }],
+        ])
+
+        const config = await session.getPeerConfig('peer-with-config')
+
+        expect(config.observe_me).toBe(true)
+        expect(config.observe_others).toBe(false)
+      })
+
+      test('setPeerConfig updates config', async () => {
+        const session = await client.session('set-peer-config-session')
+        await session.addPeers(['peer-update-config'])
+
+        await session.setPeerConfig(
+          'peer-update-config',
+          new SessionPeerConfig(false, true)
+        )
+
+        const config = await session.getPeerConfig('peer-update-config')
+        expect(config.observe_me).toBe(false)
+        expect(config.observe_others).toBe(true)
+      })
+
+      test('setPeerConfig with Peer object', async () => {
+        const session = await client.session('set-config-peer-obj')
+        const peer = await client.peer('config-obj-peer')
+        await session.addPeers([peer])
+
+        await session.setPeerConfig(peer, new SessionPeerConfig(true))
+
+        const config = await session.getPeerConfig(peer)
+        expect(config.observe_me).toBe(true)
+      })
+    })
+  })
+
+  // ===========================================================================
+  // Message Operations
+  // ===========================================================================
+
+  describe('Message operations', () => {
+    describe('POST /sessions/:id/messages', () => {
+      test('addMessages creates messages', async () => {
+        const session = await client.session('add-messages-session')
+        const peer = await client.peer('add-messages-peer')
+        await session.addPeers([peer.id])
+
+        const messages = await session.addMessages([
+          peer.message('Hello'),
+          peer.message('World'),
+        ])
+
+        expect(messages.length).toBe(2)
+        assertMessageShape(messages[0])
+        expect(messages[0].content).toBe('Hello')
+      })
+
+      test('addMessages with single message', async () => {
+        const session = await client.session('single-message-session')
+        const peer = await client.peer('single-message-peer')
+        await session.addPeers([peer.id])
+
+        const messages = await session.addMessages(peer.message('Single'))
+
+        expect(messages.length).toBe(1)
+        expect(messages[0].content).toBe('Single')
+      })
+    })
+
+    describe('POST /sessions/:id/messages/list', () => {
+      test('getMessages returns paginated list', async () => {
+        const session = await client.session('list-messages-session')
+        const peer = await client.peer('list-messages-peer')
+        await session.addPeers([peer.id])
+        await session.addMessages([
+          peer.message('Msg 1'),
+          peer.message('Msg 2'),
+        ])
+
+        const page = await session.getMessages()
+
+        expect(page.items.length).toBe(2)
+        assertMessageShape(page.items[0])
+      })
+
+      test('getMessages with filters', async () => {
+        const session = await client.session('filter-messages-session')
+        const peer = await client.peer('filter-messages-peer')
+        await session.addPeers([peer.id])
+        await session.addMessages([
+          peer.message('Filter me', { metadata: { tag: 'special' } }),
+          peer.message('Not this one'),
+        ])
+
+        const page = await session.getMessages({ tag: 'special' })
+
+        expect(page.items.length).toBe(1)
+        expect(page.items[0].metadata.tag).toBe('special')
+      })
+    })
+  })
+
+  // ===========================================================================
+  // Context and Summaries
+  // ===========================================================================
+
+  describe('POST /sessions/:id/context', () => {
+    test('getContext returns context object', async () => {
+      const session = await client.session('context-session')
+      const peer = await client.peer('context-peer')
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('Context content')])
+
+      const context = await session.getContext()
+
+      expect(context).toBeDefined()
+      expect(context.sessionId).toBe(session.id)
+      expect(Array.isArray(context.messages)).toBe(true)
+    })
+
+    test('getContext with options object', async () => {
+      const session = await client.session('context-options-session')
+      const peer = await client.peer('context-options-peer')
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('Some content')])
+
+      const context = await session.getContext({
+        summary: true,
+        tokens: 1000,
+        peerTarget: peer.id,
+      })
+
+      expect(context).toBeDefined()
+    })
+
+    test('getContext with positional args (legacy)', async () => {
+      const session = await client.session('context-positional-session')
+      const peer = await client.peer('context-positional-peer')
+      await session.addPeers([peer.id])
+
+      const context = await session.getContext(true, 500)
+
+      expect(context).toBeDefined()
+    })
+  })
+
+  describe('GET /sessions/:id/summaries', () => {
+    test('getSummaries returns summary object', async () => {
+      const session = await client.session('summaries-session')
+
+      const summaries = await session.getSummaries()
+
+      expect(summaries).toBeDefined()
+      expect(summaries.sessionId).toBe(session.id)
+      // Summaries may be null for sessions without enough messages
+      expect('shortSummary' in summaries).toBe(true)
+      expect('longSummary' in summaries).toBe(true)
+    })
+  })
+
+  // ===========================================================================
+  // Search
+  // ===========================================================================
+
+  describe('POST /sessions/:id/search', () => {
+    test('search returns matching messages', async () => {
+      const session = await client.session('search-session')
+      const peer = await client.peer('search-peer')
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('The quick brown fox'),
+        peer.message('Jumped over the lazy dog'),
+      ])
+
+      const results = await session.search('quick brown')
+
+      expect(Array.isArray(results)).toBe(true)
+      // Results are from this session
+      for (const msg of results) {
+        expect(msg.session_id).toBe(session.id)
       }
-      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus)
+    })
+
+    test('search with limit', async () => {
+      const session = await client.session('search-limit-session')
+
+      const results = await session.search('test', { limit: 5 })
+
+      expect(results.length).toBeLessThanOrEqual(5)
+    })
+  })
+
+  // ===========================================================================
+  // Queue Status
+  // ===========================================================================
+
+  describe('Queue status', () => {
+    test('getQueueStatus returns status for session', async () => {
+      const session = await client.session('queue-status-session')
 
       const status = await session.getQueueStatus()
 
-      expect(status).toEqual({
-        totalWorkUnits: 10,
-        completedWorkUnits: 5,
-        inProgressWorkUnits: 3,
-        pendingWorkUnits: 2,
-        sessions: { session1: { status: 'active' } },
-      })
-      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
-        'test-workspace',
-        { session_id: 'test-session' }
-      )
+      expect(typeof status.totalWorkUnits).toBe('number')
+      expect(typeof status.completedWorkUnits).toBe('number')
+      expect(typeof status.pendingWorkUnits).toBe('number')
     })
 
-    it('should return queue status with options', async () => {
-      const mockStatus = {
-        total_work_units: 5,
-        completed_work_units: 3,
-        in_progress_work_units: 1,
-        pending_work_units: 1,
-      }
-      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus)
+    test('getQueueStatus with observer filter', async () => {
+      const session = await client.session('queue-observer-session')
+      const peer = await client.peer('queue-observer-peer')
 
-      const status = await session.getQueueStatus({
-        observer: 'observer1',
-        sender: 'sender1',
-      })
+      const status = await session.getQueueStatus({ observer: peer })
 
-      expect(status).toEqual({
-        totalWorkUnits: 5,
-        completedWorkUnits: 3,
-        inProgressWorkUnits: 1,
-        pendingWorkUnits: 1,
-        sessions: undefined,
-      })
-      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
-        'test-workspace',
-        {
-          observer_id: 'observer1',
-          sender_id: 'sender1',
-          session_id: 'test-session',
-        }
-      )
+      expect(typeof status.totalWorkUnits).toBe('number')
+    })
+  })
+
+  // ===========================================================================
+  // Representation
+  // ===========================================================================
+
+  describe('POST /peers/:id/representation (session-scoped)', () => {
+    test('getRepresentation returns string', async () => {
+      const session = await client.session('repr-session')
+      const peer = await client.peer('repr-peer')
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('Learning TypeScript')])
+
+      const representation = await session.getRepresentation(peer)
+
+      expect(typeof representation).toBe('string')
     })
 
-    describe('pollQueueStatus', () => {
-      it('should poll until processing is complete', async () => {
-        const mockStatusComplete = {
-          total_work_units: 5,
-          completed_work_units: 5,
-          in_progress_work_units: 0,
-          pending_work_units: 0,
-        }
-        mockClient.workspaces.queue.status.mockResolvedValue(
-          mockStatusComplete
-        )
+    test('getRepresentation with target', async () => {
+      const session = await client.session('repr-target-session')
+      const observer = await client.peer('repr-observer')
+      const target = await client.peer('repr-target')
+      await session.addPeers([observer.id, target.id])
 
-        const status = await session.pollQueueStatus()
+      const representation = await session.getRepresentation(observer, target)
 
-        expect(status).toEqual({
-          totalWorkUnits: 5,
-          completedWorkUnits: 5,
-          inProgressWorkUnits: 0,
-          pendingWorkUnits: 0,
-          sessions: undefined,
-        })
+      expect(typeof representation).toBe('string')
+    })
+  })
 
-        expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
-          'test-workspace',
-          { session_id: 'test-session' }
-        )
-      })
+  // ===========================================================================
+  // String Representation
+  // ===========================================================================
 
-      it('should timeout if processing takes too long', async () => {
-        const mockStatusPending = {
-          total_work_units: 5,
-          completed_work_units: 2,
-          in_progress_work_units: 2,
-          pending_work_units: 1,
-        }
-        mockClient.workspaces.queue.status.mockResolvedValue(mockStatusPending)
+  describe('toString', () => {
+    test('returns readable format', async () => {
+      const session = await client.session('tostring-session')
 
-        await expect(
-          session.pollQueueStatus({ timeoutMs: 100 })
-        ).rejects.toThrow()
-      })
+      const str = session.toString()
+
+      expect(str).toBe("Session(id='tostring-session')")
     })
   })
 })

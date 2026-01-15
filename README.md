@@ -128,18 +128,10 @@ the core service logic. This is implemented as a FastAPI server/API to store
 data about an application's state.
 
 There are also client sdks in implemented in the `sdks/` directory with support
-for Python and TypeScript. These SDKs wrap core SDKs that are generated using
-[Stainless](https://www.stainlessapi.com/).
+for Python and TypeScript.
 
 - [Python](https://pypi.org/project/honcho-ai/)
 - [TypeScript](https://www.npmjs.com/package/@honcho-ai/sdk)
-
-We recommend using the official client SDKs instead of the core ones for better
-developer experience, however for any custom use cases you can still access the
-core SDKs in their own repos:
-
-- [Honcho Core Python](https://github.com/plastic-labs/honcho-python-core)
-- [Honcho Core TypeScript](https://github.com/plastic-labs/honcho-node-core)
 
 Examples on how to use the SDK are located within each SDK folder and in the
 [SDK Reference](https://docs.honcho.dev/v2/documentation/tutorial/SDK)

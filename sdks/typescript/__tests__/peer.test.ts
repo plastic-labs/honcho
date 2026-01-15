@@ -1,821 +1,594 @@
-import { Peer } from '../src/peer';
-import { Session } from '../src/session';
-import { Page } from '../src/pagination';
-import { Honcho } from '../src/client';
+/**
+ * Peer Tests
+ *
+ * Comprehensive tests for Peer operations.
+ *
+ * Endpoints covered:
+ * - POST /v1/workspaces/:id/peers (create/get peer)
+ * - POST /v1/workspaces/:id/peers/list (list peers)
+ * - PUT /v1/workspaces/:id/peers/:id (update peer)
+ * - POST /v1/workspaces/:id/peers/:id/sessions/list (list peer sessions)
+ * - POST /v1/workspaces/:id/peers/:id/chat (dialectic chat)
+ * - POST /v1/workspaces/:id/peers/:id/representation (get representation)
+ * - POST /v1/workspaces/:id/peers/:id/card (get peer card)
+ * - POST /v1/workspaces/:id/peers/:id/context (get peer context)
+ * - POST /v1/workspaces/:id/peers/:id/search (search peer messages)
+ */
 
-// Mock the @honcho-ai/core module
-jest.mock('@honcho-ai/core', () => {
-  return jest.fn().mockImplementation(() => ({
-    workspaces: {
-      peers: {
-        chat: jest.fn(),
-        sessions: {
-          list: jest.fn(),
-        },
-        messages: {
-          create: jest.fn(),
-          list: jest.fn(),
-        },
-        getOrCreate: jest.fn(),
-        update: jest.fn(),
-        search: jest.fn(),
-      },
-      getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
-      update: jest.fn(),
-      list: jest.fn(),
-      search: jest.fn(),
-    },
-  }));
-});
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import { Honcho, Peer } from '../src'
+import { createTestClient, generateId, requireServer } from './setup'
+import {
+  assertMessageShape,
+  assertPeerShape,
+  collectStream,
+  testMessage,
+  testMetadata,
+} from './helpers'
 
 describe('Peer', () => {
-  let honcho: Honcho;
-  let peer: Peer;
-  let mockClient: any;
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-
-    honcho = new Honcho({
-      workspaceId: 'test-workspace',
-      apiKey: 'test-key',
-      environment: 'local',
-    });
-
-    peer = new Peer('test-peer', 'test-workspace', (honcho as any)._client);
-    mockClient = (honcho as any)._client;
-  });
-
-  describe('constructor', () => {
-    it('should initialize with correct properties', () => {
-      const newPeer = new Peer('peer-id', 'test-workspace', mockClient);
-
-      expect(newPeer.id).toBe('peer-id');
-      expect(newPeer.workspaceId).toBe('test-workspace');
-      expect(newPeer['_client']).toBe(mockClient);
-    });
-  });
-
-  describe('chat', () => {
-    it('should query peer representation and return response', async () => {
-      const mockResponse = { content: 'Hello, I am a peer response' };
-      mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-      const result = await peer.chat('Hello');
-
-      expect(result).toBe('Hello, I am a peer response');
-      expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { query: 'Hello', stream: false, target: undefined, session_id: undefined }
-      );
-    });
-
-    it('should return null for None content', async () => {
-      const mockResponse = { content: 'None' };
-      mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-      const result = await peer.chat('Hello');
-
-      expect(result).toBeNull();
-    });
-
-    it('should return null for empty content', async () => {
-      const mockResponse = { content: null };
-      mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-      const result = await peer.chat('Hello');
-
-      expect(result).toBeNull();
-    });
-
-    it.skip('should handle chat with streaming option', async () => {
-      // Skipped: streaming now uses fetch API directly, not the mocked client
-      // TODO: Add proper streaming tests with fetch mocking when needed
-    });
-
-    it('should handle chat with target peer', async () => {
-      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-      const mockResponse = { content: 'Targeted response' };
-      mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-      await peer.chat('Hello', { target: targetPeer });
-
-      expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { query: 'Hello', stream: false, target: 'target-peer', session_id: undefined }
-      );
-    });
-
-    it('should handle chat with target as string', async () => {
-      const mockResponse = { content: 'Targeted response' };
-      mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-      await peer.chat('Hello', { target: 'string-target' });
-
-      expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { query: 'Hello', stream: false, target: 'string-target', session_id: undefined }
-      );
-    });
-
-    it('should handle chat with session ID', async () => {
-      const mockResponse = { content: 'Session-specific response' };
-      mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-      await peer.chat('Hello', { session: 'session-123' });
-
-      expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { query: 'Hello', stream: false, target: undefined, session_id: 'session-123' }
-      );
-    });
-
-    // TODO: Re-enable after regenerating Stainless SDK with streaming support
-    // it('should handle all options together', async () => {
-    //   const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-    //   const mockResponse = { content: 'Full options response' };
-    //   mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
-
-    //   await peer.chat('Hello', { stream: true, target: targetPeer, sessionId: 'session-456' });
-
-    //   expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
-    //     'test-workspace',
-    //     'test-peer',
-    //     { query: 'Hello', stream: true, target: 'target-peer', session_id: 'session-456' }
-    //   );
-    // });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.chat.mockRejectedValue(new Error('Chat failed'));
-
-      await expect(peer.chat('Hello')).rejects.toThrow();
-    });
-  });
-
-  describe('getSessions', () => {
-    it('should return Page of Session instances', async () => {
-      const mockSessionsData = {
-        items: [
-          { id: 'session1', metadata: {} },
-          { id: 'session2', metadata: {} },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: () => false,
-      };
-      mockClient.workspaces.peers.sessions.list.mockResolvedValue(mockSessionsData);
-
-      const sessionsPage = await peer.getSessions();
-
-      expect(sessionsPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.sessions.list).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { filters: undefined }
-      );
-    });
-
-    it('should handle empty sessions list', async () => {
-      const mockSessionsData = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: () => false,
-      };
-      mockClient.workspaces.peers.sessions.list.mockResolvedValue(mockSessionsData);
-
-      const sessionsPage = await peer.getSessions();
-
-      expect(sessionsPage).toBeInstanceOf(Page);
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.sessions.list.mockRejectedValue(new Error('Failed to get sessions'));
-
-      await expect(peer.getSessions()).rejects.toThrow();
-    });
-  });
-
-  describe('message', () => {
-    it('should create message object without metadata', () => {
-      const message = peer.message('Test content');
-
-      expect(message).toEqual({
-        peer_id: 'test-peer',
-        content: 'Test content',
-        metadata: undefined,
-        configuration: undefined,
-        created_at: undefined,
-      });
-    });
-
-    it('should create message object with metadata', () => {
-      const metadata = { importance: 'high', category: 'greeting' };
-      const message = peer.message('Hello there', { metadata });
-
-      expect(message).toEqual({
-        peer_id: 'test-peer',
-        content: 'Hello there',
-        metadata: { importance: 'high', category: 'greeting' },
-        configuration: undefined,
-        created_at: undefined,
-      });
-    });
-
-    it('should create message object with configuration', () => {
-      const configuration = { deriver: { enabled: false } };
-      const message = peer.message('Test content', { configuration });
-
-      expect(message).toEqual({
-        peer_id: 'test-peer',
-        content: 'Test content',
-        metadata: undefined,
-        configuration: { deriver: { enabled: false } },
-        created_at: undefined,
-      });
-    });
-
-    it('should create message object with metadata, configuration, and timestamp', () => {
-      const metadata = { importance: 'high' };
-      const configuration = { deriver: { enabled: false }, peer_card: { create: false } };
-      const message = peer.message('Full options test', {
-        metadata,
-        configuration,
-        created_at: '2024-01-15T10:30:00Z',
-      });
-
-      expect(message).toEqual({
-        peer_id: 'test-peer',
-        content: 'Full options test',
-        metadata: { importance: 'high' },
-        configuration: { deriver: { enabled: false }, peer_card: { create: false } },
-        created_at: '2024-01-15T10:30:00Z',
-      });
-    });
-
-    it('should handle empty content', () => {
-      const message = peer.message('');
-
-      expect(message).toEqual({
-        peer_id: 'test-peer',
-        content: '',
-        metadata: undefined,
-        configuration: undefined,
-        created_at: undefined,
-      });
-    });
-  });
-
-  describe('getMetadata', () => {
-    it('should return peer metadata', async () => {
-      const mockPeer = {
-        id: 'test-peer',
-        metadata: { name: 'Test Peer', role: 'assistant' },
-      };
-      mockClient.workspaces.peers.getOrCreate.mockResolvedValue(mockPeer);
-
-      const metadata = await peer.getMetadata();
-
-      expect(metadata).toEqual({ name: 'Test Peer', role: 'assistant' });
-      expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
-        'test-workspace',
-        { id: 'test-peer' }
-      );
-    });
-
-    it('should return empty object when no metadata exists', async () => {
-      const mockPeer = {
-        id: 'test-peer',
-        metadata: null,
-      };
-      mockClient.workspaces.peers.getOrCreate.mockResolvedValue(mockPeer);
-
-      const metadata = await peer.getMetadata();
-
-      expect(metadata).toEqual({});
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.getOrCreate.mockRejectedValue(new Error('Peer not found'));
-
-      await expect(peer.getMetadata()).rejects.toThrow();
-    });
-  });
-
-  describe('setMetadata', () => {
-    it('should update peer metadata', async () => {
-      const metadata = { name: 'Updated Peer', status: 'active' };
-      mockClient.workspaces.peers.update.mockResolvedValue({});
-
-      await peer.setMetadata(metadata);
-
-      expect(mockClient.workspaces.peers.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { metadata }
-      );
-    });
-
-    it('should handle empty metadata', async () => {
-      mockClient.workspaces.peers.update.mockResolvedValue({});
-
-      await peer.setMetadata({});
-
-      expect(mockClient.workspaces.peers.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { metadata: {} }
-      );
-    });
-
-    it('should handle complex metadata objects', async () => {
-      const complexMetadata = {
-        profile: { name: 'Complex Peer', age: 25 },
-        settings: { theme: 'dark', notifications: true },
-        tags: ['ai', 'assistant', 'helpful'],
-      };
-      mockClient.workspaces.peers.update.mockResolvedValue({});
-
-      await peer.setMetadata(complexMetadata);
-
-      expect(mockClient.workspaces.peers.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { metadata: complexMetadata }
-      );
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.update.mockRejectedValue(new Error('Update failed'));
-
-      await expect(peer.setMetadata({ key: 'value' })).rejects.toThrow();
-    });
-  });
-
-  describe('getPeerConfig', () => {
-    it('should return peer configuration', async () => {
-      const mockPeer = {
-        id: 'test-peer',
-        configuration: { observe_me: true, observe_others: false },
-      };
-      mockClient.workspaces.peers.getOrCreate.mockResolvedValue(mockPeer);
-
-      const config = await peer.getPeerConfig();
-
-      expect(config).toEqual({ observe_me: true, observe_others: false });
-      expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
-        'test-workspace',
-        { id: 'test-peer' }
-      );
-    });
-
-    it('should return empty object when no configuration exists', async () => {
-      const mockPeer = {
-        id: 'test-peer',
-        configuration: null,
-      };
-      mockClient.workspaces.peers.getOrCreate.mockResolvedValue(mockPeer);
-
-      const config = await peer.getPeerConfig();
-
-      expect(config).toEqual({});
-    });
-  });
-
-  describe('setPeerConfig', () => {
-    it('should update peer configuration', async () => {
-      const config = { observe_me: false, observe_others: true };
-      mockClient.workspaces.peers.update.mockResolvedValue({});
-
-      await peer.setPeerConfig(config);
-
-      expect(mockClient.workspaces.peers.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { configuration: config }
-      );
-    });
-  });
-
-  describe('search', () => {
-    it('should search peer messages and return array', async () => {
-      const mockSearchResults = [
-        { id: 'msg1', content: 'Hello world', peer_id: 'test-peer' },
-        { id: 'msg2', content: 'Hello there', peer_id: 'test-peer' },
-      ];
-      mockClient.workspaces.peers.search.mockResolvedValue(mockSearchResults);
-
-      const results = await peer.search('hello');
-
-      expect(Array.isArray(results)).toBe(true);
-      expect(mockClient.workspaces.peers.search).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { query: 'hello' }
-      );
-    });
-
-    it('should handle empty search results', async () => {
-      const mockSearchResults: any[] = [];
-      mockClient.workspaces.peers.search.mockResolvedValue(mockSearchResults);
-
-      const results = await peer.search('nonexistent');
-
-      expect(Array.isArray(results)).toBe(true);
-    });
-
-    it('should throw error for empty query', async () => {
-      await expect(peer.search('')).rejects.toThrow();
-      await expect(peer.search('   ')).rejects.toThrow();
-    });
-
-    it('should throw error for non-string query', async () => {
-      await expect(peer.search(null as any)).rejects.toThrow();
-      await expect(peer.search(undefined as any)).rejects.toThrow();
-      await expect(peer.search(123 as any)).rejects.toThrow();
-    });
-
-    it('should handle complex search queries', async () => {
-      const mockSearchResults: any[] = [];
-      mockClient.workspaces.peers.search.mockResolvedValue(mockSearchResults);
-
-      const complexQuery = 'complex query with "quotes" and special characters!@#$%';
-      await peer.search(complexQuery);
-
-      expect(mockClient.workspaces.peers.search).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { query: complexQuery }
-      );
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.search.mockRejectedValue(new Error('Search failed'));
-
-      await expect(peer.search('test')).rejects.toThrow();
-    });
-  });
-
-  describe('card', () => {
-    beforeEach(() => {
-      mockClient.workspaces.peers.card = jest.fn();
-    });
-
-    it('should get peer card without target', async () => {
-      const mockCardResponse = {
-        peer_card: ['Fact 1 about peer', 'Fact 2 about peer', 'Fact 3 about peer'],
-      };
-      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
-
-      const result = await peer.card();
-
-      expect(result).toBe('Fact 1 about peer\nFact 2 about peer\nFact 3 about peer');
-      expect(mockClient.workspaces.peers.card).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { target: undefined }
-      );
-    });
-
-    it('should get peer card with target as string', async () => {
-      const mockCardResponse = {
-        peer_card: ['What peer knows about target'],
-      };
-      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
-
-      const result = await peer.card('target-peer');
-
-      expect(result).toBe('What peer knows about target');
-      expect(mockClient.workspaces.peers.card).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { target: 'target-peer' }
-      );
-    });
-
-    it('should get peer card with target as Peer object', async () => {
-      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-      const mockCardResponse = {
-        peer_card: ['What peer knows about target peer'],
-      };
-      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
-
-      const result = await peer.card(targetPeer);
-
-      expect(result).toBe('What peer knows about target peer');
-      expect(mockClient.workspaces.peers.card).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-peer',
-        { target: 'target-peer' }
-      );
-    });
-
-    it('should return empty string when peer_card is null', async () => {
-      const mockCardResponse = {
-        peer_card: null,
-      };
-      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
-
-      const result = await peer.card();
-
-      expect(result).toBe('');
-    });
-
-    it('should return empty string when peer_card is undefined', async () => {
-      const mockCardResponse = {};
-      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
-
-      const result = await peer.card();
-
-      expect(result).toBe('');
-    });
-
-    it('should throw error for empty string target', async () => {
-      await expect(peer.card('')).rejects.toThrow('target string cannot be empty');
-      await expect(peer.card('   ')).rejects.toThrow('target string cannot be empty');
-    });
-
-    it('should throw error for invalid target type', async () => {
-      await expect(peer.card(123 as any)).rejects.toThrow('target must be string, Peer, or undefined');
-      await expect(peer.card(null as any)).rejects.toThrow('target must be string, Peer, or undefined');
-      await expect(peer.card({} as any)).rejects.toThrow('target must be string, Peer, or undefined');
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.card.mockRejectedValue(new Error('Card fetch failed'));
-
-      await expect(peer.card()).rejects.toThrow('Card fetch failed');
-    });
-  });
-
-  describe('getRepresentation', () => {
-    beforeEach(() => {
-      mockClient.workspaces.peers.representation = jest.fn();
-    });
-
-    it('should get working representation with no parameters', async () => {
-      const mockRepresentation = 'Observation 1\nObservation 2\nConclusion 1';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
-
-      const result = await peer.getRepresentation();
-
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      });
-    });
-
-    it('should get working representation with session as string', async () => {
-      const mockRepresentation = 'Session-scoped observation';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
-
-      const result = await peer.getRepresentation('session-123');
-
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: 'session-123',
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      });
-    });
-
-    it('should get working representation with session as Session object', async () => {
-      const session = new Session('session-123', 'test-workspace', mockClient);
-      const mockRepresentation = 'Session object observation';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
-
-      const result = await peer.getRepresentation(session);
-
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: 'session-123',
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      });
-    });
-
-    it('should get working representation with target as string', async () => {
-      const mockRepresentation = "Observer's view of target";
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
-
-      const result = await peer.getRepresentation(undefined, 'target-peer');
-
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: 'target-peer',
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      });
-    });
-
-    it('should get working representation with target as Peer object', async () => {
-      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-      const mockRepresentation = "Observer's view of target peer object";
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
-
-      const result = await peer.getRepresentation(undefined, targetPeer);
-
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: 'target-peer',
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      });
-    });
-
-    it('should get working representation with search query', async () => {
-      const mockRepresentation = 'Query-curated observation';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
-
-      const result = await peer.getRepresentation(
+  let client: Honcho
+  let cleanup: () => Promise<void>
+
+  beforeAll(async () => {
+    await requireServer()
+    const setup = await createTestClient('peer')
+    client = setup.client
+    cleanup = setup.cleanup
+  })
+
+  afterAll(async () => {
+    await cleanup()
+  })
+
+  // ===========================================================================
+  // Peer Creation (POST /peers)
+  // ===========================================================================
+
+  describe('POST /peers (create/get)', () => {
+    test('creates peer with just ID', async () => {
+      const peer = await client.peer('simple-peer')
+
+      expect(peer).toBeInstanceOf(Peer)
+      expect(peer.id).toBe('simple-peer')
+      expect(peer.workspaceId).toBe(client.workspaceId)
+    })
+
+    test('creates peer with metadata', async () => {
+      const metadata = testMetadata({ name: 'Alice' })
+      const peer = await client.peer('peer-with-meta', { metadata })
+
+      expect(peer.id).toBe('peer-with-meta')
+      expect(peer.metadata).toEqual(metadata)
+    })
+
+    test('creates peer with configuration', async () => {
+      const config = { observe_me: false }
+      const peer = await client.peer('peer-with-config', { config })
+
+      expect(peer.id).toBe('peer-with-config')
+      expect(peer.configuration).toEqual(config)
+    })
+
+    test('creates peer with both metadata and config', async () => {
+      const metadata = { role: 'user' }
+      const config = { observe_me: true }
+      const peer = await client.peer('peer-with-both', { metadata, config })
+
+      expect(peer.metadata).toEqual(metadata)
+      expect(peer.configuration).toEqual(config)
+    })
+
+    test('get-or-create is idempotent', async () => {
+      const peer1 = await client.peer('idempotent-peer', {
+        metadata: { first: true },
+      })
+      const peer2 = await client.peer('idempotent-peer', {
+        metadata: { second: true },
+      })
+
+      expect(peer1.id).toBe(peer2.id)
+      // Second call overwrites metadata
+      expect(peer2.metadata).toEqual({ second: true })
+    })
+  })
+
+  // ===========================================================================
+  // Peer Listing (POST /peers/list)
+  // ===========================================================================
+
+  describe('POST /peers/list', () => {
+    test('getPeers returns Page with items', async () => {
+      // Create some peers first
+      await client.peer('list-peer-a', { metadata: {} })
+      await client.peer('list-peer-b', { metadata: {} })
+
+      const page = await client.getPeers()
+
+      expect(page.items.length).toBeGreaterThanOrEqual(2)
+      expect(page.page).toBe(1)
+      expect(page.total).toBeGreaterThanOrEqual(2)
+    })
+
+    test('getPeers with filter narrows results', async () => {
+      const uniqueTag = `tag-${Date.now()}`
+      await client.peer('filtered-peer', {
+        metadata: { uniqueTag },
+      })
+
+      const page = await client.getPeers({ uniqueTag })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].id).toBe('filtered-peer')
+    })
+
+    test('Page is async iterable', async () => {
+      await client.peer('iter-peer-1', { metadata: {} })
+      await client.peer('iter-peer-2', { metadata: {} })
+
+      const page = await client.getPeers()
+      const ids: string[] = []
+
+      for await (const peer of page) {
+        ids.push(peer.id)
+      }
+
+      expect(ids).toContain('iter-peer-1')
+      expect(ids).toContain('iter-peer-2')
+    })
+  })
+
+  // ===========================================================================
+  // Peer Update (PUT /peers/:id)
+  // ===========================================================================
+
+  describe('PUT /peers/:id (update)', () => {
+    test('setMetadata updates peer metadata', async () => {
+      const peer = await client.peer('meta-update-peer')
+
+      await peer.setMetadata({ updated: true, count: 42 })
+      const metadata = await peer.getMetadata()
+
+      expect(metadata).toEqual({ updated: true, count: 42 })
+    })
+
+    test('setConfig updates peer configuration', async () => {
+      const peer = await client.peer('config-update-peer')
+
+      await peer.setConfig({ observe_me: false })
+      const config = await peer.getConfig()
+
+      expect(config).toEqual({ observe_me: false })
+    })
+
+    test('refresh updates cached values', async () => {
+      const peer = await client.peer('refresh-peer', {
+        metadata: { initial: true },
+      })
+
+      // Modify via another reference
+      const peer2 = await client.peer('refresh-peer')
+      await peer2.setMetadata({ modified: true })
+
+      // Original peer has stale cache
+      expect(peer.metadata).toEqual({ initial: true })
+
+      // After refresh, cache is updated
+      await peer.refresh()
+      expect(peer.metadata).toEqual({ modified: true })
+    })
+
+    test('deprecated getPeerConfig works', async () => {
+      const peer = await client.peer('deprecated-config-peer')
+      await peer.setConfig({ observe_me: true })
+
+      // Deprecated method should still work
+      const config = await peer.getPeerConfig()
+      expect(config).toEqual({ observe_me: true })
+    })
+
+    test('deprecated setPeerConfig works', async () => {
+      const peer = await client.peer('deprecated-set-config-peer')
+
+      // Deprecated method should still work
+      await peer.setPeerConfig({ observe_me: false })
+      const config = await peer.getConfig()
+
+      expect(config).toEqual({ observe_me: false })
+    })
+  })
+
+  // ===========================================================================
+  // Peer Sessions (POST /peers/:id/sessions/list)
+  // ===========================================================================
+
+  describe('POST /peers/:id/sessions/list', () => {
+    test('getSessions returns sessions peer is in', async () => {
+      const peer = await client.peer('session-member-peer')
+      const session = await client.session('peer-sessions-test')
+
+      await session.addPeers([peer.id])
+
+      const sessions = await peer.getSessions()
+
+      expect(sessions.items.length).toBeGreaterThanOrEqual(1)
+      const sessionIds = sessions.items.map((s) => s.id)
+      expect(sessionIds).toContain('peer-sessions-test')
+    })
+
+    test('getSessions returns empty for peer in no sessions', async () => {
+      const peer = await client.peer('lonely-peer')
+
+      const sessions = await peer.getSessions()
+
+      // Peer exists but not in any sessions
+      expect(Array.isArray(sessions.items)).toBe(true)
+    })
+
+    test('getSessions with filters', async () => {
+      const peer = await client.peer('filter-sessions-peer')
+      const session = await client.session('filterable-session', {
+        metadata: { category: 'special' },
+      })
+      await session.addPeers([peer.id])
+
+      const sessions = await peer.getSessions({ category: 'special' })
+
+      expect(sessions.items.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  // ===========================================================================
+  // Message Creation Helper
+  // ===========================================================================
+
+  describe('message() helper', () => {
+    test('creates message object with peer ID', () => {
+      const peer = new Peer('msg-peer', 'workspace', {} as never)
+
+      const msg = peer.message('Hello world')
+
+      expect(msg.peer_id).toBe('msg-peer')
+      expect(msg.content).toBe('Hello world')
+    })
+
+    test('message with metadata', () => {
+      const peer = new Peer('msg-peer', 'workspace', {} as never)
+
+      const msg = peer.message('Hello', { metadata: { key: 'value' } })
+
+      expect(msg.metadata).toEqual({ key: 'value' })
+    })
+
+    test('message with configuration', () => {
+      const peer = new Peer('msg-peer', 'workspace', {} as never)
+
+      const msg = peer.message('Hello', {
+        configuration: { reasoning: { enabled: true } },
+      })
+
+      expect(msg.configuration).toEqual({ reasoning: { enabled: true } })
+    })
+
+    test('message with created_at string', () => {
+      const peer = new Peer('msg-peer', 'workspace', {} as never)
+      const timestamp = '2024-01-15T10:30:00Z'
+
+      const msg = peer.message('Hello', { created_at: timestamp })
+
+      expect(msg.created_at).toBe(timestamp)
+    })
+
+    test('message with created_at Date', () => {
+      const peer = new Peer('msg-peer', 'workspace', {} as never)
+      const date = new Date('2024-01-15T10:30:00Z')
+
+      const msg = peer.message('Hello', { created_at: date })
+
+      expect(msg.created_at).toBe(date.toISOString())
+    })
+  })
+
+  // ===========================================================================
+  // Search (POST /peers/:id/search)
+  // ===========================================================================
+
+  describe('POST /peers/:id/search', () => {
+    test('search finds messages from this peer', async () => {
+      const peer = await client.peer('search-author-peer')
+      const session = await client.session('search-author-session')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('Unique content for searching xyz789'),
+      ])
+
+      const results = await peer.search('unique content searching')
+
+      expect(Array.isArray(results)).toBe(true)
+      // Results should be from this peer
+      for (const msg of results) {
+        expect(msg.peer_id).toBe(peer.id)
+      }
+    })
+
+    test('search with filters', async () => {
+      const peer = await client.peer('search-filter-peer')
+      const session = await client.session('search-filter-session')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('Searchable content abc'),
+      ])
+
+      const results = await peer.search('searchable', {
+        filters: { session_id: session.id },
+      })
+
+      for (const msg of results) {
+        expect(msg.session_id).toBe(session.id)
+      }
+    })
+
+    test('search with limit', async () => {
+      const peer = await client.peer('search-limit-peer')
+
+      const results = await peer.search('test', { limit: 3 })
+
+      expect(results.length).toBeLessThanOrEqual(3)
+    })
+  })
+
+  // ===========================================================================
+  // Representation (POST /peers/:id/representation)
+  // ===========================================================================
+
+  describe('POST /peers/:id/representation', () => {
+    test('getRepresentation returns string', async () => {
+      const peer = await client.peer('repr-peer')
+      const session = await client.session('repr-session')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('I love programming in TypeScript'),
+        peer.message('My favorite color is blue'),
+      ])
+
+      const representation = await peer.getRepresentation()
+
+      expect(typeof representation).toBe('string')
+    })
+
+    test('getRepresentation scoped to session', async () => {
+      const peer = await client.peer('repr-session-peer')
+      const session = await client.session('repr-session-scoped')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('Session-specific content')])
+
+      const representation = await peer.getRepresentation(session)
+
+      expect(typeof representation).toBe('string')
+    })
+
+    test('getRepresentation with target peer', async () => {
+      const observer = await client.peer('repr-observer')
+      const observed = await client.peer('repr-observed')
+      const session = await client.session('repr-target-session')
+
+      await session.addPeers([observer.id, observed.id])
+      await session.addMessages([
+        observed.message('I am being observed'),
+      ])
+
+      const representation = await observer.getRepresentation(
         undefined,
-        undefined,
-        { searchQuery: 'programming' }
-      );
+        observed
+      )
 
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: undefined,
-        search_query: 'programming',
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: undefined,
-      });
-    });
+      expect(typeof representation).toBe('string')
+    })
 
-    it('should get working representation with custom size', async () => {
-      const mockRepresentation = 'Limited observations';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
+    test('getRepresentation with options', async () => {
+      const peer = await client.peer('repr-options-peer')
 
-      const result = await peer.getRepresentation(undefined, undefined, { maxConclusions: 10 });
+      const representation = await peer.getRepresentation(undefined, undefined, {
+        searchQuery: 'preferences',
+        searchTopK: 5,
+        maxConclusions: 20,
+      })
 
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: 10,
-      });
-    });
+      expect(typeof representation).toBe('string')
+    })
+  })
 
-    it('should get working representation with all parameters', async () => {
-      const session = new Session('session-123', 'test-workspace', mockClient);
-      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
-      const mockRepresentation = 'Fully parameterized observation\nConclusion with all params';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
+  // ===========================================================================
+  // Peer Card (POST /peers/:id/card)
+  // ===========================================================================
 
-      const result = await peer.getRepresentation(
-        session,
-        targetPeer,
-        { searchQuery: 'Python programming', maxConclusions: 25 }
-      );
+  describe('POST /peers/:id/card', () => {
+    test('card returns string', async () => {
+      const peer = await client.peer('card-peer')
 
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: 'session-123',
-        target: 'target-peer',
-        search_query: 'Python programming',
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: 25,
-      });
-    });
+      const card = await peer.card()
 
-    it('should get working representation with string session and string target', async () => {
-      const mockRepresentation = 'String params observation';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentation,
-      });
+      expect(typeof card).toBe('string')
+    })
 
-      const result = await peer.getRepresentation(
-        'session-456',
-        'target-peer-123',
-        { searchQuery: 'machine learning', maxConclusions: 50 }
-      );
+    test('card with target peer', async () => {
+      const observer = await client.peer('card-observer')
+      const observed = await client.peer('card-observed')
 
-      expect(result).toBe(mockRepresentation);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenCalledWith('test-workspace', 'test-peer', {
-        session_id: 'session-456',
-        target: 'target-peer-123',
-        search_query: 'machine learning',
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: 50,
-      });
-    });
+      const card = await observer.card(observed)
 
-    it('should handle boundary size values', async () => {
-      const mockRepresentationString = 'Boundary test representation';
-      mockClient.workspaces.peers.representation.mockResolvedValue({
-        representation: mockRepresentationString,
-      });
+      expect(typeof card).toBe('string')
+    })
 
-      // Test size = 1
-      const result1 = await peer.getRepresentation(undefined, undefined, { maxConclusions: 1 });
-      expect(result1).toBe(mockRepresentationString);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenLastCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: 1,
-      });
+    test('card with target ID string', async () => {
+      const peer = await client.peer('card-string-peer')
 
-      // Test size = 100
-      const result2 = await peer.getRepresentation(undefined, undefined, { maxConclusions: 100 });
-      expect(result2).toBe(mockRepresentationString);
-      expect(
-        mockClient.workspaces.peers.representation
-      ).toHaveBeenLastCalledWith('test-workspace', 'test-peer', {
-        session_id: undefined,
-        target: undefined,
-        search_query: undefined,
-        search_top_k: undefined,
-        search_max_distance: undefined,
-        include_most_frequent: undefined,
-        max_conclusions: 100,
-      });
-    });
+      const card = await peer.card('some-target-id')
 
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.representation.mockRejectedValue(
-        new Error('Working representation fetch failed')
-      );
+      expect(typeof card).toBe('string')
+    })
 
-      await expect(peer.getRepresentation()).rejects.toThrow(
-        'Working representation fetch failed'
-      );
-    });
-  });
-});
+    test('card throws on invalid target type', async () => {
+      const peer = await client.peer('card-invalid-peer')
+
+      await expect(peer.card(123 as never)).rejects.toThrow(TypeError)
+    })
+
+    test('card throws on empty target string', async () => {
+      const peer = await client.peer('card-empty-peer')
+
+      await expect(peer.card('')).rejects.toThrow('target string cannot be empty')
+    })
+  })
+
+  // ===========================================================================
+  // Peer Context (POST /peers/:id/context)
+  // ===========================================================================
+
+  describe('POST /peers/:id/context', () => {
+    test('getContext returns representation and card', async () => {
+      const peer = await client.peer('context-peer')
+
+      const context = await peer.getContext()
+
+      expect(context).toBeDefined()
+      expect(context.peer_id).toBe(peer.id)
+      expect(context.target_id).toBe(peer.id) // Self-context
+      expect('representation' in context).toBe(true)
+      expect('peer_card' in context).toBe(true)
+    })
+
+    test('getContext with target peer', async () => {
+      const observer = await client.peer('context-observer')
+      const observed = await client.peer('context-observed')
+
+      const context = await observer.getContext(observed)
+
+      expect(context.peer_id).toBe(observer.id)
+      expect(context.target_id).toBe(observed.id)
+    })
+
+    test('getContext with options', async () => {
+      const peer = await client.peer('context-options-peer')
+
+      const context = await peer.getContext(undefined, {
+        searchQuery: 'interests',
+        searchTopK: 10,
+        maxConclusions: 25,
+      })
+
+      expect(context).toBeDefined()
+    })
+  })
+
+  // ===========================================================================
+  // Chat / Dialectic (POST /peers/:id/chat)
+  // ===========================================================================
+
+  describe('POST /peers/:id/chat', () => {
+    test('chat returns string response', async () => {
+      const peer = await client.peer('chat-peer')
+      const session = await client.session('chat-session')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('I enjoy hiking in the mountains'),
+      ])
+
+      const response = await peer.chat('What activities does this user enjoy?')
+
+      // Response is string or null
+      expect(response === null || typeof response === 'string').toBe(true)
+    })
+
+    test('chat with session scope', async () => {
+      const peer = await client.peer('chat-session-peer')
+      const session = await client.session('chat-scoped-session')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('Session specific info')])
+
+      const response = await peer.chat('What do you know?', {
+        session: session,
+      })
+
+      expect(response === null || typeof response === 'string').toBe(true)
+    })
+
+    test('chat with target peer', async () => {
+      const observer = await client.peer('chat-observer')
+      const target = await client.peer('chat-target')
+
+      const response = await observer.chat('What do you know about this user?', {
+        target: target,
+      })
+
+      expect(response === null || typeof response === 'string').toBe(true)
+    })
+
+    test('chat with reasoning level', async () => {
+      const peer = await client.peer('chat-reasoning-peer')
+
+      const response = await peer.chat('Analyze this user', {
+        reasoningLevel: 'high',
+      })
+
+      expect(response === null || typeof response === 'string').toBe(true)
+    })
+
+    // Streaming tests are in streaming.test.ts
+  })
+
+  // ===========================================================================
+  // Conclusions Scope
+  // ===========================================================================
+
+  describe('Conclusion scope access', () => {
+    test('conclusions property returns ConclusionScope for self', async () => {
+      const peer = await client.peer('self-conclusions-peer')
+
+      const scope = peer.conclusions
+
+      expect(scope.observer).toBe(peer.id)
+      expect(scope.observed).toBe(peer.id)
+      expect(scope.workspaceId).toBe(client.workspaceId)
+    })
+
+    test('conclusionsOf returns ConclusionScope for target', async () => {
+      const observer = await client.peer('obs-conclusions-peer')
+      const target = await client.peer('target-conclusions-peer')
+
+      const scope = observer.conclusionsOf(target)
+
+      expect(scope.observer).toBe(observer.id)
+      expect(scope.observed).toBe(target.id)
+    })
+
+    test('conclusionsOf with string ID', async () => {
+      const peer = await client.peer('string-conclusions-peer')
+
+      const scope = peer.conclusionsOf('some-target-id')
+
+      expect(scope.observer).toBe(peer.id)
+      expect(scope.observed).toBe('some-target-id')
+    })
+  })
+
+  // ===========================================================================
+  // String Representation
+  // ===========================================================================
+
+  describe('toString', () => {
+    test('returns readable format', async () => {
+      const peer = await client.peer('tostring-peer')
+
+      const str = peer.toString()
+
+      expect(str).toBe("Peer(id='tostring-peer')")
+    })
+  })
+})

@@ -15,20 +15,17 @@
     "lint:fix": "biome check src/ --write",
     "format": "biome format src/ --write",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage"
   },
   "dependencies": {
-    "@honcho-ai/core": "2.2.0",
     "@types/node": "^24.0.1",
     "zod": "4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",
-    "@types/jest": "^29.5.14",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.0",
+    "@types/bun": "latest",
     "typescript": "^5.0.0"
   }
 }
