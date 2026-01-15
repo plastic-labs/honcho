@@ -25,6 +25,9 @@ Example:
         honcho_client=honcho,
     )
 
+    # Create user peer for orchestration
+    user_peer = honcho.peer("user")
+
     # Create agent with memory
     agent = Agent(
         name="Memory Agent",
@@ -33,10 +36,13 @@ Example:
         description="An assistant with persistent memory powered by Honcho.",
     )
 
-    # Run the agent
-    response = agent.run("What do you know about the user?")
+    # Save user message via orchestration
+    honcho_tools.session.add_messages([user_peer.message("I prefer Python over JavaScript")])
 
-    # Save messages via orchestration (not the toolkit)
+    # Run the agent
+    response = agent.run("What programming language does the user prefer?")
+
+    # Save assistant response via orchestration
     honcho_tools.session.add_messages([honcho_tools.peer.message(str(response.content))])
     ```
 """

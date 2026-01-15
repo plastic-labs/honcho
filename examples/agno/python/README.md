@@ -89,13 +89,13 @@ from honcho_agno import HonchoTools
 
 # Creates its own Honcho client internally
 tools = HonchoTools(
-    app_id="my-app",              # Workspace ID (used to create internal client)
+    workspace_id="my-app",        # Workspace ID (used to create internal client)
     peer_id="assistant",          # Identity for this agent
     session_id="session-456",     # Optional: auto-generated if not provided
 )
 ```
 
-Note: When `honcho_client` is provided, `app_id` is ignored since the client already has its workspace configured.
+Note: When `honcho_client` is provided, `workspace_id` is ignored since the client already has its workspace configured.
 
 ### Environment Variables
 
@@ -209,6 +209,15 @@ uv sync
 
 ```bash
 uv run pytest
+```
+
+### Run Examples
+
+Examples require additional dependencies:
+
+```bash
+uv sync --extra examples
+uv run python examples/simple_example.py
 ```
 
 ## License

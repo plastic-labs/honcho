@@ -42,7 +42,6 @@ def main():
 
     # Setup Honcho tools - creates peer and session internally
     honcho_tools = HonchoTools(
-        app_id="travel-app",
         peer_id="travel-assistant",
         session_id="trip-planning-session",
         honcho_client=honcho,

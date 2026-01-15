@@ -48,7 +48,6 @@ def create_advisory_session(session_id: str):
 
     # === TECH BRO ADVISOR ===
     tech_bro_tools = HonchoTools(
-        app_id="advisory-trio",
         peer_id="tech-bro",
         session_id=session_id,
         honcho_client=honcho,
@@ -72,7 +71,6 @@ def create_advisory_session(session_id: str):
 
     # === PHILOSOPHY MEDITATION GURU ===
     guru_tools = HonchoTools(
-        app_id="advisory-trio",
         peer_id="philosophy-guru",
         session_id=session_id,
         honcho_client=honcho,

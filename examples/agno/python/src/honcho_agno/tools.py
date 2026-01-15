@@ -41,7 +41,7 @@ class HonchoTools(Toolkit):
         from honcho_agno import HonchoTools
 
         honcho_tools = HonchoTools(
-            app_id="my-app",
+            workspace_id="my-app",
             peer_id="assistant",
             session_id="shared-session",
         )
@@ -55,7 +55,7 @@ class HonchoTools(Toolkit):
 
     def __init__(
         self,
-        app_id: str = "default",
+        workspace_id: str = "default",
         peer_id: str = "assistant",
         session_id: str | None = None,
         honcho_client: Honcho | None = None,
@@ -64,7 +64,7 @@ class HonchoTools(Toolkit):
         Initialize the Honcho toolkit for a specific agent identity.
 
         Args:
-            app_id: Workspace ID for creating an internal Honcho client.
+            workspace_id: Workspace ID for creating an internal Honcho client.
                 Ignored if honcho_client is provided.
             peer_id: The identity this toolkit represents. This is who
                 the agent "is" when querying peer knowledge.
@@ -72,7 +72,7 @@ class HonchoTools(Toolkit):
                 will be generated. Share this across toolkits for multi-peer
                 conversations.
             honcho_client: Optional pre-configured Honcho client instance.
-                When provided, uses this client directly (app_id is ignored).
+                When provided, uses this client directly (workspace_id is ignored).
         """
         super().__init__(name="honcho")
 
@@ -80,7 +80,7 @@ class HonchoTools(Toolkit):
         if honcho_client is not None:
             self.honcho = honcho_client
         else:
-            self.honcho = Honcho(workspace_id=app_id)
+            self.honcho = Honcho(workspace_id=workspace_id)
 
         self.peer_id: str = peer_id
         self.session_id: str = session_id or str(uuid.uuid4())

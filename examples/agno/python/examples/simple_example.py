@@ -32,7 +32,6 @@ def main():
 
     # Initialize HonchoTools - creates peer and session internally
     honcho_tools = HonchoTools(
-        app_id="agno-demo",
         peer_id="assistant",
         session_id=session_id,
         honcho_client=honcho,

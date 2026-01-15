@@ -35,6 +35,10 @@ classifiers = [
 dependencies = [
     "agno>=1.4.0",
     "honcho-ai>=1.6.0",
+]
+
+[project.optional-dependencies]
+examples = [
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
 ]
