@@ -69,10 +69,8 @@ from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
+from honcho.api_types import MessageCreateParams
 from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
 from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
@@ -483,7 +481,7 @@ class LongMemEvalRunner:
                     )
 
                 # Collect all messages from all sessions in chronological order
-                all_messages: list[MessageCreateParam] = []
+                all_messages: list[MessageCreateParams] = []
                 for session_date, session_messages in zip(
                     parsed_dates, haystack_sessions, strict=True
                 ):
@@ -579,7 +577,7 @@ class LongMemEvalRunner:
                             ]
                         )
 
-                    honcho_messages: list[MessageCreateParam] = []
+                    honcho_messages: list[MessageCreateParams] = []
                     for msg in session_messages:
                         role = msg["role"]
                         content = msg["content"]

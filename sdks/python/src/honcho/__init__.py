@@ -43,6 +43,20 @@ from .async_client import (
 from .base import PeerBase, SessionBase
 from .client import Honcho
 from .conclusions import AsyncConclusionScope, ConclusionScope
+from .http.exceptions import (
+    APIError,
+    AuthenticationError,
+    BadRequestError,
+    ConflictError,
+    ConnectionError,
+    HonchoError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+    ServerError,
+    TimeoutError,
+    UnprocessableEntityError,
+)
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
@@ -56,20 +70,39 @@ __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
 __all__ = [
+    # Clients
     "AsyncHoncho",
+    "Honcho",
+    # Domain classes
     "AsyncConclusionScope",
     "AsyncPeer",
     "AsyncSession",
-    "AsyncPage",
-    "Honcho",
     "ConclusionScope",
     "Peer",
-    "PeerBase",
     "Session",
+    # Base classes
+    "PeerBase",
     "SessionBase",
+    # Response types
     "SessionContext",
     "SessionSummaries",
     "Summary",
+    # Pagination
+    "AsyncPage",
     "SyncPage",
+    # Streaming
     "DialecticStreamResponse",
+    # Exceptions
+    "APIError",
+    "AuthenticationError",
+    "BadRequestError",
+    "ConflictError",
+    "ConnectionError",
+    "HonchoError",
+    "NotFoundError",
+    "PermissionDeniedError",
+    "RateLimitError",
+    "ServerError",
+    "TimeoutError",
+    "UnprocessableEntityError",
 ]

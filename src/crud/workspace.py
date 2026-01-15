@@ -274,6 +274,17 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
             )
         )
 
+        # Also delete any queue items that reference messages in this workspace
+        # (handles race condition where deriver creates new queue items)
+        message_ids_subquery = select(models.Message.id).where(
+            models.Message.workspace_name == workspace_name
+        )
+        await db.execute(
+            delete(models.QueueItem).where(
+                models.QueueItem.message_id.in_(message_ids_subquery)
+            )
+        )
+
         await db.execute(
             delete(models.MessageEmbedding).where(
                 models.MessageEmbedding.workspace_name == workspace_name

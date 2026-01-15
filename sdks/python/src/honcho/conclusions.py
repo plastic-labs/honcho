@@ -2,27 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from honcho_core import AsyncHoncho as AsyncHonchoCore
-from honcho_core import Honcho as HonchoCore
-from honcho_core.pagination import AsyncPage, SyncPage
-from honcho_core.types.workspaces import conclusion_create_params
-from honcho_core.types.workspaces.conclusion import Conclusion
-from pydantic import BaseModel, PrivateAttr
-from typing_extensions import TypeAlias
+from pydantic import BaseModel
 
+from .api_types import ConclusionResponse, RepresentationResponse
 from .base import SessionBase
 
+if TYPE_CHECKING:
+    from .http import AsyncHonchoHTTPClient, HonchoHTTPClient
+
 __all__ = [
-    "Conclusion",
+    "ConclusionResponse",
     "ConclusionCreateResponse",
     "ConclusionScope",
     "ConclusionCreateParams",
     "AsyncConclusionScope",
 ]
 
-ConclusionCreateResponse: TypeAlias = list[Conclusion]
+ConclusionCreateResponse = list[ConclusionResponse]
 
 
 class ConclusionCreateParams(BaseModel):
@@ -53,14 +51,14 @@ class ConclusionScope:
         ```
     """
 
-    _client: HonchoCore = PrivateAttr()
+    _http: "HonchoHTTPClient"
     workspace_id: str
     observer: str
     observed: str
 
     def __init__(
         self,
-        client: HonchoCore,
+        http: "HonchoHTTPClient",
         workspace_id: str,
         observer: str,
         observed: str,
@@ -69,12 +67,12 @@ class ConclusionScope:
         Initialize a ConclusionScope.
 
         Args:
-            client: The Honcho client instance
+            http: The HTTP client instance
             workspace_id: The workspace ID
             observer: The observer peer ID
             observed: The observed peer ID
         """
-        self._client = client
+        self._http = http
         self.workspace_id = workspace_id
         self.observer = observer
         self.observed = observed
@@ -84,7 +82,7 @@ class ConclusionScope:
         page: int = 1,
         size: int = 50,
         session: str | SessionBase | None = None,
-    ) -> SyncPage[Conclusion]:
+    ) -> "SyncPage[ConclusionResponse, ConclusionResponse]":
         """
         List conclusions in this scope.
 
@@ -94,8 +92,11 @@ class ConclusionScope:
             session: Optional session (ID string or Session object) to filter by
 
         Returns:
-            Paginated response containing Conclusion objects
+            Paginated response containing ConclusionResponse objects
         """
+        from .http import routes
+        from .pagination import SyncPage
+
         resolved_session_id = (
             None
             if session is None
@@ -108,19 +109,28 @@ class ConclusionScope:
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
-        return self._client.workspaces.conclusions.list(
-            workspace_id=self.workspace_id,
-            filters=filters,
-            page=page,
-            size=size,
+        data = self._http.post(
+            routes.conclusions_list(self.workspace_id),
+            body={"filters": filters, "page": page, "size": size},
         )
+
+        def fetch_next(
+            next_page: int,
+        ) -> "SyncPage[ConclusionResponse, ConclusionResponse]":
+            next_data = self._http.post(
+                routes.conclusions_list(self.workspace_id),
+                body={"filters": filters, "page": next_page, "size": size},
+            )
+            return SyncPage(next_data, ConclusionResponse, None, fetch_next)
+
+        return SyncPage(data, ConclusionResponse, None, fetch_next)
 
     def query(
         self,
         query: str,
         top_k: int = 10,
         distance: float | None = None,
-    ) -> list[Conclusion]:
+    ) -> list[ConclusionResponse]:
         """
         Semantic search for conclusions in this scope.
 
@@ -130,20 +140,28 @@ class ConclusionScope:
             distance: Maximum cosine distance threshold (0.0-1.0)
 
         Returns:
-            List of matching Conclusion objects
+            List of matching ConclusionResponse objects
         """
+        from .http import routes
+
         filters: dict[str, Any] = {
             "observer": self.observer,
             "observed": self.observed,
         }
 
-        return self._client.workspaces.conclusions.query(
-            workspace_id=self.workspace_id,
-            query=query,
-            top_k=top_k,
-            distance=distance,
-            filters=filters,
+        body: dict[str, Any] = {
+            "query": query,
+            "top_k": top_k,
+            "filters": filters,
+        }
+        if distance is not None:
+            body["distance"] = distance
+
+        data = self._http.post(
+            routes.conclusions_query(self.workspace_id),
+            body=body,
         )
+        return [ConclusionResponse.model_validate(item) for item in data]
 
     def delete(self, conclusion_id: str) -> None:
         """
@@ -152,15 +170,14 @@ class ConclusionScope:
         Args:
             conclusion_id: The ID of the conclusion to delete
         """
-        self._client.workspaces.conclusions.delete(
-            workspace_id=self.workspace_id,
-            conclusion_id=conclusion_id,
-        )
+        from .http import routes
+
+        self._http.delete(routes.conclusion(self.workspace_id, conclusion_id))
 
     def create(
         self,
         conclusions: list[ConclusionCreateParams | dict[str, Any]],
-    ) -> list[Conclusion]:
+    ) -> list[ConclusionResponse]:
         """
         Create conclusions in this scope.
 
@@ -169,7 +186,7 @@ class ConclusionScope:
                 Each conclusion can be a ConclusionCreateParams object or a dictionary with 'content' and 'session_id' keys.
 
         Returns:
-            List of created Conclusion objects
+            List of created ConclusionResponse objects
 
         Example:
             ```python
@@ -179,23 +196,27 @@ class ConclusionScope:
             ])
             ```
         """
+        from .http import routes
 
-        return self._client.workspaces.conclusions.create(
-            workspace_id=self.workspace_id,
-            conclusions=[
-                conclusion_create_params.Conclusion(
-                    content=conclusion.content
-                    if isinstance(conclusion, ConclusionCreateParams)
-                    else conclusion["content"],
-                    session_id=conclusion.session_id
-                    if isinstance(conclusion, ConclusionCreateParams)
-                    else conclusion["session_id"],
-                    observer_id=self.observer,
-                    observed_id=self.observed,
-                )
-                for conclusion in conclusions
-            ],
+        conclusion_params = [
+            {
+                "content": c.content
+                if isinstance(c, ConclusionCreateParams)
+                else c["content"],
+                "session_id": c.session_id
+                if isinstance(c, ConclusionCreateParams)
+                else c["session_id"],
+                "observer_id": self.observer,
+                "observed_id": self.observed,
+            }
+            for c in conclusions
+        ]
+
+        data = self._http.post(
+            routes.conclusions(self.workspace_id),
+            body={"conclusions": conclusion_params},
         )
+        return [ConclusionResponse.model_validate(item) for item in data]
 
     def get_representation(
         self,
@@ -221,23 +242,25 @@ class ConclusionScope:
         Returns:
             A Representation string
         """
-        from honcho_core._types import omit
+        from .http import routes
 
-        response = self._client.workspaces.peers.representation(
-            peer_id=self.observer,
-            workspace_id=self.workspace_id,
-            target=self.observed,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+        query: dict[str, Any] = {"target": self.observed}
+        if search_query is not None:
+            query["search_query"] = search_query
+        if search_top_k is not None:
+            query["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            query["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            query["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            query["max_conclusions"] = max_conclusions
+
+        data = self._http.get(
+            routes.peer_representation(self.workspace_id, self.observer),
+            query=query,
         )
-
+        response = RepresentationResponse.model_validate(data)
         return response.representation
 
     def __repr__(self) -> str:
@@ -270,14 +293,14 @@ class AsyncConclusionScope:
         ```
     """
 
-    _client: AsyncHonchoCore = PrivateAttr()
+    _http: "AsyncHonchoHTTPClient"
     workspace_id: str
     observer: str
     observed: str
 
     def __init__(
         self,
-        client: AsyncHonchoCore,
+        http: "AsyncHonchoHTTPClient",
         workspace_id: str,
         observer: str,
         observed: str,
@@ -286,12 +309,12 @@ class AsyncConclusionScope:
         Initialize an AsyncConclusionScope.
 
         Args:
-            client: The AsyncHoncho client instance
+            http: The async HTTP client instance
             workspace_id: The workspace ID
             observer: The observer peer ID
             observed: The observed peer ID
         """
-        self._client = client
+        self._http = http
         self.workspace_id = workspace_id
         self.observer = observer
         self.observed = observed
@@ -301,7 +324,7 @@ class AsyncConclusionScope:
         page: int = 1,
         size: int = 50,
         session: str | SessionBase | None = None,
-    ) -> AsyncPage[Conclusion]:
+    ) -> "AsyncPage[ConclusionResponse, ConclusionResponse]":
         """
         List conclusions in this scope.
 
@@ -311,8 +334,11 @@ class AsyncConclusionScope:
             session: Optional session (ID string or AsyncSession object) to filter by
 
         Returns:
-            Paginated response containing Conclusion objects
+            Paginated response containing ConclusionResponse objects
         """
+        from .async_client.pagination import AsyncPage
+        from .http import routes
+
         resolved_session_id = (
             None
             if session is None
@@ -325,19 +351,28 @@ class AsyncConclusionScope:
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
-        return await self._client.workspaces.conclusions.list(
-            workspace_id=self.workspace_id,
-            filters=filters,
-            page=page,
-            size=size,
+        data = await self._http.post(
+            routes.conclusions_list(self.workspace_id),
+            body={"filters": filters, "page": page, "size": size},
         )
+
+        async def fetch_next(
+            next_page: int,
+        ) -> "AsyncPage[ConclusionResponse, ConclusionResponse]":
+            next_data = await self._http.post(
+                routes.conclusions_list(self.workspace_id),
+                body={"filters": filters, "page": next_page, "size": size},
+            )
+            return AsyncPage(next_data, ConclusionResponse, None, fetch_next)
+
+        return AsyncPage(data, ConclusionResponse, None, fetch_next)
 
     async def query(
         self,
         query: str,
         top_k: int = 10,
         distance: float | None = None,
-    ) -> list[Conclusion]:
+    ) -> list[ConclusionResponse]:
         """
         Semantic search for conclusions in this scope.
 
@@ -347,20 +382,28 @@ class AsyncConclusionScope:
             distance: Maximum cosine distance threshold (0.0-1.0)
 
         Returns:
-            List of matching Conclusion objects
+            List of matching ConclusionResponse objects
         """
+        from .http import routes
+
         filters: dict[str, Any] = {
             "observer": self.observer,
             "observed": self.observed,
         }
 
-        return await self._client.workspaces.conclusions.query(
-            workspace_id=self.workspace_id,
-            query=query,
-            top_k=top_k,
-            distance=distance,
-            filters=filters,
+        body: dict[str, Any] = {
+            "query": query,
+            "top_k": top_k,
+            "filters": filters,
+        }
+        if distance is not None:
+            body["distance"] = distance
+
+        data = await self._http.post(
+            routes.conclusions_query(self.workspace_id),
+            body=body,
         )
+        return [ConclusionResponse.model_validate(item) for item in data]
 
     async def delete(self, conclusion_id: str) -> None:
         """
@@ -369,15 +412,14 @@ class AsyncConclusionScope:
         Args:
             conclusion_id: The ID of the conclusion to delete
         """
-        await self._client.workspaces.conclusions.delete(
-            workspace_id=self.workspace_id,
-            conclusion_id=conclusion_id,
-        )
+        from .http import routes
+
+        await self._http.delete(routes.conclusion(self.workspace_id, conclusion_id))
 
     async def create(
         self,
         conclusions: list[ConclusionCreateParams | dict[str, Any]],
-    ) -> list[Conclusion]:
+    ) -> list[ConclusionResponse]:
         """
         Create conclusions in this scope.
 
@@ -386,7 +428,7 @@ class AsyncConclusionScope:
                 Each conclusion can be a ConclusionCreateParams object or a dictionary with 'content' and 'session_id' keys.
 
         Returns:
-            List of created Conclusion objects
+            List of created ConclusionResponse objects
 
         Example:
             ```python
@@ -396,22 +438,27 @@ class AsyncConclusionScope:
             ])
             ```
         """
-        return await self._client.workspaces.conclusions.create(
-            workspace_id=self.workspace_id,
-            conclusions=[
-                conclusion_create_params.Conclusion(
-                    content=conclusion.content
-                    if isinstance(conclusion, ConclusionCreateParams)
-                    else conclusion["content"],
-                    session_id=conclusion.session_id
-                    if isinstance(conclusion, ConclusionCreateParams)
-                    else conclusion["session_id"],
-                    observer_id=self.observer,
-                    observed_id=self.observed,
-                )
-                for conclusion in conclusions
-            ],
+        from .http import routes
+
+        conclusion_params = [
+            {
+                "content": c.content
+                if isinstance(c, ConclusionCreateParams)
+                else c["content"],
+                "session_id": c.session_id
+                if isinstance(c, ConclusionCreateParams)
+                else c["session_id"],
+                "observer_id": self.observer,
+                "observed_id": self.observed,
+            }
+            for c in conclusions
+        ]
+
+        data = await self._http.post(
+            routes.conclusions(self.workspace_id),
+            body={"conclusions": conclusion_params},
         )
+        return [ConclusionResponse.model_validate(item) for item in data]
 
     async def get_representation(
         self,
@@ -437,23 +484,25 @@ class AsyncConclusionScope:
         Returns:
             A Representation string
         """
-        from honcho_core._types import omit
+        from .http import routes
 
-        response = await self._client.workspaces.peers.representation(
-            peer_id=self.observer,
-            workspace_id=self.workspace_id,
-            target=self.observed,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+        query: dict[str, Any] = {"target": self.observed}
+        if search_query is not None:
+            query["search_query"] = search_query
+        if search_top_k is not None:
+            query["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            query["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            query["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            query["max_conclusions"] = max_conclusions
+
+        data = await self._http.get(
+            routes.peer_representation(self.workspace_id, self.observer),
+            query=query,
         )
-
+        response = RepresentationResponse.model_validate(data)
         return response.representation
 
     def __repr__(self) -> str:
@@ -461,3 +510,8 @@ class AsyncConclusionScope:
             f"AsyncConclusionScope(workspace_id={self.workspace_id!r}, "
             f"observer={self.observer!r}, observed={self.observed!r})"
         )
+
+
+# Import for type hints
+from .async_client.pagination import AsyncPage  # noqa: E402
+from .pagination import SyncPage  # noqa: E402

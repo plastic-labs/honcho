@@ -315,13 +315,7 @@ async def test_file_upload_with_configuration(
     text_file = BytesIO(text_content.encode("utf-8"))
     text_file.name = "test_config.txt"
 
-    from typing import cast
-
-    from honcho_core.types.workspaces.sessions.message_create_param import Configuration
-
-    configuration = cast(
-        Configuration, cast(object, {"skip_deriver": True, "custom_flag": "test"})
-    )
+    configuration = {"skip_deriver": True, "custom_flag": "test"}
 
     if isinstance(honcho_client, Honcho):
         session = honcho_client.session(id="test-session-config")
@@ -410,14 +404,8 @@ async def test_file_upload_with_all_parameters(
     text_file = BytesIO(text_content.encode("utf-8"))
     text_file.name = "test_all_params.txt"
 
-    from typing import cast
-
-    from honcho_core.types.workspaces.sessions.message_create_param import Configuration
-
     metadata: dict[str, object] = {"source": "comprehensive_test", "version": "1.0"}
-    configuration = cast(
-        Configuration, cast(object, {"skip_deriver": False, "test_mode": True})
-    )
+    configuration = {"skip_deriver": False, "test_mode": True}
     test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=timezone.utc)
     created_at_str = test_timestamp.isoformat()
 

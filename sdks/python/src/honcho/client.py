@@ -1,3 +1,7 @@
+"""Sync Honcho client."""
+
+from __future__ import annotations
+
 import logging
 import os
 import time
@@ -5,19 +9,29 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 import httpx
-from honcho_core import Honcho as HonchoCore
-from honcho_core.types.workspaces import QueueStatusResponse
-from honcho_core.types.workspaces.peer import Peer as PeerCore
-from honcho_core.types.workspaces.session import Session as SessionCore
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .api_types import (
+    MessageResponse,
+    PeerResponse,
+    QueueStatusResponse,
+    SessionResponse,
+    WorkspaceResponse,
+)
 from .base import PeerBase, SessionBase
+from .http import HonchoHTTPClient, routes
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
 
 logger = logging.getLogger(__name__)
+
+# Environment configuration
+ENVIRONMENTS = {
+    "local": "http://localhost:8000",
+    "production": "https://api.honcho.dev",
+    "demo": "https://demo.honcho.dev",
+}
 
 
 class Honcho(BaseModel):
@@ -28,16 +42,12 @@ class Honcho(BaseModel):
     from environment variables or explicit parameters. This is the primary entry
     point for interacting with the Honcho conversational memory platform.
 
-    For advanced usage, the underlying honcho_core client can be accessed via the
-    `core` property to use functionality not exposed through this SDK.
-
     Attributes:
         workspace_id: Workspace ID for scoping operations
         metadata: Cached metadata for this workspace. May be stale if not recently
             fetched. Call get_metadata() for fresh data.
         configuration: Cached configuration for this workspace. May be stale if not
             recently fetched. Call get_config() for fresh data.
-        core: Access to the underlying honcho_core client for advanced usage
     """
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore
@@ -49,7 +59,8 @@ class Honcho(BaseModel):
     )
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: HonchoCore = PrivateAttr()
+    _http: HonchoHTTPClient = PrivateAttr()
+    _base_url: str = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -62,24 +73,9 @@ class Honcho(BaseModel):
         return self._configuration
 
     @property
-    def core(self) -> HonchoCore:
-        """
-        Access the underlying honcho_core client. The honcho_core client is the raw Stainless-generated client,
-        allowing users to access functionality that is not exposed through this SDK.
-
-        Returns:
-            The underlying HonchoCore client instance
-
-        Example:
-            ```python
-            from honcho import Honcho
-
-            client = Honcho()
-
-            workspace = client.core.workspaces.get_or_create(id="custom-workspace-id")
-            ```
-        """
-        return self._client
+    def base_url(self) -> str:
+        """The base URL of the Honcho API."""
+        return self._base_url
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -108,7 +104,7 @@ class Honcho(BaseModel):
                 API key for authentication. If not provided, will attempt to
                 read from HONCHO_API_KEY environment variable
             environment:
-                Environment to use (local or production)
+                Environment to use (local, production, or demo)
             base_url:
                 Base URL for the Honcho API. If not provided, will attempt to
                 read from HONCHO_URL environment variable or default to the
@@ -135,30 +131,38 @@ class Honcho(BaseModel):
 
         super().__init__(workspace_id=resolved_workspace_id)
 
-        # Build client kwargs, excluding None values that HonchoCore doesn't handle well
-        client_kwargs: dict[str, Any] = {}
+        # Resolve API key
+        resolved_api_key = api_key or os.getenv("HONCHO_API_KEY")
 
-        if api_key is not None:
-            client_kwargs["api_key"] = api_key
-        if environment is not None:
-            client_kwargs["environment"] = environment
-        if base_url is not None:
-            client_kwargs["base_url"] = base_url
+        # Resolve base URL
+        if base_url:
+            resolved_base_url = base_url
+        elif environment:
+            resolved_base_url = ENVIRONMENTS[environment]
+        else:
+            resolved_base_url = os.getenv("HONCHO_URL", ENVIRONMENTS["production"])
+
+        self._base_url = resolved_base_url
+
+        # Build HTTP client kwargs
+        http_kwargs: dict[str, Any] = {
+            "base_url": resolved_base_url,
+            "api_key": resolved_api_key,
+        }
+
         if timeout is not None:
-            client_kwargs["timeout"] = timeout
+            http_kwargs["timeout"] = timeout
         if max_retries is not None:
-            client_kwargs["max_retries"] = max_retries
+            http_kwargs["max_retries"] = max_retries
         if default_headers is not None:
-            client_kwargs["default_headers"] = default_headers
-        if default_query is not None:
-            client_kwargs["default_query"] = default_query
+            http_kwargs["default_headers"] = dict(default_headers)
         if http_client is not None:
-            client_kwargs["http_client"] = http_client
+            http_kwargs["http_client"] = http_client
 
-        self._client = HonchoCore(**client_kwargs)
+        self._http = HonchoHTTPClient(**http_kwargs)
 
         # Get or create the workspace
-        self._client.workspaces.get_or_create(id=self.workspace_id)
+        self._http.post(routes.workspaces(), body={"id": self.workspace_id})
 
     @validate_call
     def peer(
@@ -199,13 +203,11 @@ class Honcho(BaseModel):
             ValidationError: If the peer ID is empty or invalid
         """
         # Peer constructor handles API call and caching when metadata/config provided
-        return Peer(
-            id, self.workspace_id, self._client, config=config, metadata=metadata
-        )
+        return Peer(id, self.workspace_id, self._http, config=config, metadata=metadata)
 
     def get_peers(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[PeerCore, Peer]:
+    ) -> SyncPage[PeerResponse, Peer]:
         """
         Get all peers in the current workspace.
 
@@ -216,19 +218,29 @@ class Honcho(BaseModel):
         Returns:
             A SyncPage of Peer objects representing all peers in the workspace
         """
-        peers_page = self._client.workspaces.peers.list(
-            workspace_id=self.workspace_id, filters=filters
+        data = self._http.post(
+            routes.peers_list(self.workspace_id),
+            body={"filters": filters} if filters else None,
         )
-        return SyncPage(
-            peers_page,
-            lambda peer: Peer(
+
+        def transform(peer: PeerResponse) -> Peer:
+            return Peer(
                 peer.id,
                 self.workspace_id,
-                self._client,
+                self._http,
                 metadata=peer.metadata,
                 config=peer.configuration,
-            ),
-        )
+            )
+
+        def fetch_next(page: int) -> SyncPage[PeerResponse, Peer]:
+            next_data = self._http.post(
+                routes.peers_list(self.workspace_id),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return SyncPage(next_data, PeerResponse, transform, fetch_next)
+
+        return SyncPage(data, PeerResponse, transform, fetch_next)
 
     @validate_call
     def session(
@@ -269,12 +281,12 @@ class Honcho(BaseModel):
             ValidationError: If the session ID is empty or invalid
         """
         return Session(
-            id, self.workspace_id, self._client, config=config, metadata=metadata
+            id, self.workspace_id, self._http, config=config, metadata=metadata
         )
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[SessionCore, Session]:
+    ) -> SyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace.
 
@@ -285,19 +297,29 @@ class Honcho(BaseModel):
             A SyncPage of Session objects representing all sessions in the workspace.
             Returns an empty page if no sessions exist
         """
-        sessions_page = self._client.workspaces.sessions.list(
-            workspace_id=self.workspace_id, filters=filters
+        data = self._http.post(
+            routes.sessions_list(self.workspace_id),
+            body={"filters": filters} if filters else None,
         )
-        return SyncPage(
-            sessions_page,
-            lambda session: Session(
+
+        def transform(session: SessionResponse) -> Session:
+            return Session(
                 session.id,
                 self.workspace_id,
-                self._client,
+                self._http,
                 metadata=session.metadata,
                 config=session.configuration,
-            ),
-        )
+            )
+
+        def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
+            next_data = self._http.post(
+                routes.sessions_list(self.workspace_id),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return SyncPage(next_data, SessionResponse, transform, fetch_next)
+
+        return SyncPage(data, SessionResponse, transform, fetch_next)
 
     def get_metadata(self) -> dict[str, object]:
         """
@@ -312,7 +334,8 @@ class Honcho(BaseModel):
             A dictionary containing the workspace's metadata. Returns an empty
             dictionary if no metadata is set
         """
-        workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
+        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
+        workspace = WorkspaceResponse.model_validate(data)
         self._metadata = workspace.metadata or {}
         return self._metadata
 
@@ -332,7 +355,10 @@ class Honcho(BaseModel):
             metadata: A dictionary of metadata to associate with the workspace.
                       Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.update(self.workspace_id, metadata=metadata)
+        self._http.put(
+            routes.workspace(self.workspace_id),
+            body={"metadata": metadata},
+        )
         self._metadata = metadata
 
     def get_config(self) -> dict[str, object]:
@@ -347,7 +373,8 @@ class Honcho(BaseModel):
             A dictionary containing the workspace's configuration. Returns an empty
             dictionary if no configuration is set
         """
-        workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
+        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
+        workspace = WorkspaceResponse.model_validate(data)
         self._configuration = workspace.configuration or {}
         return self._configuration
 
@@ -369,7 +396,10 @@ class Honcho(BaseModel):
             configuration: A dictionary of configuration to associate with the workspace.
                           Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.update(self.workspace_id, configuration=configuration)
+        self._http.put(
+            routes.workspace(self.workspace_id),
+            body={"configuration": configuration},
+        )
         self._configuration = configuration
 
     def refresh(self) -> None:
@@ -379,7 +409,8 @@ class Honcho(BaseModel):
         Makes a single API call to retrieve the latest metadata and configuration
         associated with the current workspace and updates the cached attributes.
         """
-        workspace = self._client.workspaces.get_or_create(id=self.workspace_id)
+        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
+        workspace = WorkspaceResponse.model_validate(data)
         self._metadata = workspace.metadata or {}
         self._configuration = workspace.configuration or {}
 
@@ -394,8 +425,15 @@ class Honcho(BaseModel):
             A list of workspace ID strings. Returns an empty list if no workspaces
             are accessible or none exist
         """
-        workspaces = self._client.workspaces.list(filters=filters)
-        return [workspace.id for workspace in workspaces]
+        data = self._http.post(
+            routes.workspaces_list(),
+            body={"filters": filters} if filters else None,
+        )
+        workspace_ids: list[str] = []
+        for item in data.get("items", []):
+            workspace = WorkspaceResponse.model_validate(item)
+            workspace_ids.append(workspace.id)
+        return workspace_ids
 
     @validate_call
     def delete_workspace(
@@ -412,7 +450,7 @@ class Honcho(BaseModel):
         Args:
             workspace_id: The ID of the workspace to delete
         """
-        self._client.workspaces.delete(workspace_id)
+        self._http.delete(routes.workspace(workspace_id))
 
     @validate_call
     def search(
@@ -424,7 +462,7 @@ class Honcho(BaseModel):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[MessageResponse]:
         """
         Search for messages in the current workspace.
 
@@ -439,9 +477,11 @@ class Honcho(BaseModel):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.search(
-            self.workspace_id, query=query, filters=filters, limit=limit
+        data = self._http.post(
+            routes.workspace_search(self.workspace_id),
+            body={"query": query, "filters": filters, "limit": limit},
         )
+        return [MessageResponse.model_validate(item) for item in data]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def get_queue_status(
@@ -474,12 +514,19 @@ class Honcho(BaseModel):
             else (session if isinstance(session, str) else session.id)
         )
 
-        return self._client.workspaces.queue.status(
-            workspace_id=self.workspace_id,
-            observer_id=resolved_observer_id,
-            sender_id=resolved_sender_id,
-            session_id=resolved_session_id,
+        query: dict[str, Any] = {}
+        if resolved_observer_id:
+            query["observer_id"] = resolved_observer_id
+        if resolved_sender_id:
+            query["sender_id"] = resolved_sender_id
+        if resolved_session_id:
+            query["session_id"] = resolved_session_id
+
+        data = self._http.get(
+            routes.workspace_queue_status(self.workspace_id),
+            query=query if query else None,
         )
+        return QueueStatusResponse.model_validate(data)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def poll_queue_status(
@@ -592,11 +639,13 @@ class Honcho(BaseModel):
             ...     filters={"observer_id": "user123", "observed_id": "assistant"}
             ... )
         """
-        return self._client.workspaces.conclusions.list(
-            workspace_id=self.workspace_id,
-            filters=filters,
-            reverse=reverse,
+        from .api_types import ConclusionResponse
+
+        data = self._http.post(
+            routes.conclusions_list(self.workspace_id),
+            body={"filters": filters, "reverse": reverse},
         )
+        return SyncPage(data, ConclusionResponse)
 
     @validate_call
     def query_conclusions(
@@ -647,6 +696,8 @@ class Honcho(BaseModel):
             ...     distance=0.8
             ... )
         """
+        from .api_types import ConclusionResponse
+
         # Merge observer/observed into filters without mutating the input
         query_filters: dict[str, object | str] = {
             **(filters or {}),
@@ -654,13 +705,19 @@ class Honcho(BaseModel):
             "observed": observed,
         }
 
-        return self._client.workspaces.conclusions.query(
-            workspace_id=self.workspace_id,
-            query=query,
-            top_k=top_k,
-            distance=distance,
-            filters=query_filters,
+        body: dict[str, Any] = {
+            "query": query,
+            "top_k": top_k,
+            "filters": query_filters,
+        }
+        if distance is not None:
+            body["distance"] = distance
+
+        data = self._http.post(
+            routes.conclusions_query(self.workspace_id),
+            body=body,
         )
+        return [ConclusionResponse.model_validate(item) for item in data]
 
     @validate_call
     def delete_conclusion(
@@ -681,15 +738,12 @@ class Honcho(BaseModel):
         Example:
             >>> client.delete_conclusion('obs_123abc')
         """
-        self._client.workspaces.conclusions.delete(
-            workspace_id=self.workspace_id,
-            conclusion_id=conclusion_id,
-        )
+        self._http.delete(routes.conclusion(self.workspace_id, conclusion_id))
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def update_message(
         self,
-        message: Message | str = Field(
+        message: MessageResponse | str = Field(
             ..., description="The Message object or message ID to update"
         ),
         metadata: dict[str, object] = Field(
@@ -699,7 +753,7 @@ class Honcho(BaseModel):
             None,
             description="The session (ID string or Session object) - required if message is a string ID",
         ),
-    ) -> Message:
+    ) -> MessageResponse:
         """
         Update the metadata of a message.
 
@@ -716,7 +770,7 @@ class Honcho(BaseModel):
         Raises:
             ValidationError: If message is a string ID but session_id is not provided
         """
-        if isinstance(message, Message):
+        if isinstance(message, MessageResponse):
             message_id = message.id
             resolved_session_id = message.session_id
         else:
@@ -725,12 +779,11 @@ class Honcho(BaseModel):
                 raise ValueError("session is required when message is a string ID")
             resolved_session_id = session if isinstance(session, str) else session.id
 
-        return self._client.workspaces.sessions.messages.update(
-            message_id=message_id,
-            workspace_id=self.workspace_id,
-            session_id=resolved_session_id,
-            metadata=metadata,
+        data = self._http.put(
+            routes.message(self.workspace_id, resolved_session_id, message_id),
+            body={"metadata": metadata},
         )
+        return MessageResponse.model_validate(data)
 
     def __repr__(self) -> str:
         """
@@ -739,7 +792,9 @@ class Honcho(BaseModel):
         Returns:
             A string representation suitable for debugging
         """
-        return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
+        return (
+            f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._base_url}')"
+        )
 
     def __str__(self) -> str:
         """

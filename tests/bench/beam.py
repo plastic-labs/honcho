@@ -74,10 +74,8 @@ from typing import Any, cast
 
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
+from honcho.api_types import MessageCreateParams
 from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
 from openai import AsyncOpenAI
 
 from src.config import settings
@@ -484,7 +482,7 @@ Review the context carefully for any such instructions before responding."""
 
             # Ingest conversation turns
             print(f"[{workspace_id}] Ingesting conversation turns...")
-            messages: list[MessageCreateParam] = []
+            messages: list[MessageCreateParams] = []
 
             # Handle different data structures for 10M vs other sizes
             for batch in chat_data:

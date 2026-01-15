@@ -1,29 +1,30 @@
+"""Async Peer class for Honcho SDK."""
+
 from __future__ import annotations
 
 import datetime
+import json
 from collections.abc import AsyncGenerator
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from honcho_core import AsyncHoncho as AsyncHonchoCore
-from honcho_core._types import omit
-from honcho_core.types.workspaces import PeerCardResponse
-from honcho_core.types.workspaces.peer_context_response import (
-    PeerContextResponse,
-)
-from honcho_core.types.workspaces.peer_representation_response import (
-    PeerRepresentationResponse,
-)
-from honcho_core.types.workspaces.session import Session as SessionCore
-from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
-from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
+from ..api_types import (
+    MessageCreateParams,
+    MessageResponse,
+    PeerCardResponse,
+    PeerContextResponse,
+    PeerResponse,
+    RepresentationResponse,
+    SessionResponse,
+)
 from ..base import PeerBase, SessionBase
-from ..conclusions import AsyncConclusionScope
+from ..http import AsyncHonchoHTTPClient, routes
 from ..types import DialecticStreamResponse
 from .pagination import AsyncPage
-from .session import AsyncSession
+
+if TYPE_CHECKING:
+    from .session import AsyncSession
 
 
 class AsyncPeer(PeerBase):
@@ -31,21 +32,18 @@ class AsyncPeer(PeerBase):
     Represents a peer in the Honcho system with async operations.
 
     Peers can send messages, participate in sessions, and maintain both global
-    and local representations for contextual interactions. A peer represents
-    an entity (user, assistant, etc.) that can communicate within the system.
+    and local representations for contextual interactions.
 
     Attributes:
         id: Unique identifier for this peer
         workspace_id: Workspace ID for scoping operations
-        metadata: Cached metadata for this peer. May be stale if not recently
-            fetched. Call get_metadata() for fresh data.
-        configuration: Cached configuration for this peer. May be stale if not
-            recently fetched. Call get_config() for fresh data.
+        metadata: Cached metadata for this peer.
+        configuration: Cached configuration for this peer.
     """
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: AsyncHonchoCore = PrivateAttr()
+    _http: AsyncHonchoHTTPClient = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -68,9 +66,7 @@ class AsyncPeer(PeerBase):
         workspace_id: str = Field(
             ..., min_length=1, description="Workspace ID for scoping operations"
         ),
-        client: AsyncHonchoCore = Field(
-            ..., description="Reference to the parent AsyncHoncho client instance"
-        ),
+        http: AsyncHonchoHTTPClient = Field(..., description="HTTP client instance"),
         *,
         metadata: dict[str, object] | None = None,
         config: dict[str, object] | None = None,
@@ -81,7 +77,7 @@ class AsyncPeer(PeerBase):
         Args:
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent AsyncHoncho client instance
+            http: HTTP client instance
             metadata: Optional metadata to initialize the cached value
             config: Optional configuration to initialize the cached value
         """
@@ -89,7 +85,7 @@ class AsyncPeer(PeerBase):
             id=peer_id,
             workspace_id=workspace_id,
         )
-        self._client = client
+        self._http = http
         self._metadata = metadata
         self._configuration = config
 
@@ -98,7 +94,7 @@ class AsyncPeer(PeerBase):
         cls,
         peer_id: str,
         workspace_id: str,
-        client: AsyncHonchoCore,
+        http: AsyncHonchoHTTPClient,
         *,
         metadata: dict[str, object] | None = None,
         config: dict[str, object] | None = None,
@@ -106,37 +102,34 @@ class AsyncPeer(PeerBase):
         """
         Create a new AsyncPeer with optional configuration.
 
-        Provided metadata and configuration will overwrite any existing data in those
-        locations if given.
-
         Args:
-            peer_id: Unique identifier for this peer within the workspace
+            peer_id: Unique identifier for this peer
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent AsyncHoncho client instance
-            metadata: Optional metadata dictionary to associate with this peer.
-            If set, will get/create peer immediately with metadata.
-            config: Optional configuration to set for this peer.
-            If set, will get/create peer immediately with flags.
+            http: HTTP client instance
+            metadata: Optional metadata dictionary
+            config: Optional configuration
 
         Returns:
             A new AsyncPeer instance
         """
         if config is not None or metadata is not None:
-            peer_data = await client.workspaces.peers.get_or_create(
-                workspace_id=workspace_id,
-                id=peer_id,
-                configuration=config if config is not None else omit,
-                metadata=metadata if metadata is not None else omit,
-            )
+            body: dict[str, Any] = {"id": peer_id}
+            if metadata is not None:
+                body["metadata"] = metadata
+            if config is not None:
+                body["configuration"] = config
+
+            data = await http.post(routes.peers(workspace_id), body=body)
+            peer_data = PeerResponse.model_validate(data)
             return cls(
                 peer_id,
                 workspace_id,
-                client,
+                http,
                 metadata=peer_data.metadata,
                 config=peer_data.configuration,
             )
 
-        return cls(peer_id, workspace_id, client)
+        return cls(peer_id, workspace_id, http)
 
     async def chat(
         self,
@@ -151,28 +144,17 @@ class AsyncPeer(PeerBase):
         """
         Query the peer's representation with a natural language question.
 
-        Makes an async API call to the Honcho dialectic endpoint to query either the peer's
-        global representation (all content associated with this peer) or their local
-        representation of another peer (what this peer knows about the target peer).
-
         Args:
             query: The natural language question to ask.
             stream: Whether to stream the response
-            target: Optional target peer for local representation query. If provided,
-                    queries what this peer knows about the target peer rather than
-                    querying the peer's global representation. Can be a peer ID string
-                    or an AsyncPeer object.
-            session: Optional session to scope the query to. If provided, only
-                     information from that session is considered. Can be a session
-                     ID string or an AsyncSession object.
-            reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
-                             "high", or "max". Defaults to "low" if not provided.
+            target: Optional target peer for local representation query.
+            session: Optional session to scope the query to.
+            reasoning_level: Optional reasoning level for the query.
 
         Returns:
-            For non-streaming: Response string containing the answer, or None if no relevant information
-            For streaming: DialecticStreamResponse object that can be iterated over and provides final response
+            For non-streaming: Response string, or None if no relevant information
+            For streaming: DialecticStreamResponse object
         """
-        # Extract IDs from objects if needed
         target_id = (
             None
             if target is None
@@ -184,31 +166,30 @@ class AsyncPeer(PeerBase):
             else (session if isinstance(session, str) else session.id)
         )
 
+        body: dict[str, Any] = {"query": query, "stream": stream}
+        if target_id:
+            body["target"] = target_id
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+
         if stream:
 
-            async def stream_response() -> AsyncGenerator[str]:
-                import json
-
-                # Use core SDK with_streaming_response
-                async with self._client.workspaces.peers.with_streaming_response.chat(
-                    peer_id=self.id,
-                    workspace_id=self.workspace_id,
-                    query=query,
-                    stream=True,
-                    target=target_id,
-                    session_id=resolved_session_id,
-                    reasoning_level=reasoning_level
-                    if reasoning_level is not None
-                    else omit,
-                ) as response:
-                    response.http_response.raise_for_status()
-                    async for line in response.iter_lines():
+            async def stream_response() -> AsyncGenerator[str, None]:
+                async for chunk in self._http.stream(
+                    "POST",
+                    routes.peer_chat(self.workspace_id, self.id),
+                    body=body,
+                ):
+                    # Parse SSE data
+                    for line in chunk.decode("utf-8").split("\n"):
                         if line.startswith("data: "):
-                            json_str = line[6:]  # Remove "data: " prefix
+                            json_str = line[6:]
                             try:
                                 chunk_data = json.loads(json_str)
                                 if chunk_data.get("done"):
-                                    break
+                                    return
                                 delta_obj = chunk_data.get("delta", {})
                                 content = delta_obj.get("content")
                                 if content:
@@ -218,44 +199,43 @@ class AsyncPeer(PeerBase):
 
             return DialecticStreamResponse(stream_response())
 
-        response = await self._client.workspaces.peers.chat(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            stream=stream,
-            target=target_id,
-            session_id=resolved_session_id,
-            reasoning_level=reasoning_level if reasoning_level is not None else omit,
+        data = await self._http.post(
+            routes.peer_chat(self.workspace_id, self.id),
+            body=body,
         )
-        # "If the context provided doesn't help address the query, write absolutely NOTHING but "None""
-        if response.content in ("", None, "None"):
+        content = data.get("content")
+        if content in ("", None, "None"):
             return None
-        return response.content
+        return content
 
     async def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> AsyncPage[SessionCore, AsyncSession]:
+    ) -> AsyncPage[SessionResponse, "AsyncSession"]:
         """
         Get all sessions this peer is a member of.
 
-        Makes an async API call to retrieve all sessions where this peer is an active participant.
-        Sessions are created when peers are added to them or send messages to them.
-
         Returns:
-            An async paginated list of AsyncSession objects this peer belongs to. Returns an empty
-            list if the peer is not a member of any sessions
+            An async paginated list of AsyncSession objects
         """
         from .session import AsyncSession
 
-        sessions_page = await self._client.workspaces.peers.sessions.list(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            filters=filters,
+        data = await self._http.post(
+            routes.peer_sessions_list(self.workspace_id, self.id),
+            body={"filters": filters} if filters else None,
         )
-        return AsyncPage(
-            sessions_page,
-            lambda session: AsyncSession(session.id, self.workspace_id, self._client),
-        )
+
+        def transform(session: SessionResponse) -> AsyncSession:
+            return AsyncSession(session.id, self.workspace_id, self._http)
+
+        async def fetch_next(page: int) -> AsyncPage[SessionResponse, AsyncSession]:
+            next_data = await self._http.post(
+                routes.peer_sessions_list(self.workspace_id, self.id),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return AsyncPage(next_data, SessionResponse, transform, fetch_next)
+
+        return AsyncPage(data, SessionResponse, transform, fetch_next)
 
     @validate_call
     def message(
@@ -264,61 +244,60 @@ class AsyncPeer(PeerBase):
             ..., min_length=1, description="The text content for the message"
         ),
         *,
-        config: Configuration | None = Field(
+        config: dict[str, Any] | None = Field(
             None,
-            description="Optional configuration dictionary to associate with the message",
+            description="Optional configuration dictionary",
         ),
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
         created_at: datetime.datetime | str | None = Field(
             None,
-            description="Optional created-at timestamp for the message. Accepts a datetime which will be converted to an ISO 8601 string, or a preformatted string.",
+            description="Optional created-at timestamp for the message.",
         ),
-    ) -> MessageCreateParam:
+    ) -> MessageCreateParams:
         """
-        Create a MessageCreateParam object attributed to this peer.
-
-        This is a convenience method for creating MessageCreateParam objects with this peer's ID.
-        The created MessageCreateParam can then be added to sessions or used in other operations.
+        Create a MessageCreateParams object attributed to this peer.
 
         Args:
             content: The text content for the message
-            metadata: Optional metadata dictionary to associate with the message
+            config: Optional configuration dictionary
+            metadata: Optional metadata dictionary
+            created_at: Optional created-at timestamp
 
         Returns:
-            A new MessageCreateParam object with this peer's ID and the provided content
+            A new MessageCreateParams object
         """
-        created_at_str: str | None
-        if isinstance(created_at, datetime.datetime):
-            created_at_str = created_at.isoformat()
-        else:
-            created_at_str = created_at
+        from ..api_types import MessageConfiguration
 
-        return MessageCreateParam(
+        created_at_dt: datetime.datetime | None
+        if isinstance(created_at, str):
+            created_at_dt = datetime.datetime.fromisoformat(created_at)
+        else:
+            created_at_dt = created_at
+
+        config_obj = MessageConfiguration(**config) if config else None
+
+        return MessageCreateParams(
             peer_id=self.id,
             content=content,
-            configuration=config,
+            configuration=config_obj,
             metadata=metadata,
-            created_at=created_at_str,
+            created_at=created_at_dt,
         )
 
     async def get_metadata(self) -> dict[str, object]:
         """
         Get the current metadata for this peer.
 
-        Makes an async API call to retrieve metadata associated with this peer. Metadata
-        can include custom attributes, settings, or any other key-value data
-        associated with the peer. This method also updates the cached metadata attribute.
-
         Returns:
-            A dictionary containing the peer's metadata. Returns an empty dictionary
-            if no metadata is set
+            A dictionary containing the peer's metadata.
         """
-        peer = await self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = await self._http.post(
+            routes.peers(self.workspace_id),
+            body={"id": self.id},
         )
+        peer = PeerResponse.model_validate(data)
         self._metadata = peer.metadata or {}
         return self._metadata
 
@@ -332,18 +311,12 @@ class AsyncPeer(PeerBase):
         """
         Set the metadata for this peer.
 
-        Makes an async API call to update the metadata associated with this peer.
-        This will overwrite any existing metadata with the provided values.
-        This method also updates the cached metadata attribute.
-
         Args:
-            metadata: A dictionary of metadata to associate with this peer.
-                      Keys must be strings, values can be any JSON-serializable type
+            metadata: A dictionary of metadata
         """
-        await self._client.workspaces.peers.update(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            metadata=metadata,
+        await self._http.put(
+            routes.peer(self.workspace_id, self.id),
+            body={"metadata": metadata},
         )
         self._metadata = metadata
 
@@ -351,44 +324,31 @@ class AsyncPeer(PeerBase):
         """
         Get the current workspace-level configuration for this peer.
 
-        Makes an API call to retrieve configuration associated with this peer.
-        Configuration currently includes one optional flag, `observe_me`.
-        This method also updates the cached configuration attribute.
-
         Returns:
             A dictionary containing the peer's configuration
         """
-        peer = await self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = await self._http.post(
+            routes.peers(self.workspace_id),
+            body={"id": self.id},
         )
+        peer = PeerResponse.model_validate(data)
         self._configuration = peer.configuration or {}
         return self._configuration
 
     @validate_call
     async def set_config(
         self,
-        config: dict[str, object] = Field(
-            ..., description="Configuration dictionary to associate with this peer"
-        ),
+        config: dict[str, object] = Field(..., description="Configuration dictionary"),
     ) -> None:
         """
-        Set the configuration for this peer. Currently the only supported config
-        value is the `observe_me` flag, which controls whether derivation tasks
-        should be created for this peer's global representation. Default is True.
-
-        Makes an API call to update the configuration associated with this peer.
-        This will overwrite any existing configuration with the provided values.
-        This method also updates the cached configuration attribute.
+        Set the configuration for this peer.
 
         Args:
-            config: A dictionary of configuration to associate with this peer.
-            Keys must be strings, values can be any JSON-serializable type
+            config: A dictionary of configuration
         """
-        await self._client.workspaces.peers.update(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            configuration=config,
+        await self._http.put(
+            routes.peer(self.workspace_id, self.id),
+            body={"configuration": config},
         )
         self._configuration = config
 
@@ -398,76 +358,61 @@ class AsyncPeer(PeerBase):
 
         .. deprecated::
             Use :meth:`get_config` instead.
-
-        Returns:
-            A dictionary containing the peer's configuration
         """
         return await self.get_config()
 
     @validate_call
     async def set_peer_config(
         self,
-        config: dict[str, object] = Field(
-            ..., description="Configuration dictionary to associate with this peer"
-        ),
+        config: dict[str, object] = Field(..., description="Configuration dictionary"),
     ) -> None:
         """
         Set the configuration for this peer.
 
         .. deprecated::
             Use :meth:`set_config` instead.
-
-        Args:
-            config: A dictionary of configuration to associate with this peer
         """
         return await self.set_config(config)
 
     async def refresh(self) -> None:
         """
         Refresh cached metadata and configuration for this peer.
-
-        Makes a single async API call to retrieve the latest metadata and configuration
-        associated with this peer and updates the cached attributes.
         """
-        peer = await self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = await self._http.post(
+            routes.peers(self.workspace_id),
+            body={"id": self.id},
         )
+        peer = PeerResponse.model_validate(data)
         self._metadata = peer.metadata or {}
         self._configuration = peer.configuration or {}
 
     @validate_call
     async def search(
         self,
-        query: str = Field(..., min_length=1, description="The search query to use"),
+        query: str = Field(..., min_length=1, description="The search query"),
         filters: dict[str, object] | None = Field(
             None, description="Filters to scope the search"
         ),
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[MessageResponse]:
         """
-        Search across all messages in the workspace with this peer as author.
-
-        Makes an API call to search endpoint.
+        Search across all messages with this peer as author.
 
         Args:
             query: The search query to use
-            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
+            filters: Filters to scope the search.
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A list of Message objects representing the search results.
-            Returns an empty list if no messages are found.
+            A list of MessageResponse objects.
         """
-        return await self._client.workspaces.peers.search(
-            self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            filters=filters,
-            limit=limit,
+        data = await self._http.post(
+            routes.peer_search(self.workspace_id, self.id),
+            body={"query": query, "filters": filters, "limit": limit},
         )
+        return [MessageResponse.model_validate(item) for item in data]
 
     async def card(
         self,
@@ -476,18 +421,12 @@ class AsyncPeer(PeerBase):
         """
         Get the peer card for this peer.
 
-        Makes an API call to retrieve the peer card, which contains a representation
-        of what this peer knows. If a target is provided, returns this peer's local
-        representation of the target peer.
-
         Args:
-            target: Optional target peer for local card. If provided, returns this
-                    peer's card of the target peer. Can be an AsyncPeer object or peer ID string.
+            target: Optional target peer for local card.
 
         Returns:
-            A string containing the peer card joined with newlines, or an empty string if none is available
+            A string containing the peer card, or empty string if none
         """
-        # Validate target parameter
         if isinstance(target, str) and len(target.strip()) == 0:
             raise ValueError("target string cannot be empty")
 
@@ -496,17 +435,18 @@ class AsyncPeer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        response: PeerCardResponse = await self._client.workspaces.peers.card(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            target=target_id,
+
+        query = {"target": target_id} if target_id else None
+        data = await self._http.get(
+            routes.peer_card(self.workspace_id, self.id),
+            query=query,
         )
+        response = PeerCardResponse.model_validate(data)
 
         if response.peer_card is None:
             return ""
 
-        items: list[str] = response.peer_card
-        return "\n".join(items)
+        return "\n".join(response.peer_card)
 
     async def get_representation(
         self,
@@ -523,35 +463,16 @@ class AsyncPeer(PeerBase):
 
         Args:
             session: Optional session to scope the representation to.
-            target: Optional target peer to get the representation of. If provided,
-            returns the representation of the target from the perspective of this peer.
+            target: Optional target peer to get the representation of.
             search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
-            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            search_max_distance: Maximum semantic distance for search results
             include_most_frequent: Whether to include the most frequent conclusions
             max_conclusions: Maximum number of conclusions to include
 
         Returns:
-            A Representation string
-
-        Example:
-            ```python
-            # Get global representation
-            rep = await peer.get_representation()
-            print(rep)
-
-            # Get representation scoped to a session
-            session_rep = await peer.get_representation(session='session-123')
-
-            # Get representation with semantic search
-            searched_rep = await peer.get_representation(
-                search_query='preferences',
-                search_top_k=10,
-                max_conclusions=50
-            )
-            ```
+            A representation string
         """
-
         session_id = (
             None
             if session is None
@@ -565,26 +486,29 @@ class AsyncPeer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerRepresentationResponse = (
-            await self._client.workspaces.peers.representation(
-                peer_id=self.id,
-                workspace_id=self.workspace_id,
-                session_id=session_id,
-                target=target_id,
-                search_query=search_query if search_query is not None else omit,
-                search_top_k=search_top_k if search_top_k is not None else omit,
-                search_max_distance=search_max_distance
-                if search_max_distance is not None
-                else omit,
-                include_most_frequent=include_most_frequent
-                if include_most_frequent is not None
-                else omit,
-                max_conclusions=max_conclusions
-                if max_conclusions is not None
-                else omit,
-            )
+
+        body: dict[str, Any] = {}
+        if session_id:
+            body["session_id"] = session_id
+        if target_id:
+            body["target"] = target_id
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            body["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            body["max_conclusions"] = max_conclusions
+
+        data = await self._http.post(
+            routes.peer_representation(self.workspace_id, self.id),
+            body=body,
         )
-        return data.representation
+        response = RepresentationResponse.model_validate(data)
+        return response.representation
 
     async def get_context(
         self,
@@ -598,38 +522,16 @@ class AsyncPeer(PeerBase):
         """
         Get context for this peer, including representation and peer card.
 
-        This is a convenience method that retrieves both the working representation
-        and peer card in a single API call.
-
         Args:
-            target: Optional target peer to get context for. If provided, returns
-                   the context for the target from this peer's perspective.
-                   Can be an AsyncPeer object or peer ID string.
+            target: Optional target peer to get context for.
             search_query: Semantic search query to filter relevant conclusions
             search_top_k: Number of semantically relevant facts to return
-            search_max_distance: Maximum semantic distance for search results (0.0-1.0)
+            search_max_distance: Maximum semantic distance for search results
             include_most_frequent: Whether to include the most frequent conclusions
             max_conclusions: Maximum number of conclusions to include
 
         Returns:
-            A PeerContext object containing the representation and peer card
-
-        Example:
-            ```python
-            # Get own context
-            context = await peer.get_context()
-            print(context.representation)
-            print(context.peer_card)
-
-            # Get context for another peer
-            context = await peer.get_context(target='other-peer-id')
-
-            # Get context with semantic search
-            context = await peer.get_context(
-                search_query='preferences',
-                search_top_k=10
-            )
-            ```
+            A PeerContextResponse object
         """
         target_id = (
             None
@@ -637,95 +539,59 @@ class AsyncPeer(PeerBase):
             else (target if isinstance(target, str) else target.id)
         )
 
-        return await self._client.workspaces.peers.context(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+        query: dict[str, Any] = {}
+        if target_id:
+            query["target"] = target_id
+        if search_query is not None:
+            query["search_query"] = search_query
+        if search_top_k is not None:
+            query["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            query["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            query["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            query["max_conclusions"] = max_conclusions
+
+        data = await self._http.get(
+            routes.peer_context(self.workspace_id, self.id),
+            query=query if query else None,
         )
+        return PeerContextResponse.model_validate(data)
 
     @property
     def conclusions(self) -> "AsyncConclusionScope":
         """
         Access this peer's self-conclusions (where observer == observed == self).
 
-        This property provides a convenient way to access conclusions that this peer
-        has made about themselves. Use this for self-conclusion scenarios.
-
         Returns:
             An AsyncConclusionScope scoped to this peer's self-conclusions
-
-        Example:
-            ```python
-            # List self-conclusions
-            obs_list = await peer.conclusions.list()
-
-            # Search self-conclusions
-            results = await peer.conclusions.query("preferences")
-
-            # Delete a self-conclusion
-            await peer.conclusions.delete("obs-123")
-            ```
         """
-        return AsyncConclusionScope(self._client, self.workspace_id, self.id, self.id)
+        from ..conclusions import AsyncConclusionScope
+
+        return AsyncConclusionScope(self._http, self.workspace_id, self.id, self.id)
 
     def conclusions_of(self, target: str | PeerBase) -> "AsyncConclusionScope":
         """
         Access conclusions this peer has made about another peer.
 
-        This method provides scoped access to conclusions where this peer is the
-        observer and the target is the observed peer.
-
         Args:
-            target: The target peer (either an AsyncPeer object or peer ID string)
+            target: The target peer (either a Peer object or peer ID string)
 
         Returns:
             An AsyncConclusionScope scoped to this peer's conclusions of the target
-
-        Example:
-            ```python
-            # Get conclusions about another peer
-            bob_conclusions = peer.conclusions_of("bob")
-
-            # List conclusions
-            obs_list = await bob_conclusions.list()
-
-            # Search conclusions
-            results = await bob_conclusions.query("work history")
-
-            # Get the representation from these conclusions
-            rep = await bob_conclusions.get_representation()
-            ```
         """
-        from ..conclusions import AsyncConclusionScope as _AsyncConclusionScope
+        from ..conclusions import AsyncConclusionScope
 
         target_id = target.id if isinstance(target, PeerBase) else target
-        return _AsyncConclusionScope(
-            self._client, self.workspace_id, self.id, target_id
-        )
+        return AsyncConclusionScope(self._http, self.workspace_id, self.id, target_id)
 
     def __repr__(self) -> str:
-        """
-        Return a string representation of the AsyncPeer.
-
-        Returns:
-            A string representation suitable for debugging
-        """
         return f"AsyncPeer(id='{self.id}')"
 
     def __str__(self) -> str:
-        """
-        Return a human-readable string representation of the AsyncPeer.
-
-        Returns:
-            The peer's ID
-        """
         return self.id
+
+
+# Import for type hints
+from ..conclusions import AsyncConclusionScope  # noqa: E402

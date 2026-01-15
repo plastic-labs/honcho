@@ -15,7 +15,6 @@ import pytest
 SDK_PATH = Path(__file__).parent.parent.parent / "sdks" / "typescript"
 
 
-@pytest.mark.asyncio
 def test_typescript_sdk(ts_test_server: str):
     """
     Run the TypeScript SDK tests against the test server.
@@ -53,7 +52,6 @@ def test_typescript_sdk(ts_test_server: str):
         pytest.fail(f"TypeScript SDK tests failed with exit code {result.returncode}")
 
 
-@pytest.mark.asyncio
 def test_typescript_sdk_typecheck():
     """
     Run TypeScript type checking on the SDK.

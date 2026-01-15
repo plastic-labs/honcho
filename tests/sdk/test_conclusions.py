@@ -1,8 +1,8 @@
 """Tests for observation SDK methods."""
 
 import pytest
-from honcho_core.types.workspaces.conclusion import Conclusion
 
+from sdks.python.src.honcho.api_types import ConclusionResponse
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.conclusions import (
@@ -50,7 +50,7 @@ async def test_observation_create_single(
         )
 
         assert len(created) == 1
-        assert isinstance(created[0], Conclusion)
+        assert isinstance(created[0], ConclusionResponse)
         assert created[0].content == "User prefers dark mode"
         assert created[0].observer_id == observer.id
         assert created[0].observed_id == target.id
@@ -85,7 +85,7 @@ async def test_observation_create_single(
         )
 
         assert len(created) == 1
-        assert isinstance(created[0], Conclusion)
+        assert isinstance(created[0], ConclusionResponse)
         assert created[0].content == "User prefers dark mode"
         assert created[0].observer_id == observer.id
         assert created[0].observed_id == target.id
@@ -226,8 +226,8 @@ async def test_observation_create_then_list(
         # List observations
         listed = await obs_scope.list()
 
-        listed_all: list[Conclusion] = [
-            Conclusion.model_validate(item) for item in listed.items
+        listed_all: list[ConclusionResponse] = [
+            ConclusionResponse.model_validate(item) for item in listed.items
         ]
 
         # The created observation should be in the list
@@ -387,8 +387,8 @@ async def test_observation_create_then_delete(
 
         # List observations - should not contain deleted one
         listed = await obs_scope.list()
-        listed_all: list[Conclusion] = [
-            Conclusion.model_validate(item) for item in listed.items
+        listed_all: list[ConclusionResponse] = [
+            ConclusionResponse.model_validate(item) for item in listed.items
         ]
         listed_ids = {obs.id for obs in listed_all}
         assert observation_id not in listed_ids
@@ -529,8 +529,8 @@ async def test_observation_create_with_session_filter(
 
         # List filtered by session1
         s1_obs = await obs_scope.list(session=session1)
-        s1_obs_all: list[Conclusion] = [
-            Conclusion.model_validate(item) for item in s1_obs.items
+        s1_obs_all: list[ConclusionResponse] = [
+            ConclusionResponse.model_validate(item) for item in s1_obs.items
         ]
         s1_contents = [obs.content for obs in s1_obs_all]
         assert "Session 1 observation" in s1_contents
@@ -538,8 +538,8 @@ async def test_observation_create_with_session_filter(
 
         # List filtered by session2
         s2_obs = await obs_scope.list(session=session2)
-        s2_obs_all: list[Conclusion] = [
-            Conclusion.model_validate(item) for item in s2_obs.items
+        s2_obs_all: list[ConclusionResponse] = [
+            ConclusionResponse.model_validate(item) for item in s2_obs.items
         ]
         s2_contents = [obs.content for obs in s2_obs_all]
         assert "Session 2 observation" in s2_contents

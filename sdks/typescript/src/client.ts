@@ -609,8 +609,19 @@ export class Honcho {
       filters: validatedFilter,
     })
 
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<WorkspaceResponse>> => {
+      return this._listWorkspaces({
+        filters: validatedFilter,
+        page,
+        size,
+      })
+    }
+
     const ids: string[] = []
-    const page = Page.from<WorkspaceResponse>(workspacesPage)
+    const page = Page.from<WorkspaceResponse>(workspacesPage, fetchNextPage)
     for await (const workspace of page) {
       ids.push(workspace.id)
     }

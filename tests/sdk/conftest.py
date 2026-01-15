@@ -29,7 +29,9 @@ def honcho_sync_test_client(client: TestClient) -> Honcho:
     )
 
     honcho_client = Honcho(
-        workspace_id="sdk-test-workspace-sync", http_client=http_client
+        workspace_id="sdk-test-workspace-sync",
+        base_url=str(client.base_url),
+        http_client=http_client,
     )
     return honcho_client
 
@@ -47,7 +49,7 @@ async def honcho_async_test_client(
         headers=client.headers,
     )
 
-    http_client = httpx.Client(
+    sync_http_client = httpx.Client(
         transport=client._transport,  # pyright: ignore
         base_url=str(client.base_url),
         headers=client.headers,
@@ -55,8 +57,9 @@ async def honcho_async_test_client(
 
     honcho_client = AsyncHoncho(
         workspace_id="sdk-test-workspace-async",
-        async_http_client=async_http_client,
-        http_client=http_client,
+        base_url=str(client.base_url),
+        http_client=async_http_client,
+        sync_http_client=sync_http_client,
     )
     return honcho_client
 

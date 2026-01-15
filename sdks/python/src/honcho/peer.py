@@ -1,29 +1,30 @@
+"""Sync Peer class for Honcho SDK."""
+
 from __future__ import annotations
 
 import datetime
+import json
 from collections.abc import Generator
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from honcho_core import Honcho as HonchoCore
-from honcho_core._types import omit
-from honcho_core.types.workspaces import PeerCardResponse
-from honcho_core.types.workspaces.peer_context_response import (
-    PeerContextResponse,
-)
-from honcho_core.types.workspaces.peer_representation_response import (
-    PeerRepresentationResponse,
-)
-from honcho_core.types.workspaces.session import Session as SessionCore
-from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
-from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
+from .api_types import (
+    MessageCreateParams,
+    MessageResponse,
+    PeerCardResponse,
+    PeerContextResponse,
+    PeerResponse,
+    RepresentationResponse,
+    SessionResponse,
+)
 from .base import PeerBase, SessionBase
-from .conclusions import ConclusionScope
+from .http import HonchoHTTPClient, routes
 from .pagination import SyncPage
-from .session import Session
 from .types import DialecticStreamResponse
+
+if TYPE_CHECKING:
+    from .session import Session
 
 
 class Peer(PeerBase):
@@ -45,7 +46,7 @@ class Peer(PeerBase):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: HonchoCore = PrivateAttr()
+    _http: HonchoHTTPClient = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -68,9 +69,7 @@ class Peer(PeerBase):
         workspace_id: str = Field(
             ..., min_length=1, description="Workspace ID for scoping operations"
         ),
-        client: HonchoCore = Field(
-            ..., description="Reference to the parent Honcho client instance"
-        ),
+        http: HonchoHTTPClient = Field(..., description="HTTP client instance"),
         *,
         metadata: dict[str, object] | None = Field(
             None,
@@ -90,7 +89,7 @@ class Peer(PeerBase):
         Args:
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent Honcho client instance
+            http: HTTP client instance
             metadata: Optional metadata dictionary to associate with this peer.
             If set, will get/create peer immediately with metadata.
             config: Optional configuration to set for this peer.
@@ -100,17 +99,19 @@ class Peer(PeerBase):
             id=peer_id,
             workspace_id=workspace_id,
         )
-        self._client = client
+        self._http = http
         self._metadata = metadata
         self._configuration = config
 
         if config is not None or metadata is not None:
-            peer_data = self._client.workspaces.peers.get_or_create(
-                workspace_id=workspace_id,
-                id=peer_id,
-                configuration=config if config is not None else omit,
-                metadata=metadata if metadata is not None else omit,
-            )
+            body: dict[str, Any] = {"id": peer_id}
+            if metadata is not None:
+                body["metadata"] = metadata
+            if config is not None:
+                body["configuration"] = config
+
+            data = http.post(routes.peers(workspace_id), body=body)
+            peer_data = PeerResponse.model_validate(data)
             # Update cached values with API response
             self._metadata = peer_data.metadata
             self._configuration = peer_data.configuration
@@ -161,31 +162,30 @@ class Peer(PeerBase):
             else (session if isinstance(session, str) else session.id)
         )
 
+        body: dict[str, Any] = {"query": query, "stream": stream}
+        if target_id:
+            body["target"] = target_id
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+
         if stream:
 
             def stream_response() -> Generator[str, None, None]:
-                import json
-
-                # Use core SDK with_streaming_response
-                with self._client.workspaces.peers.with_streaming_response.chat(
-                    peer_id=self.id,
-                    workspace_id=self.workspace_id,
-                    query=query,
-                    stream=True,
-                    target=target_id,
-                    session_id=resolved_session_id,
-                    reasoning_level=reasoning_level
-                    if reasoning_level is not None
-                    else omit,
-                ) as response:
-                    response.http_response.raise_for_status()
-                    for line in response.iter_lines():
+                for chunk in self._http.stream(
+                    "POST",
+                    routes.peer_chat(self.workspace_id, self.id),
+                    body=body,
+                ):
+                    # Parse SSE data
+                    for line in chunk.decode("utf-8").split("\n"):
                         if line.startswith("data: "):
                             json_str = line[6:]  # Remove "data: " prefix
                             try:
                                 chunk_data = json.loads(json_str)
                                 if chunk_data.get("done"):
-                                    break
+                                    return
                                 delta_obj = chunk_data.get("delta", {})
                                 content = delta_obj.get("content")
                                 if content:
@@ -195,22 +195,18 @@ class Peer(PeerBase):
 
             return DialecticStreamResponse(stream_response())
 
-        response = self._client.workspaces.peers.chat(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            stream=stream,
-            target=target_id,
-            session_id=resolved_session_id,
-            reasoning_level=reasoning_level if reasoning_level is not None else omit,
+        data = self._http.post(
+            routes.peer_chat(self.workspace_id, self.id),
+            body=body,
         )
-        if response.content in ("", None, "None"):
+        content = data.get("content")
+        if content in ("", None, "None"):
             return None
-        return response.content
+        return content
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[SessionCore, Session]:
+    ) -> SyncPage[SessionResponse, "Session"]:
         """
         Get all sessions this peer is a member of.
 
@@ -223,15 +219,23 @@ class Peer(PeerBase):
         """
         from .session import Session
 
-        sessions_page = self._client.workspaces.peers.sessions.list(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            filters=filters,
+        data = self._http.post(
+            routes.peer_sessions_list(self.workspace_id, self.id),
+            body={"filters": filters} if filters else None,
         )
-        return SyncPage(
-            sessions_page,
-            lambda session: Session(session.id, self.workspace_id, self._client),
-        )
+
+        def transform(session: SessionResponse) -> Session:
+            return Session(session.id, self.workspace_id, self._http)
+
+        def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
+            next_data = self._http.post(
+                routes.peer_sessions_list(self.workspace_id, self.id),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return SyncPage(next_data, SessionResponse, transform, fetch_next)
+
+        return SyncPage(data, SessionResponse, transform, fetch_next)
 
     @validate_call
     def message(
@@ -243,7 +247,7 @@ class Peer(PeerBase):
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
-        config: Configuration | None = Field(
+        config: dict[str, Any] | None = Field(
             None,
             description="Optional configuration dictionary to associate with the message",
         ),
@@ -251,32 +255,38 @@ class Peer(PeerBase):
             None,
             description="Optional created-at timestamp for the message. Accepts a datetime which will be converted to an ISO 8601 string, or a preformatted string.",
         ),
-    ) -> MessageCreateParam:
+    ) -> MessageCreateParams:
         """
-        Create a MessageCreateParam object attributed to this peer.
+        Create a MessageCreateParams object attributed to this peer.
 
-        This is a convenience method for creating MessageCreateParam objects with this peer's ID.
-        The created MessageCreateParam can then be added to sessions or used in other operations.
+        This is a convenience method for creating MessageCreateParams objects with this peer's ID.
+        The created MessageCreateParams can then be added to sessions or used in other operations.
 
         Args:
             content: The text content for the message
             metadata: Optional metadata dictionary to associate with the message
+            config: Optional configuration dictionary
+            created_at: Optional created-at timestamp
 
         Returns:
-            A new MessageCreateParam object with this peer's ID and the provided content
+            A new MessageCreateParams object with this peer's ID and the provided content
         """
-        created_at_str: str | None
-        if isinstance(created_at, datetime.datetime):
-            created_at_str = created_at.isoformat()
-        else:
-            created_at_str = created_at
+        from .api_types import MessageConfiguration
 
-        return MessageCreateParam(
+        created_at_dt: datetime.datetime | None
+        if isinstance(created_at, str):
+            created_at_dt = datetime.datetime.fromisoformat(created_at)
+        else:
+            created_at_dt = created_at
+
+        config_obj = MessageConfiguration(**config) if config else None
+
+        return MessageCreateParams(
             peer_id=self.id,
             content=content,
-            configuration=config,
+            configuration=config_obj,
             metadata=metadata,
-            created_at=created_at_str,
+            created_at=created_at_dt,
         )
 
     def get_metadata(self) -> dict[str, object]:
@@ -291,10 +301,11 @@ class Peer(PeerBase):
             A dictionary containing the peer's metadata. Returns an empty dictionary
             if no metadata is set
         """
-        peer = self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = self._http.post(
+            routes.peers(self.workspace_id),
+            body={"id": self.id},
         )
+        peer = PeerResponse.model_validate(data)
         self._metadata = peer.metadata or {}
         return self._metadata
 
@@ -316,10 +327,9 @@ class Peer(PeerBase):
             metadata: A dictionary of metadata to associate with this peer.
             Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.peers.update(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            metadata=metadata,
+        self._http.put(
+            routes.peer(self.workspace_id, self.id),
+            body={"metadata": metadata},
         )
         self._metadata = metadata
 
@@ -334,10 +344,11 @@ class Peer(PeerBase):
         Returns:
             A dictionary containing the peer's configuration
         """
-        peer = self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = self._http.post(
+            routes.peers(self.workspace_id),
+            body={"id": self.id},
         )
+        peer = PeerResponse.model_validate(data)
         self._configuration = peer.configuration or {}
         return self._configuration
 
@@ -361,10 +372,9 @@ class Peer(PeerBase):
             config: A dictionary of configuration to associate with this peer.
             Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.peers.update(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            configuration=config,
+        self._http.put(
+            routes.peer(self.workspace_id, self.id),
+            body={"configuration": config},
         )
         self._configuration = config
 
@@ -405,10 +415,11 @@ class Peer(PeerBase):
         Makes a single API call to retrieve the latest metadata and configuration
         associated with this peer and updates the cached attributes.
         """
-        peer = self._client.workspaces.peers.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = self._http.post(
+            routes.peers(self.workspace_id),
+            body={"id": self.id},
         )
+        peer = PeerResponse.model_validate(data)
         self._metadata = peer.metadata or {}
         self._configuration = peer.configuration or {}
 
@@ -422,7 +433,7 @@ class Peer(PeerBase):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[MessageResponse]:
         """
         Search across all messages in the workspace with this peer as author.
 
@@ -437,13 +448,11 @@ class Peer(PeerBase):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.peers.search(
-            self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            filters=filters,
-            limit=limit,
+        data = self._http.post(
+            routes.peer_search(self.workspace_id, self.id),
+            body={"query": query, "filters": filters, "limit": limit},
         )
+        return [MessageResponse.model_validate(item) for item in data]
 
     def card(
         self,
@@ -472,17 +481,18 @@ class Peer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        response: PeerCardResponse = self._client.workspaces.peers.card(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            target=target_id,
+
+        query = {"target": target_id} if target_id else None
+        data = self._http.get(
+            routes.peer_card(self.workspace_id, self.id),
+            query=query,
         )
+        response = PeerCardResponse.model_validate(data)
+
         if response.peer_card is None:
             return ""
 
-        items: list[str] = response.peer_card
-
-        return "\n".join(items)
+        return "\n".join(response.peer_card)
 
     def get_representation(
         self,
@@ -541,22 +551,29 @@ class Peer(PeerBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerRepresentationResponse = self._client.workspaces.peers.representation(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            session_id=session_id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+
+        body: dict[str, Any] = {}
+        if session_id:
+            body["session_id"] = session_id
+        if target_id:
+            body["target"] = target_id
+        if search_query is not None:
+            body["search_query"] = search_query
+        if search_top_k is not None:
+            body["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            body["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            body["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            body["max_conclusions"] = max_conclusions
+
+        data = self._http.post(
+            routes.peer_representation(self.workspace_id, self.id),
+            body=body,
         )
-        return data.representation
+        response = RepresentationResponse.model_validate(data)
+        return response.representation
 
     def get_context(
         self,
@@ -610,20 +627,25 @@ class Peer(PeerBase):
             else (target if isinstance(target, str) else target.id)
         )
 
-        return self._client.workspaces.peers.context(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+        query: dict[str, Any] = {}
+        if target_id:
+            query["target"] = target_id
+        if search_query is not None:
+            query["search_query"] = search_query
+        if search_top_k is not None:
+            query["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            query["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            query["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            query["max_conclusions"] = max_conclusions
+
+        data = self._http.get(
+            routes.peer_context(self.workspace_id, self.id),
+            query=query if query else None,
         )
+        return PeerContextResponse.model_validate(data)
 
     @property
     def conclusions(self) -> "ConclusionScope":
@@ -648,9 +670,9 @@ class Peer(PeerBase):
             peer.conclusions.delete("obs-123")
             ```
         """
-        from .conclusions import ConclusionScope as _ConclusionScope
+        from .conclusions import ConclusionScope
 
-        return _ConclusionScope(self._client, self.workspace_id, self.id, self.id)
+        return ConclusionScope(self._http, self.workspace_id, self.id, self.id)
 
     def conclusions_of(self, target: str | PeerBase) -> "ConclusionScope":
         """
@@ -680,10 +702,10 @@ class Peer(PeerBase):
             rep = bob_conclusions.get_representation()
             ```
         """
-        from .conclusions import ConclusionScope as _ConclusionScope
+        from .conclusions import ConclusionScope
 
         target_id = target.id if isinstance(target, PeerBase) else target
-        return _ConclusionScope(self._client, self.workspace_id, self.id, target_id)
+        return ConclusionScope(self._http, self.workspace_id, self.id, target_id)
 
     def __repr__(self) -> str:
         """
@@ -702,3 +724,7 @@ class Peer(PeerBase):
             The peer's ID
         """
         return self.id
+
+
+# Import for type hints
+from .conclusions import ConclusionScope  # noqa: E402

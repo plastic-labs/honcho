@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock, Mock, patch
+from collections.abc import AsyncIterator, Iterator
+from unittest.mock import patch
 
 import pytest
 
@@ -191,26 +192,17 @@ async def test_peer_chat_streaming(client_fixture: tuple[Honcho | AsyncHoncho, s
         # Add some messages to create context
         await session.add_messages([peer.message("I like pizza")])
 
-        # Mock the async streaming response
-        async def mock_aiter_lines():
-            yield 'data: {"delta": {"content": "Hello"}}'
-            yield 'data: {"delta": {"content": " async"}}'
-            yield 'data: {"done": true}'
+        # Mock the async streaming response - mock _http.stream to return chunks
+        async def mock_astream(*args: object, **kwargs: object) -> AsyncIterator[bytes]:  # pyright: ignore[reportUnusedParameter]
+            yield b'data: {"delta": {"content": "Hello"}}\n'
+            yield b'data: {"delta": {"content": " async"}}\n'
+            yield b'data: {"done": true}\n'
 
-        mock_http_response = Mock()
-        mock_http_response.raise_for_status = Mock()
-
-        mock_response = AsyncMock()
-        mock_response.iter_lines = mock_aiter_lines
-        mock_response.http_response = mock_http_response
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=None)
-
-        # Mock the with_streaming_response.chat call
+        # Mock the _http.stream method on the peer's internal http client
         with patch.object(
-            honcho_client.core.workspaces.peers.with_streaming_response,
-            "chat",
-            return_value=mock_response,
+            peer._http,  # pyright: ignore[reportPrivateUsage]
+            "stream",
+            side_effect=mock_astream,
         ):
             result = await peer.chat("Tell me something", stream=True)
             assert isinstance(result, DialecticStreamResponse)
@@ -230,22 +222,17 @@ async def test_peer_chat_streaming(client_fixture: tuple[Honcho | AsyncHoncho, s
         # Add some messages to create context
         session.add_messages([peer.message("I like pizza")])
 
-        # Mock the streaming response
-        def mock_iter_lines():
-            yield 'data: {"delta": {"content": "Hello"}}'
-            yield 'data: {"delta": {"content": " world"}}'
-            yield 'data: {"done": true}'
+        # Mock the streaming response - mock _http.stream to return chunks
+        def mock_stream(*args: object, **kwargs: object) -> Iterator[bytes]:  # pyright: ignore[reportUnusedParameter]
+            yield b'data: {"delta": {"content": "Hello"}}\n'
+            yield b'data: {"delta": {"content": " world"}}\n'
+            yield b'data: {"done": true}\n'
 
-        mock_response = Mock()
-        mock_response.iter_lines = mock_iter_lines
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=None)
-
-        # Mock the with_streaming_response.chat call
+        # Mock the _http.stream method on the peer's internal http client
         with patch.object(
-            honcho_client.core.workspaces.peers.with_streaming_response,
-            "chat",
-            return_value=mock_response,
+            peer._http,  # pyright: ignore[reportPrivateUsage]
+            "stream",
+            side_effect=mock_stream,
         ):
             result = peer.chat("Tell me something", stream=True)
             assert isinstance(result, DialecticStreamResponse)

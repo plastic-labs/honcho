@@ -1,10 +1,14 @@
-from collections.abc import Callable, Iterator
-from typing import Generic
+"""Pagination wrapper for Honcho SDK."""
 
-from honcho_core.pagination import SyncPage as SyncPageCore
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from typing import Any, Generic
+
+from pydantic import BaseModel
 from typing_extensions import TypeVar
 
-T = TypeVar("T")
+T = TypeVar("T", bound=BaseModel)
 U = TypeVar("U", default=T)
 
 
@@ -12,93 +16,107 @@ class SyncPage(Generic[T, U]):
     """
     Paginated result wrapper that transforms objects from type T to type U.
 
-    Provides iteration and transformation capabilities while preserving
-    pagination functionality from the underlying core SyncPage.
+    Provides iteration and transformation capabilities for paginated API responses.
     """
-
-    _original_page: SyncPageCore[T]
-    _transform_func: Callable[[T], U] | None
 
     def __init__(
         self,
-        original_page: SyncPageCore[T],
+        data: dict[str, Any],
+        item_type: type[T],
         transform_func: Callable[[T], U] | None = None,
+        fetch_next: Callable[[int], "SyncPage[T, U]"] | None = None,
     ) -> None:
         """
-        Initialize the transformed page.
+        Initialize the page.
 
         Args:
-            original_page: The original SyncPage to wrap
+            data: Raw paginated response data with items, page, size, total, pages
+            item_type: Type to parse items as
             transform_func: Optional function to transform objects from type T to type U.
                             If None, objects are passed through unchanged.
+            fetch_next: Optional callback to fetch the next page. Takes page number.
         """
-        self._original_page = original_page
-        self._transform_func = transform_func
+        self._data: dict[str, Any] = data
+        self._item_type: type[T] = item_type
+        self._transform_func: Callable[[T], U] | None = transform_func
+        self._fetch_next: Callable[[int], "SyncPage[T, U]"] | None = fetch_next
+
+        # Parse items
+        raw_items = data.get("items", [])
+        self._raw_items: list[T] = [
+            item_type.model_validate(item) for item in raw_items
+        ]
 
     def __iter__(self) -> Iterator[U] | Iterator[T]:
         """Iterate over all transformed items across all pages."""
-        for item in self._original_page:
-            if self._transform_func is not None:
-                yield self._transform_func(item)
-            else:
-                yield item
+        page: SyncPage[T, U] | None = self
+        while page is not None:
+            for item in page._raw_items:
+                if self._transform_func is not None:
+                    yield self._transform_func(item)
+                else:
+                    yield item
+            page = page.get_next_page()
 
     def __getitem__(self, index: int) -> U | T:
         """Get a transformed item by index on the current page."""
-        items = self._original_page.items or []
-        item = items[index]
+        item = self._raw_items[index]
         if self._transform_func is not None:
             return self._transform_func(item)
         return item
 
     def __len__(self) -> int:
         """Get the number of items on the current page."""
-        items = self._original_page.items or []
-        return len(items)
+        return len(self._raw_items)
 
     @property
     def items(self) -> list[U] | list[T]:
         """Get all transformed items on the current page."""
-        items = self._original_page.items or []
         if self._transform_func is not None:
-            return [self._transform_func(item) for item in items]
-        return items
+            return [self._transform_func(item) for item in self._raw_items]
+        return list(self._raw_items)
 
     @property
     def total(self) -> int | None:
         """Get the total number of items across all pages."""
-        return self._original_page.total
+        return self._data.get("total")
 
     @property
     def page(self) -> int | None:
         """Get the current page number."""
-        return self._original_page.page
+        return self._data.get("page")
 
     @property
     def size(self) -> int | None:
         """Get the page size."""
-        return self._original_page.size
+        return self._data.get("size")
 
     @property
     def pages(self) -> int | None:
         """Get the total number of pages."""
-        return self._original_page.pages
+        return self._data.get("pages")
 
     def has_next_page(self) -> bool:
         """Check if there's a next page."""
-        return self._original_page.has_next_page()
+        current_page = self.page
+        total_pages = self.pages
+        if current_page is None or total_pages is None:
+            return False
+        return current_page < total_pages
 
     def get_next_page(self) -> "SyncPage[T, U] | None":
         """
         Fetch the next page of results.
 
-        Returns None if there are no more pages.
+        Returns None if there are no more pages or no fetch callback.
         """
-        if not hasattr(self._original_page, "get_next_page"):
+        if not self.has_next_page():
+            return None
+        if self._fetch_next is None:
             return None
 
-        next_original_page = self._original_page.get_next_page()
-        if not next_original_page:
+        current_page = self.page
+        if current_page is None:
             return None
 
-        return SyncPage(next_original_page, self._transform_func)
+        return self._fetch_next(current_page + 1)

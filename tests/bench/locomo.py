@@ -71,10 +71,8 @@ from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
+from honcho.api_types import MessageCreateParams
 from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
 from openai import AsyncOpenAI
 
 from src.config import settings
@@ -417,7 +415,7 @@ class LoCoMoRunner:
 
             print(f"[{workspace_id}] Ingesting {len(sessions)} sessions...")
 
-            messages: list[MessageCreateParam] = []
+            messages: list[MessageCreateParams] = []
             total_tokens = 0
 
             for date_str, session_messages in sessions:

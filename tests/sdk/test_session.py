@@ -1,8 +1,8 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from honcho_core.types.workspaces import QueueStatusResponse
 
+from sdks.python.src.honcho.api_types import MessageResponse, QueueStatusResponse
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.peer import AsyncPeer
 from sdks.python.src.honcho.async_client.session import (
@@ -296,12 +296,11 @@ async def test_session_add_messages_return_value(
         assert isinstance(assistant, AsyncPeer)
 
         # Test single message return value
-        from honcho_core.types.workspaces.sessions.message import Message
 
         result = await session.add_messages(user.message("Hello assistant"))
         assert isinstance(result, list)
         assert len(result) == 1
-        assert isinstance(result[0], Message)
+        assert isinstance(result[0], MessageResponse)
         assert result[0].content == "Hello assistant"
         assert result[0].peer_id == user.id
 
@@ -314,7 +313,7 @@ async def test_session_add_messages_return_value(
         )
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all(isinstance(msg, Message) for msg in result)
+        assert all(isinstance(msg, MessageResponse) for msg in result)
         assert result[0].content == "How are you?"
         assert result[0].peer_id == user.id
         assert result[1].content == "I'm doing well, thank you!"
@@ -329,12 +328,11 @@ async def test_session_add_messages_return_value(
         assert isinstance(assistant, Peer)
 
         # Test single message return value
-        from honcho_core.types.workspaces.sessions.message import Message
 
         result = session.add_messages(user.message("Hello assistant"))
         assert isinstance(result, list)
         assert len(result) == 1
-        assert isinstance(result[0], Message)
+        assert isinstance(result[0], MessageResponse)
         assert result[0].content == "Hello assistant"
         assert result[0].peer_id == user.id
 
@@ -347,7 +345,7 @@ async def test_session_add_messages_return_value(
         )
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all(isinstance(msg, Message) for msg in result)
+        assert all(isinstance(msg, MessageResponse) for msg in result)
         assert result[0].content == "How are you?"
         assert result[0].peer_id == user.id
         assert result[1].content == "I'm doing well, thank you!"

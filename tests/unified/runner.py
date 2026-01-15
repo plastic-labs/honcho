@@ -11,9 +11,9 @@ from typing import Any, cast
 
 import httpx
 from anthropic import AsyncAnthropic
+from honcho.api_types import MessageCreateParams, QueueStatusResponse
 from honcho.async_client.session import AsyncSession
 from honcho.session_context import SessionContext
-from honcho_core.types.workspaces import QueueStatusResponse
 from pydantic import ValidationError
 
 # Adjust path to allow imports from tests.bench
@@ -22,10 +22,6 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig as SDKSessionPeerConfig
 from honcho.base import PeerBase
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    Configuration,
-    MessageCreateParam,
-)
 
 from tests.bench.harness import HonchoHarness
 from tests.unified.schema import (
@@ -216,9 +212,9 @@ class UnifiedTestExecutor:
 
             if step.peer_configs:
                 peer_list: list[tuple[str | PeerBase, SDKSessionPeerConfig]] = []
-                for peer_id, config in step.peer_configs.items():
+                for peer_id, peer_config in step.peer_configs.items():
                     sdk_config = SDKSessionPeerConfig(
-                        **config.model_dump(exclude_none=True)
+                        **peer_config.model_dump(exclude_none=True)
                     )
                     peer_list.append((peer_id, sdk_config))
                 await session.add_peers(peer_list)
@@ -228,12 +224,8 @@ class UnifiedTestExecutor:
             peer = await self.client.peer(id=step.peer_id)
             # TODO: NOT CURRENTLY RESPECTING MESSAGE CONFIG
 
-            config = (
-                cast(
-                    Configuration, cast(Any, step.config.model_dump(exclude_none=True))
-                )
-                if step.config
-                else None
+            config: dict[str, Any] | None = (
+                step.config.model_dump(exclude_none=True) if step.config else None
             )
 
             await session.add_messages(
@@ -242,16 +234,13 @@ class UnifiedTestExecutor:
 
         elif isinstance(step, AddMessagesAction):
             session = await self.client.session(id=step.session_id)
-            msgs: list[MessageCreateParam] = []
+            msgs: list[MessageCreateParams] = []
             for msg_item in step.messages:
                 peer = await self.client.peer(id=msg_item.peer_id)
                 # TODO: NOT CURRENTLY RESPECTING MESSAGE CONFIG
 
                 config = (
-                    cast(
-                        Configuration,
-                        cast(Any, msg_item.config.model_dump(exclude_none=True)),
-                    )
+                    msg_item.config.model_dump(exclude_none=True)
                     if msg_item.config
                     else None
                 )
@@ -272,13 +261,9 @@ class UnifiedTestExecutor:
                 await self.wait_for_queue(step.timeout)
 
         elif isinstance(step, ScheduleDreamAction):
-            # Use the core SDK to trigger a dream
-            await self.client.core.workspaces.schedule_dream(
-                workspace_id=self.client.workspace_id,
-                session_id=step.session_id,
-                observer=step.observer,
-                observed=step.observed,
-                dream_type=step.dream_type.value,
+            # TODO: schedule_dream is not yet implemented in the new SDK
+            raise NotImplementedError(
+                "schedule_dream is not yet implemented in the new SDK. This test action needs the schedule_dream method to be added."
             )
 
         elif isinstance(step, QueryAction):

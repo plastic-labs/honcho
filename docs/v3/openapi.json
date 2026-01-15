@@ -348,12 +348,12 @@
         }
       }
     },
-    "/v3/workspaces/{workspace_id}/trigger_dream": {
+    "/v3/workspaces/{workspace_id}/schedule_dream": {
       "post": {
         "tags": ["workspaces"],
         "summary": "Trigger Dream",
         "description": "Manually trigger a dream task immediately for a specific collection.\n\nThis endpoint bypasses all automatic dream conditions (document threshold,\nminimum hours between dreams) and executes the dream task immediately without delay.",
-        "operationId": "trigger_dream_v3_workspaces__workspace_id__trigger_dream_post",
+        "operationId": "schedule_dream_v3_workspaces__workspace_id__schedule_dream_post",
         "security": [{ "HTTPBearer": [] }],
         "parameters": [
           {

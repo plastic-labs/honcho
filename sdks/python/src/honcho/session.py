@@ -1,3 +1,5 @@
+"""Sync Session class for Honcho SDK."""
+
 from __future__ import annotations
 
 import json
@@ -6,18 +8,18 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from honcho_core import Honcho as HonchoCore
-from honcho_core._types import omit
-from honcho_core.types.workspaces import QueueStatusResponse
-from honcho_core.types.workspaces.peer_representation_response import (
-    PeerRepresentationResponse,
-)
-from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
-from honcho_core.types.workspaces.sessions.message_create_param import Configuration
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .api_types import (
+    MessageCreateParams,
+    MessageResponse,
+    PeerResponse,
+    QueueStatusResponse,
+    RepresentationResponse,
+    SessionResponse,
+)
 from .base import PeerBase, SessionBase
+from .http import HonchoHTTPClient, routes
 from .pagination import SyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
@@ -29,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPeerConfig(BaseModel):
+    """Configuration for a peer within a session."""
+
     observe_others: bool | None = Field(
         None,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
@@ -58,7 +62,7 @@ class Session(SessionBase):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _client: HonchoCore = PrivateAttr()
+    _http: HonchoHTTPClient = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -79,9 +83,7 @@ class Session(SessionBase):
         workspace_id: str = Field(
             ..., min_length=1, description="Workspace ID for scoping operations"
         ),
-        client: HonchoCore = Field(
-            ..., description="Reference to the parent Honcho client instance"
-        ),
+        http: HonchoHTTPClient = Field(..., description="HTTP client instance"),
         *,
         metadata: dict[str, object] | None = Field(
             None,
@@ -101,7 +103,7 @@ class Session(SessionBase):
         Args:
             session_id: Unique identifier for this session within the workspace
             workspace_id: Workspace ID for scoping operations
-            client: Reference to the parent Honcho client instance
+            http: HTTP client instance
             metadata: Optional metadata dictionary to associate with this session.
             If set, will get/create session immediately with metadata.
             config: Optional configuration to set for this session.
@@ -111,17 +113,19 @@ class Session(SessionBase):
             id=session_id,
             workspace_id=workspace_id,
         )
-        self._client = client
+        self._http = http
         self._metadata = metadata
         self._configuration = config
 
         if config is not None or metadata is not None:
-            session_data = self._client.workspaces.sessions.get_or_create(
-                workspace_id=workspace_id,
-                id=session_id,
-                configuration=config if config is not None else omit,
-                metadata=metadata if metadata is not None else omit,
-            )
+            body: dict[str, Any] = {"id": session_id}
+            if metadata is not None:
+                body["metadata"] = metadata
+            if config is not None:
+                body["configuration"] = config
+
+            data = http.post(routes.sessions(workspace_id), body=body)
+            session_data = SessionResponse.model_validate(data)
             # Update cached values with API response
             self._metadata = session_data.metadata
             self._configuration = session_data.configuration
@@ -141,7 +145,7 @@ class Session(SessionBase):
         """
         Add peers to this session.
 
-        Makes an async API call to add one or more peers to this session. Adding peers
+        Makes an API call to add one or more peers to this session. Adding peers
         creates bidirectional relationships and allows them to participate in
         the session's conversations.
 
@@ -170,9 +174,8 @@ class Session(SessionBase):
                 peer_id = peer if isinstance(peer, str) else peer.id
                 peer_dict[peer_id] = {}
 
-        self._client.workspaces.sessions.peers.add(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        self._http.post(
+            routes.session_peers_add(self.workspace_id, self.id),
             body=peer_dict,
         )
 
@@ -219,9 +222,8 @@ class Session(SessionBase):
                 peer_id = peer if isinstance(peer, str) else peer.id
                 peer_dict[peer_id] = {}
 
-        self._client.workspaces.sessions.peers.set(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        self._http.put(
+            routes.session_peers_set(self.workspace_id, self.id),
             body=peer_dict,
         )
 
@@ -249,13 +251,12 @@ class Session(SessionBase):
 
         peer_ids = [peer if isinstance(peer, str) else peer.id for peer in peers]
 
-        self._client.workspaces.sessions.peers.remove(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        self._http.delete(
+            routes.session_peers_remove(self.workspace_id, self.id),
             body=peer_ids,
         )
 
-    def get_peers(self) -> list[Peer]:
+    def get_peers(self) -> list["Peer"]:
         """
         Get all peers in this session.
 
@@ -268,12 +269,14 @@ class Session(SessionBase):
         """
         from .peer import Peer
 
-        peers_page = self._client.workspaces.sessions.peers.list(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
+        data: dict[str, Any] = self._http.get(
+            routes.session_peers(self.workspace_id, self.id)
         )
+
+        peers_data: list[Any] = data.get("items", [])
         return [
-            Peer(peer.id, self.workspace_id, self._client) for peer in peers_page.items
+            Peer(PeerResponse.model_validate(peer).id, self.workspace_id, self._http)
+            for peer in peers_data
         ]
 
     def get_peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
@@ -281,14 +284,12 @@ class Session(SessionBase):
         Get the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        peer_config_response = self._client.workspaces.sessions.peers.config(
-            peer_id=peer_id,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
+        data = self._http.get(
+            routes.session_peer_config(self.workspace_id, self.id, peer_id)
         )
         return SessionPeerConfig(
-            observe_others=peer_config_response.observe_others,
-            observe_me=peer_config_response.observe_me,
+            observe_others=data.get("observe_others"),
+            observe_me=data.get("observe_me"),
         )
 
     def set_peer_config(self, peer: str | PeerBase, config: SessionPeerConfig) -> None:
@@ -296,23 +297,24 @@ class Session(SessionBase):
         Set the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        self._client.workspaces.sessions.peers.set_config(
-            peer_id=peer_id,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
-            observe_others=omit
-            if config.observe_others is None
-            else config.observe_others,
-            observe_me=omit if config.observe_me is None else config.observe_me,
+        body: dict[str, Any] = {}
+        if config.observe_others is not None:
+            body["observe_others"] = config.observe_others
+        if config.observe_me is not None:
+            body["observe_me"] = config.observe_me
+
+        self._http.put(
+            routes.session_peer_config(self.workspace_id, self.id, peer_id),
+            body=body,
         )
 
     @validate_call
     def add_messages(
         self,
-        messages: MessageCreateParam | list[MessageCreateParam] = Field(
+        messages: MessageCreateParams | list[MessageCreateParams] = Field(
             ..., description="Messages to add to the session"
         ),
-    ) -> list[Message]:
+    ) -> list[MessageResponse]:
         """
         Add one or more messages to this session.
 
@@ -322,17 +324,39 @@ class Session(SessionBase):
 
         Args:
             messages: Messages to add to the session. Can be:
-                      - MessageCreateParam: Single MessageCreateParam object
-                      - List[MessageCreateParam]: List of MessageCreateParam objects
+                      - MessageCreateParams: Single MessageCreateParams object
+                      - List[MessageCreateParams]: List of MessageCreateParams objects
         """
         if not isinstance(messages, list):
             messages = [messages]
 
-        return self._client.workspaces.sessions.messages.create(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            messages=[MessageCreateParam(**message) for message in messages],
+        # Convert MessageCreateParams to dict
+        messages_data: list[dict[str, Any]] = []
+        for msg in messages:
+            msg_dict: dict[str, Any] = {
+                "content": msg.content,
+                "peer_id": msg.peer_id,
+            }
+            if msg.metadata is not None:
+                msg_dict["metadata"] = msg.metadata
+            if msg.configuration is not None:
+                msg_dict["configuration"] = msg.configuration.model_dump(
+                    exclude_none=True
+                )
+            if msg.created_at is not None:
+                created_at_val = msg.created_at
+                msg_dict["created_at"] = (
+                    created_at_val.isoformat()
+                    if hasattr(created_at_val, "isoformat")
+                    else str(created_at_val)
+                )
+            messages_data.append(msg_dict)
+
+        data = self._http.post(
+            routes.messages(self.workspace_id, self.id),
+            body={"messages": messages_data},
         )
+        return [MessageResponse.model_validate(msg) for msg in data]
 
     @validate_call
     def get_messages(
@@ -341,7 +365,7 @@ class Session(SessionBase):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
-    ) -> SyncPage[Message]:
+    ) -> SyncPage[MessageResponse, MessageResponse]:
         """
         Get messages from this session with optional filtering.
 
@@ -359,12 +383,20 @@ class Session(SessionBase):
             A list of Message objects matching the specified criteria, ordered by
             creation time (most recent first)
         """
-        messages_page = self._client.workspaces.sessions.messages.list(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            filters=filters,
+        data = self._http.post(
+            routes.messages_list(self.workspace_id, self.id),
+            body={"filters": filters} if filters else None,
         )
-        return SyncPage(messages_page)
+
+        def fetch_next(page: int) -> SyncPage[MessageResponse, MessageResponse]:
+            next_data = self._http.post(
+                routes.messages_list(self.workspace_id, self.id),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return SyncPage(next_data, MessageResponse, None, fetch_next)
+
+        return SyncPage(data, MessageResponse, None, fetch_next)
 
     def get_metadata(self) -> dict[str, object]:
         """
@@ -378,11 +410,12 @@ class Session(SessionBase):
             A dictionary containing the session's metadata. Returns an empty dictionary
             if no metadata is set
         """
-        session_data = self._client.workspaces.sessions.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = self._http.post(
+            routes.sessions(self.workspace_id),
+            body={"id": self.id},
         )
-        self._metadata = session_data.metadata or {}
+        session = SessionResponse.model_validate(data)
+        self._metadata = session.metadata or {}
         return self._metadata
 
     def delete(self) -> None:
@@ -398,10 +431,7 @@ class Session(SessionBase):
 
         This action cannot be undone.
         """
-        self._client.workspaces.sessions.delete(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-        )
+        self._http.delete(routes.session(self.workspace_id, self.id))
 
     def clone(
         self,
@@ -433,20 +463,21 @@ class Session(SessionBase):
             cloned = session.clone(message_id="msg_abc123")
             ```
         """
-        # Make the API call using the core SDK's clone method
-        cloned_session_data = self._client.workspaces.sessions.clone(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            message_id=message_id if message_id is not None else omit,
-        )
+        query: dict[str, Any] = {}
+        if message_id is not None:
+            query["message_id"] = message_id
 
-        # Return a new Session object with the cloned session's data
+        data = self._http.post(
+            routes.session_clone(self.workspace_id, self.id),
+            query=query if query else None,
+        )
+        cloned = SessionResponse.model_validate(data)
         return Session(
-            cloned_session_data.id,
+            cloned.id,
             self.workspace_id,
-            self._client,
-            metadata=cloned_session_data.metadata,
-            config=cloned_session_data.configuration,
+            self._http,
+            metadata=cloned.metadata,
+            config=cloned.configuration,
         )
 
     @validate_call
@@ -467,10 +498,9 @@ class Session(SessionBase):
             metadata: A dictionary of metadata to associate with this session.
                      Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.sessions.update(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            metadata=metadata,
+        self._http.put(
+            routes.session(self.workspace_id, self.id),
+            body={"metadata": metadata},
         )
         self._metadata = metadata
 
@@ -486,11 +516,12 @@ class Session(SessionBase):
             A dictionary containing the session's configuration. Returns an empty dictionary
             if no configuration is set
         """
-        session_data = self._client.workspaces.sessions.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = self._http.post(
+            routes.sessions(self.workspace_id),
+            body={"id": self.id},
         )
-        self._configuration = session_data.configuration or {}
+        session = SessionResponse.model_validate(data)
+        self._configuration = session.configuration or {}
         return self._configuration
 
     @validate_call
@@ -511,10 +542,9 @@ class Session(SessionBase):
             configuration: A dictionary of configuration to associate with this session.
                           Keys must be strings, values can be any JSON-serializable type
         """
-        self._client.workspaces.sessions.update(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            configuration=configuration,
+        self._http.put(
+            routes.session(self.workspace_id, self.id),
+            body={"configuration": configuration},
         )
         self._configuration = configuration
 
@@ -525,12 +555,13 @@ class Session(SessionBase):
         Makes a single API call to retrieve the latest metadata and configuration
         associated with this session and updates the cached attributes.
         """
-        session_data = self._client.workspaces.sessions.get_or_create(
-            workspace_id=self.workspace_id,
-            id=self.id,
+        data = self._http.post(
+            routes.sessions(self.workspace_id),
+            body={"id": self.id},
         )
-        self._metadata = session_data.metadata or {}
-        self._configuration = session_data.configuration or {}
+        session = SessionResponse.model_validate(data)
+        self._metadata = session.metadata or {}
+        self._configuration = session.configuration or {}
 
     @validate_call
     def get_context(
@@ -544,7 +575,7 @@ class Session(SessionBase):
             None,
             description="A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.",
         ),
-        last_user_message: str | Message | None = Field(
+        last_user_message: str | MessageResponse | None = Field(
             None,
             description="The most recent message (string or Message object), used to fetch semantically relevant conclusions and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
         ),
@@ -591,14 +622,14 @@ class Session(SessionBase):
             summary: Whether to include summary information
             tokens: Maximum number of tokens to include in the context. Will default
             to Honcho server configuration if not provided.
-            peer_target: A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.
-            last_user_message: The most recent message (string or Message object), used to fetch semantically relevant conclusions and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
-            peer_perspective: A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.
-            limit_to_session: Whether to limit the representation to this session only. If True, only conclusions from this session will be included.
-            search_top_k: Number of semantically relevant facts to return when searching with `last_user_message`.
-            search_max_distance: Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.
-            include_most_frequent: Whether to include the most frequent conclusions in the representation.
-            max_conclusions: Maximum number of conclusions to include in the representation.
+            peer_target: A peer ID to get context for.
+            last_user_message: The most recent message for semantic search.
+            peer_perspective: A peer ID to get context from the perspective of.
+            limit_to_session: Whether to limit the representation to this session only.
+            search_top_k: Number of semantically relevant facts to return.
+            search_max_distance: Maximum semantic distance for search results.
+            include_most_frequent: Whether to include the most frequent conclusions.
+            max_conclusions: Maximum number of conclusions to include.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -622,49 +653,61 @@ class Session(SessionBase):
 
         last_user_message_id = (
             last_user_message.id
-            if isinstance(last_user_message, Message)
+            if isinstance(last_user_message, MessageResponse)
             else last_user_message
         )
-        context = self._client.workspaces.sessions.context(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            tokens=tokens if tokens is not None else omit,
-            summary=summary,
-            last_message=last_user_message_id
-            if last_user_message_id is not None
-            else omit,
-            peer_target=peer_target if peer_target is not None else omit,
-            peer_perspective=peer_perspective if peer_perspective is not None else omit,
-            limit_to_session=limit_to_session,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+
+        query: dict[str, Any] = {
+            "summary": summary,
+            "limit_to_session": limit_to_session,
+        }
+        if tokens is not None:
+            query["tokens"] = tokens
+        if last_user_message_id is not None:
+            query["last_message"] = last_user_message_id
+        if peer_target is not None:
+            query["peer_target"] = peer_target
+        if peer_perspective is not None:
+            query["peer_perspective"] = peer_perspective
+        if search_top_k is not None:
+            query["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            query["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            query["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            query["max_conclusions"] = max_conclusions
+
+        data = self._http.get(
+            routes.session_context(self.workspace_id, self.id),
+            query=query,
         )
 
-        # Convert the honcho_core summary to our Summary if it exists
+        # Convert summary if present
         session_summary = None
-        if context.summary:
+        if data.get("summary"):
+            s = data["summary"]
             session_summary = Summary(
-                content=context.summary.content,
-                message_id=context.summary.message_id,
-                summary_type=context.summary.summary_type,
-                created_at=context.summary.created_at,
-                token_count=context.summary.token_count,
+                content=s["content"],
+                message_id=s["message_id"],
+                summary_type=s["summary_type"],
+                created_at=s["created_at"],
+                token_count=s["token_count"],
             )
+
+        # Parse messages
+        messages = [
+            MessageResponse.model_validate(msg) for msg in data.get("messages", [])
+        ]
 
         return SessionContext(
             session_id=self.id,
-            messages=context.messages,
+            messages=messages,
             summary=session_summary,
-            peer_representation=str(context.peer_representation)
-            if context.peer_representation
+            peer_representation=str(data.get("peer_representation"))
+            if data.get("peer_representation")
             else None,
-            peer_card=context.peer_card,
+            peer_card=data.get("peer_card"),
         )
 
     def get_summaries(self) -> SessionSummaries:
@@ -687,35 +730,32 @@ class Session(SessionBase):
             - The summary generation is still in progress
             - Summary generation is disabled for this session
         """
-        # Use the honcho_core client to get summaries
-        response = self._client.workspaces.sessions.summaries(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-        )
+        data = self._http.get(routes.session_summaries(self.workspace_id, self.id))
 
-        # Create Summary objects from the response data
         short_summary = None
-        if response.short_summary:
+        if data.get("short_summary"):
+            s = data["short_summary"]
             short_summary = Summary(
-                content=response.short_summary.content,
-                message_id=response.short_summary.message_id,
-                summary_type=response.short_summary.summary_type,
-                created_at=response.short_summary.created_at,
-                token_count=response.short_summary.token_count,
+                content=s["content"],
+                message_id=s["message_id"],
+                summary_type=s["summary_type"],
+                created_at=s["created_at"],
+                token_count=s["token_count"],
             )
 
         long_summary = None
-        if response.long_summary:
+        if data.get("long_summary"):
+            s = data["long_summary"]
             long_summary = Summary(
-                content=response.long_summary.content,
-                message_id=response.long_summary.message_id,
-                summary_type=response.long_summary.summary_type,
-                created_at=response.long_summary.created_at,
-                token_count=response.long_summary.token_count,
+                content=s["content"],
+                message_id=s["message_id"],
+                summary_type=s["summary_type"],
+                created_at=s["created_at"],
+                token_count=s["token_count"],
             )
 
         return SessionSummaries(
-            id=response.id or self.id,
+            id=data.get("id") or self.id,
             short_summary=short_summary,
             long_summary=long_summary,
         )
@@ -730,7 +770,7 @@ class Session(SessionBase):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[MessageResponse]:
         """
         Search for messages in this session.
 
@@ -745,13 +785,11 @@ class Session(SessionBase):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.sessions.search(
-            self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            filters=filters,
-            limit=limit,
+        data = self._http.post(
+            routes.session_search(self.workspace_id, self.id),
+            body={"query": query, "filters": filters, "limit": limit},
         )
+        return [MessageResponse.model_validate(msg) for msg in data]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def upload_file(
@@ -767,7 +805,7 @@ class Session(SessionBase):
             None,
             description="Optional metadata dictionary to associate with the messages",
         ),
-        configuration: Configuration | None = Field(
+        configuration: dict[str, Any] | None = Field(
             None,
             description="Optional configuration dictionary to associate with the messages",
         ),
@@ -775,7 +813,7 @@ class Session(SessionBase):
             None,
             description="Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.",
         ),
-    ) -> list[Message]:
+    ) -> list[MessageResponse]:
         """
         Upload file to create message(s) in this session.
 
@@ -784,7 +822,7 @@ class Session(SessionBase):
         - (filename, bytes, content_type) tuples
         - (filename, fileobj, content_type) tuples
 
-        Files are normalized to (filename, fileobj, content_type) tuples for the Stainless client.
+        Files are normalized to (filename, fileobj, content_type) tuples for the HTTP client.
 
         Args:
             file: File to upload. Can be:
@@ -812,29 +850,26 @@ class Session(SessionBase):
         # Extract peer ID from Peer object if needed
         resolved_peer_id = peer if isinstance(peer, str) else peer.id
 
-        # Build extra_body dict with optional fields as JSON strings (backend expects Form fields)
-        extra_body_data: dict[str, str] = {}
+        # Build form data
+        data_dict: dict[str, str] = {"peer_id": resolved_peer_id}
         if metadata is not None:
-            extra_body_data["metadata"] = json.dumps(metadata)
+            data_dict["metadata"] = json.dumps(metadata)
         if configuration is not None:
-            extra_body_data["configuration"] = json.dumps(configuration)
+            data_dict["configuration"] = json.dumps(configuration)
         if created_at is not None:
             # Ensure created_at is a string (ISO format)
             if isinstance(created_at, datetime):
-                extra_body_data["created_at"] = created_at.isoformat()
+                data_dict["created_at"] = created_at.isoformat()
             else:
-                extra_body_data["created_at"] = created_at
+                data_dict["created_at"] = created_at
 
-        # Call the upload endpoint with extra_body for the additional form fields
-        response = self._client.workspaces.sessions.messages.upload(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            file=(filename, content_bytes, content_type),
-            peer_id=resolved_peer_id,
-            extra_body=extra_body_data if extra_body_data else None,
+        response = self._http.upload(
+            routes.messages_upload(self.workspace_id, self.id),
+            files={"file": (filename, content_bytes, content_type)},
+            data=data_dict,
         )
 
-        return [Message.model_validate(msg) for msg in response]
+        return [MessageResponse.model_validate(msg) for msg in response]
 
     def get_representation(
         self,
@@ -887,22 +922,27 @@ class Session(SessionBase):
             if target is None
             else (target if isinstance(target, str) else target.id)
         )
-        data: PeerRepresentationResponse = self._client.workspaces.peers.representation(
-            peer_id,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
-            target=target_id,
-            search_query=search_query if search_query is not None else omit,
-            search_top_k=search_top_k if search_top_k is not None else omit,
-            search_max_distance=search_max_distance
-            if search_max_distance is not None
-            else omit,
-            include_most_frequent=include_most_frequent
-            if include_most_frequent is not None
-            else omit,
-            max_conclusions=max_conclusions if max_conclusions is not None else omit,
+
+        query: dict[str, Any] = {"session_id": self.id}
+        if target_id:
+            query["target"] = target_id
+        if search_query is not None:
+            query["search_query"] = search_query
+        if search_top_k is not None:
+            query["search_top_k"] = search_top_k
+        if search_max_distance is not None:
+            query["search_max_distance"] = search_max_distance
+        if include_most_frequent is not None:
+            query["include_most_frequent"] = include_most_frequent
+        if max_conclusions is not None:
+            query["max_conclusions"] = max_conclusions
+
+        data = self._http.post(
+            routes.peer_representation(self.workspace_id, peer_id),
+            body=query,
         )
-        return data.representation
+        response = RepresentationResponse.model_validate(data)
+        return response.representation
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def get_queue_status(
@@ -928,12 +968,17 @@ class Session(SessionBase):
             else (sender if isinstance(sender, str) else sender.id)
         )
 
-        return self._client.workspaces.queue.status(
-            workspace_id=self.workspace_id,
-            observer_id=resolved_observer_id,
-            sender_id=resolved_sender_id,
-            session_id=self.id,
+        query: dict[str, Any] = {"session_id": self.id}
+        if resolved_observer_id:
+            query["observer_id"] = resolved_observer_id
+        if resolved_sender_id:
+            query["sender_id"] = resolved_sender_id
+
+        data = self._http.get(
+            routes.workspace_queue_status(self.workspace_id),
+            query=query,
         )
+        return QueueStatusResponse.model_validate(data)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def poll_queue_status(

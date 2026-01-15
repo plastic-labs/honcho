@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, Field, validate_call
+
+from .api_types import MessageResponse
 
 if TYPE_CHECKING:
     from .peer import Peer
@@ -52,7 +53,7 @@ class SessionContext(BaseModel):
     session_id: str = Field(
         ..., description="ID of the session this context belongs to"
     )
-    messages: list[Message] = Field(
+    messages: list[MessageResponse] = Field(
         ..., description="List of Message objects to include in the context"
     )
     summary: Summary | None = Field(
@@ -73,7 +74,7 @@ class SessionContext(BaseModel):
         session_id: str = Field(
             ..., description="ID of the session this context belongs to"
         ),
-        messages: list[Message] = Field(
+        messages: list[MessageResponse] = Field(
             ..., description="List of Message objects to include in the context"
         ),
         summary: Summary | None = Field(
