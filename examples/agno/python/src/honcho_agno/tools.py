@@ -12,10 +12,14 @@ directly to manage other peers.
 
 import logging
 import uuid
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from agno.tools import Toolkit
 from honcho import Honcho
+
+if TYPE_CHECKING:
+    from honcho.peer import Peer
+    from honcho.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +64,6 @@ class HonchoTools(Toolkit):
         session_id: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
-        environment: Literal["local", "production"] | None = "production",
         honcho_client: Honcho | None = None,
     ) -> None:
         """
@@ -78,8 +81,6 @@ class HonchoTools(Toolkit):
             api_key: Optional API key for Honcho. If not provided, will
                 attempt to read from HONCHO_API_KEY environment variable.
             base_url: Optional base URL for the Honcho API.
-            environment: Environment to use. Options: "local", "production".
-                Defaults to "production".
             honcho_client: Optional pre-configured Honcho client instance.
                 If provided, other connection parameters are ignored.
         """
@@ -95,8 +96,6 @@ class HonchoTools(Toolkit):
                 client_kwargs["api_key"] = api_key
             if base_url is not None:
                 client_kwargs["base_url"] = base_url
-            if environment is not None:
-                client_kwargs["environment"] = environment
             self.honcho = Honcho(**client_kwargs)
 
         # Store identifiers

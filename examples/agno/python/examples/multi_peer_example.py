@@ -9,8 +9,7 @@ A realistic multi-agent scenario using Agno's patterns:
 
 Environment Variables:
     OPENAI_API_KEY or LLM_OPENAI_API_KEY: OpenAI API key
-    HONCHO_ENVIRONMENT: 'local' or 'production' (default: production)
-    HONCHO_API_KEY: Required for production environment
+    HONCHO_API_KEY: Required for Honcho API access
 """
 
 import os
@@ -27,11 +26,11 @@ from honcho_agno import HonchoTools
 
 load_dotenv()
 
-if not os.getenv("OPENAI_API_KEY") and os.getenv("LLM_OPENAI_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.getenv("LLM_OPENAI_API_KEY")
+if not os.getenv("OPENAI_API_KEY") and (llm_key := os.getenv("LLM_OPENAI_API_KEY")):
+    os.environ["OPENAI_API_KEY"] = llm_key
 
 
-def create_advisor_system(honcho_env: str, session_id: str):
+def create_advisor_system(session_id: str):
     """
     Creates a multi-agent advisory system where:
     - Each specialist agent has its own identity (HonchoTools)
@@ -41,7 +40,7 @@ def create_advisor_system(honcho_env: str, session_id: str):
     model_id = os.getenv("OPENAI_MODEL", "gpt-4o")
 
     # Shared Honcho client and session
-    honcho = Honcho(workspace_id="advisory-system", environment=honcho_env)
+    honcho = Honcho(workspace_id="advisory-system")
     session = honcho.session(session_id)
     user_peer = honcho.peer("user")
 
@@ -52,7 +51,6 @@ def create_advisor_system(honcho_env: str, session_id: str):
         app_id="advisory-system",
         peer_id="tech-specialist",
         session_id=session_id,
-        environment=honcho_env,
         honcho_client=honcho,
     )
 
@@ -73,7 +71,6 @@ def create_advisor_system(honcho_env: str, session_id: str):
         app_id="advisory-system",
         peer_id="business-specialist",
         session_id=session_id,
-        environment=honcho_env,
         honcho_client=honcho,
     )
 
@@ -106,7 +103,7 @@ def create_advisor_system(honcho_env: str, session_id: str):
             Technical specialist's response.
         """
         response = tech_agent.run(question)
-        return response.content
+        return str(response.content) if response.content else ""
 
     @tool
     def consult_business_specialist(question: str) -> str:
@@ -121,14 +118,13 @@ def create_advisor_system(honcho_env: str, session_id: str):
             Business specialist's response.
         """
         response = business_agent.run(question)
-        return response.content
+        return str(response.content) if response.content else ""
 
     # Coordinator has its own identity too
     coordinator_tools = HonchoTools(
         app_id="advisory-system",
         peer_id="coordinator",
         session_id=session_id,
-        environment=honcho_env,
         honcho_client=honcho,
     )
 
@@ -150,13 +146,12 @@ def create_advisor_system(honcho_env: str, session_id: str):
 
 
 def main(test_mode: bool = False):
-    honcho_env = os.getenv("HONCHO_ENVIRONMENT", "production")
     session_id = f"advisory-{uuid.uuid4().hex[:8]}"
 
     print(f"Session: {session_id}")
     print("=" * 60)
 
-    coordinator, session, user_peer = create_advisor_system(honcho_env, session_id)
+    coordinator, session, user_peer = create_advisor_system(session_id)
 
     if test_mode:
         # Non-interactive test

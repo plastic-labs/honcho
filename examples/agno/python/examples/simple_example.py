@@ -3,8 +3,7 @@ Simple Honcho + Agno Example
 
 Environment Variables:
     OPENAI_API_KEY or LLM_OPENAI_API_KEY: OpenAI API key
-    HONCHO_ENVIRONMENT: 'local' or 'production' (default: production)
-    HONCHO_API_KEY: Required for production environment
+    HONCHO_API_KEY: Required for Honcho API access
 """
 
 import os
@@ -21,22 +20,16 @@ from honcho_agno import HonchoTools
 load_dotenv()
 
 # Support both OPENAI_API_KEY and LLM_OPENAI_API_KEY
-if not os.getenv("OPENAI_API_KEY") and os.getenv("LLM_OPENAI_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.getenv("LLM_OPENAI_API_KEY")
+if not os.getenv("OPENAI_API_KEY") and (llm_key := os.getenv("LLM_OPENAI_API_KEY")):
+    os.environ["OPENAI_API_KEY"] = llm_key
 
 
 def main():
-    # Get environment settings
-    honcho_env = os.getenv("HONCHO_ENVIRONMENT", "production")
-
     # Create shared session
     session_id = f"simple-{uuid.uuid4().hex[:8]}"
 
     # Initialize Honcho directly for managing user messages
-    honcho = Honcho(
-        workspace_id="agno-demo",
-        environment=honcho_env,
-    )
+    honcho = Honcho(workspace_id="agno-demo")
     session = honcho.session(session_id)
     user_peer = honcho.peer("user")
 
@@ -45,7 +38,6 @@ def main():
         app_id="agno-demo",
         peer_id="assistant",  # The toolkit speaks as "assistant"
         session_id=session_id,  # Same session as user
-        environment=honcho_env,
         honcho_client=honcho,  # Reuse client
     )
 
@@ -89,6 +81,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-    # Run directly - test mode is default for non-interactive execution
     main()

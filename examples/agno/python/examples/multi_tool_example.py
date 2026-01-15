@@ -15,8 +15,7 @@ Pattern: toolkit = agent identity
 Environment Variables:
     OPENAI_API_KEY or LLM_OPENAI_API_KEY: OpenAI API key
     OPENAI_MODEL: Model to use (default: gpt-4o)
-    HONCHO_ENVIRONMENT: 'local' or 'production' (default: production)
-    HONCHO_API_KEY: Required for production environment
+    HONCHO_API_KEY: Required for Honcho API access
 """
 
 import os
@@ -32,8 +31,8 @@ from honcho_agno import HonchoTools
 load_dotenv()
 
 # Support both OPENAI_API_KEY and LLM_OPENAI_API_KEY
-if not os.getenv("OPENAI_API_KEY") and os.getenv("LLM_OPENAI_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.getenv("LLM_OPENAI_API_KEY")
+if not os.getenv("OPENAI_API_KEY") and (llm_key := os.getenv("LLM_OPENAI_API_KEY")):
+    os.environ["OPENAI_API_KEY"] = llm_key
 
 
 def main():
@@ -41,14 +40,8 @@ def main():
     print("HONCHO TOOLS + AGNO EXAMPLE")
     print("=" * 70 + "\n")
 
-    # Get environment settings
-    honcho_env = os.getenv("HONCHO_ENVIRONMENT", "production")
-
     # Initialize Honcho for managing the session and user peer
-    honcho = Honcho(
-        workspace_id="travel-app",
-        environment=honcho_env,
-    )
+    honcho = Honcho(workspace_id="travel-app")
     session = honcho.session("trip-planning-session")
     user_peer = honcho.peer("traveler-42")
 
@@ -57,7 +50,6 @@ def main():
         app_id="travel-app",
         peer_id="travel-assistant",  # The toolkit speaks as "travel-assistant"
         session_id="trip-planning-session",
-        environment=honcho_env,
         honcho_client=honcho,
     )
 
