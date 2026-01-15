@@ -118,7 +118,7 @@ export class Session {
   }): Promise<SessionResponse> {
     return this._http.post<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/clone`,
-      { body: params || {} }
+      { query: params }
     )
   }
 
@@ -134,9 +134,9 @@ export class Session {
     include_most_frequent?: boolean
     max_conclusions?: number
   }): Promise<SessionContextResponse> {
-    return this._http.post<SessionContextResponse>(
+    return this._http.get<SessionContextResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/context`,
-      { body: params }
+      { query: params }
     )
   }
 
@@ -164,8 +164,8 @@ export class Session {
     >
   ): Promise<void> {
     await this._http.post(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers/add`,
-      { body: { peers } }
+      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
+      { body: peers }
     )
   }
 
@@ -175,16 +175,16 @@ export class Session {
       { observe_me?: boolean | null; observe_others?: boolean | null }
     >
   ): Promise<void> {
-    await this._http.post(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers/set`,
-      { body: { peers } }
+    await this._http.put(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
+      { body: peers }
     )
   }
 
   private async _removePeers(peerIds: string[]): Promise<void> {
-    await this._http.post(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers/remove`,
-      { body: { peers: peerIds } }
+    await this._http.delete(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
+      { body: peerIds }
     )
   }
 

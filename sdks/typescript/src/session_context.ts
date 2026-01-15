@@ -57,6 +57,13 @@ export class SessionSummaries {
   readonly id: string
 
   /**
+   * Alias for id - the session ID.
+   */
+  get sessionId(): string {
+    return this.id
+  }
+
+  /**
    * The short summary if available.
    */
   readonly shortSummary: Summary | null

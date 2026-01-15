@@ -46,7 +46,7 @@ describe('Session', () => {
 
   describe('POST /sessions (create/get)', () => {
     test('creates session with just ID', async () => {
-      const session = await client.session('simple-session')
+      const session = await client.session('simple-session', { metadata: {} })
 
       expect(session).toBeInstanceOf(Session)
       expect(session.id).toBe('simple-session')
@@ -101,7 +101,7 @@ describe('Session', () => {
       const tag = `tag-${Date.now()}`
       await client.session('filtered-session', { metadata: { tag } })
 
-      const page = await client.getSessions({ tag })
+      const page = await client.getSessions({ metadata: { tag } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-session')
@@ -114,7 +114,7 @@ describe('Session', () => {
 
   describe('PUT /sessions/:id (update)', () => {
     test('setMetadata updates session metadata', async () => {
-      const session = await client.session('update-meta-session')
+      const session = await client.session('update-meta-session', { metadata: {} })
 
       await session.setMetadata({ updated: true, step: 2 })
       const metadata = await session.getMetadata()
@@ -123,7 +123,7 @@ describe('Session', () => {
     })
 
     test('setConfig updates session configuration', async () => {
-      const session = await client.session('update-config-session')
+      const session = await client.session('update-config-session', { metadata: {} })
 
       await session.setConfig({ summary: { enabled: false } })
       const config = await session.getConfig()
@@ -137,7 +137,7 @@ describe('Session', () => {
       })
 
       // Modify via another reference
-      const session2 = await client.session('refresh-session')
+      const session2 = await client.session('refresh-session', { metadata: {} })
       await session2.setMetadata({ modified: true })
 
       // Original has stale cache
@@ -188,7 +188,7 @@ describe('Session', () => {
     })
 
     test('clone up to specific message', async () => {
-      const original = await client.session('clone-partial-session')
+      const original = await client.session('clone-partial-session', { metadata: {} })
       const peer = await client.peer('clone-partial-peer')
       await original.addPeers([peer.id])
 
@@ -213,7 +213,7 @@ describe('Session', () => {
   describe('Peer management', () => {
     describe('POST /sessions/:id/peers/add', () => {
       test('addPeers with string array', async () => {
-        const session = await client.session('add-peers-string')
+        const session = await client.session('add-peers-string', { metadata: {} })
 
         await session.addPeers(['peer-a', 'peer-b'])
 
@@ -224,7 +224,7 @@ describe('Session', () => {
       })
 
       test('addPeers with Peer objects', async () => {
-        const session = await client.session('add-peers-objects')
+        const session = await client.session('add-peers-objects', { metadata: {} })
         const peerA = await client.peer('obj-peer-a')
         const peerB = await client.peer('obj-peer-b')
 
@@ -237,7 +237,7 @@ describe('Session', () => {
       })
 
       test('addPeers with config tuples', async () => {
-        const session = await client.session('add-peers-config')
+        const session = await client.session('add-peers-config', { metadata: {} })
 
         await session.addPeers([
           ['config-peer-a', { observe_me: true, observe_others: false }],
@@ -250,7 +250,7 @@ describe('Session', () => {
       })
 
       test('addPeers with single peer', async () => {
-        const session = await client.session('add-single-peer')
+        const session = await client.session('add-single-peer', { metadata: {} })
 
         await session.addPeers('single-peer')
 
@@ -261,7 +261,7 @@ describe('Session', () => {
 
     describe('POST /sessions/:id/peers/set', () => {
       test('setPeers replaces all peers', async () => {
-        const session = await client.session('set-peers-session')
+        const session = await client.session('set-peers-session', { metadata: {} })
         await session.addPeers(['old-peer-a', 'old-peer-b'])
 
         await session.setPeers(['new-peer-a', 'new-peer-b'])
@@ -276,7 +276,7 @@ describe('Session', () => {
 
     describe('POST /sessions/:id/peers/remove', () => {
       test('removePeers removes specified peers', async () => {
-        const session = await client.session('remove-peers-session')
+        const session = await client.session('remove-peers-session', { metadata: {} })
         await session.addPeers(['keep-peer', 'remove-peer'])
 
         await session.removePeers(['remove-peer'])
@@ -288,7 +288,7 @@ describe('Session', () => {
       })
 
       test('removePeers with Peer objects', async () => {
-        const session = await client.session('remove-peer-objects')
+        const session = await client.session('remove-peer-objects', { metadata: {} })
         const peer = await client.peer('peer-to-remove')
         await session.addPeers([peer])
 
@@ -301,7 +301,7 @@ describe('Session', () => {
 
     describe('GET /sessions/:id/peers', () => {
       test('getPeers returns Peer instances', async () => {
-        const session = await client.session('get-peers-session')
+        const session = await client.session('get-peers-session', { metadata: {} })
         await session.addPeers(['list-peer-1', 'list-peer-2'])
 
         const peers = await session.getPeers()
@@ -313,7 +313,7 @@ describe('Session', () => {
 
     describe('GET/PUT /sessions/:id/peers/:id/config', () => {
       test('getPeerConfig returns config', async () => {
-        const session = await client.session('get-peer-config-session')
+        const session = await client.session('get-peer-config-session', { metadata: {} })
         await session.addPeers([
           ['peer-with-config', { observe_me: true, observe_others: false }],
         ])
@@ -325,7 +325,7 @@ describe('Session', () => {
       })
 
       test('setPeerConfig updates config', async () => {
-        const session = await client.session('set-peer-config-session')
+        const session = await client.session('set-peer-config-session', { metadata: {} })
         await session.addPeers(['peer-update-config'])
 
         await session.setPeerConfig(
@@ -339,7 +339,7 @@ describe('Session', () => {
       })
 
       test('setPeerConfig with Peer object', async () => {
-        const session = await client.session('set-config-peer-obj')
+        const session = await client.session('set-config-peer-obj', { metadata: {} })
         const peer = await client.peer('config-obj-peer')
         await session.addPeers([peer])
 
@@ -358,7 +358,7 @@ describe('Session', () => {
   describe('Message operations', () => {
     describe('POST /sessions/:id/messages', () => {
       test('addMessages creates messages', async () => {
-        const session = await client.session('add-messages-session')
+        const session = await client.session('add-messages-session', { metadata: {} })
         const peer = await client.peer('add-messages-peer')
         await session.addPeers([peer.id])
 
@@ -373,7 +373,7 @@ describe('Session', () => {
       })
 
       test('addMessages with single message', async () => {
-        const session = await client.session('single-message-session')
+        const session = await client.session('single-message-session', { metadata: {} })
         const peer = await client.peer('single-message-peer')
         await session.addPeers([peer.id])
 
@@ -386,7 +386,7 @@ describe('Session', () => {
 
     describe('POST /sessions/:id/messages/list', () => {
       test('getMessages returns paginated list', async () => {
-        const session = await client.session('list-messages-session')
+        const session = await client.session('list-messages-session', { metadata: {} })
         const peer = await client.peer('list-messages-peer')
         await session.addPeers([peer.id])
         await session.addMessages([
@@ -401,7 +401,7 @@ describe('Session', () => {
       })
 
       test('getMessages with filters', async () => {
-        const session = await client.session('filter-messages-session')
+        const session = await client.session('filter-messages-session', { metadata: {} })
         const peer = await client.peer('filter-messages-peer')
         await session.addPeers([peer.id])
         await session.addMessages([
@@ -409,7 +409,7 @@ describe('Session', () => {
           peer.message('Not this one'),
         ])
 
-        const page = await session.getMessages({ tag: 'special' })
+        const page = await session.getMessages({ metadata: { tag: 'special' } })
 
         expect(page.items.length).toBe(1)
         expect(page.items[0].metadata.tag).toBe('special')
@@ -423,7 +423,7 @@ describe('Session', () => {
 
   describe('POST /sessions/:id/context', () => {
     test('getContext returns context object', async () => {
-      const session = await client.session('context-session')
+      const session = await client.session('context-session', { metadata: {} })
       const peer = await client.peer('context-peer')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Context content')])
@@ -436,7 +436,7 @@ describe('Session', () => {
     })
 
     test('getContext with options object', async () => {
-      const session = await client.session('context-options-session')
+      const session = await client.session('context-options-session', { metadata: {} })
       const peer = await client.peer('context-options-peer')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Some content')])
@@ -451,7 +451,7 @@ describe('Session', () => {
     })
 
     test('getContext with positional args (legacy)', async () => {
-      const session = await client.session('context-positional-session')
+      const session = await client.session('context-positional-session', { metadata: {} })
       const peer = await client.peer('context-positional-peer')
       await session.addPeers([peer.id])
 
@@ -463,7 +463,7 @@ describe('Session', () => {
 
   describe('GET /sessions/:id/summaries', () => {
     test('getSummaries returns summary object', async () => {
-      const session = await client.session('summaries-session')
+      const session = await client.session('summaries-session', { metadata: {} })
 
       const summaries = await session.getSummaries()
 
@@ -481,7 +481,7 @@ describe('Session', () => {
 
   describe('POST /sessions/:id/search', () => {
     test('search returns matching messages', async () => {
-      const session = await client.session('search-session')
+      const session = await client.session('search-session', { metadata: {} })
       const peer = await client.peer('search-peer')
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -499,7 +499,7 @@ describe('Session', () => {
     })
 
     test('search with limit', async () => {
-      const session = await client.session('search-limit-session')
+      const session = await client.session('search-limit-session', { metadata: {} })
 
       const results = await session.search('test', { limit: 5 })
 
@@ -513,7 +513,7 @@ describe('Session', () => {
 
   describe('Queue status', () => {
     test('getQueueStatus returns status for session', async () => {
-      const session = await client.session('queue-status-session')
+      const session = await client.session('queue-status-session', { metadata: {} })
 
       const status = await session.getQueueStatus()
 
@@ -523,7 +523,7 @@ describe('Session', () => {
     })
 
     test('getQueueStatus with observer filter', async () => {
-      const session = await client.session('queue-observer-session')
+      const session = await client.session('queue-observer-session', { metadata: {} })
       const peer = await client.peer('queue-observer-peer')
 
       const status = await session.getQueueStatus({ observer: peer })
@@ -538,7 +538,7 @@ describe('Session', () => {
 
   describe('POST /peers/:id/representation (session-scoped)', () => {
     test('getRepresentation returns string', async () => {
-      const session = await client.session('repr-session')
+      const session = await client.session('repr-session', { metadata: {} })
       const peer = await client.peer('repr-peer')
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Learning TypeScript')])
@@ -549,7 +549,7 @@ describe('Session', () => {
     })
 
     test('getRepresentation with target', async () => {
-      const session = await client.session('repr-target-session')
+      const session = await client.session('repr-target-session', { metadata: {} })
       const observer = await client.peer('repr-observer')
       const target = await client.peer('repr-target')
       await session.addPeers([observer.id, target.id])
@@ -566,7 +566,7 @@ describe('Session', () => {
 
   describe('toString', () => {
     test('returns readable format', async () => {
-      const session = await client.session('tostring-session')
+      const session = await client.session('tostring-session', { metadata: {} })
 
       const str = session.toString()
 

@@ -138,7 +138,7 @@ export class Peer {
     size?: number
   }): Promise<PageResponse<SessionResponse>> {
     return this._http.post<PageResponse<SessionResponse>>(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/sessions/list`,
+      `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/sessions`,
       {
         body: { filters: params?.filters },
         query: { page: params?.page, size: params?.size },
@@ -211,18 +211,18 @@ export class Peer {
     include_most_frequent?: boolean
     max_conclusions?: number
   }): Promise<PeerContextResponse> {
-    return this._http.post<PeerContextResponse>(
+    return this._http.get<PeerContextResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/context`,
-      { body: params }
+      { query: params }
     )
   }
 
   private async _getCard(params: {
     target?: string
   }): Promise<PeerCardResponse> {
-    return this._http.post<PeerCardResponse>(
+    return this._http.get<PeerCardResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/card`,
-      { body: params }
+      { query: params }
     )
   }
 
@@ -310,7 +310,7 @@ export class Peer {
    * Makes an API call to retrieve all sessions where this peer is an active participant.
    * Sessions are created when peers are added to them or send messages to them.
    *
-   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
    * @returns Promise resolving to a paginated list of Session objects this peer belongs to.
    *          Returns an empty list if the peer is not a member of any sessions
    */
@@ -474,7 +474,7 @@ export class Peer {
    * Makes an API call to search endpoint.
    *
    * @param query The search query to use
-   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
    * @param limit - Optional limit on the number of results to return.
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.

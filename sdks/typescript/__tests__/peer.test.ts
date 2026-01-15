@@ -116,7 +116,7 @@ describe('Peer', () => {
         metadata: { uniqueTag },
       })
 
-      const page = await client.getPeers({ uniqueTag })
+      const page = await client.getPeers({ metadata: { uniqueTag } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-peer')
@@ -205,7 +205,7 @@ describe('Peer', () => {
   describe('POST /peers/:id/sessions/list', () => {
     test('getSessions returns sessions peer is in', async () => {
       const peer = await client.peer('session-member-peer')
-      const session = await client.session('peer-sessions-test')
+      const session = await client.session('peer-sessions-test', { metadata: {} })
 
       await session.addPeers([peer.id])
 
@@ -232,7 +232,7 @@ describe('Peer', () => {
       })
       await session.addPeers([peer.id])
 
-      const sessions = await peer.getSessions({ category: 'special' })
+      const sessions = await peer.getSessions({ metadata: { category: 'special' } })
 
       expect(sessions.items.length).toBeGreaterThanOrEqual(1)
     })
@@ -296,7 +296,7 @@ describe('Peer', () => {
   describe('POST /peers/:id/search', () => {
     test('search finds messages from this peer', async () => {
       const peer = await client.peer('search-author-peer')
-      const session = await client.session('search-author-session')
+      const session = await client.session('search-author-session', { metadata: {} })
 
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -314,7 +314,7 @@ describe('Peer', () => {
 
     test('search with filters', async () => {
       const peer = await client.peer('search-filter-peer')
-      const session = await client.session('search-filter-session')
+      const session = await client.session('search-filter-session', { metadata: {} })
 
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -346,7 +346,7 @@ describe('Peer', () => {
   describe('POST /peers/:id/representation', () => {
     test('getRepresentation returns string', async () => {
       const peer = await client.peer('repr-peer')
-      const session = await client.session('repr-session')
+      const session = await client.session('repr-session', { metadata: {} })
 
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -361,7 +361,7 @@ describe('Peer', () => {
 
     test('getRepresentation scoped to session', async () => {
       const peer = await client.peer('repr-session-peer')
-      const session = await client.session('repr-session-scoped')
+      const session = await client.session('repr-session-scoped', { metadata: {} })
 
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Session-specific content')])
@@ -374,7 +374,7 @@ describe('Peer', () => {
     test('getRepresentation with target peer', async () => {
       const observer = await client.peer('repr-observer')
       const observed = await client.peer('repr-observed')
-      const session = await client.session('repr-target-session')
+      const session = await client.session('repr-target-session', { metadata: {} })
 
       await session.addPeers([observer.id, observed.id])
       await session.addMessages([
@@ -492,7 +492,7 @@ describe('Peer', () => {
   describe('POST /peers/:id/chat', () => {
     test('chat returns string response', async () => {
       const peer = await client.peer('chat-peer')
-      const session = await client.session('chat-session')
+      const session = await client.session('chat-session', { metadata: {} })
 
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -507,7 +507,7 @@ describe('Peer', () => {
 
     test('chat with session scope', async () => {
       const peer = await client.peer('chat-session-peer')
-      const session = await client.session('chat-scoped-session')
+      const session = await client.session('chat-scoped-session', { metadata: {} })
 
       await session.addPeers([peer.id])
       await session.addMessages([peer.message('Session specific info')])

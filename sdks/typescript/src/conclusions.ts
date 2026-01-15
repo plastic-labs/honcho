@@ -168,8 +168,8 @@ export class ConclusionScope {
         : session.id
       : undefined
     const filters: Record<string, unknown> = {
-      observer: this.observer,
-      observed: this.observed,
+      observer_id: this.observer,
+      observed_id: this.observed,
     }
     if (resolvedSessionId) {
       filters.session_id = resolvedSessionId
@@ -191,8 +191,8 @@ export class ConclusionScope {
     distance?: number
   ): Promise<Conclusion[]> {
     const filters: Record<string, unknown> = {
-      observer: this.observer,
-      observed: this.observed,
+      observer_id: this.observer,
+      observed_id: this.observed,
     }
 
     const response = await this._query({

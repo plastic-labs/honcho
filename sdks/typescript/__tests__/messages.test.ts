@@ -37,7 +37,7 @@ describe('Messages', () => {
 
   describe('POST /messages (create)', () => {
     test('creates single message', async () => {
-      const session = await client.session('single-msg-session')
+      const session = await client.session('single-msg-session', { metadata: {} })
       const peer = await client.peer('single-msg-peer')
       await session.addPeers([peer.id])
 
@@ -51,7 +51,7 @@ describe('Messages', () => {
     })
 
     test('creates batch of messages', async () => {
-      const session = await client.session('batch-msg-session')
+      const session = await client.session('batch-msg-session', { metadata: {} })
       const peer = await client.peer('batch-msg-peer')
       await session.addPeers([peer.id])
 
@@ -68,7 +68,7 @@ describe('Messages', () => {
     })
 
     test('message with metadata', async () => {
-      const session = await client.session('meta-msg-session')
+      const session = await client.session('meta-msg-session', { metadata: {} })
       const peer = await client.peer('meta-msg-peer')
       await session.addPeers([peer.id])
 
@@ -80,7 +80,7 @@ describe('Messages', () => {
     })
 
     test('message with configuration', async () => {
-      const session = await client.session('config-msg-session')
+      const session = await client.session('config-msg-session', { metadata: {} })
       const peer = await client.peer('config-msg-peer')
       await session.addPeers([peer.id])
 
@@ -95,7 +95,7 @@ describe('Messages', () => {
     })
 
     test('message with custom created_at', async () => {
-      const session = await client.session('timestamp-msg-session')
+      const session = await client.session('timestamp-msg-session', { metadata: {} })
       const peer = await client.peer('timestamp-msg-peer')
       await session.addPeers([peer.id])
 
@@ -111,7 +111,7 @@ describe('Messages', () => {
     })
 
     test('messages from multiple peers', async () => {
-      const session = await client.session('multi-peer-msg-session')
+      const session = await client.session('multi-peer-msg-session', { metadata: {} })
       const alice = await client.peer('alice')
       const bob = await client.peer('bob')
       await session.addPeers([alice.id, bob.id])
@@ -128,7 +128,7 @@ describe('Messages', () => {
     })
 
     test('batch up to 100 messages', async () => {
-      const session = await client.session('large-batch-session')
+      const session = await client.session('large-batch-session', { metadata: {} })
       const peer = await client.peer('large-batch-peer')
       await session.addPeers([peer.id])
 
@@ -144,7 +144,7 @@ describe('Messages', () => {
     })
 
     test('token_count is calculated', async () => {
-      const session = await client.session('token-count-session')
+      const session = await client.session('token-count-session', { metadata: {} })
       const peer = await client.peer('token-count-peer')
       await session.addPeers([peer.id])
 
@@ -162,7 +162,7 @@ describe('Messages', () => {
 
   describe('POST /messages/list', () => {
     test('returns paginated list', async () => {
-      const session = await client.session('list-msg-session')
+      const session = await client.session('list-msg-session', { metadata: {} })
       const peer = await client.peer('list-msg-peer')
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -179,7 +179,7 @@ describe('Messages', () => {
     })
 
     test('pagination works', async () => {
-      const session = await client.session('paginate-msg-session')
+      const session = await client.session('paginate-msg-session', { metadata: {} })
       const peer = await client.peer('paginate-msg-peer')
       await session.addPeers([peer.id])
 
@@ -196,7 +196,7 @@ describe('Messages', () => {
     })
 
     test('Page is async iterable', async () => {
-      const session = await client.session('iter-msg-session')
+      const session = await client.session('iter-msg-session', { metadata: {} })
       const peer = await client.peer('iter-msg-peer')
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -214,7 +214,7 @@ describe('Messages', () => {
     })
 
     test('filter by peer', async () => {
-      const session = await client.session('filter-peer-msg-session')
+      const session = await client.session('filter-peer-msg-session', { metadata: {} })
       const alice = await client.peer('filter-alice')
       const bob = await client.peer('filter-bob')
       await session.addPeers([alice.id, bob.id])
@@ -230,7 +230,7 @@ describe('Messages', () => {
     })
 
     test('filter by metadata', async () => {
-      const session = await client.session('filter-meta-msg-session')
+      const session = await client.session('filter-meta-msg-session', { metadata: {} })
       const peer = await client.peer('filter-meta-peer')
       await session.addPeers([peer.id])
       await session.addMessages([
@@ -238,7 +238,7 @@ describe('Messages', () => {
         peer.message('Untagged'),
       ])
 
-      const page = await session.getMessages({ category: 'important' })
+      const page = await session.getMessages({ metadata: { category: 'important' } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].metadata.category).toBe('important')
@@ -251,7 +251,7 @@ describe('Messages', () => {
 
   describe('PUT /messages/:id (update)', () => {
     test('updateMessage with MessageResponse', async () => {
-      const session = await client.session('update-msg-response-session')
+      const session = await client.session('update-msg-response-session', { metadata: {} })
       const peer = await client.peer('update-msg-response-peer')
       await session.addPeers([peer.id])
 
@@ -267,7 +267,7 @@ describe('Messages', () => {
     })
 
     test('updateMessage with string ID', async () => {
-      const session = await client.session('update-msg-string-session')
+      const session = await client.session('update-msg-string-session', { metadata: {} })
       const peer = await client.peer('update-msg-string-peer')
       await session.addPeers([peer.id])
 
@@ -283,7 +283,7 @@ describe('Messages', () => {
     })
 
     test('updateMessage replaces metadata entirely', async () => {
-      const session = await client.session('update-msg-replace-session')
+      const session = await client.session('update-msg-replace-session', { metadata: {} })
       const peer = await client.peer('update-msg-replace-peer')
       await session.addPeers([peer.id])
 
@@ -304,7 +304,7 @@ describe('Messages', () => {
 
   describe('POST /messages/upload', () => {
     test('upload text file creates messages', async () => {
-      const session = await client.session('upload-session')
+      const session = await client.session('upload-session', { metadata: {} })
       const peer = await client.peer('upload-peer')
       await session.addPeers([peer.id])
 
@@ -318,7 +318,7 @@ describe('Messages', () => {
     })
 
     test('upload with metadata', async () => {
-      const session = await client.session('upload-meta-session')
+      const session = await client.session('upload-meta-session', { metadata: {} })
       const peer = await client.peer('upload-meta-peer')
       await session.addPeers([peer.id])
 
@@ -332,7 +332,7 @@ describe('Messages', () => {
     })
 
     test('upload with buffer-style object', async () => {
-      const session = await client.session('upload-buffer-session')
+      const session = await client.session('upload-buffer-session', { metadata: {} })
       const peer = await client.peer('upload-buffer-peer')
       await session.addPeers([peer.id])
 
@@ -351,7 +351,7 @@ describe('Messages', () => {
     })
 
     test('upload with peer ID string', async () => {
-      const session = await client.session('upload-peer-string-session')
+      const session = await client.session('upload-peer-string-session', { metadata: {} })
       await session.addPeers(['upload-string-peer'])
 
       const file = new Blob(['Content'], { type: 'text/plain' })
@@ -368,7 +368,7 @@ describe('Messages', () => {
 
   describe('Response shape validation', () => {
     test('message has all required fields', async () => {
-      const session = await client.session('shape-session')
+      const session = await client.session('shape-session', { metadata: {} })
       const peer = await client.peer('shape-peer')
       await session.addPeers([peer.id])
 
@@ -392,7 +392,7 @@ describe('Messages', () => {
     })
 
     test('message IDs are unique', async () => {
-      const session = await client.session('unique-id-session')
+      const session = await client.session('unique-id-session', { metadata: {} })
       const peer = await client.peer('unique-id-peer')
       await session.addPeers([peer.id])
 

@@ -183,10 +183,7 @@ export class HonchoHTTPClient {
   /**
    * Make a DELETE request.
    */
-  async delete<T>(
-    path: string,
-    options?: Omit<RequestOptions, 'body'>
-  ): Promise<T> {
+  async delete<T>(path: string, options?: RequestOptions): Promise<T> {
     return this.request<T>('DELETE', path, options)
   }
 

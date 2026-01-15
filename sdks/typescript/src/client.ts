@@ -153,8 +153,10 @@ export class Honcho {
       defaultHeaders: validatedOptions.defaultHeaders,
     })
 
-    // Fire and forget workspace creation
-    this._getOrCreateWorkspace(this.workspaceId)
+    // Fire and forget workspace creation (suppress errors to avoid unhandled rejections)
+    this._getOrCreateWorkspace(this.workspaceId).catch(() => {
+      // Silently ignore - workspace will be created on first real API call if needed
+    })
   }
 
   // ===========================================================================
@@ -190,12 +192,8 @@ export class Honcho {
     )
   }
 
-  private async _deleteWorkspace(
-    workspaceId: string
-  ): Promise<WorkspaceResponse> {
-    return this._http.delete<WorkspaceResponse>(
-      `/${API_VERSION}/workspaces/${workspaceId}`
-    )
+  private async _deleteWorkspace(workspaceId: string): Promise<void> {
+    await this._http.delete(`/${API_VERSION}/workspaces/${workspaceId}`)
   }
 
   private async _listWorkspaces(params?: {
@@ -383,7 +381,7 @@ export class Honcho {
    * Makes an API call to retrieve all peers that have been created or used
    * within the current workspace. Returns a paginated result.
    *
-   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
   async getPeers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
@@ -477,7 +475,7 @@ export class Honcho {
    * Makes an API call to retrieve all sessions that have been created within
    * the current workspace.
    *
-   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
@@ -601,7 +599,7 @@ export class Honcho {
    * Makes an API call to retrieve all workspace IDs that the authenticated
    * user has access to.
    *
-   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
    * @returns Promise resolving to a list of workspace ID strings. Returns an empty
    *          list if no workspaces are accessible or none exist
    */
@@ -625,10 +623,10 @@ export class Honcho {
    * Makes an API call to delete the specified workspace.
    *
    * @param workspaceId - The ID of the workspace to delete
-   * @returns Promise resolving to the deleted Workspace object
+   * @returns Promise that resolves when the workspace is deleted
    */
-  async deleteWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
-    return await this._deleteWorkspace(workspaceId)
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    await this._deleteWorkspace(workspaceId)
   }
 
   /**
@@ -637,7 +635,7 @@ export class Honcho {
    * Makes an API call to search for messages in the current workspace.
    *
    * @param query - The search query to use
-   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/guides/using-filters).
    * @param limit - Number of results to return (1-100, default: 10).
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.

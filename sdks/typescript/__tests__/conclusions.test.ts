@@ -71,8 +71,9 @@ describe('Conclusions', () => {
 
   describe('POST /conclusions (create)', () => {
     test('create single conclusion', async () => {
-      const peer = await client.peer('create-single-conclusion-peer')
-      const session = await client.session('create-single-conclusion-session')
+      // Pass metadata to ensure peer is created on server
+      const peer = await client.peer('create-single-conclusion-peer', { metadata: {} })
+      const session = await client.session('create-single-conclusion-session', { metadata: {} })
 
       const conclusions = await peer.conclusions.create({
         content: 'User prefers dark mode',
@@ -87,8 +88,8 @@ describe('Conclusions', () => {
     })
 
     test('create multiple conclusions', async () => {
-      const peer = await client.peer('create-multi-conclusion-peer')
-      const session = await client.session('create-multi-conclusion-session')
+      const peer = await client.peer('create-multi-conclusion-peer', { metadata: {} })
+      const session = await client.session('create-multi-conclusion-session', { metadata: {} })
 
       const conclusions = await peer.conclusions.create([
         { content: 'Likes TypeScript', sessionId: session },
@@ -103,9 +104,9 @@ describe('Conclusions', () => {
     })
 
     test('create conclusion for target peer', async () => {
-      const observer = await client.peer('conclusion-observer')
-      const observed = await client.peer('conclusion-observed')
-      const session = await client.session('conclusion-target-session')
+      const observer = await client.peer('conclusion-observer', { metadata: {} })
+      const observed = await client.peer('conclusion-observed', { metadata: {} })
+      const session = await client.session('conclusion-target-session', { metadata: {} })
 
       const scope = observer.conclusionsOf(observed)
       const conclusions = await scope.create({
@@ -124,8 +125,8 @@ describe('Conclusions', () => {
 
   describe('POST /conclusions/list', () => {
     test('list returns conclusions in scope', async () => {
-      const peer = await client.peer('list-conclusion-peer')
-      const session = await client.session('list-conclusion-session')
+      const peer = await client.peer('list-conclusion-peer', { metadata: {} })
+      const session = await client.session('list-conclusion-session', { metadata: {} })
 
       // Create some conclusions first
       await peer.conclusions.create([
@@ -144,8 +145,8 @@ describe('Conclusions', () => {
     })
 
     test('list with pagination', async () => {
-      const peer = await client.peer('paginate-conclusion-peer')
-      const session = await client.session('paginate-conclusion-session')
+      const peer = await client.peer('paginate-conclusion-peer', { metadata: {} })
+      const session = await client.session('paginate-conclusion-session', { metadata: {} })
 
       // Create several conclusions
       await peer.conclusions.create(
@@ -162,9 +163,9 @@ describe('Conclusions', () => {
     })
 
     test('list scoped to session', async () => {
-      const peer = await client.peer('session-scope-conclusion-peer')
-      const session1 = await client.session('conclusion-session-1')
-      const session2 = await client.session('conclusion-session-2')
+      const peer = await client.peer('session-scope-conclusion-peer', { metadata: {} })
+      const session1 = await client.session('conclusion-session-1', { metadata: {} })
+      const session2 = await client.session('conclusion-session-2', { metadata: {} })
 
       await peer.conclusions.create([
         { content: 'Session 1 conclusion', sessionId: session1 },
@@ -180,9 +181,9 @@ describe('Conclusions', () => {
     })
 
     test('list for target peer scope', async () => {
-      const observer = await client.peer('list-target-observer')
-      const target = await client.peer('list-target-target')
-      const session = await client.session('list-target-session')
+      const observer = await client.peer('list-target-observer', { metadata: {} })
+      const target = await client.peer('list-target-target', { metadata: {} })
+      const session = await client.session('list-target-session', { metadata: {} })
 
       await observer.conclusionsOf(target).create({
         content: 'About the target',
@@ -205,8 +206,8 @@ describe('Conclusions', () => {
 
   describe('POST /conclusions/query', () => {
     test('query returns semantically similar conclusions', async () => {
-      const peer = await client.peer('query-conclusion-peer')
-      const session = await client.session('query-conclusion-session')
+      const peer = await client.peer('query-conclusion-peer', { metadata: {} })
+      const session = await client.session('query-conclusion-session', { metadata: {} })
 
       // Create conclusions with distinct topics
       await peer.conclusions.create([
@@ -222,8 +223,8 @@ describe('Conclusions', () => {
     })
 
     test('query with topK limit', async () => {
-      const peer = await client.peer('topk-conclusion-peer')
-      const session = await client.session('topk-conclusion-session')
+      const peer = await client.peer('topk-conclusion-peer', { metadata: {} })
+      const session = await client.session('topk-conclusion-session', { metadata: {} })
 
       await peer.conclusions.create(
         Array.from({ length: 10 }, (_, i) => ({
@@ -238,8 +239,8 @@ describe('Conclusions', () => {
     })
 
     test('query with distance threshold', async () => {
-      const peer = await client.peer('distance-conclusion-peer')
-      const session = await client.session('distance-conclusion-session')
+      const peer = await client.peer('distance-conclusion-peer', { metadata: {} })
+      const session = await client.session('distance-conclusion-session', { metadata: {} })
 
       await peer.conclusions.create({
         content: 'Very specific unique content xyz123',
@@ -256,9 +257,9 @@ describe('Conclusions', () => {
     })
 
     test('query scoped to target peer', async () => {
-      const observer = await client.peer('query-target-observer')
-      const target = await client.peer('query-target-target')
-      const session = await client.session('query-target-session')
+      const observer = await client.peer('query-target-observer', { metadata: {} })
+      const target = await client.peer('query-target-target', { metadata: {} })
+      const session = await client.session('query-target-session', { metadata: {} })
 
       await observer.conclusionsOf(target).create({
         content: 'Target likes machine learning',
@@ -280,8 +281,8 @@ describe('Conclusions', () => {
 
   describe('DELETE /conclusions/:id', () => {
     test('delete removes conclusion', async () => {
-      const peer = await client.peer('delete-conclusion-peer')
-      const session = await client.session('delete-conclusion-session')
+      const peer = await client.peer('delete-conclusion-peer', { metadata: {} })
+      const session = await client.session('delete-conclusion-session', { metadata: {} })
 
       const [conclusion] = await peer.conclusions.create({
         content: 'To be deleted',
@@ -304,8 +305,8 @@ describe('Conclusions', () => {
 
   describe('getRepresentation from scope', () => {
     test('returns representation for self-scope', async () => {
-      const peer = await client.peer('repr-self-scope-peer')
-      const session = await client.session('repr-self-scope-session')
+      const peer = await client.peer('repr-self-scope-peer', { metadata: {} })
+      const session = await client.session('repr-self-scope-session', { metadata: {} })
 
       await peer.conclusions.create({
         content: 'User is a software engineer',
@@ -318,9 +319,9 @@ describe('Conclusions', () => {
     })
 
     test('returns representation for target scope', async () => {
-      const observer = await client.peer('repr-target-scope-observer')
-      const target = await client.peer('repr-target-scope-target')
-      const session = await client.session('repr-target-scope-session')
+      const observer = await client.peer('repr-target-scope-observer', { metadata: {} })
+      const target = await client.peer('repr-target-scope-target', { metadata: {} })
+      const session = await client.session('repr-target-scope-session', { metadata: {} })
 
       await observer.conclusionsOf(target).create({
         content: 'Target is friendly',
@@ -335,7 +336,7 @@ describe('Conclusions', () => {
     })
 
     test('representation with options', async () => {
-      const peer = await client.peer('repr-options-scope-peer')
+      const peer = await client.peer('repr-options-scope-peer', { metadata: {} })
 
       const representation = await peer.conclusions.getRepresentation({
         searchQuery: 'preferences',
@@ -373,8 +374,8 @@ describe('Conclusions', () => {
     })
 
     test('toString returns readable format', async () => {
-      const peer = await client.peer('tostring-conclusion-peer')
-      const session = await client.session('tostring-conclusion-session')
+      const peer = await client.peer('tostring-conclusion-peer', { metadata: {} })
+      const session = await client.session('tostring-conclusion-session', { metadata: {} })
 
       const [conclusion] = await peer.conclusions.create({
         content: 'A longer conclusion that should be truncated in toString',

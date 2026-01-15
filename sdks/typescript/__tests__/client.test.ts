@@ -104,9 +104,10 @@ describe('Honcho Client', () => {
       expect(freshClient.configuration).toBeUndefined()
 
       // After refresh, cache is populated
+      // Note: server may add default configuration values like reasoning.enabled
       await freshClient.refresh()
       expect(freshClient.metadata).toEqual({ a: 1 })
-      expect(freshClient.configuration).toEqual({ b: 2 })
+      expect(freshClient.configuration).toMatchObject({ b: 2 })
     })
   })
 
@@ -136,7 +137,7 @@ describe('Honcho Client', () => {
 
         // Filter should find this workspace
         const filtered = await client.getWorkspaces({
-          filterKey: uniqueValue,
+          metadata: { filterKey: uniqueValue },
         })
 
         expect(filtered).toContain(testClient.workspaceId)
@@ -163,9 +164,8 @@ describe('Honcho Client', () => {
       // Ensure it exists
       await tempClient.getMetadata()
 
-      // Delete it
-      const result = await client.deleteWorkspace(tempWorkspaceId)
-      expect(result.id).toBe(tempWorkspaceId)
+      // Delete it (returns void)
+      await client.deleteWorkspace(tempWorkspaceId)
 
       // Verify it's gone from list
       const workspaces = await client.getWorkspaces()
@@ -212,7 +212,7 @@ describe('Honcho Client', () => {
 
   describe('Session access', () => {
     test('session() returns Session instance without API call', async () => {
-      const session = await client.session('lazy-session')
+      const session = await client.session('lazy-session', { metadata: {} })
 
       expect(session.id).toBe('lazy-session')
       expect(session.workspaceId).toBe(client.workspaceId)
@@ -249,7 +249,7 @@ describe('Honcho Client', () => {
   describe('POST /workspaces/:id/search', () => {
     test('search returns matching messages', async () => {
       // Setup: create session with messages
-      const session = await client.session('search-session')
+      const session = await client.session('search-session', { metadata: {} })
       const peer = await client.peer('search-peer')
 
       await session.addPeers([peer.id])
@@ -266,7 +266,7 @@ describe('Honcho Client', () => {
     })
 
     test('search with filters scopes results', async () => {
-      const session = await client.session('search-filtered-session')
+      const session = await client.session('search-filtered-session', { metadata: {} })
       const peer = await client.peer('search-filtered-peer')
 
       await session.addPeers([peer.id])
@@ -316,7 +316,7 @@ describe('Honcho Client', () => {
     })
 
     test('getQueueStatus with session filter', async () => {
-      const session = await client.session('queue-session')
+      const session = await client.session('queue-session', { metadata: {} })
 
       const status = await client.getQueueStatus({
         session: session,
@@ -332,7 +332,7 @@ describe('Honcho Client', () => {
 
   describe('PUT /sessions/:id/messages/:id', () => {
     test('updateMessage updates message metadata', async () => {
-      const session = await client.session('update-msg-session')
+      const session = await client.session('update-msg-session', { metadata: {} })
       const peer = await client.peer('update-msg-peer')
 
       await session.addPeers([peer.id])
@@ -350,7 +350,7 @@ describe('Honcho Client', () => {
     })
 
     test('updateMessage with string ID requires session', async () => {
-      const session = await client.session('update-msg-session-2')
+      const session = await client.session('update-msg-session-2', { metadata: {} })
       const peer = await client.peer('update-msg-peer-2')
 
       await session.addPeers([peer.id])
