@@ -4,6 +4,9 @@ Honcho Agno Integration
 This package provides seamless integration between Honcho and Agno,
 enabling AI agents to maintain persistent memory across conversations.
 
+Each HonchoTools instance represents ONE agent identity (peer). The toolkit
+speaks as that peer when adding messages or querying the dialectic.
+
 Example:
     ```python
     from agno.agent import Agent
@@ -13,7 +16,8 @@ Example:
     # Create Honcho tools
     honcho_tools = HonchoTools(
         app_id="my-app",
-        user_id="user-123",
+        peer_id="assistant",  # The identity for the agent using this toolkit
+        session_id="session-123",
     )
 
     # Create agent with memory
@@ -24,8 +28,8 @@ Example:
         description="An assistant with persistent memory powered by Honcho.",
     )
 
-    # Run the agent
-    response = agent.run("Remember that I prefer Python over JavaScript")
+    # Run the agent - messages saved via add_message() are attributed to "assistant"
+    response = agent.run("What do you know about the user?")
     ```
 """
 

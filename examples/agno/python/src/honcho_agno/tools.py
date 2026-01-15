@@ -3,11 +3,16 @@ Honcho Tools for Agno
 
 This module provides a Toolkit that allows Agno agents to interact with Honcho's
 memory system, including session context, semantic search, and dialectic API.
+
+Each HonchoTools instance represents ONE agent identity (peer). The toolkit
+speaks as that peer when adding messages or querying the dialectic. For
+multi-peer conversations, create separate toolkit instances or use Honcho
+directly to manage other peers.
 """
 
 import logging
 import uuid
-from typing import Literal, Optional
+from typing import Any, Literal
 
 from agno.tools import Toolkit
 from honcho import Honcho
@@ -19,8 +24,14 @@ class HonchoTools(Toolkit):
     """
     Honcho toolkit for Agno agents.
 
-    Provides memory tools for session context retrieval, semantic search,
-    message storage, and querying user knowledge via the Dialectic API.
+    Each toolkit instance represents ONE agent identity. The peer_id parameter
+    defines who this toolkit "speaks as" - all messages added through this
+    toolkit are attributed to that peer.
+
+    For multi-peer conversations:
+    - Create one HonchoTools per agent, each with a different peer_id
+    - Share the same session_id across toolkits
+    - Use Honcho directly for peers not represented by an agent
 
     Example:
         ```python
@@ -28,9 +39,11 @@ class HonchoTools(Toolkit):
         from agno.models.openai import OpenAIChat
         from honcho_agno import HonchoTools
 
+        # This toolkit IS the assistant - it speaks as "assistant"
         honcho_tools = HonchoTools(
             app_id="my-app",
-            user_id="user-123",
+            peer_id="assistant",
+            session_id="shared-session",
         )
 
         agent = Agent(
@@ -43,22 +56,25 @@ class HonchoTools(Toolkit):
     def __init__(
         self,
         app_id: str = "default",
-        user_id: str = "default",
-        session_id: Optional[str] = None,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        environment: Optional[Literal["local", "production"]] = "production",
-        honcho_client: Optional[Honcho] = None,
+        peer_id: str = "assistant",
+        session_id: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        environment: Literal["local", "production"] | None = "production",
+        honcho_client: Honcho | None = None,
     ) -> None:
         """
-        Initialize the Honcho toolkit.
+        Initialize the Honcho toolkit for a specific agent identity.
 
         Args:
             app_id: Application/workspace ID for scoping operations.
                 Maps to Honcho's workspace_id.
-            user_id: User identifier. Creates a peer with this ID.
+            peer_id: The identity this toolkit represents. All messages
+                added through this toolkit are attributed to this peer.
+                This is who the agent "is" in the conversation.
             session_id: Optional session ID. If not provided, a new UUID
-                will be generated.
+                will be generated. Share this across toolkits for multi-peer
+                conversations.
             api_key: Optional API key for Honcho. If not provided, will
                 attempt to read from HONCHO_API_KEY environment variable.
             base_url: Optional base URL for the Honcho API.
@@ -70,10 +86,11 @@ class HonchoTools(Toolkit):
         super().__init__(name="honcho")
 
         # Initialize Honcho client
+        self.honcho: Honcho
         if honcho_client is not None:
             self.honcho = honcho_client
         else:
-            client_kwargs: dict = {"workspace_id": app_id}
+            client_kwargs: dict[str, Any] = {"workspace_id": app_id}
             if api_key is not None:
                 client_kwargs["api_key"] = api_key
             if base_url is not None:
@@ -83,49 +100,47 @@ class HonchoTools(Toolkit):
             self.honcho = Honcho(**client_kwargs)
 
         # Store identifiers
-        self.app_id = app_id
-        self.user_id = user_id
-        self.session_id = session_id or str(uuid.uuid4())
+        self.app_id: str = app_id
+        self.peer_id: str = peer_id
+        self.session_id: str = session_id or str(uuid.uuid4())
 
-        # Create peers for user and assistant
-        self.user = self.honcho.peer(user_id)
-        self.assistant = self.honcho.peer("assistant")
+        # Create the peer this toolkit represents
+        # This is THE identity of this toolkit - one toolkit = one voice
+        self.peer: Peer = self.honcho.peer(peer_id)
 
         # Create or get session
-        self.session = self.honcho.session(self.session_id)
+        self.session: Session = self.honcho.session(self.session_id)
 
         # Register tools
         self.register(self.add_message)
         self.register(self.get_context)
         self.register(self.search_messages)
-        self.register(self.query_user)
+        self.register(self.query_peer)
 
-    def add_message(self, content: str, role: str = "user") -> str:
+    def add_message(self, content: str) -> str:
         """
-        Store a message in the current session.
+        Store a message in the current session as this agent.
 
-        Use this tool to save important information from the conversation
-        that should be remembered for future interactions.
+        Use this tool to save your responses or important information
+        to the conversation history. The message is attributed to this
+        toolkit's peer identity.
 
         Args:
             content: The message content to store.
-            role: The role of the message sender. Use 'user' for user messages
-                or 'assistant' for AI responses.
 
         Returns:
             Confirmation message indicating the memory was saved.
         """
         try:
-            peer = self.user if role == "user" else self.assistant
-            self.session.add_messages([peer.message(content)])
-            return f"Message saved successfully to session {self.session_id}"
+            self.session.add_messages([self.peer.message(content)])
+            return f"Message saved as '{self.peer_id}' to session {self.session_id}"
         except Exception as e:
             logger.exception("Error saving message")
             return f"Error saving message: {e!s}"
 
     def get_context(
         self,
-        tokens: Optional[int] = None,
+        tokens: int | None = None,
         include_summary: bool = True,
     ) -> str:
         """
@@ -148,7 +163,7 @@ class HonchoTools(Toolkit):
                 tokens=tokens,
             )
 
-            result = []
+            result: list[str] = []
 
             # Add summary if present
             if context.summary:
@@ -216,23 +231,31 @@ class HonchoTools(Toolkit):
             logger.exception("Error searching messages")
             return f"Error searching messages: {e!s}"
 
-    def query_user(self, query: str) -> str:
+    def query_peer(self, query: str, target_peer_id: str | None = None) -> str:
         """
-        Query the system's knowledge about the user.
+        Query the system's knowledge about a peer in the conversation.
 
-        Use this tool to ask questions about user preferences, interests,
-        or past interactions. The system uses dialectic reasoning to
-        provide insights based on the user's long-term representation.
+        Use this tool to ask questions about any participant's preferences,
+        interests, or past interactions. The system uses dialectic reasoning
+        to provide insights based on the peer's long-term representation.
 
         Args:
-            query: Natural language question about the user.
+            query: Natural language question about the peer.
                 Examples: "What does the user like?", "What are their preferences?"
+            target_peer_id: Optional peer ID to query about. If not provided,
+                queries about this toolkit's own peer identity.
 
         Returns:
-            Response from the dialectic API with insights about the user.
+            Response from the dialectic API with insights about the peer.
         """
         try:
-            response = self.user.chat(
+            # Query about a specific peer, or self if not specified
+            if target_peer_id:
+                target = self.honcho.peer(target_peer_id)
+            else:
+                target = self.peer
+
+            response = target.chat(
                 query=query,
                 stream=False,
                 session=self.session_id,
@@ -241,8 +264,8 @@ class HonchoTools(Toolkit):
             return str(response) if response else "No relevant information found."
 
         except Exception as e:
-            logger.exception("Error querying user knowledge")
-            return f"Error querying user knowledge: {e!s}"
+            logger.exception("Error querying peer knowledge")
+            return f"Error querying peer knowledge: {e!s}"
 
     def reset_session(self) -> str:
         """

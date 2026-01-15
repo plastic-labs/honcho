@@ -50,8 +50,24 @@ Changelog = "https://github.com/plastic-labs/honcho/blob/main/CHANGELOG.md"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+dev = [
+    "basedpyright>=1.29.4",
+    "pytest>=8.2.2",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/honcho_agno"]
+
+[tool.basedpyright]
+include = ["src", "tests", "examples"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+reportMissingTypeStubs = false
+reportAny = false
+reportExplicitAny = false
+reportUnusedCallResult = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
