@@ -19,7 +19,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from src import crud, prometheus, schemas
 from src.config import settings
 from src.dependencies import db
-from src.deriver import enqueue
+from src.agents.extractor import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
 from src.utils.files import process_file_uploads_for_messages

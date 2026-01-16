@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.crud.document import get_all_documents
-from src.dreamer.trees import SurprisalTree, create_tree
+from src.agents.dreamer.trees import SurprisalTree, create_tree
 
 logger = logging.getLogger(__name__)
 

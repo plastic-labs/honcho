@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, prometheus
 from src.config import ReasoningLevel, settings
-from src.dialectic import prompts
+from src.agents.dialectic import prompts
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
 from src.utils.clients import (
     HonchoLLMCallResponse,

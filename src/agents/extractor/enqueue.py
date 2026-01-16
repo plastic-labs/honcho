@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.dream_scheduler import get_dream_scheduler
+from src.agents.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
 from src.dependencies import db, tracked_db
-from src.deriver.enqueue import enqueue_deletion
+from src.agents.extractor.enqueue import enqueue_deletion
 from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,

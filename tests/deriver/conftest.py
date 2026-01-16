@@ -288,7 +288,7 @@ async def create_active_queue_session(db_session: AsyncSession) -> Callable[...,
 @pytest.fixture
 def mock_queue_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright: ignore[reportUnusedParameter]
     """Mock the queue manager to avoid actual queue processing"""
-    from src.deriver.queue_manager import QueueManager
+    from src.agents.extractor.queue_manager import QueueManager
 
     # Create a mock queue manager
     mock_manager = AsyncMock(spec=QueueManager)

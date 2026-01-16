@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
+from src.agents.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key
 

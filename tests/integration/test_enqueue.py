@@ -8,8 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.deriver import enqueue
-from src.deriver.enqueue import generate_queue_records
+from src.agents.extractor import enqueue
+from src.agents.extractor.enqueue import generate_queue_records
 from src.models import Peer, QueueItem, Workspace
 
 
@@ -962,7 +962,7 @@ class TestGetEffectiveObserveMeFunction:
 
     def test_sender_missing_from_configuration_uses_default(self):
         """Test that missing sender uses default observe_me=True"""
-        from src.deriver.enqueue import get_effective_observe_me
+        from src.agents.extractor.enqueue import get_effective_observe_me
 
         # Empty peer configuration dict simulates sender who left after sending message
         peers_with_configuration: dict[str, list[dict[str, Any]]] = {}
@@ -974,7 +974,7 @@ class TestGetEffectiveObserveMeFunction:
 
     def test_sender_with_empty_configurations_uses_default(self):
         """Test that sender with empty peer and session configs uses default"""
-        from src.deriver.enqueue import get_effective_observe_me
+        from src.agents.extractor.enqueue import get_effective_observe_me
 
         # Sender present but with empty configurations
         peers_with_configuration: dict[str, list[dict[str, Any]]] = {
@@ -988,7 +988,7 @@ class TestGetEffectiveObserveMeFunction:
 
     def test_sender_with_peer_config_observe_me_false(self):
         """Test that peer config observe_me=False is respected"""
-        from src.deriver.enqueue import get_effective_observe_me
+        from src.agents.extractor.enqueue import get_effective_observe_me
 
         peers_with_configuration = {
             "sender": [{"observe_me": False}, {}]  # Peer config with observe_me=False
@@ -1000,7 +1000,7 @@ class TestGetEffectiveObserveMeFunction:
 
     def test_session_config_overrides_peer_config(self):
         """Test that session peer config takes precedence over peer config"""
-        from src.deriver.enqueue import get_effective_observe_me
+        from src.agents.extractor.enqueue import get_effective_observe_me
 
         peers_with_configuration = {
             "sender": [
@@ -1015,7 +1015,7 @@ class TestGetEffectiveObserveMeFunction:
 
     def test_session_config_none_falls_back_to_peer_config(self):
         """Test that session config with None observe_me falls back to peer config"""
-        from src.deriver.enqueue import get_effective_observe_me
+        from src.agents.extractor.enqueue import get_effective_observe_me
 
         peers_with_configuration = {
             "sender": [
@@ -1030,7 +1030,7 @@ class TestGetEffectiveObserveMeFunction:
 
     def test_mixed_configurations_with_active_status(self):
         """Test various configuration combinations with active status"""
-        from src.deriver.enqueue import get_effective_observe_me
+        from src.agents.extractor.enqueue import get_effective_observe_me
 
         # Test cases: (peer_config, session_config, expected_result)
         test_cases: list[tuple[dict[str, Any] | None, dict[str, Any] | None, bool]] = [

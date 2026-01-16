@@ -4,7 +4,7 @@ import sentry_sdk
 
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.orchestrator import run_dream
+from src.agents.dreamer.orchestrator import run_dream
 from src.schemas import DreamType
 from src.utils.queue_payload import DreamPayload
 

@@ -163,7 +163,7 @@ class DreamScheduler:
         """Execute the dream by enqueueing it and updating collection metadata."""
         # Import here to avoid circular dependency
         from src import crud
-        from src.deriver.enqueue import enqueue_dream
+        from src.agents.extractor.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
         # Find the most recent session and get current document count

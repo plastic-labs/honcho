@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from src import crud
 from src.config import ReasoningLevel
 from src.dependencies import tracked_db
-from src.dialectic.core import DialecticAgent
+from src.agents.dialectic.core import DialecticAgent
 from src.utils.config_helpers import get_configuration
 
 logger = logging.getLogger(__name__)

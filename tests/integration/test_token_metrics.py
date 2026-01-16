@@ -199,7 +199,7 @@ class TestDeriverIngestionMetrics:
         metric_checker: MetricDeltaChecker,
     ):
         """Verify OUTPUT_TOTAL tokens match response.output_tokens from LLM."""
-        from src.deriver.deriver import process_representation_tasks_batch
+        from src.agents.extractor.deriver import process_representation_tasks_batch
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -255,8 +255,8 @@ class TestDeriverIngestionMetrics:
         metric_checker: MetricDeltaChecker,
     ):
         """Verify PROMPT component is tracked for ingestion input."""
-        from src.deriver.deriver import process_representation_tasks_batch
-        from src.deriver.prompts import estimate_minimal_deriver_prompt_tokens
+        from src.agents.extractor.deriver import process_representation_tasks_batch
+        from src.agents.extractor.prompts import estimate_minimal_deriver_prompt_tokens
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -309,7 +309,7 @@ class TestDeriverIngestionMetrics:
         metric_checker: MetricDeltaChecker,
     ):
         """Verify MESSAGES component is tracked for ingestion input."""
-        from src.deriver.deriver import process_representation_tasks_batch
+        from src.agents.extractor.deriver import process_representation_tasks_batch
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -648,7 +648,7 @@ class TestDialecticTokenMetrics:
         metric_checker: MetricDeltaChecker,
     ):
         """Verify INPUT tokens are tracked from LLM response."""
-        from src.dialectic.core import DialecticAgent
+        from src.agents.dialectic.core import DialecticAgent
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -695,7 +695,7 @@ class TestDialecticTokenMetrics:
         metric_checker: MetricDeltaChecker,
     ):
         """Verify OUTPUT tokens are tracked from LLM response."""
-        from src.dialectic.core import DialecticAgent
+        from src.agents.dialectic.core import DialecticAgent
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -743,7 +743,7 @@ class TestDialecticTokenMetrics:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """Verify metrics are NOT emitted when METRICS_ENABLED=False."""
-        from src.dialectic.core import DialecticAgent
+        from src.agents.dialectic.core import DialecticAgent
 
         # Explicitly disable metrics
         monkeypatch.setattr("src.prometheus.METRICS_ENABLED", False)

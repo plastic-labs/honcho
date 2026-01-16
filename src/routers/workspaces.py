@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import db
-from src.deriver.enqueue import enqueue_dream
+from src.agents.extractor.enqueue import enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
 from src.utils.search import search

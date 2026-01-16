@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.deriver.queue_manager import QueueManager, WorkerOwnership
+from src.agents.extractor.queue_manager import QueueManager, WorkerOwnership
 from src.utils.work_unit import construct_work_unit_key
 
 

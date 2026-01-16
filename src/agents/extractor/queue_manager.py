@@ -19,8 +19,8 @@ from src import models, prometheus
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
-from src.deriver.consumer import process_item, process_representation_batch
-from src.dreamer.dream_scheduler import (
+from src.agents.extractor.consumer import process_item, process_representation_batch
+from src.agents.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
     set_dream_scheduler,

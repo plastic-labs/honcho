@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import settings
-from src.dreamer.specialists import SPECIALISTS
-from src.dreamer.surprisal import SurprisalScore  # type: ignore
+from src.agents.dreamer.specialists import SPECIALISTS
+from src.agents.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SpecialistExecutionError, SurprisalError
 from src.utils.config_helpers import get_configuration
 from src.utils.logging import (
@@ -102,7 +102,7 @@ async def run_dream(
     if settings.DREAM.SURPRISAL.ENABLED:
         logger.info(f"[{run_id}] Phase 0: Computing surprisal scores")
         try:
-            from src.dreamer.surprisal import sample_observations_with_surprisal
+            from src.agents.dreamer.surprisal import sample_observations_with_surprisal
 
             high_surprisal_obs = await sample_observations_with_surprisal(
                 db=db,

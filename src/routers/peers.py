@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, prometheus, schemas
 from src.config import settings
 from src.dependencies import db, tracked_db
-from src.dialectic.chat import agentic_chat, agentic_chat_stream
+from src.agents.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 from src.utils.search import search
