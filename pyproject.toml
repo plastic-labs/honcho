@@ -33,6 +33,8 @@ dependencies = [
     "typing-extensions>=4.11.0",
     "prometheus-client>=0.20.0",
     "json-repair>=0.49.0",
+    "turbopuffer>=1.8.1",
+    "lancedb>=0.25.3",
     "redis>=7.0.0,<8.0.0",
     "cashews[redis]==7.4.4",
     "scikit-learn>=1.6.0",
@@ -112,7 +114,7 @@ reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
 reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse"]
+allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow"]
 reportImplicitOverride = false
 reportImportCycles = false
 

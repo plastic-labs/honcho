@@ -10,12 +10,15 @@ from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
-from src.schemas import ResolvedConfiguration
+from src.reconciler.queue_cleanup import cleanup_queue_items
+from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
+from src.schemas import ReconcilerType, ResolvedConfiguration
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
 from src.utils.queue_payload import (
     DeletionPayload,
     DreamPayload,
+    ReconcilerPayload,
     SummaryPayload,
     WebhookPayload,
 )
@@ -30,6 +33,25 @@ async def process_item(queue_item: models.QueueItem) -> None:
     task_type = queue_item.task_type
     queue_payload = queue_item.payload
     workspace_name = queue_item.workspace_name
+
+    # Handle reconciler first - it's the only task type that doesn't require workspace_name
+    if task_type == "reconciler":
+        with sentry_sdk.start_transaction(name="process_reconciler_task", op="deriver"):
+            try:
+                validated = ReconcilerPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid reconciler payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_reconciler(validated)
+        return
+
+    # All other task types require a workspace_name
+    if workspace_name is None:
+        raise ValueError(f"{task_type} tasks require a workspace_name")
 
     if task_type == "webhook":
         try:
@@ -220,3 +242,43 @@ async def process_deletion(
 
         else:
             raise ValueError(f"Unsupported deletion type: {deletion_type}")
+
+
+async def process_reconciler(payload: ReconcilerPayload) -> None:
+    """
+    Process a reconciler task from the queue.
+
+    Currently supports:
+    - sync_vectors: Syncs pending documents/message embeddings to vector store
+      and cleans up soft-deleted documents.
+    - cleanup_queue: Removes old processed queue items.
+
+    Args:
+        payload: The reconciler payload containing the reconciler type
+    """
+    reconciler_type = payload.reconciler_type
+
+    if reconciler_type == ReconcilerType.SYNC_VECTORS:
+        logger.debug("Processing sync_vectors task")
+        metrics = await run_vector_reconciliation_cycle()
+
+        if (
+            metrics.total_synced > 0
+            or metrics.total_failed > 0
+            or metrics.total_cleaned > 0
+        ):
+            logger.info(
+                "Reconciliation complete: synced %s docs, %s message embeddings; failed %s docs, %s message embeddings; cleaned %s docs",
+                metrics.documents_synced,
+                metrics.message_embeddings_synced,
+                metrics.documents_failed,
+                metrics.message_embeddings_failed,
+                metrics.documents_cleaned,
+            )
+
+    elif reconciler_type == ReconcilerType.CLEANUP_QUEUE:
+        logger.debug("Processing cleanup_queue task")
+        await cleanup_queue_items()
+
+    else:
+        raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

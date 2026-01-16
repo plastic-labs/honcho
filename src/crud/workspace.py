@@ -12,6 +12,7 @@ from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
+from src.vector_store import get_external_vector_store
 
 logger = getLogger(__name__)
 
@@ -274,6 +275,14 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
             )
         )
 
+        # Get all collections for this workspace to delete their vector namespaces
+        collections_result = await db.execute(
+            select(models.Collection).where(
+                models.Collection.workspace_name == workspace_name
+            )
+        )
+        collections = collections_result.scalars().all()
+
         await db.execute(
             delete(models.MessageEmbedding).where(
                 models.MessageEmbedding.workspace_name == workspace_name
@@ -315,6 +324,51 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         )
         await db.delete(honcho_workspace)
         await db.commit()
+
+        # Delete vector store namespaces for this workspace
+        external_vector_store = get_external_vector_store()
+
+        # Delete message embeddings namespace for this workspace
+        if external_vector_store:
+            message_namespace = external_vector_store.get_vector_namespace(
+                "message", workspace_name
+            )
+            try:
+                await external_vector_store.delete_namespace(message_namespace)
+                logger.debug(
+                    "Deleted message embeddings namespace %s for workspace %s",
+                    message_namespace,
+                    workspace_name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete message embeddings namespace %s: %s",
+                    message_namespace,
+                    e,
+                )
+
+            # Delete document embeddings namespaces for each collection
+            for collection in collections:
+                doc_namespace = external_vector_store.get_vector_namespace(
+                    "document",
+                    workspace_name,
+                    collection.observer,
+                    collection.observed,
+                )
+                try:
+                    await external_vector_store.delete_namespace(doc_namespace)
+                    logger.debug(
+                        "Deleted document namespace %s for collection %s/%s",
+                        doc_namespace,
+                        collection.observer,
+                        collection.observed,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to delete document namespace %s: %s",
+                        doc_namespace,
+                        e,
+                    )
 
         cache_key = workspace_cache_key(workspace_name)
         workspace_pattern = f"{cache_key}*"

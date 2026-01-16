@@ -19,13 +19,21 @@ from src import models, prometheus
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
-from src.deriver.consumer import process_item, process_representation_batch
+from src.deriver.consumer import (
+    process_item,
+    process_representation_batch,
+)
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
     set_dream_scheduler,
 )
 from src.models import QueueItem
+from src.reconciler import (
+    ReconcilerScheduler,
+    get_reconciler_scheduler,
+    set_reconciler_scheduler,
+)
 from src.schemas import ResolvedConfiguration
 from src.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
@@ -52,7 +60,6 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
-        self._maintenance_task: asyncio.Task[None] | None = None
 
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
@@ -65,6 +72,14 @@ class QueueManager:
             set_dream_scheduler(self.dream_scheduler)
         else:
             self.dream_scheduler = existing_scheduler
+
+        # Get or create the singleton reconciler scheduler
+        existing_reconciler = get_reconciler_scheduler()
+        if existing_reconciler is None:
+            self.reconciler_scheduler: ReconcilerScheduler = ReconcilerScheduler()
+            set_reconciler_scheduler(self.reconciler_scheduler)
+        else:
+            self.reconciler_scheduler = existing_reconciler
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
@@ -108,11 +123,11 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start background maintenance loop
+        # Start the reconciler scheduler
         try:
-            self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+            await self.reconciler_scheduler.start()
         except Exception:
-            logger.exception("Failed to start maintenance loop")
+            logger.exception("Failed to start reconciler scheduler")
 
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
@@ -128,6 +143,9 @@ class QueueManager:
 
         # Cancel all pending dreams
         await self.dream_scheduler.shutdown()
+
+        # Stop the reconciler scheduler
+        await self.reconciler_scheduler.shutdown()
 
         if self.active_tasks:
             logger.info(
@@ -159,14 +177,6 @@ class QueueManager:
                     sentry_sdk.capture_exception(e)
             finally:
                 self.worker_ownership.clear()
-
-        # Cancel maintenance loop if running
-        if self._maintenance_task is not None:
-            from contextlib import suppress
-
-            self._maintenance_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._maintenance_task
 
     ##########################
     # Polling and Scheduling #
@@ -353,55 +363,6 @@ class QueueManager:
     # Queue Worker Logic #
     ######################
 
-    async def cleanup_queue_items(self) -> None:
-        """Delete processed queue items.
-        Successfully processed queue items are deleted immediately,
-        while errored queue items are deleted after retention window."""
-        async with tracked_db("cleanup_queue_items") as db:
-            now = datetime.now(timezone.utc)
-            error_cutoff = now - timedelta(
-                seconds=settings.DERIVER.QUEUE_ERROR_RETENTION_SECONDS
-            )
-
-            await db.execute(
-                delete(models.QueueItem).where(
-                    models.QueueItem.processed
-                    & (
-                        models.QueueItem.error.is_(None)
-                        | (
-                            models.QueueItem.error.is_not(None)
-                            & (models.QueueItem.created_at < error_cutoff)
-                        )
-                    )
-                )
-            )
-            await db.commit()
-
-    async def _maintenance_loop(self) -> None:
-        """Run periodic maintenance tasks on the queue."""
-        try:
-            while not self.shutdown_event.is_set():
-                try:
-                    await self.cleanup_queue_items()
-                except Exception:
-                    logger.exception("Error during maintenance cleanup")
-                    if settings.SENTRY.ENABLED:
-                        sentry_sdk.capture_exception()
-
-                # Sleep until interval elapses or shutdown event is set
-                try:
-                    await asyncio.wait_for(
-                        self.shutdown_event.wait(),
-                        timeout=43200,  # 12 hours
-                    )
-                    break  # Shutdown event set
-                except asyncio.TimeoutError:
-                    # Timeout means it's time for next cleanup
-                    pass
-        except asyncio.CancelledError:
-            logger.debug("Maintenance loop cancelled")
-            raise
-
     async def _handle_processing_error(
         self,
         error: Exception,
@@ -545,7 +506,10 @@ class QueueManager:
                 if removed and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        if work_unit.task_type in ["representation", "summary"]:
+                        if (
+                            work_unit.task_type in ["representation", "summary"]
+                            and work_unit.workspace_name is not None
+                        ):
                             logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
                             )
@@ -807,7 +771,10 @@ class QueueManager:
             )
             await db.commit()
 
-            if work_unit.task_type in ["representation", "summary"]:
+            if (
+                work_unit.task_type in ["representation", "summary"]
+                and work_unit.workspace_name is not None
+            ):
                 prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,
@@ -853,6 +820,7 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
+
     try:
         await init_cache()
     except Exception as e:

@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from src.schemas import DreamType, ResolvedConfiguration
+from src.schemas import DreamType, ReconcilerType, ResolvedConfiguration
 
 
 class BasePayload(BaseModel):
@@ -65,6 +65,13 @@ class DeletionPayload(BasePayload):
     task_type: Literal["deletion"] = "deletion"
     deletion_type: Literal["session", "observation"]
     resource_id: str
+
+
+class ReconcilerPayload(BasePayload):
+    """Payload for reconciler tasks (vector sync, queue cleanup, self-healing)."""
+
+    task_type: Literal["reconciler"] = "reconciler"
+    reconciler_type: ReconcilerType
 
 
 def create_webhook_payload(

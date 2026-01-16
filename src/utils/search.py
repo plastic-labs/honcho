@@ -18,6 +18,7 @@ from src.exceptions import ValidationException
 from src.models import session_peers_table
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
 
@@ -67,17 +68,19 @@ def reciprocal_rank_fusion(*ranked_lists: list[T], k: int = 60, limit: int) -> l
 async def _semantic_search(
     db: AsyncSession,
     query: str,
-    stmt: Select[tuple[models.Message]],
+    workspace_name: str,
     limit: int,
+    filters: dict[str, Any] | None = None,
 ) -> list[models.Message]:
     """
-    Perform semantic search using message embeddings.
+    Perform semantic search using external vector store for message embeddings.
 
     Args:
         db: Database session
         query: Search query
-        stmt: Base SQL query conditions
+        workspace_name: Name of the workspace to search in
         limit: Maximum number of results to return
+        filters: Optional filters to apply at vector store level (supports: session_id, peer_id)
 
     Returns:
         list of messages ordered by semantic similarity
@@ -89,16 +92,153 @@ async def _semantic_search(
             f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
         ) from e
 
-    # Use cosine distance for semantic search on MessageEmbedding table
-    semantic_query = stmt.join(
-        models.MessageEmbedding,
-        models.Message.public_id == models.MessageEmbedding.message_id,
-    ).order_by(models.MessageEmbedding.embedding.cosine_distance(embedding_query))
+    # Query Postgres / pgvector directly
+    if settings.EMBED_MESSAGES and (
+        settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
+    ):
+        # Join message_embeddings with messages to get full message objects
+        distance_expr = models.MessageEmbedding.embedding.cosine_distance(
+            embedding_query
+        )
 
-    semantic_query = semantic_query.limit(limit)
+        stmt = (
+            select(models.Message)
+            .join(
+                models.MessageEmbedding,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            )
+            .where(models.MessageEmbedding.embedding.isnot(None))
+            .where(models.MessageEmbedding.workspace_name == workspace_name)
+        )
+
+        # Apply all additional filters using the standard filter utility
+        # filters dict uses external names (session_id, peer_id) which apply_filter will map
+        # to internal column names (session_name, peer_name)
+        if filters:
+            # Create a copy with workspace added
+            internal_filters = filters.copy()
+            internal_filters["workspace_id"] = workspace_name
+            stmt = apply_filter(stmt, models.Message, internal_filters)
+
+        # Order by cosine distance and limit
+        stmt = stmt.order_by(distance_expr).limit(limit)
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    # FALLBACK: Use external vector store (Turbopuffer, LanceDB)
+    external_vector_store = get_external_vector_store()
+    if external_vector_store is None:
+        return []
+
+    namespace = external_vector_store.get_vector_namespace("message", workspace_name)
+
+    # Build vector store filters from the provided filters
+    vector_filters: dict[str, Any] = {}
+    if filters:
+        # Map external filter keys to vector store metadata keys
+        if "session_id" in filters:
+            vector_filters["session_name"] = filters["session_id"]
+        if "peer_id" in filters:
+            vector_filters["peer_name"] = filters["peer_id"]
+
+    # Query external vector store for similar message embeddings
+    # Since all filters are applied at the vector store level, we don't need to oversample
+    vector_results = await external_vector_store.query(
+        namespace,
+        embedding_query,
+        top_k=limit,
+        filters=vector_filters if vector_filters else None,
+    )
+
+    if not vector_results:
+        return []
+
+    # Extract message IDs from vector metadata
+    # Use dict to deduplicate while preserving order (dict keys maintain insertion order in Python 3.7+)
+    seen_message_ids: dict[str, None] = {}
+
+    for result in vector_results:
+        message_id = result.metadata.get("message_id")
+        if message_id and message_id not in seen_message_ids:
+            seen_message_ids[message_id] = None
+
+    message_ids = list(seen_message_ids.keys())
+
+    # Fetch messages from database by the IDs from vector search and reapply filters
+    semantic_query = select(models.Message).where(
+        models.Message.public_id.in_(message_ids)
+    )
+    semantic_query = apply_filter(semantic_query, models.Message, filters)
 
     result = await db.execute(semantic_query)
-    return list(result.scalars().all())
+    messages = {msg.public_id: msg for msg in result.scalars().all()}
+
+    # Return messages in order of similarity (preserving vector store order)
+    ordered_messages: list[models.Message] = []
+    for msg_id in message_ids:
+        if msg_id in messages:
+            ordered_messages.append(messages[msg_id])
+
+    return ordered_messages
+
+
+async def _filter_by_peer_perspective(
+    db: AsyncSession,
+    messages: list[models.Message],
+    workspace_name: str,
+    peer_name: str,
+) -> list[models.Message]:
+    """
+    Filter messages by peer perspective (temporal session membership).
+
+    Only keeps messages from sessions where the peer was a member at the time
+    the message was created (between joined_at and left_at).
+
+    Args:
+        db: Database session
+        messages: List of messages to filter
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer whose perspective to use
+
+    Returns:
+        Filtered list of messages
+    """
+    if not messages:
+        return []
+
+    # Get all session memberships for this peer in this workspace
+    session_memberships_query = (
+        select(session_peers_table)
+        .where(session_peers_table.c.workspace_name == workspace_name)
+        .where(session_peers_table.c.peer_name == peer_name)
+    )
+    result = await db.execute(session_memberships_query)
+    memberships = result.all()
+
+    # Build a lookup of session -> time windows
+    session_windows: dict[str, list[tuple[Any, Any]]] = {}
+    for membership in memberships:
+        session_name = membership.session_name
+        if session_name not in session_windows:
+            session_windows[session_name] = []
+        session_windows[session_name].append((membership.joined_at, membership.left_at))
+
+    # Filter messages
+    filtered_messages: list[models.Message] = []
+    for msg in messages:
+        if msg.session_name not in session_windows:
+            continue
+
+        # Check if message was created during any of the peer's active windows in this session
+        for joined_at, left_at in session_windows[msg.session_name]:
+            if msg.created_at >= joined_at and (
+                left_at is None or msg.created_at <= left_at
+            ):
+                filtered_messages.append(msg)
+                break  # Don't add the same message twice
+
+    return filtered_messages
 
 
 async def _fulltext_search(
@@ -183,9 +323,9 @@ async def search(
     Args:
         db: Database session
         query: Search query to match against message content
-        filters: Optional filters to scope search. Special filter 'peer_perspective' will search
-                across all messages from sessions that the peer is/was a member of, filtered
-                by the time window when they were actually in the session.
+        filters: Optional filters to scope search (must include workspace_id for semantic search).
+            Special filter 'peer_perspective' will search across all messages from sessions that the peer is/was a member of,
+            filtered by the time window when they were actually in the session.
         limit: Maximum number of results to return
 
     Returns:
@@ -198,8 +338,9 @@ async def search(
     stmt = select(models.Message)
 
     # Handle special peer_perspective filter
+    peer_perspective_name: str | None = None
     if filters and "peer_perspective" in filters:
-        peer_name = filters["peer_perspective"]
+        peer_perspective_name = filters["peer_perspective"]
         # Remove from filters dict so apply_filter doesn't try to handle it
         filters = {k: v for k, v in filters.items() if k != "peer_perspective"}
         # Safety: peer_perspective must be scoped to a workspace
@@ -223,19 +364,34 @@ async def search(
                     models.Message.created_at <= session_peers_table.c.left_at,
                 ),
             ),
-        ).where(session_peers_table.c.peer_name == peer_name)
+        ).where(session_peers_table.c.peer_name == peer_perspective_name)
 
     stmt = apply_filter(stmt, models.Message, filters)
 
     search_results: list[list[models.Message]] = []
 
-    # Perform semantic search if enabled
-    if settings.EMBED_MESSAGES:
-        # Get more results for fusion
-        semantic_limit = limit * 2
+    # Perform semantic search if enabled and we have workspace context
+    # workspace_id is required for semantic search to determine the vector namespace
+    workspace_name: str | None = filters.get("workspace_id") if filters else None
+    if settings.EMBED_MESSAGES and isinstance(workspace_name, str):
+        # Type narrowing: workspace_name is guaranteed to be str in this block
+        # Get more results for fusion (increase if peer_perspective filtering is applied post-search)
+        semantic_limit = limit * 4 if peer_perspective_name else limit * 2
         semantic_results = await _semantic_search(
-            db=db, query=query, stmt=stmt, limit=semantic_limit
+            db=db,
+            query=query,
+            workspace_name=workspace_name,
+            limit=semantic_limit,
+            filters=filters,
         )
+
+        # Apply peer_perspective filtering to semantic results if needed
+        # Vector store can't handle temporal filtering (joined_at/left_at), so filter post-search
+        if peer_perspective_name:
+            semantic_results = await _filter_by_peer_perspective(
+                db, semantic_results, workspace_name, peer_perspective_name
+            )
+
         search_results.append(semantic_results)
 
     # Perform full-text search

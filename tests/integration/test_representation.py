@@ -277,7 +277,6 @@ class TestDocumentCreationWorkflow:
             level="explicit",
             times_derived=5,
             internal_metadata={},
-            embedding=[0.1] * 1536,
         )
         db_session.add(highly_derived_doc)
 
@@ -291,7 +290,6 @@ class TestDocumentCreationWorkflow:
             level="explicit",
             times_derived=2,
             internal_metadata={},
-            embedding=[0.2] * 1536,
         )
         db_session.add(less_derived_doc)
 
@@ -325,7 +323,6 @@ class TestDocumentCreationWorkflow:
                 "message_ids": [1],
             },
             session_name="test_session",
-            embedding=[0.1] * 1536,
             created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
         )
 
@@ -341,7 +338,6 @@ class TestDocumentCreationWorkflow:
                 "premises": ["User said they like programming"],
             },
             session_name="test_session",
-            embedding=[0.2] * 1536,
             created_at=datetime(2025, 1, 1, 10, 1, 0, tzinfo=timezone.utc),
         )
 
