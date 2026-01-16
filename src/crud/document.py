@@ -140,6 +140,7 @@ async def query_documents_recent(
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
+        models.Document.deleted_at.is_(None),
     )
 
     if session_name is not None:
@@ -178,6 +179,7 @@ async def query_documents_most_derived(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
+            models.Document.deleted_at.is_(None),
         )
         .order_by(models.Document.times_derived.desc())
         .limit(limit)
@@ -956,6 +958,7 @@ async def get_documents_by_ids(
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
         models.Document.id.in_(document_ids),
+        models.Document.deleted_at.is_(None),
     )
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -989,6 +992,7 @@ async def get_child_observations(
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
         models.Document.source_ids.contains([parent_id]),
+        models.Document.deleted_at.is_(None),
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)

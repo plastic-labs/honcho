@@ -187,9 +187,11 @@ def upgrade() -> None:
 
     # Add partial unique index on queue table for reconciler task deduplication
     # This ensures only one pending reconciler task exists per work_unit_key
-    if not index_exists("queue", "uq_queue_work_unit_key", inspector):
+    if not index_exists(
+        "queue", "uq_queue_reconciler_pending_work_unit_key", inspector
+    ):
         op.create_index(
-            "uq_queue_work_unit_key",
+            "uq_queue_reconciler_pending_work_unit_key",
             "queue",
             ["work_unit_key"],
             unique=True,
@@ -292,9 +294,9 @@ def downgrade() -> None:
     )
 
     # Drop reconciler queue index if it exists
-    if index_exists("queue", "uq_queue_work_unit_key", inspector):
+    if index_exists("queue", "uq_queue_reconciler_pending_work_unit_key", inspector):
         op.drop_index(
-            "uq_queue_work_unit_key",
+            "uq_queue_reconciler_pending_work_unit_key",
             table_name="queue",
             schema=schema,
         )

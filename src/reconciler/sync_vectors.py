@@ -459,12 +459,113 @@ async def _cleanup_soft_deleted_documents_pgvector(
     return len(doc_ids)
 
 
+async def _reconcile_documents_batch(
+    external_vector_store: VectorStore,
+    metrics: ReconciliationMetrics,
+) -> bool:
+    """
+    Reconcile a single batch of documents.
+
+    Returns True if work was done, False otherwise.
+    """
+    async with tracked_db("reconciliation_docs") as db:
+        docs = await _get_documents_needing_sync(db)
+        if not docs:
+            return False
+
+        synced, failed = await _sync_documents(db, docs, external_vector_store)
+        metrics.documents_synced += synced
+        metrics.documents_failed += failed
+        await db.commit()
+        return True
+
+
+async def _reconcile_message_embeddings_batch(
+    external_vector_store: VectorStore,
+    metrics: ReconciliationMetrics,
+) -> bool:
+    """
+    Reconcile a single batch of message embeddings.
+
+    Returns True if work was done, False otherwise.
+    """
+    async with tracked_db("reconciliation_embs") as db:
+        embs = await _get_message_embeddings_needing_sync(db)
+        if not embs:
+            return False
+
+        try:
+            synced, failed = await _sync_message_embeddings(
+                db, embs, external_vector_store
+            )
+        except Exception:
+            logger.exception(
+                "Message embedding reconciliation failed for %s embeddings",
+                len(embs),
+            )
+            await _bump_message_embedding_sync_attempts(db, embs)
+            synced = 0
+            failed = len(embs)
+
+        metrics.message_embeddings_synced += synced
+        metrics.message_embeddings_failed += failed
+        await db.commit()
+        return True
+
+
+async def _cleanup_documents_batch(
+    external_vector_store: VectorStore,
+    metrics: ReconciliationMetrics,
+) -> bool:
+    """
+    Clean up a single batch of soft-deleted documents.
+
+    Returns True if work was done, False otherwise.
+    """
+    from src.crud.document import cleanup_soft_deleted_documents
+
+    async with tracked_db("reconciliation_cleanup") as db:
+        cleaned = await cleanup_soft_deleted_documents(
+            db,
+            external_vector_store,
+            batch_size=RECONCILIATION_BATCH_SIZE,
+        )
+        if not cleaned:
+            return False
+
+        metrics.documents_cleaned += cleaned
+        await db.commit()
+        return True
+
+
+async def _cleanup_pgvector_batch(
+    metrics: ReconciliationMetrics,
+) -> bool:
+    """
+    Clean up a single batch of soft-deleted documents in pgvector-only mode.
+
+    Returns True if work was done, False otherwise.
+    """
+    async with tracked_db("reconciliation_pgvector_cleanup") as db:
+        cleaned = await _cleanup_soft_deleted_documents_pgvector(
+            db, batch_size=RECONCILIATION_BATCH_SIZE
+        )
+        if not cleaned:
+            return False
+
+        metrics.documents_cleaned += cleaned
+        await db.commit()
+        return True
+
+
 async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     """
     Run a complete reconciliation cycle.
 
     Runs a rolling sweep to reconcile missing vectors and clean up soft deletes.
     Uses batching and FOR UPDATE SKIP LOCKED for safe concurrent operation.
+    Each batch operation uses its own database session to avoid holding
+    connections open for the entire cycle duration.
 
     Returns metrics about what was synced.
     """
@@ -472,74 +573,38 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     external_vector_store = get_external_vector_store()
     deadline = time.monotonic() + RECONCILIATION_TIME_BUDGET_SECONDS
 
-    from src.crud.document import cleanup_soft_deleted_documents
-
-    async with tracked_db("reconciliation") as db:
-        # If no external vector store (pgvector mode), only clean up soft-deleted documents
-        if external_vector_store is None:
-            while time.monotonic() < deadline:
-                cleaned = await _cleanup_soft_deleted_documents_pgvector(
-                    db, batch_size=RECONCILIATION_BATCH_SIZE
-                )
-                if cleaned:
-                    metrics.documents_cleaned += cleaned
-                    await db.commit()
-                else:
-                    break
-            return metrics
-
+    # If no external vector store (pgvector mode), only clean up soft-deleted documents
+    if external_vector_store is None:
         while time.monotonic() < deadline:
-            did_work = False
-
-            # Reconcile documents
-            docs = await _get_documents_needing_sync(db)
-            if docs:
-                synced, failed = await _sync_documents(db, docs, external_vector_store)
-                metrics.documents_synced += synced
-                metrics.documents_failed += failed
-                await db.commit()
-                did_work = True
-
-            if time.monotonic() >= deadline:
-                break
-
-            # Reconcile message embeddings
-            embs = await _get_message_embeddings_needing_sync(db)
-            if embs:
-                try:
-                    synced, failed = await _sync_message_embeddings(
-                        db, embs, external_vector_store
-                    )
-                except Exception:
-                    logger.exception(
-                        "Message embedding reconciliation failed for %s embeddings",
-                        len(embs),
-                    )
-                    await _bump_message_embedding_sync_attempts(db, embs)
-                    synced = 0
-                    failed = len(embs)
-                metrics.message_embeddings_synced += synced
-                metrics.message_embeddings_failed += failed
-                await db.commit()
-                did_work = True
-
-            if time.monotonic() >= deadline:
-                break
-
-            # Clean up soft-deleted documents
-            cleaned = await cleanup_soft_deleted_documents(
-                db,
-                external_vector_store,
-                batch_size=RECONCILIATION_BATCH_SIZE,
-            )
-            if cleaned:
-                metrics.documents_cleaned += cleaned
-                await db.commit()
-                did_work = True
-
+            did_work = await _cleanup_pgvector_batch(metrics)
             if not did_work:
-                logger.debug("No work done, breaking reconciliation loop")
                 break
-    logger.info("Vector reconciliation cycle completed")
+        logger.info("Vector reconciliation cycle completed (pgvector mode)")
+        return metrics
 
+    # External vector store mode - reconcile documents, embeddings, and cleanup
+    while time.monotonic() < deadline:
+        # Reconcile documents
+        docs_work = await _reconcile_documents_batch(external_vector_store, metrics)
+
+        if time.monotonic() >= deadline:
+            break
+
+        # Reconcile message embeddings
+        embs_work = await _reconcile_message_embeddings_batch(
+            external_vector_store, metrics
+        )
+
+        if time.monotonic() >= deadline:
+            break
+
+        # Clean up soft-deleted documents
+        cleanup_work = await _cleanup_documents_batch(external_vector_store, metrics)
+
+        # Continue only if any operation did work
+        if not (docs_work or embs_work or cleanup_work):
+            logger.debug("No work done, breaking reconciliation loop")
+            break
+
+    logger.info("Vector reconciliation cycle completed")
     return metrics
