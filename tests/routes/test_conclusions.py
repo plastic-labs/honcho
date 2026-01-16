@@ -346,25 +346,9 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create test conclusions via API (this populates the vector store)
-        _create_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "User loves pizza and pasta",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    },
-                    {
-                        "content": "User dislikes vegetables",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    },
-                ]
-            },
+        # Create collection
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
         # Create test conclusions
