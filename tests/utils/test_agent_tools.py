@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.config import settings
 from src.utils.agent_tools import (
     ToolContext,
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
@@ -252,7 +253,7 @@ class TestDeleteObservations:
         tool_test_data: Any,
         make_tool_context: Callable[..., ToolContext],
     ):
-        """Successfully deletes observation by ID."""
+        """Successfully soft-deletes observation by ID."""
         _, _, _, _, _, documents = tool_test_data
         ctx = make_tool_context(include_observation_ids=True)
 
@@ -261,10 +262,11 @@ class TestDeleteObservations:
 
         assert "Deleted 1 observations" in result
 
-        # Verify deletion
+        # Verify soft-deletion (document still exists but has deleted_at timestamp)
         stmt = select(models.Document).where(models.Document.id == doc_id)
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
-        assert doc is None
+        assert doc is not None
+        assert doc.deleted_at is not None
 
     async def test_delete_invalid_id_handled_gracefully(
         self, make_tool_context: Callable[..., ToolContext]
@@ -311,9 +313,14 @@ class TestSearchMemory:
     """Tests for _handle_search_memory."""
 
     async def test_returns_matching_observations(
-        self, make_tool_context: Callable[..., ToolContext]
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Returns observations matching semantic query."""
+        # Force pgvector queries since test documents are created directly in postgres
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", False)
+
         ctx = make_tool_context()
 
         result = await _handle_search_memory(ctx, {"query": "coffee preferences"})

@@ -62,7 +62,6 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="User prefers dark mode",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -70,7 +69,6 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="User works late at night",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -170,7 +168,6 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Peer1 observes Peer2",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -178,7 +175,6 @@ class TestConclusionRoutes:
             observer=test_peer2.name,
             observed=test_peer3.name,
             content="Peer2 observes Peer3",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -350,9 +346,25 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create test conclusions via API (this populates the vector store)
+        _create_response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "User loves pizza and pasta",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "User dislikes vegetables",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
         )
 
         # Create test conclusions
@@ -640,7 +652,9 @@ class TestConclusionRoutes:
 
         stmt = select(models.Document).where(models.Document.id == conclusion_id)
         result = await db_session.execute(stmt)
-        assert result.scalar_one_or_none() is None
+        doc = result.scalar_one_or_none()
+        assert doc is not None
+        assert doc.deleted_at is not None
 
     @pytest.mark.asyncio
     async def test_delete_conclusion_not_found(

@@ -27,6 +27,13 @@ class DreamType(str, Enum):
     OMNI = "omni"
 
 
+class ReconcilerType(str, Enum):
+    """Types of reconciler tasks that can be performed."""
+
+    SYNC_VECTORS = "sync_vectors"
+    CLEANUP_QUEUE = "cleanup_queue"
+
+
 class ReasoningConfiguration(BaseModel):
     enabled: bool | None = Field(
         default=None,

@@ -64,16 +64,13 @@ async def test_message_embedding_created_when_setting_enabled(
     result = await db_session.execute(stmt)
     embedding_record = result.scalar_one_or_none()
 
-    # Verify the embedding was created
+    # Verify the embedding record was created (embedding vectors are now stored externally)
     assert embedding_record is not None
     assert embedding_record.message_id == created_message.public_id
     assert embedding_record.content == test_message_content
     assert embedding_record.workspace_name == test_workspace.name
     assert embedding_record.session_name == test_session.name
     assert embedding_record.peer_name == test_peer.name
-    # Verify embedding vector exists and is not empty
-    assert embedding_record.embedding is not None
-    assert len(embedding_record.embedding) > 0
 
 
 @pytest.mark.asyncio
@@ -176,15 +173,13 @@ async def test_multiple_message_embeddings_created_when_setting_enabled(
         result = await db_session.execute(stmt)
         embedding_record = result.scalar_one_or_none()
 
-        # Verify the embedding was created
+        # Verify the embedding record was created (embedding vectors are now stored externally)
         assert embedding_record is not None
         assert embedding_record.message_id == created_message.public_id
         assert embedding_record.content == messages[i].content
         assert embedding_record.workspace_name == test_workspace.name
         assert embedding_record.session_name == test_session.name
         assert embedding_record.peer_name == test_peer.name
-        assert embedding_record.embedding is not None
-        assert len(embedding_record.embedding) > 0
 
 
 @pytest.mark.asyncio
@@ -322,7 +317,8 @@ async def test_message_chunking_creates_multiple_embeddings(
     result = await db_session.execute(stmt)
     embedding_records = list(result.scalars().all())
 
-    # Verify multiple embeddings were created (one per chunk)
+    # Verify multiple embedding records were created (one per chunk)
+    # Embedding vectors are now stored externally in the vector store
     assert len(embedding_records) == 3  # Should have 3 embeddings for 3 chunks
 
     for _, embedding_record in enumerate(embedding_records):
@@ -333,7 +329,3 @@ async def test_message_chunking_creates_multiple_embeddings(
         assert embedding_record.workspace_name == test_workspace.name
         assert embedding_record.session_name == test_session.name
         assert embedding_record.peer_name == test_peer.name
-        assert embedding_record.embedding is not None
-        assert len(embedding_record.embedding) == 1536
-        # Each chunk should have a different embedding vector (0.1, 0.2, 0.3)
-        assert embedding_record.embedding[0] in [0.1, 0.2, 0.3]
