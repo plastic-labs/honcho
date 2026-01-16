@@ -1,7 +1,7 @@
 import random
 import uuid
 
-from honcho import Honcho
+from honcho import Honcho, MessageCreateParams
 
 # Create a Honcho client with the default workspace
 honcho = Honcho(environment="local")
@@ -16,7 +16,7 @@ peers = [
 session = honcho.session("context_test_" + str(uuid.uuid4()))
 
 # Generate some random messages from alice, bob, and charlie and add them to the session
-messages = []
+messages: list[MessageCreateParams] = []
 for i in range(10):
     random_peer = random.choice(peers)
     messages.append(
@@ -27,5 +27,5 @@ session.add_messages(messages)
 
 # Get some context of the session
 # Set the token limit super low so we only get a few of the tiny messages created
-context = session.get_context(summary=True, tokens=50)
+context = session.context(summary=True, tokens=50)
 print("context returned:", context)

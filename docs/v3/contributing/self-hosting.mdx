@@ -1,0 +1,324 @@
+---
+title: 'Local Environment Setup'
+sidebarTitle: 'Local Environment'
+description: 'Set up a local environment to run Honcho for development, testing, or self-hosting'
+icon: 'computer'
+---
+
+This guide helps you set up a local environment to run Honcho for development, testing, or self-hosting.
+
+## Overview
+
+By the end of this guide, you'll have:
+- A local Honcho server running on your machine
+- A PostgreSQL database with pgvector extension
+- Basic configuration to connect your applications
+- A working environment for development or testing
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+### Required Software
+- **uv** - Python package manager: `pip install uv` (manages Python installations automatically)
+- **Git** - [Download from git-scm.com](https://git-scm.com/downloads)
+- **Docker** (optional) - [Download from docker.com](https://www.docker.com/products/docker-desktop/)
+
+### Database Options
+You'll need a PostgreSQL database with the pgvector extension. Choose one:
+
+- **Local PostgreSQL** - Install locally or use Docker
+- **Supabase** - Free cloud PostgreSQL with pgvector
+- **Railway** - Simple cloud PostgreSQL hosting
+- **Your own PostgreSQL server**
+
+## Docker Setup (Recommended)
+
+The easiest way to get started is using Docker Compose, which handles both the database and Honcho server.
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/plastic-labs/honcho.git
+cd honcho
+```
+
+### 2. Set Up Environment Variables
+
+Copy the example environment file and configure it:
+
+```bash
+cp .env.template .env
+```
+
+Edit `.env` and set your API keys (if using LLM features):
+
+```bash
+# Optional API keys (required for LLM features)
+OPENAI_API_KEY=your-openai-api-key
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Database will be created automatically by Docker
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/honcho
+
+# Disable auth for local development
+AUTH_USE_AUTH=false
+```
+
+### 3. Start the Services
+
+```bash
+# Copy the example docker-compose file
+cp docker-compose.yml.example docker-compose.yml
+
+# Start PostgreSQL and Honcho
+docker compose up -d
+```
+
+### 4. Verify It's Working
+
+Check that both services are running:
+
+```bash
+docker compose ps
+```
+
+Test the Honcho API:
+
+```bash
+curl http://localhost:8000/health
+```
+
+You should see a response indicating the service is healthy.
+
+## Manual Setup
+
+For more control over your environment, you can set up everything manually.
+
+### 1. Clone and Install Dependencies
+
+```bash
+git clone https://github.com/plastic-labs/honcho.git
+cd honcho
+
+# Install dependencies using uv (this will also set up Python if needed)
+uv sync
+
+# Activate the virtual environment
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+### 2. Set Up PostgreSQL
+
+#### Option A: Local PostgreSQL Installation
+
+Install PostgreSQL and pgvector on your system:
+
+**macOS (using Homebrew):**
+```bash
+brew install postgresql
+brew install pgvector
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+# Install pgvector extension (see pgvector docs for your version)
+```
+
+**Windows:**
+Download from [postgresql.org](https://www.postgresql.org/download/windows/)
+
+#### Option B: Docker PostgreSQL
+
+```bash
+docker run --name honcho-db \
+  -e POSTGRES_DB=honcho \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  -d pgvector/pgvector:pg15
+```
+
+### 3. Create Database and Enable Extensions
+
+Connect to PostgreSQL and set up the database:
+
+```bash
+# Connect to PostgreSQL
+psql -U postgres
+
+# Create database and enable extensions
+CREATE DATABASE honcho;
+\c honcho
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+\q
+```
+
+### 4. Configure Environment
+
+Create a `.env` file with your settings:
+
+```bash
+cp .env.template .env
+```
+
+Edit `.env` with your configuration:
+
+```bash
+# Database connection
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+
+# Optional API keys (required for LLM features)
+OPENAI_API_KEY=your-openai-api-key
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Development settings
+AUTH_USE_AUTH=false
+LOG_LEVEL=DEBUG
+```
+
+### 5. Run Database Migrations
+
+```bash
+# Run migrations to create tables
+uv run alembic upgrade head
+```
+
+### 6. Start the Server
+
+```bash
+# Start the development server
+fastapi dev src/main.py
+```
+
+The server will be available at `http://localhost:8000`.
+
+## Cloud Database Setup
+
+If you prefer to use a managed PostgreSQL service:
+
+### Supabase (Recommended)
+
+1. **Create a Supabase project** at [supabase.com](https://supabase.com)
+2. **Enable pgvector extension** in the SQL editor:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   CREATE EXTENSION IF NOT EXISTS pg_trgm;
+   ```
+3. **Get your connection string** from Settings > Database
+4. **Update your `.env` file** with the connection string
+
+### Railway
+
+1. **Create a Railway project** at [railway.app](https://railway.app)
+2. **Add a PostgreSQL service**
+3. **Enable pgvector** in the PostgreSQL console
+4. **Get your connection string** from the service variables
+5. **Update your `.env` file**
+
+## Verify Your Setup
+
+Once your Honcho server is running, verify everything is working:
+
+### 1. Health Check
+
+```bash
+curl http://localhost:8000/health
+```
+
+### 2. API Documentation
+
+Visit `http://localhost:8000/docs` to see the interactive API documentation.
+
+### 3. Test with SDK
+
+Create a simple test script:
+
+```python
+from honcho import Honcho
+
+# Connect to your local instance
+client = Honcho(base_url="http://localhost:8000")
+
+# Create a test peer
+peer = client.peer("test-user")
+print(f"Created peer: {peer.id}")
+```
+
+## Connect Your Application
+
+Now that Honcho is running locally, you can connect your applications:
+
+### Update SDK Configuration
+
+```python
+# Python SDK
+from honcho import Honcho
+
+client = Honcho(
+    base_url="http://localhost:8000",  # Your local instance
+    api_key="your-api-key"  # If auth is enabled
+)
+```
+
+```typescript
+// TypeScript SDK
+import { Honcho } from '@honcho-ai/sdk';
+
+const client = new Honcho({
+  baseUrl: 'http://localhost:8000',  // Your local instance
+  apiKey: 'your-api-key'  // If auth is enabled
+});
+```
+
+### Next Steps
+
+- **Explore the API**: Check out the [API Reference](../api-reference/introduction)
+- **Try the SDKs**: See our [guides](../guides) for examples
+- **Configure Honcho**: Visit the [Configuration Guide](./configuration) for detailed settings
+- **Join the community**: [Discord](https://discord.gg/plasticlabs)
+
+## Troubleshooting
+
+### Common Issues
+
+**Database Connection Errors**
+- Ensure PostgreSQL is running
+- Verify the connection string format: `postgresql+psycopg://...`
+- Check that pgvector extension is installed
+
+**API Key Issues**
+- Verify your OpenAI and Anthropic API keys are valid
+- Check that the keys have sufficient credits/quota
+
+**Port Already in Use**
+- Pass a different port to FastAPI or stop other services using port 8000
+
+**Docker Issues**
+- Ensure Docker is running
+- Check container logs: `docker compose logs`
+- Restart containers: `docker compose down && docker compose up -d`
+
+**Migration Errors**
+- Ensure the database exists and pgvector is enabled
+- Check database permissions
+- Run migrations manually: `uv run alembic upgrade head`
+
+### Getting Help
+
+- **GitHub Issues**: [Report bugs](https://github.com/plastic-labs/honcho/issues)
+- **Discord**: [Join our community](https://discord.gg/plasticlabs)
+- **Documentation**: Check the [Configuration Guide](./configuration) for detailed settings
+
+## Production Considerations
+
+When self-hosting for production, consider:
+
+- **Security**: Enable authentication, use HTTPS, secure your database
+- **Scaling**: Use connection pooling, consider load balancing
+- **Monitoring**: Set up logging, error tracking, health checks
+- **Backups**: Regular database backups, disaster recovery plan
+- **Updates**: Keep Honcho and dependencies updated

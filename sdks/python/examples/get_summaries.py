@@ -6,9 +6,10 @@ for a session, including their metadata like message ID, creation timestamp,
 and token count.
 """
 
-from honcho import AsyncHoncho, Honcho, SessionSummaries
 import asyncio
 import os
+
+from honcho import Honcho, SessionSummaries
 
 # Initialize the Honcho client
 api_key = os.getenv("HONCHO_API_KEY")
@@ -21,7 +22,7 @@ client = Honcho(api_key=api_key)
 session = client.session("my-conversation-session")
 
 # Get summaries for the session
-summaries: SessionSummaries = session.get_summaries()
+summaries: SessionSummaries = session.summaries()
 
 print(f"Session ID: {summaries.id}")
 print("-" * 50)
@@ -50,20 +51,21 @@ if summaries.long_summary:
 else:
     print("No long summary available yet")
 
-# Example with async client
+# Example with async client using .aio accessor
 print("\n" + "=" * 50)
 print("ASYNC EXAMPLE:")
 print("=" * 50)
 
 
-async def get_summaries_async():
-    async_client = AsyncHoncho(api_key=api_key)
+async def summaries_async():
+    # Use the same Honcho client with .aio accessor for async operations
+    async_client = Honcho(api_key=api_key)
 
-    # Get a session
-    async_session = await async_client.session("my-conversation-session")
+    # Get a session using .aio accessor
+    async_session = await async_client.aio.session("my-conversation-session")
 
-    # Get summaries asynchronously
-    summaries = await async_session.get_summaries()
+    # Get summaries asynchronously using .aio accessor
+    summaries = await async_session.aio.summaries()
 
     print(f"Session ID (async): {summaries.id}")
 
@@ -79,4 +81,4 @@ async def get_summaries_async():
 
 
 # Run the async example
-asyncio.run(get_summaries_async())
+asyncio.run(summaries_async())

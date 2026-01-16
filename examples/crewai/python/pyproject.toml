@@ -41,7 +41,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://honcho.dev"
-Documentation = "https://docs.honcho.dev/v2/integrations/crewai"
+Documentation = "https://docs.honcho.dev/v3/integrations/crewai"
 Repository = "https://github.com/plastic-labs/honcho"
 "Bug Tracker" = "https://github.com/plastic-labs/honcho/issues"
 Changelog = "https://github.com/plastic-labs/honcho/blob/main/CHANGELOG.md"

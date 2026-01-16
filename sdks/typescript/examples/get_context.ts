@@ -1,4 +1,4 @@
-import { Honcho, Message } from '../src';
+import { Honcho, MessageInput } from '../src';
 
 /**
  * Example demonstrating how to get context from a session with summary and token limits.
@@ -27,7 +27,7 @@ async function main() {
 
   console.log('Generating random messages...');
   // Generate some random messages from alice, bob, and charlie and add them to the session
-  const messages: Message[] = [];
+  const messages: MessageInput[] = [];
   for (let i = 0; i < 10; i++) {
     const randomPeer = peers[Math.floor(Math.random() * peers.length)];
     messages.push(
@@ -41,7 +41,7 @@ async function main() {
   console.log('Getting context with summary and low token limit...');
   // Get some context of the session
   // Set the token limit super low so we only get a few of the tiny messages created
-  const context = await session.getContext({ summary: true, tokens: 50 });
+  const context = await session.context({ summary: true, tokens: 50 });
   console.log('Context returned:', context);
 
   console.log('Example completed successfully!');

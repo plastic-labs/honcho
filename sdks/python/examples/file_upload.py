@@ -14,6 +14,6 @@ with open(__file__, "rb") as file:
 
 # get the messages from the session
 # should contain the contents of this file!
-messages = session.get_messages()
+messages = session.messages()
 for message in messages:
     print(str(message))

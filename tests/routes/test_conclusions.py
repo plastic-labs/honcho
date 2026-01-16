@@ -76,7 +76,7 @@ class TestConclusionRoutes:
 
         # List conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -118,7 +118,7 @@ class TestConclusionRoutes:
 
         # List conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -182,7 +182,7 @@ class TestConclusionRoutes:
 
         # List conclusions filtered by observer
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={
                 "filters": {"observer": test_peer.name, "session_id": test_session.name}
             },
@@ -248,7 +248,7 @@ class TestConclusionRoutes:
 
         # List conclusions in reverse (oldest first)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list?reverse=true",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?reverse=true",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -302,7 +302,7 @@ class TestConclusionRoutes:
 
         # Get first page (default size)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list?page=1&size=10",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?page=1&size=10",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -313,7 +313,7 @@ class TestConclusionRoutes:
 
         # Get second page
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list?page=2&size=10",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?page=2&size=10",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -346,25 +346,9 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create test conclusions via API (this populates the vector store)
-        _create_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "User loves pizza and pasta",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    },
-                    {
-                        "content": "User dislikes vegetables",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    },
-                ]
-            },
+        # Create collection
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
         # Create test conclusions
@@ -389,7 +373,7 @@ class TestConclusionRoutes:
 
         # Query conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "food preferences",
                 "filters": {
@@ -456,7 +440,7 @@ class TestConclusionRoutes:
 
         # Query with top_k=2
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "relevant topic",
                 "top_k": 2,
@@ -516,7 +500,7 @@ class TestConclusionRoutes:
 
         # Query with distance threshold
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "test",
                 "distance": 0.8,
@@ -551,7 +535,7 @@ class TestConclusionRoutes:
 
         # Query without observer/observed filters should fail
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={"query": "test"},
         )
 
@@ -583,7 +567,7 @@ class TestConclusionRoutes:
 
         # Query with invalid top_k (too high)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "test",
                 "top_k": 101,  # Max is 100
@@ -642,7 +626,7 @@ class TestConclusionRoutes:
 
         # Delete conclusion
         response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/{conclusion_id}"
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{conclusion_id}"
         )
 
         assert response.status_code == 204
@@ -675,7 +659,7 @@ class TestConclusionRoutes:
 
         # Try to delete non-existent conclusion
         response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
+            f"/v3/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
         )
 
         assert response.status_code == 404
@@ -693,7 +677,7 @@ class TestConclusionRoutes:
 
         # Try to list conclusions for non-existent session
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": "nonexistent_session"}},
         )
 
@@ -745,7 +729,7 @@ class TestConclusionRoutes:
 
         # List conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -792,7 +776,7 @@ class TestConclusionRoutes:
 
         # Create conclusion via API
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -843,7 +827,7 @@ class TestConclusionRoutes:
 
         # Create multiple conclusions via API
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -896,7 +880,7 @@ class TestConclusionRoutes:
 
         # Try to create conclusion with non-existent session
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -930,7 +914,7 @@ class TestConclusionRoutes:
 
         # Try to create conclusion with non-existent observer
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -971,7 +955,7 @@ class TestConclusionRoutes:
 
         # Try to create conclusion with empty content
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -997,7 +981,7 @@ class TestConclusionRoutes:
 
         # Try to create with empty conclusions list
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={"conclusions": []},
         )
 
@@ -1029,7 +1013,7 @@ class TestConclusionRoutes:
 
         # Create conclusion via API (this should auto-create collection)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -1081,7 +1065,7 @@ class TestConclusionRoutes:
 
         # Create conclusions with different observer/observed pairs
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -1139,7 +1123,7 @@ class TestConclusionRoutes:
 
         # Create conclusion via API
         create_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -1157,7 +1141,7 @@ class TestConclusionRoutes:
 
         # List conclusions and verify the created one is there
         list_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={
                 "filters": {
                     "observer": test_peer.name,

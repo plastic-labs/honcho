@@ -1,0 +1,175 @@
+---
+title: "The Honcho Dashboard"
+icon: "rocket"
+description: "Build stateful agents without worrying about infrastructure"
+sidebarTitle: "Dashboard Overview"
+---
+
+<Card title="Sign up to start using Honcho!" icon="rocket" href="https://app.honcho.dev">
+    Start using the platform to manage Honcho instances for your workspace or app.
+</Card>
+
+The quickest way to begin using Honcho in production is with the
+[Honcho Cloud Service](https://app.honcho.dev). Sign up, generate an API key,
+and start building with Honcho.
+
+## 1. Go to [app.honcho.dev](https://app.honcho.dev)
+
+Create an account to start using Honcho. If a teammate already uses Honcho, ask
+them to invite you to their organization. Otherwise, you'll see a banner
+prompting you to create a new one.
+
+<div style={{ maxWidth: "400px", margin: "0 auto" }}>
+  <Frame>
+    <img src="/images/app-screenshots/welcome-to-honcho.png" alt="Honcho Platform Dashboard" loading="lazy" decoding="async" fetchpriority="low" style={{ width: "100%", height: "auto" }} />
+  </Frame>
+</div>
+
+
+Once you've created an organization, you'll be taken to the dashboard and see
+the Welcome page with integration guidance and links to documentation.
+
+<Frame>
+  <img src="/images/app-screenshots/get-started-copy.png" alt="Honcho Dashboard Getting Started" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+Each organization has dedicated infrastructure running to isolate your
+workloads. Once you add a valid payment method under the
+[Billing](https://app.honcho.dev/billing) page, your instance will turn on.
+
+## 2. Activate your Honcho instance
+
+Navigate to the [Billing](https://app.honcho.dev/billing) page to add a payment method. Your Honcho instance provisions automatically, and you can monitor the deployment on the [Instance Status](https://app.honcho.dev/status) page until all systems show a green check mark.
+
+<Frame>
+  <img src="/images/app-screenshots/status-page.png" alt="Instance Status Page" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+You can also upgrade Honcho when new versions are made available directly from the status page.
+
+<div style={{ maxWidth: "700px", margin: "0 auto" }}>
+  <Frame>
+    <img src="/images/app-screenshots/upgrade-honcho.png" alt="Upgrade Honcho" loading="lazy" decoding="async" fetchpriority="low" style={{ width: "100%", height: "auto" }} />
+  </Frame>
+</div>
+
+The **Performance** page provides comprehensive monitoring with usage metrics, health analytics, API response times, and endpoint usage across Honcho.
+
+<Frame>
+  <img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 3. Manage API Keys
+The [API Keys](https://app.honcho.dev/api-keys) page allows you to create and manage authentication tokens for different environments. You can create admin-level keys with full instance access or scope keys to specific `Workspaces`, `Peers`, or `Sessions`.
+
+<Frame>
+  <img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 4. Test with API Playground
+The [API Playground](https://app.honcho.dev/playground) provides a Postman-like interface to test queries, explore endpoints, and validate your integration. Authenticate with an API key and send requests directly to your Honcho instance with real-time responses and full request/response logging.
+
+<Frame>
+  <img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 5. Workspaces
+The [Explore](https://app.honcho.dev/explore) page provides comprehensive `Workspace` management where you can create workspaces and begin exploring the platform. Each `Workspace` serves as a container for organizing your Honcho data.
+
+<Frame>
+  <img src="/images/app-screenshots/explore-honcho.png" alt="Workspace Table" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+Click into any workspace to access a general overview of `Peers` and `Sessions`. Here you can quickly create `Peers`, `Sessions`, and add multiple `Peers` to any `Session`. Edit the metadata and configuration for a `Workspace` with the Edit Config button. Click into any entity to navigate to their respective utilities pages or click the expand icon to view Workspace-wide `Peers` and `Sessions` data tables with more details.
+
+<Frame>
+  <img src="/images/app-screenshots/workspace-dash.png" alt="Workspace Dashboard Overview" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 6. Peer Dashboard & Utilities
+Expand the `Peers` list from the `Workspace` dashboard to see a detailed view of `Peers`.
+
+<Frame>
+  <img src="/images/app-screenshots/peer-dash.png" alt="Peer Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+Click into any peer to navigate to their respective utilities page. Next to the `Peer` name you can edit the [Peer Configuration](/v3/documentation/features/advanced/reasoning-configuration), and in the tabs below, explore all utilities for the `Peer`.
+
+<Frame>
+  <img src="/images/app-screenshots/peer-utilities.png" alt="Peer Management Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+Utilities include:
+- **Message search** across all sessions for a `Peer`
+- **Chat** to query `Peer` representations with an optional session scope (results vary based on the `Peer`'s configuration)
+
+<Frame>
+  <img src="/images/app-screenshots/chat-endpoint.png" alt="Chat Endpoint" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+- **Session logs** view which `Sessions` the `Peer` is active
+- **Peer configuration and metadata management** including [Session-Peer Configuration](/v3/documentation/features/advanced/reasoning-configuration#session-configuration)
+
+<Frame>
+  <img src="/images/app-screenshots/peer-utilities.png" alt="Peer Management Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 7. Session Dashboard & Utilities
+Click into the sessions view within a workspace to see a table of all of your `Sessions` data.
+
+<Frame>
+  <img src="/images/app-screenshots/session-dash.png" alt="Sessions Table" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+Click into a `Session` to open its utilities page.
+
+<Frame>
+  <img src="/images/app-screenshots/session-utilities.png" alt="Session Utilities" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+Here you can:
+- **View and add Messages** within the `Session`; filter messages by `Peer`
+- **Advanced search** across `Session` messages
+- **Peer management** for adding/removing `Peers` and editing a `Peer`'s Session-level configuration
+- **Get Context** to generate LLM-ready context with customizable token limits
+
+<Frame>
+  <img src="/images/app-screenshots/get-context.png" alt="Get Context" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 8. Webhooks Integration
+The [Webhooks](https://app.honcho.dev/webhooks) page enables Webhook creation and management.
+
+<Frame>
+  <img src="/images/app-screenshots/webhooks-page.png" alt="Webhooks Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## 9. Organization Member Access
+The [Members](https://app.honcho.dev/members) page provides organization administration to manage your team's access to Honcho with the ability to grant admin permissions.
+
+<Frame>
+  <img src="/images/app-screenshots/members-dashboard.png" alt="Members Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />
+</Frame>
+
+## Go Further
+
+View the [Architecture](/v3/documentation/core-concepts/architecture) to see how Honcho works under the hood.
+
+Dive into our [API Reference](/v3/api-reference) to explore all available endpoints.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sign up to Honcho Platform" icon="rocket" href="https://app.honcho.dev">
+    Get started with managed Honcho instances
+  </Card>
+  <Card title="Join our Discord" icon="discord" href="http://discord.gg/plasticlabs">
+    Connect with 1000+ developers building with Honcho
+  </Card>
+  <Card title="Contribute to Honcho" icon="code" href="/v3/contributing/guidelines">
+    View our guidelines and explore the codebase
+  </Card>
+  <Card title="Explore Examples" icon="book" href="/v3/guides">
+    See Honcho in action with real examples
+  </Card>
+</CardGroup>

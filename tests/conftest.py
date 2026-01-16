@@ -104,7 +104,7 @@ async def setup_test_database(db_url: URL):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url), echo=True)
+    engine = create_async_engine(str(db_url), echo=False)
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -503,6 +503,13 @@ def mock_vector_store():
 def mock_llm_call_functions():
     """Mock LLM functions to avoid needing API keys during tests"""
 
+    # Create an async generator for streaming responses
+    async def mock_stream(*args, **kwargs):  # pyright: ignore[reportUnusedParameter, reportMissingParameterType, reportUnknownParameterType]
+        """Mock streaming response that yields chunks"""
+        chunks = ["Test ", "streaming ", "response"]
+        for chunk in chunks:
+            yield chunk
+
     # Create mock responses for different function types
     # Note: critical_analysis_call was removed as the deriver now uses agentic approach
     # Note: dialectic_call/dialectic_stream were replaced with agentic_chat
@@ -516,6 +523,9 @@ def mock_llm_call_functions():
         patch(
             "src.routers.peers.agentic_chat", new_callable=AsyncMock
         ) as mock_agentic_chat,
+        patch(
+            "src.routers.peers.agentic_chat_stream", side_effect=mock_stream
+        ) as mock_agentic_chat_stream,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
@@ -528,6 +538,7 @@ def mock_llm_call_functions():
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "agentic_chat": mock_agentic_chat,
+            "agentic_chat_stream": mock_agentic_chat_stream,
         }
 
 

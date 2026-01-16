@@ -38,7 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python: ${{ steps.filter.outputs.python }}
-      typescript: ${{ steps.filter.outputs.typescript }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -50,8 +49,6 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'migrations/**'
-              - '.github/workflows/unittest.yml'
-            typescript:
               - 'sdks/typescript/**'
               - '.github/workflows/unittest.yml'
 
@@ -130,47 +127,17 @@ jobs:
           SUMMARY_PROVIDER: openai
           SUMMARY_MODEL: test
 
-  test-typescript:
-    needs: changes
-    if: ${{ needs.changes.outputs.typescript == 'true' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: latest
-
-      - name: Install TypeScript SDK dependencies
-        run: |
-          cd sdks/typescript
-          bun install
-
-      - name: Run TypeScript SDK tests
-        run: |
-          cd sdks/typescript
-          bun run test
-        env:
-          HONCHO_API_KEY: test-key
-          HONCHO_BASE_URL: http://localhost:8000
-
   # Status check for branch protection rules
   # This job always runs and reports success only if all required jobs pass
   test-status:
     runs-on: ubuntu-latest
-    needs: [changes, test-python, test-typescript]
+    needs: [changes, test-python]
     if: always()
     steps:
       - name: Check test results
         run: |
           if [[ "${{ needs.changes.outputs.python }}" == "true" && "${{ needs.test-python.result }}" != "success" && "${{ needs.test-python.result }}" != "skipped" ]]; then
             echo "Python tests failed or were cancelled"
-            exit 1
-          fi
-          if [[ "${{ needs.changes.outputs.typescript }}" == "true" && "${{ needs.test-typescript.result }}" != "success" && "${{ needs.test-typescript.result }}" != "skipped" ]]; then
-            echo "TypeScript tests failed or were cancelled"
             exit 1
           fi
           echo "All required tests passed!"

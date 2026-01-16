@@ -40,7 +40,7 @@ class NamespacedCounter(Counter):
 # Incremented in: src/main.py middleware for every request
 # Labels:
 #   - method: HTTP method (GET, POST, PUT, DELETE, etc.)
-#   - endpoint: FastAPI route template (e.g., "/v2/workspaces/{workspace_id}/sessions/{session_id}/messages")
+#   - endpoint: FastAPI route template (e.g., "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages")
 #   - status_code: HTTP response status code (200, 404, 500, etc.)
 API_REQUESTS = NamespacedCounter(
     "api_requests_total",

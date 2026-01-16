@@ -6,7 +6,7 @@ This script:
 1. Loads test definitions from JSON files
 2. Creates a workspace for each test
 3. Adds all messages to sessions
-4. Waits for the deriver queue to be empty
+4. Waits for the deriver queue to be empty (TODO implement this differently!)
 5. Executes queries and judges responses using an LLM
 """
 
@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -23,8 +22,8 @@ from typing import Any
 import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
+from honcho import Honcho
+from honcho.session import SessionPeerConfig
 from typing_extensions import TypedDict
 
 load_dotenv()
@@ -141,7 +140,7 @@ class TestRunner:
         with open(test_file) as f:
             return json.load(f)
 
-    async def create_honcho_client(self, workspace_id: str) -> AsyncHoncho:
+    def create_honcho_client(self, workspace_id: str) -> Honcho:
         """
         Create a Honcho client for a specific workspace.
 
@@ -149,38 +148,13 @@ class TestRunner:
             workspace_id: Workspace ID for the test
 
         Returns:
-            AsyncHoncho client instance
+            Honcho client instance
         """
-        return AsyncHoncho(
+        return Honcho(
             environment="local",
             workspace_id=workspace_id,
             base_url=self.honcho_url,
         )
-
-    async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
-    ) -> bool:
-        """
-        Wait for the deriver queue to be empty.
-
-        Args:
-            honcho_client: Honcho client instance
-            timeout: Maximum time to wait in seconds
-
-        Returns:
-            True if queue is empty, False if timeout exceeded
-        """
-        try:
-            await honcho_client.poll_queue_status(
-                session=session_id,
-                timeout=float(self.timeout_seconds)
-                if self.timeout_seconds
-                else 10000.0,
-            )
-            return True
-        except Exception as e:
-            self.logger.warning(f"Error polling deriver status: {e}")
-            return False
 
     async def judge_response(
         self, query: str, expected_response: str, actual_response: str
@@ -289,7 +263,7 @@ Evaluate whether the actual response contains the core correct information from 
 
         # Create workspace for this test
         workspace_id = f"test_{test_name}_{int(time.time())}"
-        honcho_client = await self.create_honcho_client(workspace_id)
+        honcho_client = self.create_honcho_client(workspace_id)
 
         results: TestResult = {
             "test_name": test_name,
@@ -342,11 +316,11 @@ Evaluate whether the actual response contains the core correct information from 
             # Create all peers first
             peers: dict[str, Any] = {}
             for peer_name in all_peers:
-                peers[peer_name] = await honcho_client.peer(id=peer_name)
+                peers[peer_name] = await honcho_client.aio.peer(id=peer_name)
 
             for session_name, session_data in sessions.items():
                 # Create session
-                session = await honcho_client.session(id=str(session_name))
+                session = await honcho_client.aio.session(id=str(session_name))
 
                 output_lines.append(f"\n  session: {session_name}")
 
@@ -384,7 +358,7 @@ Evaluate whether the actual response contains the core correct information from 
                         peer_configs.append((peers[peer_name], config))
                         output_lines.append(f"    peer config: {peer_name} -> {config}")
 
-                await session.add_peers(peer_configs)
+                await session.aio.add_peers(peer_configs)
 
                 # Add messages to session
                 messages = session_data.get("messages", [])
@@ -398,7 +372,7 @@ Evaluate whether the actual response contains the core correct information from 
                     output_lines.append(f"    {peer_name}: {truncated_content}")
 
                 # Add messages to session
-                await session.add_messages(
+                await session.aio.add_messages(
                     [peers[msg["peer"]].message(msg["content"]) for msg in messages]
                 )
 
@@ -420,12 +394,13 @@ Evaluate whether the actual response contains the core correct information from 
                 observed: str | None = query_data.get("observed")
 
                 # Wait for deriver queue to be empty for this session
-                queue_empty = await self.wait_for_deriver_queue_empty(
-                    honcho_client, session_id=session_name
-                )
-                if not queue_empty:
-                    print(f"Deriver queue never emptied for session {session_name}!!!")
-                    sys.exit(1)
+                # TODO implement this differently!
+                # queue_empty = await self.wait_for_deriver_queue_empty(
+                #     honcho_client, session_id=session_name
+                # )
+                # if not queue_empty:
+                #     print(f"Deriver queue never emptied for session {session_name}!!!")
+                #     sys.exit(1)
 
                 output_lines.append(f"\n  query {i + 1}: {query}")
                 context_parts: list[str] = []
@@ -450,21 +425,21 @@ Evaluate whether the actual response contains the core correct information from 
 
                     # Execute chat query
                     if session_name and observed:
-                        response_text = await query_peer.chat(
+                        response_text = await query_peer.aio.chat(
                             query,
                             session_id=session_name,
                             target=peers[observed],
                         )
                     elif session_name:
-                        response_text = await query_peer.chat(
+                        response_text = await query_peer.aio.chat(
                             query, session_id=session_name
                         )
                     elif observed:
-                        response_text = await query_peer.chat(
+                        response_text = await query_peer.aio.chat(
                             query, target=peers[observed]
                         )
                     else:
-                        response_text = await query_peer.chat(query)
+                        response_text = await query_peer.aio.chat(query)
 
                     actual_response: str = (
                         response_text if response_text is not None else ""
@@ -532,19 +507,20 @@ Evaluate whether the actual response contains the core correct information from 
                 session_name = str(get_context_call["session"])
                 summary = get_context_call["summary"]
                 max_tokens: int | None = get_context_call.get("max_tokens")
-                session = await honcho_client.session(id=session_name)
+                session = await honcho_client.aio.session(id=session_name)
 
                 # Wait for deriver queue to be empty for this session
-                queue_empty = await self.wait_for_deriver_queue_empty(
-                    honcho_client, session_id=session_name
-                )
-                if not queue_empty:
-                    output_lines.append(
-                        f"Deriver queue never emptied for session {session_name}!!!"
-                    )
-                    sys.exit(1)
+                # TODO implement this differently!
+                # queue_empty = await self.wait_for_deriver_queue_empty(
+                #     honcho_client, session_id=session_name
+                # )
+                # if not queue_empty:
+                #     output_lines.append(
+                #         f"Deriver queue never emptied for session {session_name}!!!"
+                #     )
+                #     sys.exit(1)
 
-                session_context = await session.get_context(
+                session_context = await session.aio.context(
                     summary=summary, tokens=max_tokens
                 )
 

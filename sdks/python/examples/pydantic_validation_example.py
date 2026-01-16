@@ -112,7 +112,7 @@ def demonstrate_validation():
         # Create a valid message
         message = peer.message("Hello, world!", metadata={"type": "greeting"})
         print(
-            f"✅ Created message: peer_id={message['peer_id']}, content='{message['content']}'"
+            f"✅ Created message: peer_id={message.peer_id}, content='{message.content}'"
         )
 
         # Valid peer operations (validation passes, but no API calls made)

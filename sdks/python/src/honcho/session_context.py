@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
-from honcho_core.types.workspaces.sessions.message import Message
-from pydantic import BaseModel, Field, validate_call
+from pydantic import BaseModel, ConfigDict, Field
+
+from .message import Message
 
 if TYPE_CHECKING:
     from .peer import Peer
@@ -49,6 +50,8 @@ class SessionContext(BaseModel):
         messages: List of Message objects representing the conversation context
     """
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(arbitrary_types_allowed=True)
+
     session_id: str = Field(
         ..., description="ID of the session this context belongs to"
     )
@@ -66,43 +69,6 @@ class SessionContext(BaseModel):
         None,
         description="The peer card, if context is requested from a specific perspective",
     )
-
-    @validate_call
-    def __init__(
-        self,
-        session_id: str = Field(
-            ..., description="ID of the session this context belongs to"
-        ),
-        messages: list[Message] = Field(
-            ..., description="List of Message objects to include in the context"
-        ),
-        summary: Summary | None = Field(
-            None,
-            description="Summary of the session history prior to the message cutoff",
-        ),
-        peer_representation: str | None = Field(
-            None,
-            description="The peer representation, if context is requested from a specific perspective",
-        ),
-        peer_card: list[str] | None = Field(
-            None,
-            description="The peer card, if context is requested from a specific perspective",
-        ),
-    ) -> None:
-        """
-        Initialize a new SessionContext.
-
-        Args:
-            messages: List of Message objects to include in the context
-            summary: Optional Summary object containing summary information
-        """
-        super().__init__(
-            session_id=session_id,
-            messages=messages,
-            summary=summary,
-            peer_representation=peer_representation,
-            peer_card=peer_card,
-        )
 
     def to_openai(
         self,

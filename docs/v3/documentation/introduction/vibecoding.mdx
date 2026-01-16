@@ -1,0 +1,94 @@
+---
+title: "AI-Powered Honcho Setup"
+icon: "wand-magic-sparkles"
+description: "Universal starter prompt and Claude Code skill for building with Honcho"
+sidebarTitle: 'Vibecoding Setup'
+---
+
+These docs are designed to be easily consumable by LLMs. Each page has a button that lets you copy the page as Markdown or paste directly into ChatGPT or Claude.
+
+We follow the llms.txt standard. There are both an llms.txt and llms-full.txt available:
+
+- [llms.txt](/llms.txt)
+- [llms-full.txt](/llms-full.txt)
+
+---
+
+## Claude Code Skill
+
+If you're using [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), you can install the Honcho integration skill for a guided, interactive setup experience. The skill will explore your codebase, ask targeted questions about your integration needs, and implement Honcho step by step.
+
+### Installation
+
+<CodeGroup>
+```bash Global Installation (all projects)
+# Add to your global skills directory
+curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+```
+
+```bash Project-specific Installation
+# Add to your project's .claude directory
+mkdir -p .claude/skills
+curl -o .claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+```
+</CodeGroup>
+
+### Usage
+
+Once installed, invoke the skill in Claude Code:
+
+```
+/honcho-integration
+```
+
+The skill will:
+1. **Explore your codebase** to understand your language, framework, and existing AI/LLM integrations
+2. **Interview you** about which entities should be peers, your preferred integration pattern, and session structure
+3. **Implement the integration** based on your answers
+4. **Verify the setup** to ensure everything is configured correctly
+
+---
+
+## Universal Starter Prompt
+
+```
+I want to start building with Honcho - an open source memory library for building stateful agents.
+
+## Honcho Resources
+
+**Documentation:**
+- Main docs: https://docs.honcho.dev
+- API Reference: https://docs.honcho.dev/v3/api-reference/introduction
+- Quickstart: https://docs.honcho.dev/v3/documentation/introduction/quickstart
+- Architecture: https://docs.honcho.dev/v3/documentation/core-concepts/architecture
+
+**Code & Examples:**
+- Core repo: https://github.com/plastic-labs/honcho
+- Python SDK: https://github.com/plastic-labs/honcho-python
+- TypeScript SDK: https://github.com/plastic-labs/honcho-node
+- Discord bot starter: https://github.com/plastic-labs/discord-python-starter
+- Telegram bot example: https://github.com/plastic-labs/telegram-python-starter
+
+**What Honcho Does:**
+Honcho is an open source memory library with a managed service for building stateful agents. It enables agents to build and maintain state about any entity--users, agents, groups, ideas, and more. Because it's a continual learning system, it understands entities that change over time.
+
+When you write messages to Honcho, they're stored and processed in the background. Custom reasoning models perform formal logical reasoning to generate conclusions about each peer. These conclusions are stored as representations that you can query to provide rich context for your agents.
+
+**Architecture Overview:**
+- Core primitives: Workspaces contain Peers (any entity that persists but changes) and Sessions (interaction threads between peers)
+- Peers can observe other peers in sessions (configurable with observe_me and observe_others)
+- Background reasoning processes messages to extract premises, draw conclusions, and build representations
+- Representations enable continuous improvement as new messages refine existing conclusions and scaffold new ones over time
+- Chat endpoint provides personalized responses based on learned context
+- Supports any LLM (OpenAI, Anthropic, open source)
+- Can use managed service or self-host
+
+Please assess the resources above and ask me relevant questions to help build a well-structured application using Honcho. Consider asking about:
+- What I'm trying to build
+- My technical preferences and stack
+- Whether I want to use the managed service or self-host
+- My experience level with the technologies involved
+- Specific features I need (multi-peer sessions, perspective-taking, streaming, etc.)
+
+Once you understand my needs, help me create a working implementation with proper memory and statefulness.
+```

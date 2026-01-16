@@ -45,7 +45,7 @@ crew = Crew(
 ## Documentation
 
 For comprehensive guides, examples, and API reference, visit:
-**[https://docs.honcho.dev/v2/integrations/crewai](https://docs.honcho.dev/v2/integrations/crewai)**
+**[https://docs.honcho.dev/v3/integrations/crewai](https://docs.honcho.dev/v3/integrations/crewai)**
 
 ## Examples
 
