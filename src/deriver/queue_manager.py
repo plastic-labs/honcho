@@ -10,7 +10,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -214,26 +214,64 @@ class QueueManager:
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
         Get available work units that aren't being processed.
+        For representation tasks, only returns work units with accumulated tokens
+        >= REPRESENTATION_BATCH_MAX_TOKENS (forced batching).
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
         if limit == 0:
             return {}
-        async with tracked_db(
-            "get_available_work_units"
-        ) as db:  # Get number of available workers
-            query = (
-                select(models.QueueItem.work_unit_key)
-                .limit(limit)
-                .outerjoin(
-                    models.ActiveQueueSession,
-                    models.QueueItem.work_unit_key
-                    == models.ActiveQueueSession.work_unit_key,
+
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        async with tracked_db("get_available_work_units") as db:
+            representation_prefix = "representation:"
+            token_stats_subq = (
+                select(
+                    models.QueueItem.work_unit_key,
+                    func.sum(models.Message.token_count).label("total_tokens"),
+                )
+                .join(
+                    models.Message,
+                    models.QueueItem.message_id == models.Message.id,
                 )
                 .where(~models.QueueItem.processed)
-                .where(models.QueueItem.work_unit_key.isnot(None))
-                .where(models.ActiveQueueSession.work_unit_key.is_(None))
-                .distinct()
+                .where(models.QueueItem.work_unit_key.startswith(representation_prefix))
+                .group_by(models.QueueItem.work_unit_key)
+                .subquery()
+            )
+
+            work_units_subq = (
+                select(models.QueueItem.work_unit_key)
+                .where(~models.QueueItem.processed)
+                .group_by(models.QueueItem.work_unit_key)
+                .subquery()
+            )
+
+            query = (
+                select(work_units_subq.c.work_unit_key)
+                .limit(limit)
+                .outerjoin(
+                    token_stats_subq,
+                    work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
+                )
+                .where(
+                    ~select(models.ActiveQueueSession.id)
+                    .where(
+                        models.ActiveQueueSession.work_unit_key
+                        == work_units_subq.c.work_unit_key
+                    )
+                    .exists()
+                )
+                .where(
+                    or_(
+                        ~work_units_subq.c.work_unit_key.startswith(
+                            representation_prefix
+                        ),
+                        func.coalesce(token_stats_subq.c.total_tokens, 0)
+                        >= batch_max_tokens,
+                    )
+                )
             )
 
             result = await db.execute(query)

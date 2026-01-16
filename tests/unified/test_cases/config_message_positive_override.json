@@ -1,7 +1,7 @@
 {
-  "description": "Test message-level deriver override",
+  "description": "Test message-level reasoning override",
   "workspace_config": {
-    "deriver": {
+    "reasoning": {
       "enabled": false
     }
   },
@@ -18,7 +18,7 @@
           "peer_id": "charlie",
           "content": "I like turtles.",
           "config": {
-            "deriver": {
+            "reasoning": {
               "enabled": true
             }
           }
@@ -27,7 +27,7 @@
           "peer_id": "charlie",
           "content": "I like squids.",
           "config": {
-            "deriver": {
+            "reasoning": {
               "enabled": false
             }
           }

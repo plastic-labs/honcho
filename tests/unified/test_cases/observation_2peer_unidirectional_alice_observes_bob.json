@@ -51,9 +51,9 @@
       "session_id": "session_uni_a_to_b",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Alice's local representation of Bob contains information about Bob studying biology and genetics.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "biology",
+          "case_sensitive": false
         }
       ]
     },
@@ -65,11 +65,12 @@
       "session_id": "session_uni_a_to_b",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     }

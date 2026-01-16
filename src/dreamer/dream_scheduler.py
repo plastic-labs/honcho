@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 from datetime import datetime, timezone
 from logging import getLogger
-from typing import Any
 
 import sentry_sdk
 from sqlalchemy import func, select
@@ -31,39 +30,6 @@ def get_dream_scheduler() -> "DreamScheduler | None":
     return _dream_scheduler
 
 
-def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
-    """
-    Get all work unit keys for dreams that might be affected by this message.
-
-    Args:
-        message: The message payload
-
-    Returns:
-        List of work unit keys that should have their dreams cancelled
-    """
-    workspace_name = message.get("workspace_name")
-    peer_name = message.get("peer_name")
-
-    if not workspace_name or not peer_name:
-        return []
-
-    # Generate dream work unit keys for each enabled dream type
-    dream_keys: list[str] = []
-    for dream_type in settings.DREAM.ENABLED_TYPES:
-        dream_key = construct_work_unit_key(
-            workspace_name,
-            {
-                "task_type": "dream",
-                "observer": peer_name,
-                "observed": peer_name,
-                "dream_type": dream_type,
-            },
-        )
-        dream_keys.append(dream_key)
-
-    return dream_keys
-
-
 class DreamScheduler:
     _instance: "DreamScheduler | None" = None
     _initialized: bool = False
@@ -89,7 +55,6 @@ class DreamScheduler:
         self,
         work_unit_key: str,
         workspace_name: str,
-        document_count: int,
         delay_minutes: int,
         dream_type: DreamType,
         *,
@@ -107,7 +72,6 @@ class DreamScheduler:
             self._delayed_dream(
                 work_unit_key,
                 workspace_name,
-                document_count,
                 delay_minutes,
                 dream_type,
                 observer=observer,
@@ -128,11 +92,42 @@ class DreamScheduler:
             return True
         return False
 
+    async def cancel_dreams_for_observed(
+        self, workspace_name: str, observed: str
+    ) -> set[str]:
+        """
+        Cancel all pending dreams where the observed peer matches.
+
+        This handles both self-observation (observer=observed) and peer-to-peer
+        observation (observer!=observed) dreams.
+
+        Args:
+            workspace_name: The workspace to match
+            observed: The observed peer name to match
+
+        Returns:
+            Set of work_unit_keys that were cancelled
+        """
+        cancelled: set[str] = set()
+
+        # Collect keys to cancel (can't modify dict while iterating)
+        keys_to_cancel: list[str] = []
+        for work_unit_key in self.pending_dreams:
+            parsed = parse_work_unit_key(work_unit_key)
+            if parsed.workspace_name == workspace_name and parsed.observed == observed:
+                keys_to_cancel.append(work_unit_key)
+
+        # Cancel each matching dream
+        for key in keys_to_cancel:
+            if await self.cancel_dream(key):
+                cancelled.add(key)
+
+        return cancelled
+
     async def _delayed_dream(
         self,
         work_unit_key: str,
         workspace_name: str,
-        document_count: int,
         delay_minutes: int,
         dream_type: DreamType,
         *,
@@ -142,22 +137,13 @@ class DreamScheduler:
         try:
             await asyncio.sleep(delay_minutes * 60)
 
-            # Check if collection is still inactive before executing dream
-            if await self._should_execute_dream(
-                workspace_name, observer=observer, observed=observed
-            ):
-                await self.execute_dream(
-                    workspace_name,
-                    document_count,
-                    dream_type,
-                    observer=observer,
-                    observed=observed,
-                )
-                logger.info("Executed dream for %s", work_unit_key)
-            else:
-                logger.info(
-                    "Skipping dream for %s - collection is active", work_unit_key
-                )
+            await self.execute_dream(
+                workspace_name,
+                dream_type,
+                observer=observer,
+                observed=observed,
+            )
+            logger.info("Executed dream for %s", work_unit_key)
 
         except asyncio.CancelledError:
             logger.debug("Dream task cancelled for %s", work_unit_key)
@@ -166,33 +152,9 @@ class DreamScheduler:
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
 
-    async def _should_execute_dream(
-        self, workspace_name: str, *, observer: str, observed: str
-    ) -> bool:
-        """Check if the collection is inactive and should be dreamed upon."""
-        async with tracked_db("dream_activity_check") as db:
-            # Check for active queue sessions related to this collection
-            query = select(models.ActiveQueueSession)
-            result = await db.execute(query)
-            active_sessions = result.scalars().all()
-
-            # Look for any active work units that match this collection
-            for active_session in active_sessions:
-                parsed_key = parse_work_unit_key(active_session.work_unit_key)
-                if (
-                    parsed_key.workspace_name == workspace_name
-                    and parsed_key.observer == observer
-                    and parsed_key.observed == observed
-                ):
-                    logger.debug("Collection is active, skipping dream")
-                    return False
-
-        return True
-
     async def execute_dream(
         self,
         workspace_name: str,
-        document_count: int,
         dream_type: DreamType,
         *,
         observer: str,
@@ -204,7 +166,7 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
-        # Find the most recent session for this observer/observed pair
+        # Find the most recent session and get current document count
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
@@ -224,6 +186,14 @@ class DreamScheduler:
                 )
                 return
 
+            # Get current document count at execution time (not stale from scheduling)
+            count_stmt = select(func.count(models.Document.id)).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.observer == observer,
+                models.Document.observed == observed,
+            )
+            current_document_count = int(await db.scalar(count_stmt) or 0)
+
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
@@ -242,7 +212,7 @@ class DreamScheduler:
             observer=observer,
             observed=observed,
             dream_type=dream_type,
-            document_count=document_count,
+            document_count=current_document_count,
             session_name=session_name,
         )
 
@@ -346,7 +316,6 @@ async def check_and_schedule_dream(
                 await dream_scheduler.schedule_dream(
                     dream_work_unit_key,
                     collection.workspace_name,
-                    current_document_count,
                     settings.DREAM.IDLE_TIMEOUT_MINUTES,
                     dream_type=DreamType(dream_type),
                     observer=collection.observer,

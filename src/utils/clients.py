@@ -851,6 +851,16 @@ async def _execute_tool_loop(
         f"Tool execution loop reached max iterations ({max_tool_iterations})"
     )
 
+    # Add a synthesis prompt to help the model generate a response
+    # without tool calls - the conversation currently ends with tool results
+    # and the model may not know to produce text output
+    synthesis_prompt = (
+        "You have reached the maximum number of tool calls. "
+        "Based on all the information you have gathered, provide your final response now. "
+        "Do not attempt to call any more tools."
+    )
+    conversation_messages.append({"role": "user", "content": synthesis_prompt})
+
     # If streaming the final response, use the streaming helper with metadata
     if stream_final:
         stream = _stream_final_response(

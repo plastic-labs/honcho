@@ -268,8 +268,8 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
-        Field(default=4096, ge=128, le=16_384),
-    ] = 4096
+        Field(default=1024, ge=128, le=16_384),
+    ] = 1024
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -287,13 +287,13 @@ class PeerCardSettings(HonchoSettings):
 
 
 # Reasoning levels for dialectic - defined here to avoid circular imports with schemas
-ReasoningLevel = Literal["minimal", "low", "medium", "high", "extra-high"]
+ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 REASONING_LEVELS: list[ReasoningLevel] = [
     "minimal",
     "low",
     "medium",
     "high",
-    "extra-high",
+    "max",
 ]
 
 
@@ -314,6 +314,9 @@ class DialecticLevelSettings(BaseModel):
     MAX_TOOL_ITERATIONS: Annotated[
         int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
     ]
+    TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
+        None  # None/auto lets model decide, "any"/"required" forces tool use
+    )
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self) -> "DialecticLevelSettings":
@@ -351,13 +354,15 @@ class DialecticSettings(HonchoSettings):
                 PROVIDER="google",
                 MODEL="gemini-2.5-flash-lite",
                 THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=2,
+                MAX_TOOL_ITERATIONS=5,
+                TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
                 PROVIDER="google",
                 MODEL="gemini-3-flash-preview",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=5,
+                TOOL_CHOICE="any",
             ),
             "medium": DialecticLevelSettings(
                 PROVIDER="anthropic",
@@ -371,7 +376,7 @@ class DialecticSettings(HonchoSettings):
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=4,
             ),
-            "extra-high": DialecticLevelSettings(
+            "max": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-opus-4-5",
                 THINKING_BUDGET_TOKENS=2048,
@@ -493,9 +498,8 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 
-    # LLM settings for dream processing - upgraded for extended reasoning
     PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-sonnet-4-20250514"  # Upgraded from haiku for reasoning
+    MODEL: str = "claude-sonnet-4-20250514"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
 
@@ -507,17 +511,12 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         16_384
     )
 
-    # Observation limits for orchestrated dreaming prescan
-    # Higher = more context for reasoning but slower prescan
-    PRESCAN_OBSERVATIONS_PER_LEVEL: Annotated[
-        int, Field(default=200, gt=0, le=1000)
-    ] = 200
+    ## NOTE: specialist models use the same provider as the main model
 
-    # Specialist model settings (OpenRouter format: provider/model)
-    # DeductionSpecialist: handles logical inference + temporal reasoning
-    DEDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
-    # InductionSpecialist: identifies patterns across observations
-    INDUCTION_MODEL: str = "anthropic/claude-haiku-4.5"
+    # Deduction Specialist: handles logical inference
+    DEDUCTION_MODEL: str = "claude-haiku-4-5"
+    # Induction Specialist: identifies patterns across observations
+    INDUCTION_MODEL: str = "claude-haiku-4-5"
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)

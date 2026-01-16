@@ -4,11 +4,13 @@ description: Learn how to check the status of Honcho's reasoning
 icon: "lines-leaning"
 ---
 
-Whenever messages are stored in Honcho, a background process kicks off to [reason](/v2.6.0-alpha/documentation/core-concepts/reasoning) about the conversation and generate insights.
+Whenever messages are stored in Honcho, background processes kick off to [reason](/v2.6.0-alpha/documentation/core-concepts/reasoning) about the conversation and generate insights.
 
-Reasoning is an asynchronous process and, depending on load, may not immediately
-generate insights for the latest message you've sent. To help with this, Honcho
-provides several utilities to check the status of the queue.
+Reasoning is an asynchronous process and will not immediately
+generate insights for the latest message you've sent. This is
+by design: we want to reason efficiently over batches of messages
+rather than assessing each message in a vacuum. Honcho provides
+several utilities to check the status of the queue.
 
 <CodeGroup>
 ```python Python
@@ -75,7 +77,7 @@ work_units will be processed in parallel
   generate an additional work unit for every peer that has `observe_others=True`
 
 The `get_queue_status` and `poll_queue_status` methods can take additional
-parameters to scope the status to a specific work unit
+parameters to scope the status to a specific work unit:
 
 <CodeGroup>
 ```python Python
@@ -104,7 +106,7 @@ export const QueueStatusOptionsSchema = z.object({
 Additionally, there are queue status and polling queue status methods
 available on the session objects in each of the SDKs.
 
-Below are the function signatures for the session level queue status method
+Below are the function signatures for the session level queue status method:
 
 <CodeGroup>
 ```python python

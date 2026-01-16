@@ -1,5 +1,5 @@
 {
-  "description": "Test that disabling deriver prevents any derived data generation",
+  "description": "Test that disabling reasoning prevents any derived data generation",
   "steps": [
     {
       "step_type": "create_session",
@@ -13,7 +13,7 @@
           "peer_id": "alice",
           "content": "Message 1",
           "config": {
-            "deriver": {
+            "reasoning": {
               "enabled": false
             }
           }
@@ -22,7 +22,7 @@
           "peer_id": "alice",
           "content": "Message 2",
           "config": {
-            "deriver": {
+            "reasoning": {
               "enabled": false
             }
           }
@@ -31,7 +31,7 @@
           "peer_id": "alice",
           "content": "Message 3",
           "config": {
-            "deriver": {
+            "reasoning": {
               "enabled": false
             }
           }
@@ -62,11 +62,12 @@
       "session_id": "session_1",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },

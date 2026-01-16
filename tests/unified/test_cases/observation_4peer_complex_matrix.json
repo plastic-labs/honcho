@@ -1,7 +1,7 @@
 {
   "description": "Test complex 4-peer scenario with mixed observation patterns",
   "workspace_config": {
-    "deriver": {
+    "reasoning": {
       "enabled": true
     }
   },
@@ -62,9 +62,9 @@
       "session_id": "session_four_peer",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Alice observes Bob (should contain lawyer info).",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "lawyer",
+          "case_sensitive": false
         }
       ]
     },
@@ -76,11 +76,12 @@
       "session_id": "session_four_peer",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -92,9 +93,9 @@
       "session_id": "session_four_peer",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Bob observes Alice (should contain neurologist info).",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "neurologist",
+          "case_sensitive": false
         }
       ]
     },
@@ -106,9 +107,9 @@
       "session_id": "session_four_peer",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Charlie observes Alice (should contain neurologist info, even though Charlie has observe_me=false).",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "neurologist",
+          "case_sensitive": false
         }
       ]
     },
@@ -120,9 +121,9 @@
       "session_id": "session_four_peer",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Alice observes Diana (should contain pharmacist info).",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "pharmacist",
+          "case_sensitive": false
         }
       ]
     },
@@ -134,11 +135,12 @@
       "session_id": "session_four_peer",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     }

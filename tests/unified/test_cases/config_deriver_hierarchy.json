@@ -1,10 +1,10 @@
 {
-  "description": "Test deriver configuration hierarchy (Session > Workspace)",
+  "description": "Test reasoning configuration hierarchy (Session > Workspace)",
   "steps": [
     {
       "step_type": "set_workspace_config",
       "config": {
-        "deriver": {
+        "reasoning": {
           "enabled": true
         }
       }
@@ -13,7 +13,7 @@
       "step_type": "create_session",
       "session_id": "session_disabled",
       "config": {
-        "deriver": {
+        "reasoning": {
           "enabled": false
         }
       }
@@ -43,18 +43,19 @@
       "session_id": "session_disabled",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
     {
       "step_type": "set_workspace_config",
       "config": {
-        "deriver": {
+        "reasoning": {
           "enabled": false
         }
       }
@@ -63,7 +64,7 @@
       "step_type": "create_session",
       "session_id": "session_enabled",
       "config": {
-        "deriver": {
+        "reasoning": {
           "enabled": true
         }
       }
@@ -93,9 +94,9 @@
       "session_id": "session_enabled",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if there are explicit observations about testing or overriding in the representation.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "testing",
+          "case_sensitive": false
         }
       ]
     }

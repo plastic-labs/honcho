@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.dream_scheduler import get_affected_dream_keys, get_dream_scheduler
+from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
@@ -31,16 +31,20 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
         payload: List of message payload dictionaries
     """
 
-    # Cancel any pending dreams for affected collections since user is active again
+    # Cancel any pending dreams for affected collections since user is active again.
+    # This cancels dreams for all collections where observed=peer_name, which covers
+    # both self-observation and peer-to-peer observation cases.
     dream_scheduler = get_dream_scheduler()
     if dream_scheduler and payload:
         cancelled_dreams: set[str] = set()
         for message in payload:
-            # Generate work unit keys for dreams that might be affected by this message
-            dream_keys: list[str] = get_affected_dream_keys(message)
-            for dream_key in dream_keys:
-                if await dream_scheduler.cancel_dream(dream_key):
-                    cancelled_dreams.add(dream_key)
+            workspace_name = message.get("workspace_name")
+            peer_name = message.get("peer_name")
+            if workspace_name and peer_name:
+                cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                    workspace_name, peer_name
+                )
+                cancelled_dreams.update(cancelled)
 
         if cancelled_dreams:
             logger.info(

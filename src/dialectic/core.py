@@ -347,7 +347,7 @@ class DialecticAgent:
             prompt="",  # Ignored since we pass messages
             max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
             tools=DIALECTIC_TOOLS,
-            tool_choice=None,
+            tool_choice=level_settings.TOOL_CHOICE,
             tool_executor=tool_executor,
             max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
             messages=self.messages,
@@ -401,7 +401,7 @@ class DialecticAgent:
                 stream=True,
                 stream_final_only=True,
                 tools=DIALECTIC_TOOLS,
-                tool_choice=None,
+                tool_choice=level_settings.TOOL_CHOICE,
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,

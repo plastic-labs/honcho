@@ -59,9 +59,9 @@
       "session_id": "session_all_watch_alice",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Bob's local representation of Alice contains information about Alice being a professional dancer specializing in contemporary and ballet.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "dancer",
+          "case_sensitive": false
         }
       ]
     },
@@ -73,9 +73,9 @@
       "session_id": "session_all_watch_alice",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Charlie's local representation of Alice contains information about Alice being a professional dancer who has been dancing for 15 years.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "dancer",
+          "case_sensitive": false
         }
       ]
     },
@@ -87,11 +87,12 @@
       "session_id": "session_all_watch_alice",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -103,11 +104,12 @@
       "session_id": "session_all_watch_alice",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -118,9 +120,9 @@
       "observed_peer_id": "alice",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Bob has a peer card for Alice that contains relevant information about her.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "dancer",
+          "case_sensitive": false
         }
       ]
     },
@@ -131,9 +133,9 @@
       "observed_peer_id": "alice",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Charlie has a peer card for Alice that contains relevant information about her.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "dancer",
+          "case_sensitive": false
         }
       ]
     },

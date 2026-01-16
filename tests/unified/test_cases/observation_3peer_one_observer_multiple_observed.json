@@ -59,9 +59,9 @@
       "session_id": "session_alice_watches_all",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Alice's local representation of Bob contains information about Bob training for a marathon and running 5 miles every morning.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "marathon",
+          "case_sensitive": false
         }
       ]
     },
@@ -73,9 +73,9 @@
       "session_id": "session_alice_watches_all",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "Check if Alice's local representation of Charlie contains information about Charlie learning chess and practicing tactics daily.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "chess",
+          "case_sensitive": false
         }
       ]
     },
@@ -87,11 +87,12 @@
       "session_id": "session_alice_watches_all",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     },
@@ -103,11 +104,12 @@
       "session_id": "session_alice_watches_all",
       "assertions": [
         {
-          "assertion_type": "json_match",
-          "key_value_pairs": {
-            "explicit": [],
-            "deductive": []
-          }
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
         }
       ]
     }
