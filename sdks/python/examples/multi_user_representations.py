@@ -1,7 +1,7 @@
 import time
 import uuid
 
-from honcho import Honcho
+from honcho import Honcho, MessageCreateParams
 from honcho.session import SessionPeerConfig
 
 # Create a Honcho client with the default workspace
@@ -21,7 +21,7 @@ session.add_peers(
 )
 
 # Generate messages with personal information
-messages = []
+messages: list[MessageCreateParams] = []
 messages.append(alice.message("I had a great breakfast today!"))
 messages.append(bob.message("What did you eat?"))
 messages.append(alice.message("I had pancakes and eggs and bacon."))
@@ -48,25 +48,19 @@ session2.add_messages(
     ]
 )
 
-# wait for the queue to process the messages
-print("waiting for the queue to process all the messages")
-queue_status = honcho.poll_queue_status()
-print("queue status:", queue_status)
-
-
 # # Chat with alice's honcho-level representation
-# print(
-#     "\n\n\033[1m asking alice's honcho-level representation what she had for breakfast \033[0m"
-# )
-# response = alice.chat("what did alice have for breakfast today?", session_id=session.id)
-# print("response:", response)
+print(
+    "\n\n\033[1m asking alice's honcho-level representation what she had for breakfast \033[0m"
+)
+response = alice.chat("what did alice have for breakfast today?", session=session)
+print("response:", response)
 
 # Chat with bob's internal representation of alice
 print(
     "\n\n\033[1m asking bob what alice had for breakfast -- scoped to session 1 \033[0m"
 )
 response = bob.chat(
-    "what did alice have for breakfast today?", target=alice, session=session.id
+    "what did alice have for breakfast today?", target=alice, session=session
 )
 print("response:", response)
 
@@ -74,7 +68,7 @@ print(
     "\n\n\033[1m asking bob what alice had for breakfast -- scoped to session 2 \033[0m"
 )
 response = bob.chat(
-    "what did alice have for breakfast today?", target=alice, session=session2.id
+    "what did alice have for breakfast today?", target=alice, session=session2
 )
 print("response:", response)
 
