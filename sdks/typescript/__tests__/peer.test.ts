@@ -64,19 +64,19 @@ describe('Peer', () => {
 
     test('creates peer with configuration', async () => {
       const config = { observe_me: false }
-      const peer = await client.peer('peer-with-config', { config })
+      const peer = await client.peer('peer-with-config', { configuration: config })
 
       expect(peer.id).toBe('peer-with-config')
-      expect(peer.config).toEqual(config)
+      expect(peer.configuration).toEqual(config)
     })
 
-    test('creates peer with both metadata and config', async () => {
+    test('creates peer with both metadata and configuration', async () => {
       const metadata = { role: 'user' }
       const config = { observe_me: true }
-      const peer = await client.peer('peer-with-both', { metadata, config })
+      const peer = await client.peer('peer-with-both', { metadata, configuration: config })
 
       expect(peer.metadata).toEqual(metadata)
-      expect(peer.config).toEqual(config)
+      expect(peer.configuration).toEqual(config)
     })
 
     test('get-or-create is idempotent', async () => {
@@ -152,11 +152,11 @@ describe('Peer', () => {
       expect(metadata).toEqual({ updated: true, count: 42 })
     })
 
-    test('setConfig updates peer configuration', async () => {
+    test('setConfiguration updates peer configuration', async () => {
       const peer = await client.peer('config-update-peer')
 
-      await peer.setConfig({ observe_me: false })
-      const config = await peer.getConfig()
+      await peer.setConfiguration({ observe_me: false })
+      const config = await peer.getConfiguration()
 
       expect(config).toEqual({ observe_me: false })
     })

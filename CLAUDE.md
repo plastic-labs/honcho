@@ -86,16 +86,20 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 
 ### SDK Testing
 
-**IMPORTANT: Never run `bun test` directly for TypeScript SDK tests.** The SDK tests require a running server and are orchestrated via pytest from the monorepo root.
+#### TypeScript SDK
 
-To run TypeScript SDK tests:
+**🚨 DO NOT RUN `bun test` DIRECTLY. IT WILL NOT WORK. 🚨**
+
+The TypeScript SDK tests require a running Honcho server with database and Redis. Running `bun test` alone will fail immediately because there's no server. The tests are orchestrated via pytest which handles all the infrastructure setup.
+
+**The ONLY way to run TypeScript SDK tests:**
 
 ```bash
 # From the monorepo root (not from sdks/typescript/)
 uv run pytest tests/ -k typescript
 ```
 
-To type-check the TypeScript SDK without running tests:
+**To type-check the TypeScript SDK (this is fine to run directly):**
 
 ```bash
 cd sdks/typescript && bun run tsc --noEmit

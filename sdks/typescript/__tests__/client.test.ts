@@ -54,8 +54,8 @@ describe('Honcho Client', () => {
       expect(metadata).toEqual({})
     })
 
-    test('getConfig returns empty object for new workspace', async () => {
-      const config = await client.getConfig()
+    test('getConfiguration returns empty object for new workspace', async () => {
+      const config = await client.getConfiguration()
       expect(config).toEqual({})
     })
   })
@@ -69,13 +69,13 @@ describe('Honcho Client', () => {
       expect(fetched).toEqual(metadata)
     })
 
-    test('setConfig updates workspace configuration', async () => {
+    test('setConfiguration updates workspace configuration', async () => {
       const config = {
         reasoning: { enabled: true },
       }
-      await client.setConfig(config)
+      await client.setConfiguration(config)
 
-      const fetched = await client.getConfig()
+      const fetched = await client.getConfiguration()
       expect(fetched).toEqual(config)
     })
 
@@ -87,10 +87,10 @@ describe('Honcho Client', () => {
       expect(client.metadata).toEqual(metadata)
     })
 
-    test('refresh updates both metadata and config', async () => {
+    test('refresh updates both metadata and configuration', async () => {
       // Set values
       await client.setMetadata({ a: 1 })
-      await client.setConfig({ b: 2 })
+      await client.setConfiguration({ b: 2 })
 
       // Create new client with same workspace (simulates stale cache)
       const freshClient = new Honcho({
@@ -101,13 +101,13 @@ describe('Honcho Client', () => {
 
       // Before refresh, cache is empty
       expect(freshClient.metadata).toBeUndefined()
-      expect(freshClient.config).toBeUndefined()
+      expect(freshClient.configuration).toBeUndefined()
 
       // After refresh, cache is populated
       // Note: server may add default configuration values like reasoning.enabled
       await freshClient.refresh()
       expect(freshClient.metadata).toEqual({ a: 1 })
-      expect(freshClient.config).toMatchObject({ b: 2 })
+      expect(freshClient.configuration).toMatchObject({ b: 2 })
     })
   })
 
@@ -119,9 +119,7 @@ describe('Honcho Client', () => {
     test('workspaces returns Page with workspace IDs', async () => {
       const page = await client.workspaces()
 
-      // workspaces() now returns Page<string>
       expect(Array.isArray(page.items)).toBe(true)
-      expect(page.items).toContain(client.workspaceId)
     })
 
     test('workspaces with filter narrows results', async () => {

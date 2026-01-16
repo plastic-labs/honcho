@@ -73,9 +73,9 @@ export class Honcho {
    */
   private _metadata?: Record<string, unknown>
   /**
-   * Private cached config for this workspace.
+   * Private cached configuration for this workspace.
    */
-  private _config?: Record<string, unknown>
+  private _configuration?: Record<string, unknown>
 
   /**
    * Cached metadata for this workspace. May be stale if the workspace
@@ -89,14 +89,14 @@ export class Honcho {
   }
 
   /**
-   * Cached config for this workspace. May be stale if the workspace
+   * Cached configuration for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
    *
-   * Call getConfig() to get the latest config from the server,
+   * Call getConfiguration() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get config(): Record<string, unknown> | undefined {
-    return this._config
+  get configuration(): Record<string, unknown> | undefined {
+    return this._configuration
   }
 
   /**
@@ -316,7 +316,7 @@ export class Honcho {
    * Get or create a peer with the given ID.
    *
    * Creates a Peer object that can be used to interact with the specified peer.
-   * If metadata or config is provided, makes an API call to get/create the peer
+   * If metadata or configuration is provided, makes an API call to get/create the peer
    * immediately with those values.
    *
    * Provided metadata and configuration will overwrite existing data for this peer
@@ -326,8 +326,8 @@ export class Honcho {
    *             stable identifier that can be used consistently across sessions.
    * @param metadata - Optional metadata dictionary to associate with this peer.
    *                   If set, will get/create peer immediately with metadata.
-   * @param config - Optional configuration to set for this peer.
-   *                 If set, will get/create peer immediately with flags.
+   * @param configuration - Optional configuration to set for this peer.
+   *                        If set, will get/create peer immediately with flags.
    * @returns Promise resolving to a Peer object that can be used to send messages,
    *          join sessions, and query the peer's knowledge representations
    * @throws Error if the peer ID is empty or invalid
@@ -336,21 +336,21 @@ export class Honcho {
     id: string,
     options?: {
       metadata?: PeerMetadata
-      config?: PeerConfig
+      configuration?: PeerConfig
     }
   ): Promise<Peer> {
     const validatedId = PeerIdSchema.parse(id)
     const validatedMetadata = options?.metadata
       ? PeerMetadataSchema.parse(options.metadata)
       : undefined
-    const validatedConfig = options?.config
-      ? PeerConfigSchema.parse(options.config)
+    const validatedConfiguration = options?.configuration
+      ? PeerConfigSchema.parse(options.configuration)
       : undefined
 
-    if (validatedConfig || validatedMetadata) {
+    if (validatedConfiguration || validatedMetadata) {
       const peerData = await this._getOrCreatePeer(this.workspaceId, {
         id: validatedId,
-        configuration: validatedConfig,
+        configuration: validatedConfiguration,
         metadata: validatedMetadata,
       })
       return new Peer(
@@ -409,7 +409,7 @@ export class Honcho {
    * Get or create a session with the given ID.
    *
    * Creates a Session object that can be used to manage conversations between
-   * multiple peers. If metadata or config is provided, makes an API call to
+   * multiple peers. If metadata or configuration is provided, makes an API call to
    * get/create the session immediately with those values.
    *
    * Provided metadata and configuration will overwrite existing data for this session
@@ -420,8 +420,8 @@ export class Honcho {
    *             same conversation
    * @param metadata - Optional metadata dictionary to associate with this session.
    *                   If set, will get/create session immediately with metadata.
-   * @param config - Optional configuration to set for this session.
-   *                 If set, will get/create session immediately with flags.
+   * @param configuration - Optional configuration to set for this session.
+   *                        If set, will get/create session immediately with flags.
    * @returns Promise resolving to a Session object that can be used to add peers,
    *          send messages, and manage conversation context
    * @throws Error if the session ID is empty or invalid
@@ -430,21 +430,21 @@ export class Honcho {
     id: string,
     options?: {
       metadata?: SessionMetadata
-      config?: SessionConfig
+      configuration?: SessionConfig
     }
   ): Promise<Session> {
     const validatedId = SessionIdSchema.parse(id)
     const validatedMetadata = options?.metadata
       ? SessionMetadataSchema.parse(options.metadata)
       : undefined
-    const validatedConfig = options?.config
-      ? SessionConfigSchema.parse(options.config)
+    const validatedConfiguration = options?.configuration
+      ? SessionConfigSchema.parse(options.configuration)
       : undefined
 
-    if (validatedConfig || validatedMetadata) {
+    if (validatedConfiguration || validatedMetadata) {
       const sessionData = await this._getOrCreateSession(this.workspaceId, {
         id: validatedId,
-        configuration: validatedConfig,
+        configuration: validatedConfiguration,
         metadata: validatedMetadata,
       })
       return new Session(
@@ -545,10 +545,10 @@ export class Honcho {
    * @returns Promise resolving to a dictionary containing the workspace's configuration.
    *          Returns an empty dictionary if no configuration is set
    */
-  async getConfig(): Promise<Record<string, unknown>> {
+  async getConfiguration(): Promise<Record<string, unknown>> {
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
-    this._config = workspace.configuration || {}
-    return this._config
+    this._configuration = workspace.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -561,12 +561,12 @@ export class Honcho {
    * @param configuration - A dictionary of configuration to associate with the workspace.
    *                        Keys must be strings, values can be any JSON-serializable type
    */
-  async setConfig(configuration: WorkspaceConfig): Promise<void> {
+  async setConfiguration(configuration: WorkspaceConfig): Promise<void> {
     const validatedConfig = WorkspaceConfigSchema.parse(configuration)
     await this._updateWorkspace(this.workspaceId, {
       configuration: validatedConfig,
     })
-    this._config = validatedConfig
+    this._configuration = validatedConfig
   }
 
   /**
@@ -578,7 +578,7 @@ export class Honcho {
   async refresh(): Promise<void> {
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
-    this._config = workspace.configuration || {}
+    this._configuration = workspace.configuration || {}
   }
 
   /**

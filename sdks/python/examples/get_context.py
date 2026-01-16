@@ -27,5 +27,5 @@ session.add_messages(messages)
 
 # Get some context of the session
 # Set the token limit super low so we only get a few of the tiny messages created
-context = session.get_context(summary=True, tokens=50)
+context = session.context(summary=True, tokens=50)
 print("context returned:", context)

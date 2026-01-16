@@ -27,22 +27,25 @@ Usage:
         bob.message("Hi Alice, how are you?")
     ])
 
-    # Wait for deriver to process all messages (only necessary if very recent messages are critical to query)
-    client.poll_deriver_status()
+    # Wait for queue to process all messages (only necessary if very recent messages are critical to query)
+    client.poll_queue_status()
 
     # Query conversation context
     response = alice.chat("What did Bob say to me?")
+
+    # Async operations via .aio accessor
+    peer = await client.aio.peer("user-123")
+    await peer.aio.chat("query")
+    async for p in client.aio.peers():
+        print(p.id)
 """
 
-from .async_client import (
-    AsyncHoncho,
-    AsyncPage,
-    AsyncPeer,
-    AsyncSession,
-)
+from .aio import ConclusionScopeAio, HonchoAio, PeerAio, SessionAio
+from .api_types import MessageCreateParams
+from .api_types import MessageResponse as Message
 from .base import PeerBase, SessionBase
 from .client import Honcho
-from .conclusions import AsyncConclusionScope, ConclusionScope
+from .conclusions import ConclusionScope
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -57,11 +60,12 @@ from .http.exceptions import (
     TimeoutError,
     UnprocessableEntityError,
 )
-from .pagination import SyncPage
+from .pagination import AsyncPage, SyncPage
 from .peer import Peer
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
+    AsyncDialecticStreamResponse,
     DialecticStreamResponse,
 )
 
@@ -70,16 +74,19 @@ __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
 __all__ = [
-    # Clients
-    "AsyncHoncho",
+    # Client
     "Honcho",
     # Domain classes
-    "AsyncConclusionScope",
-    "AsyncPeer",
-    "AsyncSession",
     "ConclusionScope",
+    "Message",
+    "MessageCreateParams",
     "Peer",
     "Session",
+    # Aio views (for type hints)
+    "ConclusionScopeAio",
+    "HonchoAio",
+    "PeerAio",
+    "SessionAio",
     # Base classes
     "PeerBase",
     "SessionBase",
@@ -91,6 +98,7 @@ __all__ = [
     "AsyncPage",
     "SyncPage",
     # Streaming
+    "AsyncDialecticStreamResponse",
     "DialecticStreamResponse",
     # Exceptions
     "APIError",

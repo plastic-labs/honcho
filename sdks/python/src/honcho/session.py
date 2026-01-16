@@ -1,14 +1,14 @@
+# pyright: reportPrivateUsage=false
 """Sync Session class for Honcho SDK."""
 
 from __future__ import annotations
 
 import json
 import logging
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
+from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 
 from .api_types import (
     MessageCreateParams,
@@ -16,34 +16,33 @@ from .api_types import (
     PeerResponse,
     QueueStatusResponse,
     RepresentationResponse,
+    SessionPeerConfig,
     SessionResponse,
 )
 from .base import PeerBase, SessionBase
-from .http import HonchoHTTPClient, routes
+from .http import routes
+from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
+from .peer import Peer
 from .session_context import SessionContext, SessionSummaries, Summary
-from .utils import prepare_file_for_upload
+from .utils import (
+    datetime_to_iso,
+    normalize_peers_to_dict,
+    poll_until_complete,
+    prepare_file_for_upload,
+    resolve_id,
+)
 
 if TYPE_CHECKING:
-    from .peer import Peer
+    from .aio import SessionAio
+    from .client import Honcho
 
 logger = logging.getLogger(__name__)
 
-
-class SessionPeerConfig(BaseModel):
-    """Configuration for a peer within a session."""
-
-    observe_others: bool | None = Field(
-        None,
-        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
-    )
-    observe_me: bool | None = Field(
-        None,
-        description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
-    )
+__all__ = ["Session", "SessionPeerConfig"]
 
 
-class Session(SessionBase):
+class Session(SessionBase, MetadataConfigMixin):
     """
     Represents a session in Honcho.
 
@@ -57,12 +56,12 @@ class Session(SessionBase):
         metadata: Cached metadata for this session. May be stale if not recently
             fetched. Call get_metadata() for fresh data.
         configuration: Cached configuration for this session. May be stale if not
-            recently fetched. Call get_config() for fresh data.
+            recently fetched. Call get_configuration() for fresh data.
     """
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
-    _http: HonchoHTTPClient = PrivateAttr()
+    _honcho: "Honcho" = PrivateAttr()
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -71,8 +70,50 @@ class Session(SessionBase):
 
     @property
     def configuration(self) -> dict[str, object] | None:
-        """Cached configuration for this session. May be stale. Use get_config() for fresh data."""
+        """Cached configuration for this session. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
+
+    # MetadataConfigMixin implementation
+    def _get_http_client(self):
+        return self._honcho._http
+
+    def _get_fetch_route(self) -> str:
+        return routes.sessions(self.workspace_id)
+
+    def _get_update_route(self) -> str:
+        return routes.session(self.workspace_id, self.id)
+
+    def _get_fetch_body(self) -> dict[str, Any]:
+        return {"id": self.id}
+
+    def _parse_response(
+        self, data: dict[str, Any]
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        session = SessionResponse.model_validate(data)
+        return session.metadata or {}, session.configuration or {}
+
+    @property
+    def aio(self) -> "SessionAio":
+        """
+        Access async versions of all Session methods.
+
+        Returns a SessionAio view that provides async versions of all methods
+        while sharing state with this Session instance.
+
+        Example:
+            ```python
+            session = honcho.session("session-123")
+
+            # Async operations
+            await session.aio.add_messages(peer.message("Hello"))
+            async for msg in session.aio.messages():
+                print(msg.content)
+            ```
+        """
+        # Import here to avoid circular import (aio.py imports Session)
+        from .aio import SessionAio
+
+        return SessionAio(self)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -80,16 +121,13 @@ class Session(SessionBase):
         session_id: str = Field(
             ..., min_length=1, description="Unique identifier for this session"
         ),
-        workspace_id: str = Field(
-            ..., min_length=1, description="Workspace ID for scoping operations"
-        ),
-        http: HonchoHTTPClient = Field(..., description="HTTP client instance"),
+        honcho: Any = Field(..., description="Honcho client instance"),
         *,
         metadata: dict[str, object] | None = Field(
             None,
             description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
         ),
-        config: dict[str, object] | None = Field(
+        configuration: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
@@ -102,29 +140,28 @@ class Session(SessionBase):
 
         Args:
             session_id: Unique identifier for this session within the workspace
-            workspace_id: Workspace ID for scoping operations
-            http: HTTP client instance
+            honcho: Honcho client instance
             metadata: Optional metadata dictionary to associate with this session.
-            If set, will get/create session immediately with metadata.
-            config: Optional configuration to set for this session.
-            If set, will get/create session immediately with flags.
+                If set, will get/create session immediately with metadata.
+            configuration: Optional configuration to set for this session.
+                If set, will get/create session immediately with flags.
         """
         super().__init__(
             id=session_id,
-            workspace_id=workspace_id,
+            workspace_id=honcho.workspace_id,
         )
-        self._http = http
+        self._honcho = honcho
         self._metadata = metadata
-        self._configuration = config
+        self._configuration = configuration
 
-        if config is not None or metadata is not None:
+        if configuration is not None or metadata is not None:
             body: dict[str, Any] = {"id": session_id}
             if metadata is not None:
                 body["metadata"] = metadata
-            if config is not None:
-                body["configuration"] = config
+            if configuration is not None:
+                body["configuration"] = configuration
 
-            data = http.post(routes.sessions(workspace_id), body=body)
+            data = honcho._http.post(routes.sessions(honcho.workspace_id), body=body)
             session_data = SessionResponse.model_validate(data)
             # Update cached values with API response
             self._metadata = session_data.metadata
@@ -159,24 +196,9 @@ class Session(SessionBase):
                 - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
-        if not isinstance(peers, list):
-            peers = [peers]
-
-        peer_dict: dict[str, Any] = {}
-        for peer in peers:
-            if isinstance(peer, tuple):
-                # Handle tuple[str/Peer, SessionPeerConfig]
-                peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
-                peer_config = peer[1]
-                peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
-            else:
-                # Handle direct str or Peer
-                peer_id = peer if isinstance(peer, str) else peer.id
-                peer_dict[peer_id] = {}
-
-        self._http.post(
+        self._honcho._http.post(
             routes.session_peers_add(self.workspace_id, self.id),
-            body=peer_dict,
+            body=normalize_peers_to_dict(peers),
         )
 
     def set_peers(
@@ -207,24 +229,9 @@ class Session(SessionBase):
                 - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
-        if not isinstance(peers, list):
-            peers = [peers]
-
-        peer_dict: dict[str, Any] = {}
-        for peer in peers:
-            if isinstance(peer, tuple):
-                # Handle tuple[str/Peer, SessionPeerConfig]
-                peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
-                peer_config = peer[1]
-                peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
-            else:
-                # Handle direct str or Peer
-                peer_id = peer if isinstance(peer, str) else peer.id
-                peer_dict[peer_id] = {}
-
-        self._http.put(
+        self._honcho._http.put(
             routes.session_peers_set(self.workspace_id, self.id),
-            body=peer_dict,
+            body=normalize_peers_to_dict(peers),
         )
 
     def remove_peers(
@@ -251,12 +258,12 @@ class Session(SessionBase):
 
         peer_ids = [peer if isinstance(peer, str) else peer.id for peer in peers]
 
-        self._http.delete(
+        self._honcho._http.delete(
             routes.session_peers_remove(self.workspace_id, self.id),
             body=peer_ids,
         )
 
-    def get_peers(self) -> list["Peer"]:
+    def peers(self) -> list[Peer]:
         """
         Get all peers in this session.
 
@@ -267,24 +274,22 @@ class Session(SessionBase):
         Returns:
             A list of Peer objects that are members of this session
         """
-        from .peer import Peer
-
-        data: dict[str, Any] = self._http.get(
+        data: dict[str, Any] = self._honcho._http.get(
             routes.session_peers(self.workspace_id, self.id)
         )
 
         peers_data: list[Any] = data.get("items", [])
         return [
-            Peer(PeerResponse.model_validate(peer).id, self.workspace_id, self._http)
+            Peer(PeerResponse.model_validate(peer).id, self._honcho)
             for peer in peers_data
         ]
 
-    def get_peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
+    def peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
         peer_id = peer if isinstance(peer, str) else peer.id
-        data = self._http.get(
+        data = self._honcho._http.get(
             routes.session_peer_config(self.workspace_id, self.id, peer_id)
         )
         return SessionPeerConfig(
@@ -303,7 +308,7 @@ class Session(SessionBase):
         if config.observe_me is not None:
             body["observe_me"] = config.observe_me
 
-        self._http.put(
+        self._honcho._http.put(
             routes.session_peer_config(self.workspace_id, self.id, peer_id),
             body=body,
         )
@@ -330,36 +335,18 @@ class Session(SessionBase):
         if not isinstance(messages, list):
             messages = [messages]
 
-        # Convert MessageCreateParams to dict
-        messages_data: list[dict[str, Any]] = []
-        for msg in messages:
-            msg_dict: dict[str, Any] = {
-                "content": msg.content,
-                "peer_id": msg.peer_id,
-            }
-            if msg.metadata is not None:
-                msg_dict["metadata"] = msg.metadata
-            if msg.configuration is not None:
-                msg_dict["configuration"] = msg.configuration.model_dump(
-                    exclude_none=True
-                )
-            if msg.created_at is not None:
-                created_at_val = msg.created_at
-                msg_dict["created_at"] = (
-                    created_at_val.isoformat()
-                    if hasattr(created_at_val, "isoformat")
-                    else str(created_at_val)
-                )
-            messages_data.append(msg_dict)
+        messages_data = [
+            msg.model_dump(mode="json", exclude_none=True) for msg in messages
+        ]
 
-        data = self._http.post(
+        data = self._honcho._http.post(
             routes.messages(self.workspace_id, self.id),
             body={"messages": messages_data},
         )
         return [MessageResponse.model_validate(msg) for msg in data]
 
     @validate_call
-    def get_messages(
+    def messages(
         self,
         *,
         filters: dict[str, object] | None = Field(
@@ -383,13 +370,13 @@ class Session(SessionBase):
             A list of Message objects matching the specified criteria, ordered by
             creation time (most recent first)
         """
-        data = self._http.post(
+        data = self._honcho._http.post(
             routes.messages_list(self.workspace_id, self.id),
             body={"filters": filters} if filters else None,
         )
 
         def fetch_next(page: int) -> SyncPage[MessageResponse, MessageResponse]:
-            next_data = self._http.post(
+            next_data = self._honcho._http.post(
                 routes.messages_list(self.workspace_id, self.id),
                 body={"filters": filters} if filters else None,
                 query={"page": page},
@@ -397,26 +384,6 @@ class Session(SessionBase):
             return SyncPage(next_data, MessageResponse, None, fetch_next)
 
         return SyncPage(data, MessageResponse, None, fetch_next)
-
-    def get_metadata(self) -> dict[str, object]:
-        """
-        Get metadata for this session.
-
-        Makes an API call to retrieve the current metadata associated with this session.
-        Metadata can include custom attributes, settings, or any other key-value data.
-        This method also updates the cached metadata attribute.
-
-        Returns:
-            A dictionary containing the session's metadata. Returns an empty dictionary
-            if no metadata is set
-        """
-        data = self._http.post(
-            routes.sessions(self.workspace_id),
-            body={"id": self.id},
-        )
-        session = SessionResponse.model_validate(data)
-        self._metadata = session.metadata or {}
-        return self._metadata
 
     def delete(self) -> None:
         """
@@ -431,7 +398,7 @@ class Session(SessionBase):
 
         This action cannot be undone.
         """
-        self._http.delete(routes.session(self.workspace_id, self.id))
+        self._honcho._http.delete(routes.session(self.workspace_id, self.id))
 
     def clone(
         self,
@@ -467,104 +434,20 @@ class Session(SessionBase):
         if message_id is not None:
             query["message_id"] = message_id
 
-        data = self._http.post(
+        data = self._honcho._http.post(
             routes.session_clone(self.workspace_id, self.id),
             query=query if query else None,
         )
         cloned = SessionResponse.model_validate(data)
         return Session(
             cloned.id,
-            self.workspace_id,
-            self._http,
+            self._honcho,
             metadata=cloned.metadata,
-            config=cloned.configuration,
+            configuration=cloned.configuration,
         )
 
     @validate_call
-    def set_metadata(
-        self,
-        metadata: dict[str, object] = Field(
-            ..., description="Metadata dictionary to associate with this session"
-        ),
-    ) -> None:
-        """
-        Set metadata for this session.
-
-        Makes an API call to update the metadata associated with this session.
-        This will overwrite any existing metadata with the provided values.
-        This method also updates the cached metadata attribute.
-
-        Args:
-            metadata: A dictionary of metadata to associate with this session.
-                     Keys must be strings, values can be any JSON-serializable type
-        """
-        self._http.put(
-            routes.session(self.workspace_id, self.id),
-            body={"metadata": metadata},
-        )
-        self._metadata = metadata
-
-    def get_config(self) -> dict[str, object]:
-        """
-        Get configuration for this session.
-
-        Makes an API call to retrieve the current configuration associated with this session.
-        Configuration includes settings that control session behavior.
-        This method also updates the cached configuration attribute.
-
-        Returns:
-            A dictionary containing the session's configuration. Returns an empty dictionary
-            if no configuration is set
-        """
-        data = self._http.post(
-            routes.sessions(self.workspace_id),
-            body={"id": self.id},
-        )
-        session = SessionResponse.model_validate(data)
-        self._configuration = session.configuration or {}
-        return self._configuration
-
-    @validate_call
-    def set_config(
-        self,
-        configuration: dict[str, object] = Field(
-            ..., description="Configuration dictionary to associate with this session"
-        ),
-    ) -> None:
-        """
-        Set configuration for this session.
-
-        Makes an API call to update the configuration associated with this session.
-        This will overwrite any existing configuration with the provided values.
-        This method also updates the cached configuration attribute.
-
-        Args:
-            configuration: A dictionary of configuration to associate with this session.
-                          Keys must be strings, values can be any JSON-serializable type
-        """
-        self._http.put(
-            routes.session(self.workspace_id, self.id),
-            body={"configuration": configuration},
-        )
-        self._configuration = configuration
-
-    def refresh(self) -> None:
-        """
-        Refresh cached metadata and configuration for this session.
-
-        Makes a single API call to retrieve the latest metadata and configuration
-        associated with this session and updates the cached attributes.
-        """
-        data = self._http.post(
-            routes.sessions(self.workspace_id),
-            body={"id": self.id},
-        )
-        session = SessionResponse.model_validate(data)
-        self._metadata = session.metadata or {}
-        self._configuration = session.configuration or {}
-
-    @validate_call
-    def get_context(
+    def context(
         self,
         *,
         summary: bool = True,
@@ -678,7 +561,7 @@ class Session(SessionBase):
         if max_conclusions is not None:
             query["max_conclusions"] = max_conclusions
 
-        data = self._http.get(
+        data = self._honcho._http.get(
             routes.session_context(self.workspace_id, self.id),
             query=query,
         )
@@ -710,7 +593,7 @@ class Session(SessionBase):
             peer_card=data.get("peer_card"),
         )
 
-    def get_summaries(self) -> SessionSummaries:
+    def summaries(self) -> SessionSummaries:
         """
         Get available summaries for this session.
 
@@ -730,7 +613,9 @@ class Session(SessionBase):
             - The summary generation is still in progress
             - Summary generation is disabled for this session
         """
-        data = self._http.get(routes.session_summaries(self.workspace_id, self.id))
+        data = self._honcho._http.get(
+            routes.session_summaries(self.workspace_id, self.id)
+        )
 
         short_summary = None
         if data.get("short_summary"):
@@ -785,7 +670,7 @@ class Session(SessionBase):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        data = self._http.post(
+        data = self._honcho._http.post(
             routes.session_search(self.workspace_id, self.id),
             body={"query": query, "filters": filters, "limit": limit},
         )
@@ -856,14 +741,11 @@ class Session(SessionBase):
             data_dict["metadata"] = json.dumps(metadata)
         if configuration is not None:
             data_dict["configuration"] = json.dumps(configuration)
-        if created_at is not None:
-            # Ensure created_at is a string (ISO format)
-            if isinstance(created_at, datetime):
-                data_dict["created_at"] = created_at.isoformat()
-            else:
-                data_dict["created_at"] = created_at
+        created_at_iso = datetime_to_iso(created_at)
+        if created_at_iso is not None:
+            data_dict["created_at"] = created_at_iso
 
-        response = self._http.upload(
+        response = self._honcho._http.upload(
             routes.messages_upload(self.workspace_id, self.id),
             files={"file": (filename, content_bytes, content_type)},
             data=data_dict,
@@ -871,16 +753,17 @@ class Session(SessionBase):
 
         return [MessageResponse.model_validate(msg) for msg in response]
 
-    def get_representation(
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def representation(
         self,
         peer: str | PeerBase,
         *,
         target: str | PeerBase | None = None,
         search_query: str | None = None,
-        search_top_k: int | None = None,
-        search_max_distance: float | None = None,
+        search_top_k: int | None = Field(None, ge=1, le=100),
+        search_max_distance: float | None = Field(None, ge=0.0, le=1.0),
         include_most_frequent: bool | None = None,
-        max_conclusions: int | None = None,
+        max_conclusions: int | None = Field(None, ge=1, le=100),
     ) -> str:
         """
         Get a subset of the representation of the peer in this session.
@@ -901,27 +784,22 @@ class Session(SessionBase):
         Example:
             ```python
             # Get peer's representation in this session
-            rep = session.get_representation('user123')
+            rep = session.representation('user123')
             print(rep)
 
             # Get what user123 knows about assistant in this session
-            local_rep = session.get_representation('user123', target='assistant')
+            local_rep = session.representation('user123', target='assistant')
 
             # Get representation with semantic search
-            searched_rep = session.get_representation(
+            searched_rep = session.representation(
                 'user123',
                 search_query='preferences',
                 search_top_k=10
             )
             ```
         """
-
-        peer_id = peer if isinstance(peer, str) else peer.id
-        target_id = (
-            None
-            if target is None
-            else (target if isinstance(target, str) else target.id)
-        )
+        peer_id = resolve_id(peer)
+        target_id = resolve_id(target)
 
         query: dict[str, Any] = {"session_id": self.id}
         if target_id:
@@ -937,7 +815,7 @@ class Session(SessionBase):
         if max_conclusions is not None:
             query["max_conclusions"] = max_conclusions
 
-        data = self._http.post(
+        data = self._honcho._http.post(
             routes.peer_representation(self.workspace_id, peer_id),
             body=query,
         )
@@ -945,7 +823,7 @@ class Session(SessionBase):
         return response.representation
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def get_queue_status(
+    def queue_status(
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
@@ -957,16 +835,8 @@ class Session(SessionBase):
             observer: Optional observer (ID string or Peer object) to scope the status check
             sender: Optional sender (ID string or Peer object) to scope the status check
         """
-        resolved_observer_id = (
-            None
-            if observer is None
-            else (observer if isinstance(observer, str) else observer.id)
-        )
-        resolved_sender_id = (
-            None
-            if sender is None
-            else (sender if isinstance(sender, str) else sender.id)
-        )
+        resolved_observer_id = resolve_id(observer)
+        resolved_sender_id = resolve_id(sender)
 
         query: dict[str, Any] = {"session_id": self.id}
         if resolved_observer_id:
@@ -974,7 +844,7 @@ class Session(SessionBase):
         if resolved_sender_id:
             query["sender_id"] = resolved_sender_id
 
-        data = self._http.get(
+        data = self._honcho._http.get(
             routes.workspace_queue_status(self.workspace_id),
             query=query,
         )
@@ -1010,53 +880,40 @@ class Session(SessionBase):
             TimeoutError: If timeout is exceeded before work units complete
             Exception: If get_queue_status fails repeatedly
         """
-        start_time = time.time()
+        return poll_until_complete(
+            lambda: self.queue_status(observer, sender),
+            timeout=timeout,
+        )
 
-        while True:
-            try:
-                status = self.get_queue_status(observer, sender)
-            except Exception as e:
-                logger.warning(f"Failed to get queue status: {e}")
-                # Sleep briefly before retrying
-                time.sleep(1)
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def update_message(
+        self,
+        message: MessageResponse | str = Field(
+            ..., description="The Message object or message ID to update"
+        ),
+        metadata: dict[str, object] = Field(
+            ..., description="The metadata to update for the message"
+        ),
+    ) -> MessageResponse:
+        """
+        Update the metadata of a message in this session.
 
-                # Check timeout after error
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= timeout:
-                    raise TimeoutError(
-                        f"Polling timeout exceeded after {timeout}s. "
-                        + f"Error during status check: {e}"
-                    ) from e
-                continue
+        Makes an API call to update the metadata of a specific message within this session.
 
-            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
-                return status
+        Args:
+            message: Either a Message object or a message ID string
+            metadata: The metadata to update for the message
 
-            # Check timeout before sleeping
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= timeout:
-                raise TimeoutError(
-                    f"Polling timeout exceeded after {timeout}s. "
-                    + f"Current status: {status.pending_work_units} pending, "
-                    + f"{status.in_progress_work_units} in progress work units."
-                )
+        Returns:
+            The updated Message object
+        """
+        message_id = message.id if isinstance(message, MessageResponse) else message
 
-            # Sleep for the expected time to complete all current work units
-            # Assuming each pending and in-progress work unit takes 1 second
-            total_work_units = status.pending_work_units + status.in_progress_work_units
-            sleep_time = max(1, total_work_units)
-
-            # Don't sleep past the timeout
-            remaining_time = timeout - elapsed_time
-            sleep_time = min(sleep_time, remaining_time)
-            if sleep_time <= 0:
-                raise TimeoutError(
-                    f"Polling timeout exceeded after {timeout}s. "
-                    + f"Current status: {status.pending_work_units} pending, "
-                    + f"{status.in_progress_work_units} in progress work units."
-                )
-
-            time.sleep(sleep_time)
+        data = self._honcho._http.put(
+            routes.message(self.workspace_id, self.id, message_id),
+            body={"metadata": metadata},
+        )
+        return MessageResponse.model_validate(data)
 
     def __repr__(self) -> str:
         """

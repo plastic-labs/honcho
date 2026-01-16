@@ -48,10 +48,10 @@ session2.add_messages(
     ]
 )
 
-# wait for the deriver to process the messages
-print("waiting for the deriver to process all the messages")
-deriver_status = honcho.poll_deriver_status()
-print("deriver status:", deriver_status)
+# wait for the queue to process the messages
+print("waiting for the queue to process all the messages")
+queue_status = honcho.poll_queue_status()
+print("queue status:", queue_status)
 
 
 # # Chat with alice's honcho-level representation

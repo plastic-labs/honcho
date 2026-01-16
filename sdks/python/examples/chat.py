@@ -25,7 +25,7 @@ for i in range(10):
 
 session.add_messages(messages)
 
-honcho.poll_deriver_status()
+honcho.poll_queue_status()
 
 # Chat with alice
 alice = peers[0]

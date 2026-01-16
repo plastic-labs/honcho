@@ -3,25 +3,20 @@
  *
  * Provides utilities for running integration tests against a live Honcho server.
  *
- * REQUIREMENTS:
- * 1. PostgreSQL database running (default: localhost:5432)
- * 2. Honcho server running (default: localhost:8000)
+ * ============================================================================
+ * 🚨 DO NOT RUN `bun test` DIRECTLY - IT WILL FAIL 🚨
  *
- * Environment variables:
- *   - HONCHO_TEST_URL: Base URL of the test server (default: http://localhost:8000)
- *   - HONCHO_TEST_API_KEY: API key for authentication (optional if auth disabled)
+ * These tests require a running server with database and Redis.
+ * The test infrastructure is orchestrated via pytest from the monorepo root.
  *
- * Quick start:
- *   # Start PostgreSQL (if not running)
- *   docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15
+ * To run these tests:
+ *   cd /path/to/honcho  # monorepo root, NOT sdks/typescript
+ *   uv run pytest tests/ -k typescript
+ * ============================================================================
  *
- *   # Start Honcho server
- *   cd /path/to/honcho && uv run fastapi dev src/main.py
- *
- *   # Run tests
- *   cd sdks/typescript && bun test
- *
- * Note: Unit tests in errors.test.ts run without a server.
+ * Environment variables (set automatically by pytest):
+ *   - HONCHO_TEST_URL: Base URL of the test server
+ *   - HONCHO_TEST_API_KEY: API key for authentication
  */
 
 import { Honcho } from '../src'
@@ -120,11 +115,23 @@ export async function waitForServer(
  * Use this in beforeAll to gracefully skip integration tests.
  */
 export async function requireServer(): Promise<void> {
-  const ready = await waitForServer(3, 500)
+  // Wait up to 15 seconds (30 attempts × 500ms) for the server to be ready
+  // This accounts for server startup time in pytest fixtures
+  const ready = await waitForServer(30, 500)
   if (!ready) {
     throw new Error(
-      `Honcho server not available at ${TEST_CONFIG.baseURL}. ` +
-        'Start the server with: uv run fastapi dev src/main.py'
+      '\n\n' +
+        '╔══════════════════════════════════════════════════════════════════╗\n' +
+        '║  ERROR: Cannot run tests - no server available                   ║\n' +
+        '║                                                                  ║\n' +
+        '║  You probably ran `bun test` directly. DON\'T DO THAT.           ║\n' +
+        '║                                                                  ║\n' +
+        '║  These tests MUST be run via pytest from the monorepo root:     ║\n' +
+        '║                                                                  ║\n' +
+        '║    cd /path/to/honcho                                           ║\n' +
+        '║    uv run pytest tests/ -k typescript                           ║\n' +
+        '║                                                                  ║\n' +
+        '╚══════════════════════════════════════════════════════════════════╝\n'
     )
   }
 }

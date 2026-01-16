@@ -3,7 +3,7 @@ import type { HonchoHTTPClient } from './http/client'
 import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import { SessionContext, SessionSummaries, Summary } from './session_context'
+import { SessionContext, SessionSummaries } from './session_context'
 import type {
   MessageResponse,
   PageResponse,
@@ -75,7 +75,7 @@ export class Session {
   readonly workspaceId: string
   private _http: HonchoHTTPClient
   private _metadata?: Record<string, unknown>
-  private _config?: Record<string, unknown>
+  private _configuration?: Record<string, unknown>
 
   /**
    * Cached metadata for this session. May be stale if the session
@@ -89,14 +89,14 @@ export class Session {
   }
 
   /**
-   * Cached config for this session. May be stale if the session
+   * Cached configuration for this session. May be stale if the session
    * was not recently fetched from the API.
    *
-   * Call getConfig() to get the latest config from the server,
+   * Call getConfiguration() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get config(): Record<string, unknown> | undefined {
-    return this._config
+  get configuration(): Record<string, unknown> | undefined {
+    return this._configuration
   }
 
   /**
@@ -106,20 +106,20 @@ export class Session {
    * @param workspaceId - Workspace ID for scoping operations
    * @param http - Reference to the HTTP client instance
    * @param metadata - Optional metadata to initialize the cached value
-   * @param config - Optional config to initialize the cached value
+   * @param configuration - Optional configuration to initialize the cached value
    */
   constructor(
     id: string,
     workspaceId: string,
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
-    config?: Record<string, unknown>
+    configuration?: Record<string, unknown>
   ) {
     this.id = id
     this.workspaceId = workspaceId
     this._http = http
     this._metadata = metadata
-    this._config = config
+    this._configuration = configuration
   }
 
   // ===========================================================================
@@ -553,10 +553,10 @@ export class Session {
    * @returns Promise resolving to a dictionary containing the session's configuration.
    *          Returns an empty dictionary if no configuration is set
    */
-  async getConfig(): Promise<Record<string, unknown>> {
+  async getConfiguration(): Promise<Record<string, unknown>> {
     const session = await this._getOrCreate({ id: this.id })
-    this._config = session.configuration || {}
-    return this._config
+    this._configuration = session.configuration || {}
+    return this._configuration
   }
 
   /**
@@ -566,13 +566,15 @@ export class Session {
    * This will overwrite any existing configuration with the provided values.
    * This method also updates the cached configuration property.
    *
-   * @param config - A dictionary of configuration to associate with this session.
-   *                 Keys must be strings, values can be any JSON-serializable type
+   * @param configuration - A dictionary of configuration to associate with this session.
+   *                        Keys must be strings, values can be any JSON-serializable type
    */
-  async setConfig(config: Record<string, unknown>): Promise<void> {
-    const validatedConfig = SessionConfigSchema.parse(config)
+  async setConfiguration(
+    configuration: Record<string, unknown>
+  ): Promise<void> {
+    const validatedConfig = SessionConfigSchema.parse(configuration)
     await this._update({ configuration: validatedConfig })
-    this._config = validatedConfig
+    this._configuration = validatedConfig
   }
 
   /**
@@ -584,7 +586,7 @@ export class Session {
   async refresh(): Promise<void> {
     const session = await this._getOrCreate({ id: this.id })
     this._metadata = session.metadata || {}
-    this._config = session.configuration || {}
+    this._configuration = session.configuration || {}
   }
 
   /**

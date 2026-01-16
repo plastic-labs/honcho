@@ -12,16 +12,16 @@ from typing import Any, cast
 import httpx
 from anthropic import AsyncAnthropic
 from honcho.api_types import MessageCreateParams, QueueStatusResponse
-from honcho.async_client.session import AsyncSession
+from honcho.session import Session
 from honcho.session_context import SessionContext
 from pydantic import ValidationError
 
 # Adjust path to allow imports from tests.bench
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig as SDKSessionPeerConfig
+from honcho import Honcho
 from honcho.base import PeerBase
+from honcho.session import SessionPeerConfig as SDKSessionPeerConfig
 
 from tests.bench.harness import HonchoHarness
 from tests.unified.schema import (
@@ -168,10 +168,8 @@ async def save_results_to_s3(
 
 
 class UnifiedTestExecutor:
-    def __init__(
-        self, honcho_client: AsyncHoncho, anthropic_client: AsyncAnthropic | None
-    ):
-        self.client: AsyncHoncho = honcho_client
+    def __init__(self, honcho_client: Honcho, anthropic_client: AsyncAnthropic | None):
+        self.client: Honcho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
 
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
@@ -179,7 +177,7 @@ class UnifiedTestExecutor:
 
         # 1. Apply workspace config if present
         if test_def.workspace_config:
-            await self.client.set_config(
+            await self.client.aio.set_configuration(
                 test_def.workspace_config.model_dump(exclude_none=True)
             )
 
@@ -196,16 +194,20 @@ class UnifiedTestExecutor:
 
     async def execute_step(self, step: Any):
         if isinstance(step, SetWorkspaceConfigAction):
-            await self.client.set_config(step.config.model_dump(exclude_none=True))
+            await self.client.aio.set_configuration(
+                step.config.model_dump(exclude_none=True)
+            )
 
         elif isinstance(step, SetSessionConfigAction):
-            session = await self.client.session(id=step.session_id)
-            await session.set_config(step.config.model_dump(exclude_none=True))
+            session = await self.client.aio.session(id=step.session_id)
+            await session.aio.set_configuration(
+                step.config.model_dump(exclude_none=True)
+            )
 
         elif isinstance(step, CreateSessionAction):
-            session = await self.client.session(
+            session = await self.client.aio.session(
                 id=step.session_id,
-                config=step.config.model_dump(exclude_none=True)
+                configuration=step.config.model_dump(exclude_none=True)
                 if step.config
                 else None,
             )
@@ -217,26 +219,30 @@ class UnifiedTestExecutor:
                         **peer_config.model_dump(exclude_none=True)
                     )
                     peer_list.append((peer_id, sdk_config))
-                await session.add_peers(peer_list)
+                await session.aio.add_peers(peer_list)
 
         elif isinstance(step, AddMessageAction):
-            session = await self.client.session(id=step.session_id)
-            peer = await self.client.peer(id=step.peer_id)
+            session = await self.client.aio.session(id=step.session_id)
+            peer = await self.client.aio.peer(id=step.peer_id)
             # TODO: NOT CURRENTLY RESPECTING MESSAGE CONFIG
 
             config: dict[str, Any] | None = (
                 step.config.model_dump(exclude_none=True) if step.config else None
             )
 
-            await session.add_messages(
-                [peer.message(step.content, created_at=step.created_at, config=config)]
+            await session.aio.add_messages(
+                [
+                    peer.message(
+                        step.content, created_at=step.created_at, configuration=config
+                    )
+                ]
             )
 
         elif isinstance(step, AddMessagesAction):
-            session = await self.client.session(id=step.session_id)
+            session = await self.client.aio.session(id=step.session_id)
             msgs: list[MessageCreateParams] = []
             for msg_item in step.messages:
-                peer = await self.client.peer(id=msg_item.peer_id)
+                peer = await self.client.aio.peer(id=msg_item.peer_id)
                 # TODO: NOT CURRENTLY RESPECTING MESSAGE CONFIG
 
                 config = (
@@ -249,10 +255,10 @@ class UnifiedTestExecutor:
                     peer.message(
                         msg_item.content,
                         created_at=msg_item.created_at,
-                        config=config,
+                        configuration=config,
                     )
                 )
-            await session.add_messages(msgs)
+            await session.aio.add_messages(msgs)
 
         elif isinstance(step, WaitAction):
             if step.duration:
@@ -277,7 +283,7 @@ class UnifiedTestExecutor:
         await asyncio.sleep(1)
         start = time.time()
         while time.time() - start < timeout:
-            status: QueueStatusResponse = await self.client.get_queue_status()
+            status: QueueStatusResponse = await self.client.aio.queue_status()
             # status structure from schema: DeriverStatus with pending_work_units, in_progress_work_units
             if status.pending_work_units == 0 and status.in_progress_work_units == 0:
                 return
@@ -291,9 +297,9 @@ class UnifiedTestExecutor:
             if step.input is None:
                 raise ValueError("input required for chat")
 
-            peer = await self.client.peer(id=step.observer_peer_id)
+            peer = await self.client.aio.peer(id=step.observer_peer_id)
 
-            response = await peer.chat(
+            response = await peer.aio.chat(
                 step.input, session=step.session_id, target=step.observed_peer_id
             )
             return response
@@ -301,8 +307,8 @@ class UnifiedTestExecutor:
         elif step.target == "get_context":
             if not step.session_id:
                 raise ValueError("session_id required for get_context")
-            session: AsyncSession = await self.client.session(id=step.session_id)
-            context: SessionContext = await session.get_context(
+            session: Session = await self.client.aio.session(id=step.session_id)
+            context: SessionContext = await session.aio.context(
                 summary=step.summary, tokens=step.max_tokens
             )
             # Return the whole context object
@@ -312,8 +318,8 @@ class UnifiedTestExecutor:
             if not step.observer_peer_id:
                 raise ValueError("peer_id required for get_peer_card")
 
-            peer = await self.client.peer(id=step.observer_peer_id)
-            card = await peer.card(
+            peer = await self.client.aio.peer(id=step.observer_peer_id)
+            card = await peer.aio.card(
                 step.observed_peer_id
                 if step.observed_peer_id
                 else step.observer_peer_id
@@ -324,8 +330,8 @@ class UnifiedTestExecutor:
             if not step.observer_peer_id:
                 raise ValueError("observer_peer_id required for get_representation")
 
-            peer = await self.client.peer(id=step.observer_peer_id)
-            representation = await peer.get_representation(
+            peer = await self.client.aio.peer(id=step.observer_peer_id)
+            representation = await peer.aio.representation(
                 step.session_id, target=step.observed_peer_id, search_query=step.input
             )
             return representation
@@ -530,7 +536,7 @@ class UnifiedTestRunner:
             logger.info(f"Found {len(test_files)} test(s)")
 
             # 3. Execute Tests
-            client = AsyncHoncho(
+            client = Honcho(
                 base_url=f"http://localhost:{self.harness.api_port}",
                 workspace_id="default",  # Will be overridden per test
             )
@@ -549,7 +555,7 @@ class UnifiedTestRunner:
                         data = json.load(f)
                     test_def = TestDefinition(**data)
 
-                    executor.client = AsyncHoncho(
+                    executor.client = Honcho(
                         base_url=f"http://localhost:{self.harness.api_port}",
                         workspace_id=f"test_{test_name}_{int(time.time())}",
                     )

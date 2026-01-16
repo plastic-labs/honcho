@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -12,6 +11,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .api_types import (
+    ConclusionResponse,
     MessageResponse,
     PeerResponse,
     QueueStatusResponse,
@@ -19,10 +19,14 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
-from .http import HonchoHTTPClient, routes
+from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
+from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
+from .utils import poll_until_complete, resolve_id
+
+from .aio import HonchoAio
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,7 @@ ENVIRONMENTS = {
 }
 
 
-class Honcho(BaseModel):
+class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMultipleInheritance]
     """
     Main client for the Honcho SDK.
 
@@ -47,7 +51,7 @@ class Honcho(BaseModel):
         metadata: Cached metadata for this workspace. May be stale if not recently
             fetched. Call get_metadata() for fresh data.
         configuration: Cached configuration for this workspace. May be stale if not
-            recently fetched. Call get_config() for fresh data.
+            recently fetched. Call get_configuration() for fresh data.
     """
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore
@@ -60,6 +64,8 @@ class Honcho(BaseModel):
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: dict[str, object] | None = PrivateAttr(default=None)
     _http: HonchoHTTPClient = PrivateAttr()
+    _async_http: AsyncHonchoHTTPClient | None = PrivateAttr(default=None)
+    _http_config: dict[str, Any] = PrivateAttr()
     _base_url: str = PrivateAttr()
 
     @property
@@ -69,13 +75,59 @@ class Honcho(BaseModel):
 
     @property
     def configuration(self) -> dict[str, object] | None:
-        """Cached configuration for this workspace. May be stale. Use get_config() for fresh data."""
+        """Cached configuration for this workspace. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
+
+    # MetadataConfigMixin implementation
+    def _get_http_client(self):
+        return self._http
+
+    def _get_fetch_route(self) -> str:
+        return routes.workspaces()
+
+    def _get_update_route(self) -> str:
+        return routes.workspace(self.workspace_id)
+
+    def _get_fetch_body(self) -> dict[str, Any]:
+        return {"id": self.workspace_id}
+
+    def _parse_response(
+        self, data: dict[str, Any]
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        workspace = WorkspaceResponse.model_validate(data)
+        return workspace.metadata or {}, workspace.configuration or {}
 
     @property
     def base_url(self) -> str:
         """The base URL of the Honcho API."""
         return self._base_url
+
+    @property
+    def _async_http_client(self) -> AsyncHonchoHTTPClient:
+        """Lazily create and return the async HTTP client."""
+        if self._async_http is None:
+            self._async_http = AsyncHonchoHTTPClient(**self._http_config)
+        return self._async_http
+
+    @property
+    def aio(self) -> HonchoAio:
+        """
+        Access async versions of all Honcho methods.
+
+        Returns an HonchoAio view that provides async versions of all methods
+        while sharing state with this Honcho instance.
+
+        Example:
+            ```python
+            honcho = Honcho(workspace_id="my-workspace")
+
+            # Async operations
+            peer = await honcho.aio.peer("user-123")
+            async for p in honcho.aio.peers():
+                print(p.id)
+            ```
+        """
+        return HonchoAio(self)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -156,6 +208,10 @@ class Honcho(BaseModel):
             http_kwargs["max_retries"] = max_retries
         if default_headers is not None:
             http_kwargs["default_headers"] = dict(default_headers)
+
+        # Store config for lazy async client creation (without custom http_client)
+        self._http_config = dict(http_kwargs)
+
         if http_client is not None:
             http_kwargs["http_client"] = http_client
 
@@ -175,7 +231,7 @@ class Honcho(BaseModel):
             None,
             description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
         ),
-        config: dict[str, object] | None = Field(
+        configuration: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
@@ -184,16 +240,16 @@ class Honcho(BaseModel):
         Get or create a peer with the given ID.
 
         Creates a Peer object that can be used to interact with the specified peer.
-        This method does not make an API call unless `config` or `metadata` is
+        This method does not make an API call unless `configuration` or `metadata` is
         provided.
 
         Args:
             id: Unique identifier for the peer within the workspace. Should be a
-            stable identifier that can be used consistently across sessions.
+                stable identifier that can be used consistently across sessions.
             metadata: Optional metadata dictionary to associate with this peer.
-            If set, will get/create peer immediately with metadata.
-            config: Optional configuration to set for this peer.
-            If set, will get/create peer immediately with flags.
+                If set, will get/create peer immediately with metadata.
+            configuration: Optional configuration to set for this peer.
+                If set, will get/create peer immediately with flags.
 
         Returns:
             A Peer object that can be used to send messages, join sessions, and
@@ -202,10 +258,9 @@ class Honcho(BaseModel):
         Raises:
             ValidationError: If the peer ID is empty or invalid
         """
-        # Peer constructor handles API call and caching when metadata/config provided
-        return Peer(id, self.workspace_id, self._http, config=config, metadata=metadata)
+        return Peer(id, self, configuration=configuration, metadata=metadata)
 
-    def get_peers(
+    def peers(
         self, filters: dict[str, object] | None = None
     ) -> SyncPage[PeerResponse, Peer]:
         """
@@ -226,10 +281,9 @@ class Honcho(BaseModel):
         def transform(peer: PeerResponse) -> Peer:
             return Peer(
                 peer.id,
-                self.workspace_id,
-                self._http,
+                self,
                 metadata=peer.metadata,
-                config=peer.configuration,
+                configuration=peer.configuration,
             )
 
         def fetch_next(page: int) -> SyncPage[PeerResponse, Peer]:
@@ -253,7 +307,7 @@ class Honcho(BaseModel):
             None,
             description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
         ),
-        config: dict[str, object] | None = Field(
+        configuration: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
@@ -262,17 +316,18 @@ class Honcho(BaseModel):
         Get or create a session with the given ID.
 
         Creates a Session object that can be used to manage conversations between
-        multiple peers. This method does not make an API call unless `config` or
+        multiple peers. This method does not make an API call unless `configuration` or
         `metadata` is provided.
 
         Args:
             id: Unique identifier for the session within the workspace. Should be a
-            stable identifier that can be used consistently to reference the
-            same conversation
+                stable identifier that can be used consistently to reference the
+                same conversation
             metadata: Optional metadata dictionary to associate with this session.
-            If set, will get/create session immediately with metadata.
-            config: Optional configuration to set for this session.
-            If set, will get/create session immediately with flags.
+                If set, will get/create session immediately with metadata.
+            configuration: Optional configuration to set for this session.
+                If set, will get/create session immediately with flags.
+
         Returns:
             A Session object that can be used to add peers, send messages, and
             manage conversation context
@@ -280,11 +335,9 @@ class Honcho(BaseModel):
         Raises:
             ValidationError: If the session ID is empty or invalid
         """
-        return Session(
-            id, self.workspace_id, self._http, config=config, metadata=metadata
-        )
+        return Session(id, self, configuration=configuration, metadata=metadata)
 
-    def get_sessions(
+    def sessions(
         self, filters: dict[str, object] | None = None
     ) -> SyncPage[SessionResponse, Session]:
         """
@@ -305,10 +358,9 @@ class Honcho(BaseModel):
         def transform(session: SessionResponse) -> Session:
             return Session(
                 session.id,
-                self.workspace_id,
-                self._http,
+                self,
                 metadata=session.metadata,
-                config=session.configuration,
+                configuration=session.configuration,
             )
 
         def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
@@ -321,100 +373,7 @@ class Honcho(BaseModel):
 
         return SyncPage(data, SessionResponse, transform, fetch_next)
 
-    def get_metadata(self) -> dict[str, object]:
-        """
-        Get metadata for the current workspace.
-
-        Makes an API call to retrieve metadata associated with the current workspace.
-        Workspace metadata can include settings, configuration, or any other
-        key-value data associated with the workspace. This method also updates the
-        cached metadata attribute.
-
-        Returns:
-            A dictionary containing the workspace's metadata. Returns an empty
-            dictionary if no metadata is set
-        """
-        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
-        workspace = WorkspaceResponse.model_validate(data)
-        self._metadata = workspace.metadata or {}
-        return self._metadata
-
-    @validate_call
-    def set_metadata(
-        self,
-        metadata: dict[str, object] = Field(..., description="Metadata dictionary"),
-    ) -> None:
-        """
-        Set metadata for the current workspace.
-
-        Makes an API call to update the metadata associated with the current workspace.
-        This will overwrite any existing metadata with the provided values.
-        This method also updates the cached metadata attribute.
-
-        Args:
-            metadata: A dictionary of metadata to associate with the workspace.
-                      Keys must be strings, values can be any JSON-serializable type
-        """
-        self._http.put(
-            routes.workspace(self.workspace_id),
-            body={"metadata": metadata},
-        )
-        self._metadata = metadata
-
-    def get_config(self) -> dict[str, object]:
-        """
-        Get configuration for the current workspace.
-
-        Makes an API call to retrieve configuration associated with the current workspace.
-        Configuration includes settings that control workspace behavior.
-        This method also updates the cached configuration attribute.
-
-        Returns:
-            A dictionary containing the workspace's configuration. Returns an empty
-            dictionary if no configuration is set
-        """
-        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
-        workspace = WorkspaceResponse.model_validate(data)
-        self._configuration = workspace.configuration or {}
-        return self._configuration
-
-    @validate_call
-    def set_config(
-        self,
-        configuration: dict[str, object] = Field(
-            ..., description="Configuration dictionary"
-        ),
-    ) -> None:
-        """
-        Set configuration for the current workspace.
-
-        Makes an API call to update the configuration associated with the current workspace.
-        This will overwrite any existing configuration with the provided values.
-        This method also updates the cached configuration attribute.
-
-        Args:
-            configuration: A dictionary of configuration to associate with the workspace.
-                          Keys must be strings, values can be any JSON-serializable type
-        """
-        self._http.put(
-            routes.workspace(self.workspace_id),
-            body={"configuration": configuration},
-        )
-        self._configuration = configuration
-
-    def refresh(self) -> None:
-        """
-        Refresh cached metadata and configuration for the current workspace.
-
-        Makes a single API call to retrieve the latest metadata and configuration
-        associated with the current workspace and updates the cached attributes.
-        """
-        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
-        workspace = WorkspaceResponse.model_validate(data)
-        self._metadata = workspace.metadata or {}
-        self._configuration = workspace.configuration or {}
-
-    def get_workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
+    def workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
         """
         Get all workspace IDs from the Honcho instance.
 
@@ -484,7 +443,7 @@ class Honcho(BaseModel):
         return [MessageResponse.model_validate(item) for item in data]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def get_queue_status(
+    def queue_status(
         self,
         observer: str | PeerBase | None = None,
         sender: str | PeerBase | None = None,
@@ -498,21 +457,9 @@ class Honcho(BaseModel):
             sender: Optional sender (ID string or Peer object) to scope the status check
             session: Optional session (ID string or Session object) to scope the status check
         """
-        resolved_observer_id = (
-            None
-            if observer is None
-            else (observer if isinstance(observer, str) else observer.id)
-        )
-        resolved_sender_id = (
-            None
-            if sender is None
-            else (sender if isinstance(sender, str) else sender.id)
-        )
-        resolved_session_id = (
-            None
-            if session is None
-            else (session if isinstance(session, str) else session.id)
-        )
+        resolved_observer_id = resolve_id(observer)
+        resolved_sender_id = resolve_id(sender)
+        resolved_session_id = resolve_id(session)
 
         query: dict[str, Any] = {}
         if resolved_observer_id:
@@ -560,53 +507,10 @@ class Honcho(BaseModel):
             TimeoutError: If timeout is exceeded before work units complete
             Exception: If get_queue_status fails repeatedly
         """
-        start_time = time.time()
-
-        while True:
-            try:
-                status = self.get_queue_status(observer, sender, session)
-            except Exception as e:
-                logger.warning(f"Failed to get queue status: {e}")
-                # Sleep briefly before retrying
-                time.sleep(1)
-
-                # Check timeout after error
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= timeout:
-                    raise TimeoutError(
-                        f"Polling timeout exceeded after {timeout}s. "
-                        + f"Error during status check: {e}"
-                    ) from e
-                continue
-
-            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
-                return status
-
-            # Check timeout before sleeping
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= timeout:
-                raise TimeoutError(
-                    f"Polling timeout exceeded after {timeout}s. "
-                    + f"Current status: {status.pending_work_units} pending, "
-                    + f"{status.in_progress_work_units} in progress work units."
-                )
-
-            # Sleep for the expected time to complete all current work units
-            # Assuming each pending and in-progress work unit takes 1 second
-            total_work_units = status.pending_work_units + status.in_progress_work_units
-            sleep_time = max(1, total_work_units)
-
-            # Don't sleep past the timeout
-            remaining_time = timeout - elapsed_time
-            sleep_time = min(sleep_time, remaining_time)
-            if sleep_time <= 0:
-                raise TimeoutError(
-                    f"Polling timeout exceeded after {timeout}s. "
-                    + f"Current status: {status.pending_work_units} pending, "
-                    + f"{status.in_progress_work_units} in progress work units."
-                )
-
-            time.sleep(sleep_time)
+        return poll_until_complete(
+            lambda: self.queue_status(observer, sender, session),
+            timeout=timeout,
+        )
 
     @validate_call
     def list_conclusions(
@@ -639,8 +543,6 @@ class Honcho(BaseModel):
             ...     filters={"observer_id": "user123", "observed_id": "assistant"}
             ... )
         """
-        from .api_types import ConclusionResponse
-
         data = self._http.post(
             routes.conclusions_list(self.workspace_id),
             body={"filters": filters, "reverse": reverse},
@@ -696,8 +598,6 @@ class Honcho(BaseModel):
             ...     distance=0.8
             ... )
         """
-        from .api_types import ConclusionResponse
-
         # Merge observer/observed into filters without mutating the input
         query_filters: dict[str, object | str] = {
             **(filters or {}),
@@ -777,7 +677,7 @@ class Honcho(BaseModel):
             message_id = message
             if not session:
                 raise ValueError("session is required when message is a string ID")
-            resolved_session_id = session if isinstance(session, str) else session.id
+            resolved_session_id = resolve_id(session)
 
         data = self._http.put(
             routes.message(self.workspace_id, resolved_session_id, message_id),

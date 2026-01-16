@@ -71,16 +71,17 @@ class MessageConfiguration(BaseModel):
 # ==============================================================================
 
 
-class PeerConfig(BaseModel):
-    """Base peer configuration."""
+class SessionPeerConfig(BaseModel):
+    """Configuration for a peer within a session."""
 
-    observe_me: bool | None = None
-
-
-class SessionPeerConfig(PeerConfig):
-    """Session-level peer configuration."""
-
-    observe_others: bool | None = None
+    observe_others: bool | None = Field(
+        None,
+        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
+    )
+    observe_me: bool | None = Field(
+        None,
+        description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
+    )
 
 
 # ==============================================================================

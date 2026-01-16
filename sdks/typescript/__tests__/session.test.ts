@@ -65,9 +65,9 @@ describe('Session', () => {
 
     test('creates session with configuration', async () => {
       const config = { summary: { enabled: true } }
-      const session = await client.session('session-with-config', { config })
+      const session = await client.session('session-with-config', { configuration: config })
 
-      expect(session.config).toEqual(config)
+      expect(session.configuration).toEqual(config)
     })
 
     test('get-or-create is idempotent', async () => {
@@ -125,11 +125,11 @@ describe('Session', () => {
       expect(metadata).toEqual({ updated: true, step: 2 })
     })
 
-    test('setConfig updates session configuration', async () => {
+    test('setConfiguration updates session configuration', async () => {
       const session = await client.session('update-config-session', { metadata: {} })
 
-      await session.setConfig({ summary: { enabled: false } })
-      const config = await session.getConfig()
+      await session.setConfiguration({ summary: { enabled: false } })
+      const config = await session.getConfiguration()
 
       expect(config).toEqual({ summary: { enabled: false } })
     })
