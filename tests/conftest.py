@@ -404,7 +404,12 @@ def mock_vector_store():
     """Mock vector store operations for testing"""
     from unittest.mock import AsyncMock, MagicMock
 
-    from src.vector_store import VectorQueryResult, VectorRecord, VectorUpsertResult
+    from src.vector_store import (
+        VectorQueryResult,
+        VectorRecord,
+        VectorUpsertResult,
+        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+    )
 
     # Create a mock vector store that stores vectors in memory
     vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
@@ -464,14 +469,15 @@ def mock_vector_store():
         observer: str | None = None,
         observed: str | None = None,
     ) -> str:
+        # Uses real hash function for consistency with production
         if namespace_type == "document":
             if observer is None or observed is None:
                 raise ValueError(
                     "observer and observed are required for document namespaces"
                 )
-            return f"honcho2345.{workspace_name}.{observer}.{observed}"
+            return f"honcho2345.doc.{_hash_namespace_components(workspace_name, observer, observed)}"
         if namespace_type == "message":
-            return f"honcho2345.{workspace_name}.messages"
+            return f"honcho2345.msg.{_hash_namespace_components(workspace_name)}"
         raise ValueError(f"Unknown namespace type: {namespace_type}")
 
     mock_vs.get_vector_namespace = mock_get_vector_namespace

@@ -24,7 +24,12 @@ from src.reconciler.sync_vectors import (
     _sync_message_embeddings,  # pyright: ignore[reportPrivateUsage]
     run_vector_reconciliation_cycle,
 )
-from src.vector_store import VectorRecord, VectorStore, VectorUpsertResult
+from src.vector_store import (
+    VectorRecord,
+    VectorStore,
+    VectorUpsertResult,
+    _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @pytest.mark.asyncio
@@ -77,7 +82,7 @@ class TestStateTransitions:
         # Mock vector store to succeed
         mock_vector_store = MagicMock(spec=VectorStore)
         mock_vector_store.get_vector_namespace = MagicMock(
-            return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
+            return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
         mock_vector_store.upsert_many = AsyncMock(
             return_value=VectorUpsertResult(ok=True)
@@ -139,7 +144,7 @@ class TestStateTransitions:
         # Mock vector store to fail with exception
         mock_vector_store = MagicMock(spec=VectorStore)
         mock_vector_store.get_vector_namespace = MagicMock(
-            return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
+            return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
         mock_vector_store.upsert_many = AsyncMock(
             side_effect=Exception("Vector store failed")
@@ -200,7 +205,7 @@ class TestStateTransitions:
         # Mock vector store to fail with exception
         mock_vector_store = MagicMock(spec=VectorStore)
         mock_vector_store.get_vector_namespace = MagicMock(
-            return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
+            return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
         mock_vector_store.upsert_many = AsyncMock(
             side_effect=Exception("Vector store failed")
@@ -302,7 +307,7 @@ class TestBatchProcessing:
         def mock_get_namespace(
             _namespace_type: str, workspace: str, observer: str, observed: str
         ) -> str:
-            return f"honcho.{workspace}.{observer}.{observed}"
+            return f"honcho.doc.{_hash_namespace_components(workspace, observer, observed)}"
 
         async def mock_upsert(
             namespace: str, vectors: list[VectorRecord]
@@ -323,8 +328,8 @@ class TestBatchProcessing:
         assert failed == 0
 
         # Verify namespaces
-        expected_ns1 = f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
-        expected_ns2 = f"honcho.{workspace.name}.{peer1.name}.{peer2.name}"
+        expected_ns1 = f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
+        expected_ns2 = f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer2.name)}"
 
         assert expected_ns1 in namespace_calls
         assert expected_ns2 in namespace_calls
@@ -433,7 +438,7 @@ class TestReEmbedding:
             # Mock vector store
             mock_vector_store = MagicMock(spec=VectorStore)
             mock_vector_store.get_vector_namespace = MagicMock(
-                return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
+                return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
             )
             mock_vector_store.upsert_many = AsyncMock(
                 return_value=VectorUpsertResult(ok=True)
@@ -505,7 +510,7 @@ class TestReEmbedding:
             # Mock vector store
             mock_vector_store = MagicMock(spec=VectorStore)
             mock_vector_store.get_vector_namespace = MagicMock(
-                return_value=f"honcho.{workspace.name}.{peer1.name}.{peer1.name}"
+                return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
             )
             mock_vector_store.upsert_many = AsyncMock(
                 return_value=VectorUpsertResult(ok=True)

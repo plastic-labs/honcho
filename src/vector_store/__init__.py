@@ -2,6 +2,8 @@
 Vector store abstraction layer for Honcho.
 """
 
+import base64
+import hashlib
 from abc import ABC, abstractmethod
 from functools import cache
 from typing import Any, ClassVar, Literal
@@ -9,6 +11,23 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
+
+
+def _hash_namespace_components(*parts: str) -> str:
+    """
+    Hash namespace components to create a fixed-length, valid namespace suffix.
+
+    Turbopuffer requires namespaces to match [A-Za-z0-9-_.]{1,128}.
+    This function hashes the variable parts (workspace, observer, observed)
+    to ensure the namespace fits within length limits and uses only valid chars.
+
+    Returns:
+        A 43-character base64url-encoded SHA-256 hash (no padding).
+        (SHA-256 = 32 bytes, base64 = ceil(32 * 4 / 3) = 43 chars without padding)
+    """
+    combined = ".".join(parts)
+    hash_bytes = hashlib.sha256(combined.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(hash_bytes).decode("ascii").rstrip("=")
 
 
 class VectorRecord(BaseModel):
@@ -46,13 +65,14 @@ class VectorStore(ABC):
     """
     Abstract base class for vector store implementations.
 
-    All vector operations are namespace-scoped. Namespaces map to:
-    - Document embeddings: {prefix}.{workspace}.{observer}.{observed} (per collection)
-    - Message embeddings: {prefix}.{workspace}.messages (per workspace)
+    All vector operations are namespace-scoped. Namespaces are generated via
+    get_vector_namespace() which hashes workspace/peer names to ensure:
+    - Total length fits within Turbopuffer's 128 char limit
+    - Only valid characters [A-Za-z0-9-_.] are used
 
-    Note: Period (.) is used as the delimiter since vector stores (Turbopuffer, LanceDB)
-    only allow [A-Za-z0-9-_.] in namespace names, and period is not allowed in
-    workspace/peer IDs (which only allow [A-Za-z0-9_-]).
+    Namespace format: {prefix}.{type}.{hash}
+    - Document embeddings: {prefix}.doc.{hash}
+    - Message embeddings: {prefix}.msg.{hash}
     """
 
     namespace_prefix: str
@@ -82,17 +102,20 @@ class VectorStore(ABC):
 
         Returns:
             Namespace string in format:
-            - document: {prefix}.{workspace}.{observer}.{observed}
-            - message: {prefix}.{workspace}.messages
+            - document: {prefix}.doc.{hash}
+            - message: {prefix}.msg.{hash}
+            where hash is derived from the workspace/peer names.
         """
         if namespace_type == "document":
             if observer is None or observed is None:
                 raise ValueError(
                     "observer and observed are required for document namespaces"
                 )
-            return f"{self.namespace_prefix}.{workspace_name}.{observer}.{observed}"
-        if namespace_type == "message":
-            return f"{self.namespace_prefix}.{workspace_name}.messages"
+            hash_suffix = _hash_namespace_components(workspace_name, observer, observed)
+            return f"{self.namespace_prefix}.doc.{hash_suffix}"
+        elif namespace_type == "message":
+            hash_suffix = _hash_namespace_components(workspace_name)
+            return f"{self.namespace_prefix}.msg.{hash_suffix}"
 
     # === Core operations ===
     @abstractmethod
@@ -231,4 +254,5 @@ __all__ = [
     "get_external_vector_store",
     "close_external_vector_store",
     "upsert_with_retry",
+    "_hash_namespace_components",
 ]

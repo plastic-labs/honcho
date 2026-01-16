@@ -543,9 +543,10 @@ class VectorStoreSettings(HonchoSettings):
     MIGRATED: bool = False
 
     # Global namespace prefix for all vector namespaces
-    # Namespaces follow the pattern:
-    # - Documents: {NAMESPACE}.{workspace}.{observer}.{observed}
-    # - Messages: {NAMESPACE}.{workspace}.messages
+    # Namespaces follow the pattern: {NAMESPACE}.{type}.{hash}
+    # where hash is a base64url-encoded SHA-256 of the workspace/peer names
+    # - Documents: {NAMESPACE}.doc.{hash(workspace, observer, observed)}
+    # - Messages: {NAMESPACE}.msg.{hash(workspace)}
     NAMESPACE: str = "honcho"
 
     DIMENSIONS: Annotated[

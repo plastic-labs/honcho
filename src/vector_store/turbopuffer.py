@@ -30,9 +30,8 @@ class TurbopufferVectorStore(VectorStore):
     """
     Turbopuffer implementation of the VectorStore interface.
 
-    Each namespace corresponds to either:
-    - A document collection: {prefix}.{workspace}.{observer}.{observed}
-    - A workspace's message embeddings: {prefix}.{workspace}.messages
+    Namespaces are generated via get_vector_namespace() which hashes
+    the variable components to fit Turbopuffer's [A-Za-z0-9-_.]{1,128} limit.
     """
 
     tpuf: AsyncTurbopuffer

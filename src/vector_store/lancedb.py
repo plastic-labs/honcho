@@ -109,22 +109,25 @@ class LanceDBVectorStore(VectorStore):
         """
         Infer standard metadata columns based on namespace structure.
 
-        Namespaces:
-            - Documents: {prefix}.{workspace}.{observer}.{observed}
-            - Messages:  {prefix}.{workspace}.messages
+        Namespaces use format: {prefix}.{type}.{hash}
+            - Documents: {prefix}.doc.{hash}
+            - Messages:  {prefix}.msg.{hash}
         """
         parts = namespace.split(".")
         if len(parts) < 3:
             return []
 
-        if parts[-1] == "messages":
+        # Second-to-last part indicates the type (doc or msg)
+        ns_type = parts[-2]
+
+        if ns_type == "msg":
             return [
                 pa.field("message_id", pa.string(), nullable=True),
                 pa.field("session_name", pa.string(), nullable=True),
                 pa.field("peer_name", pa.string(), nullable=True),
             ]
 
-        if len(parts) == 4:
+        if ns_type == "doc":
             return [
                 pa.field("workspace_name", pa.string(), nullable=True),
                 pa.field("observer", pa.string(), nullable=True),
