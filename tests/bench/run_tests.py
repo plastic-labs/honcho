@@ -6,7 +6,7 @@ This script:
 1. Loads test definitions from JSON files
 2. Creates a workspace for each test
 3. Adds all messages to sessions
-4. Waits for the deriver queue to be empty
+4. Waits for the deriver queue to be empty (TODO implement this differently!)
 5. Executes queries and judges responses using an LLM
 """
 
@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -156,31 +155,6 @@ class TestRunner:
             workspace_id=workspace_id,
             base_url=self.honcho_url,
         )
-
-    async def wait_for_deriver_queue_empty(
-        self, honcho_client: Honcho, session_id: str | None = None
-    ) -> bool:
-        """
-        Wait for the deriver queue to be empty.
-
-        Args:
-            honcho_client: Honcho client instance
-            timeout: Maximum time to wait in seconds
-
-        Returns:
-            True if queue is empty, False if timeout exceeded
-        """
-        try:
-            await honcho_client.aio.poll_queue_status(
-                session=session_id,
-                timeout=float(self.timeout_seconds)
-                if self.timeout_seconds
-                else 10000.0,
-            )
-            return True
-        except Exception as e:
-            self.logger.warning(f"Error polling deriver status: {e}")
-            return False
 
     async def judge_response(
         self, query: str, expected_response: str, actual_response: str
@@ -420,12 +394,13 @@ Evaluate whether the actual response contains the core correct information from 
                 observed: str | None = query_data.get("observed")
 
                 # Wait for deriver queue to be empty for this session
-                queue_empty = await self.wait_for_deriver_queue_empty(
-                    honcho_client, session_id=session_name
-                )
-                if not queue_empty:
-                    print(f"Deriver queue never emptied for session {session_name}!!!")
-                    sys.exit(1)
+                # TODO implement this differently!
+                # queue_empty = await self.wait_for_deriver_queue_empty(
+                #     honcho_client, session_id=session_name
+                # )
+                # if not queue_empty:
+                #     print(f"Deriver queue never emptied for session {session_name}!!!")
+                #     sys.exit(1)
 
                 output_lines.append(f"\n  query {i + 1}: {query}")
                 context_parts: list[str] = []
@@ -535,14 +510,15 @@ Evaluate whether the actual response contains the core correct information from 
                 session = await honcho_client.aio.session(id=session_name)
 
                 # Wait for deriver queue to be empty for this session
-                queue_empty = await self.wait_for_deriver_queue_empty(
-                    honcho_client, session_id=session_name
-                )
-                if not queue_empty:
-                    output_lines.append(
-                        f"Deriver queue never emptied for session {session_name}!!!"
-                    )
-                    sys.exit(1)
+                # TODO implement this differently!
+                # queue_empty = await self.wait_for_deriver_queue_empty(
+                #     honcho_client, session_id=session_name
+                # )
+                # if not queue_empty:
+                #     output_lines.append(
+                #         f"Deriver queue never emptied for session {session_name}!!!"
+                #     )
+                #     sys.exit(1)
 
                 session_context = await session.aio.context(
                     summary=summary, tokens=max_tokens

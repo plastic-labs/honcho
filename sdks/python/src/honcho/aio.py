@@ -54,7 +54,6 @@ from .utils import (
     datetime_to_iso,
     normalize_peers_to_dict,
     parse_sse_chunk,
-    poll_until_complete_async,
     prepare_file_for_upload,
     resolve_id,
 )
@@ -339,19 +338,6 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
-
-    async def poll_queue_status(
-        self,
-        observer: str | PeerBase | None = None,
-        sender: str | PeerBase | None = None,
-        session: str | SessionBase | None = None,
-        timeout: float = 300.0,
-    ) -> QueueStatusResponse:
-        """Poll queue status until complete asynchronously."""
-        return await poll_until_complete_async(
-            lambda: self.queue_status(observer, sender, session),
-            timeout=timeout,
-        )
 
 
 class PeerAio(AsyncMetadataConfigMixin):
@@ -1099,18 +1085,6 @@ class SessionAio(AsyncMetadataConfigMixin):
             query=query,
         )
         return QueueStatusResponse.model_validate(data)
-
-    async def poll_queue_status(
-        self,
-        observer: str | PeerBase | None = None,
-        sender: str | PeerBase | None = None,
-        timeout: float = 300.0,
-    ) -> QueueStatusResponse:
-        """Poll queue status until complete asynchronously."""
-        return await poll_until_complete_async(
-            lambda: self.queue_status(observer, sender),
-            timeout=timeout,
-        )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def update_message(

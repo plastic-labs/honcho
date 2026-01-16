@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock, patch
-
 import pytest
 
 from sdks.python.src.honcho.api_types import QueueStatusResponse
@@ -483,70 +481,6 @@ async def test_session_queue_status(
         # Test with both observer and sender
         status = session.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
-
-
-@pytest.mark.asyncio
-async def test_session_poll_queue_status(
-    client_fixture: tuple[Honcho, str],
-):
-    """
-    Tests polling deriver status until completion for sessions.
-    """
-    honcho_client, client_type = client_fixture
-
-    # Mock the queue_status method to return a "completed" status
-    # to avoid infinite polling in tests
-    completed_status = QueueStatusResponse(
-        total_work_units=0,
-        completed_work_units=0,
-        in_progress_work_units=0,
-        pending_work_units=0,
-    )
-
-    if client_type == "async":
-        session = await honcho_client.aio.session(id="test-session-poll-queue")
-        assert isinstance(session, Session)
-
-        with patch.object(
-            session.aio.__class__,
-            "queue_status",
-            new=AsyncMock(return_value=completed_status),
-        ):
-            status = await session.aio.poll_queue_status()
-            assert isinstance(status, QueueStatusResponse)
-            assert status.pending_work_units == 0
-            assert status.in_progress_work_units == 0
-
-        # Test with parameters
-        peer = await honcho_client.aio.peer(id="test-peer-session-poll")
-        with patch.object(
-            session.aio.__class__,
-            "queue_status",
-            new=AsyncMock(return_value=completed_status),
-        ):
-            status = await session.aio.poll_queue_status(
-                observer=peer.id, sender=peer.id
-            )
-            assert isinstance(status, QueueStatusResponse)
-    else:
-        session = honcho_client.session(id="test-session-poll-queue")
-        assert isinstance(session, Session)
-
-        with patch.object(
-            session.__class__, "queue_status", return_value=completed_status
-        ):
-            status = session.poll_queue_status()
-            assert isinstance(status, QueueStatusResponse)
-            assert status.pending_work_units == 0
-            assert status.in_progress_work_units == 0
-
-        # Test with parameters
-        peer = honcho_client.peer(id="test-peer-session-poll")
-        with patch.object(
-            session.__class__, "queue_status", return_value=completed_status
-        ):
-            status = session.poll_queue_status(observer=peer.id, sender=peer.id)
-            assert isinstance(status, QueueStatusResponse)
 
 
 @pytest.mark.asyncio

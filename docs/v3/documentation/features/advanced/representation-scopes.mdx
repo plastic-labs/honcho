@@ -128,7 +128,7 @@ const charlie = await honcho.peer("charlie");
 
 await session.addPeers([alice, bob, charlie]);
 
-await session.setPeerConfig(alice, { observe_others: true });
+await session.setPeerConfig(alice, { observeOthers: true });
 
 await session.addMessages([
     bob.message("I had pancakes for breakfast."),
@@ -137,7 +137,7 @@ await session.addMessages([
 
 const session2 = await honcho.session("game-session-2");
 await session2.addPeers([alice, charlie]);
-await session2.setPeerConfig(alice, { observe_others: true });
+await session2.setPeerConfig(alice, { observeOthers: true });
 
 await session2.addMessages([
     charlie.message("I didn't have breakfast. I lied to Bob.")

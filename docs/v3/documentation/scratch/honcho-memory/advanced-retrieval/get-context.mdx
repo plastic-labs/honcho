@@ -25,7 +25,7 @@ Unlike basic message retrieval, memory-enhanced context:
 Automatically manages context to fit within your specified token budget:
 
 ```python
-context = session.get_context(max_tokens=2000)
+context = session.get_context(tokens=2000)
 ```
 
 ### Multi-Layered Context
@@ -43,7 +43,7 @@ Fine-tune what context is included:
 
 ```python
 context = session.get_context(
-    max_tokens=2000,
+    tokens=2000,
     include_summaries=True,
     include_representation=True,
     peer_id="peer_123"  # Get representation for specific peer
@@ -58,7 +58,7 @@ Provide your agent with rich context for personalized responses:
 
 ```python
 # Get optimized context
-context = session.get_context(max_tokens=1500)
+context = session.get_context(tokens=1500)
 
 # Use in your LLM prompt
 response = llm.generate(
@@ -87,10 +87,10 @@ Adjust context size based on task complexity:
 
 ```python
 # More context for complex tasks
-detailed_context = session.get_context(max_tokens=4000)
+detailed_context = session.get_context(tokens=4000)
 
 # Minimal context for simple queries
-quick_context = session.get_context(max_tokens=500)
+quick_context = session.get_context(tokens=500)
 ```
 
 ## How It Works
@@ -111,7 +111,7 @@ Leave room in your model's context window:
 
 ```python
 # For a 8K context model
-context = session.get_context(max_tokens=2000)  # Leaves room for prompt + response
+context = session.get_context(tokens=2000)  # Leaves room for prompt + response
 ```
 
 ### Representation Updates
@@ -120,7 +120,7 @@ Ensure representations are current:
 
 ```python
 # Check if representation is being generated
-status = workspace.get_deriver_status(session_id=session.id)
+status = honcho.queue_status(session_id=session.id)
 
 # Wait for processing if needed
 if status.pending > 0:
@@ -133,7 +133,7 @@ Context can be cached for repeated queries:
 
 ```python
 # Cache context for multiple agent calls
-cached_context = session.get_context(max_tokens=2000)
+cached_context = session.get_context(tokens=2000)
 
 # Reuse for multiple related queries
 for query in user_queries:

@@ -238,8 +238,8 @@ The `SessionContext` object always includes fields for messages, summaries, `pee
 
 **Using `peer_target` for Context:**
 
-- **Without `peer_perspective`**: Returns Honcho's omniscient view of `peer_target` (all observations and context)
-- **With `peer_perspective`**: Returns what `peer_perspective` knows about `peer_target` (perspective-based observations and context)
+- **Without `peer_perspective`**: Returns Honcho's omniscient view of `peer_target` (all conclusions and context)
+- **With `peer_perspective`**: Returns what `peer_perspective` knows about `peer_target` (perspective-based conclusions and context)
 
 That's it. Call `session.get_context().to_openai(assistant)` and you get properly formatted context tailored for your assistant.
 

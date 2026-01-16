@@ -184,13 +184,13 @@ import { Honcho } from "@honcho-ai/sdk";
     const honcho = new Honcho({});
 
     // Create peer with configuration
-    const peer = await honcho.peer("my-peer", { config: { observe_me: false } });
+    const peer = await honcho.peer("my-peer", { config: { observeMe: false } });
 
     // Change peer's configuration
-    await peer.setConfig({ observe_me: true });
+    await peer.setConfig({ observeMe: true });
 
     // Note: creating the same peer again will also replace the configuration
-    await honcho.peer("my-peer", { config: { observe_me: false } });
+    await honcho.peer("my-peer", { config: { observeMe: false } });
 })();
 ```
 </CodeGroup>

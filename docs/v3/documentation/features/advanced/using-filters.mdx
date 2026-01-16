@@ -45,7 +45,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
     // Simple peer filter
     const peers = await honcho.getPeers({
-      filters: { peerId: "alice" }
+      filters: { peer_id: "alice" }
     });
 
     // Simple session filter with metadata
@@ -58,8 +58,8 @@ import { Honcho } from "@honcho-ai/sdk";
     // Simple message filter
     const messages = await honcho.getMessages({
       filters: {
-        sessionId: "support-chat-1",
-        peerId: "alice"
+        session_id: "support-chat-1",
+        peer_id: "alice"
       }
     });
 })();
@@ -89,8 +89,8 @@ messages = honcho.get_messages(filters={
     const messages = await honcho.getMessages({
       filters: {
         AND: [
-          { sessionId: "chat-1" },
-          { createdAt: { gte: "2024-01-01" } }
+          { session_id: "chat-1" },
+          { created_at: { gte: "2024-01-01" } }
         ]
       }
     });
@@ -128,8 +128,8 @@ sessions = honcho.get_sessions(filters={
     const messages = await session.getMessages({
       filters: {
         OR: [
-          { peerId: "alice" },
-          { peerId: "bob" }
+          { peer_id: "alice" },
+          { peer_id: "bob" }
         ]
       }
     });
@@ -175,7 +175,7 @@ sessions = honcho.get_sessions(filters={
     const peers = await honcho.getPeers({
       filters: {
         NOT: [
-          { peerId: "alice" }
+          { peer_id: "alice" }
         ]
       }
     });
@@ -224,8 +224,8 @@ messages = session.get_messages(filters={
         AND: [
           {
             OR: [
-              { peerId: "alice" },
-              { peerId: "bob" }
+              { peer_id: "alice" },
+              { peer_id: "bob" }
             ]
           },
           {
@@ -275,14 +275,14 @@ sessions = honcho.get_sessions(filters={
     // Find sessions created after a specific date
     const sessions = await honcho.getSessions({
       filters: {
-        createdAt: { gte: "2024-01-01" }
+        created_at: { gte: "2024-01-01" }
       }
     });
 
     // Find messages within a date range
     const messages = await session.getMessages({
       filters: {
-        createdAt: {
+        created_at: {
           gte: "2024-01-01",
           lte: "2024-12-31"
         }
@@ -290,7 +290,7 @@ sessions = honcho.get_sessions(filters={
     });
 
     // Metadata numeric comparisons
-    const sessions = await honcho.getSessions({
+    const filteredSessions = await honcho.getSessions({
       filters: {
         metadata: {
           score: { gt: 8.5 },
@@ -331,7 +331,7 @@ peers = honcho.get_peers(filters={
     // Find messages from specific peers in a session
     const messages = await session.getMessages({
       filters: {
-        peerId: { in: ["alice", "bob", "charlie"] }
+        peer_id: { in: ["alice", "bob", "charlie"] }
       }
     });
 
@@ -444,7 +444,7 @@ messages = session.get_messages(filters={
       filters: {
         metadata: {
           score: { gte: 4.0, lte: 5.0 },
-          createdBy: { ne: "system" },
+          created_by: { ne: "system" },
           tags: { contains: "important" }
         }
       }
@@ -494,19 +494,19 @@ sessions = honcho.get_sessions(filters={
     // Find all sessions with any peer_id (essentially all sessions)
     const sessions = await honcho.getSessions({
       filters: {
-        peerId: "*"
+        peer_id: "*"
       }
     });
 
     // Wildcard in lists - matches everything
     const messages = await session.getMessages({
       filters: {
-        peerId: { in: ["alice", "bob", "*"] }
+        peer_id: { in: ["alice", "bob", "*"] }
       }
     });
 
     // Metadata wildcards
-    const sessions = await honcho.getSessions({
+    const filteredSessions = await honcho.getSessions({
       filters: {
         metadata: {
           type: "*",  // Any type
@@ -594,17 +594,17 @@ messages = session.get_messages(filters={
       filters: {
         AND: [
           { content: { icontains: "error" } },
-          { createdAt: { gte: weekAgo } },
+          { created_at: { gte: weekAgo } },
           { metadata: { level: { in: ["error", "critical"] } } }
         ]
       }
     });
 
     // Find messages in specific sessions with sentiment analysis
-    const messages = await session.getMessages({
+    const sentimentMessages = await session.getMessages({
       filters: {
         AND: [
-          { sessionId: { in: ["support-1", "support-2", "support-3"] } },
+          { session_id: { in: ["support-1", "support-2", "support-3"] } },
           { metadata: { sentiment: "negative" } },
           { metadata: { confidence: { gte: 0.7 } } }
         ]
@@ -646,7 +646,7 @@ except FilterError as e:
       // Invalid filter - unsupported operator
       const messages = await session.getMessages({
         filters: {
-          createdAt: { invalidOperator: "2024-01-01" }
+          created_at: { invalid_operator: "2024-01-01" }
         }
       });
     } catch (error) {
@@ -660,7 +660,7 @@ except FilterError as e:
       // Invalid column name
       const sessions = await honcho.getSessions({
         filters: {
-          nonexistentField: "value"
+          nonexistent_field: "value"
         }
       });
     } catch (error) {

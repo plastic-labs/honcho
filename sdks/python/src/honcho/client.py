@@ -25,7 +25,7 @@ from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
-from .utils import poll_until_complete, resolve_id
+from .utils import resolve_id
 
 logger = logging.getLogger(__name__)
 
@@ -516,43 +516,6 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
-
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def poll_queue_status(
-        self,
-        observer: str | PeerBase | None = None,
-        sender: str | PeerBase | None = None,
-        session: str | SessionBase | None = None,
-        timeout: float = Field(
-            300.0,
-            gt=0,
-            description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
-        ),
-    ) -> QueueStatusResponse:
-        """
-        Poll get_queue_status until pending_work_units and in_progress_work_units are both 0.
-        This allows you to guarantee that all messages have been processed by the queue for
-        use with the dialectic endpoint.
-
-        The polling estimates sleep time by assuming each work unit takes 1 second.
-
-        Args:
-            observer: Optional observer (ID string or Peer object) to scope the status check
-            sender: Optional sender (ID string or Peer object) to scope the status check
-            session: Optional session (ID string or Session object) to scope the status check
-            timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
-
-        Returns:
-            QueueStatusResponse when all work units are complete
-
-        Raises:
-            TimeoutError: If timeout is exceeded before work units complete
-            Exception: If get_queue_status fails repeatedly
-        """
-        return poll_until_complete(
-            lambda: self.queue_status(observer, sender, session),
-            timeout=timeout,
-        )
 
     def __repr__(self) -> str:
         """

@@ -27,15 +27,12 @@ Usage:
         bob.message("Hi Alice, how are you?")
     ])
 
-    # Wait for queue to process all messages (only necessary if very recent messages are critical to query)
-    client.poll_queue_status()
-
     # Query conversation context
-    response = alice.chat("What did Bob say to me?")
+    response = alice.chat("What did Bob say to me?", session=session)
 
     # Async operations via .aio accessor
     peer = await client.aio.peer("user-123")
-    await peer.aio.chat("query")
+    await peer.aio.chat("query", session=session)
     async for p in client.aio.peers():
         print(p.id)
 """
@@ -45,7 +42,6 @@ from .api_types import MessageCreateParams
 from .base import PeerBase, SessionBase
 from .client import Honcho
 from .conclusions import Conclusion, ConclusionScope
-from .message import Message
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -60,6 +56,7 @@ from .http.exceptions import (
     TimeoutError,
     UnprocessableEntityError,
 )
+from .message import Message
 from .pagination import AsyncPage, SyncPage
 from .peer import Peer
 from .session import Session

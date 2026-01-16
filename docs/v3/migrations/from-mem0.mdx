@@ -27,7 +27,7 @@ We would love to support the transfer and cost—just [book a call!](https://cal
 
 For the best results, we recommend importing your raw messages directly into Honcho. This gives Honcho the full context to build rich, accurate representations and enables features like session summaries.
 
-However, if you'd like to get started quickly, you can migrate your existing Mem0 memories directly as **observations**.
+However, if you'd like to get started quickly, you can migrate your existing Mem0 memories directly as **conclusions**.
 
 <Info>
 Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys). New accounts start with $100 credits.
@@ -49,18 +49,18 @@ user = honcho.peer("user123")
 session = honcho.session("imported")
 session.add_peers([user])
 
-# Import memories directly as observations
-observations = []
+# Import memories directly as conclusions
+conclusions = []
 for memory in memories['results']:
     content = memory.get("memory") or memory.get("messages", [{}])[0].get("content", "")
     if content:
-        observations.append({"content": content, "session_id": "imported"})
+        conclusions.append({"content": content, "session_id": "imported"})
 
-# Batch create observations (up to 100 at a time)
-if observations:
-    user.observations.create(observations)
+# Batch create conclusions (up to 100 at a time)
+if conclusions:
+    user.conclusions.create(conclusions)
 
-print(f"Migrated {len(observations)} memories as observations!")
+print(f"Migrated {len(conclusions)} memories as conclusions!")
 ```
 
 ```typescript TypeScript
@@ -78,24 +78,24 @@ const user = await honcho.peer("user123");
 const session = await honcho.session("imported");
 await session.addPeers([user]);
 
-// Import memories directly as observations
-const observations = memories.results
+// Import memories directly as conclusions
+const conclusions = memories.results
   .map(memory => ({
     content: memory.memory || memory.messages?.[0]?.content || "",
-    session_id: "imported"
+    sessionId: "imported"
   }))
-  .filter(obs => obs.content);
+  .filter(c => c.content);
 
-// Batch create observations (up to 100 at a time)
-if (observations.length > 0) {
-  await user.observations.create(observations);
+// Batch create conclusions (up to 100 at a time)
+if (conclusions.length > 0) {
+  await user.conclusions.create(conclusions);
 }
 
-console.log(`Migrated ${observations.length} memories as observations!`);
+console.log(`Migrated ${conclusions.length} memories as conclusions!`);
 ```
 </CodeGroup>
 
-That's it! The user's Mem0 memories are now searchable in Honcho as observations. For richer representations with deductive reasoning and session summaries, consider importing your raw messages as described in the [Step-by-Step Migration](#step-by-step-migration) section.
+That's it! The user's Mem0 memories are now searchable in Honcho as conclusions. For richer representations with deductive reasoning and session summaries, consider importing your raw messages as described in the [Step-by-Step Migration](#step-by-step-migration) section.
 
 For more details on replacing Mem0 API calls with Honcho equivalents go to [API Comparison](#api-comparison).
 
@@ -249,11 +249,11 @@ Reference the [API Comparison](#api-comparison) to replace your Mem0 API calls w
 | **Initialize** | `MemoryClient(api_key=...)` | `Honcho(api_key=...)` |  |
 | **Identity** | `user_id` string param | `peer = honcho.peer("id")` | Peers can be users or AI agents |
 | **Add messages** | `client.add(messages, user_id=...)` | `session.add_messages([peer.message(...)])` | Session-scoped, triggers reasoning |
-| **Add observations** |  | `peer.observations.create([...])` | Direct observation or "memory" import, no processing |
-| **Search** | `client.search(query, filters={"user_id": ...})` | `peer.search(query)` or `peer.observations.query(...)` | Scoped to peer or session |
-| **List all** | `client.get_all(filters={"user_id": ...})` | `session.get_messages()` or `peer.observations.list()` | Messages or observations |
+| **Add conclusions** |  | `peer.conclusions.create([...])` | Direct conclusion or "memory" import, no processing |
+| **Search** | `client.search(query, filters={"user_id": ...})` | `peer.search(query)` or `peer.conclusions.query(...)` | Scoped to peer or session |
+| **List all** | `client.get_all(filters={"user_id": ...})` | `session.get_messages()` or `peer.conclusions.list()` | Messages or conclusions |
 | **Update** | `client.update(memory_id, data=...)` | `honcho.update_message(message, metadata=...)` | Metadata updates only |
-| **Delete** | `client.delete(memory_id)` | `peer.observations.delete(id)` or `session.delete()` | Observation or session-level |
+| **Delete** | `client.delete(memory_id)` | `peer.conclusions.delete(id)` or `session.delete()` | Conclusion or session-level |
 
 ### Honcho-Only Capabilities
 
