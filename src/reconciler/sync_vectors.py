@@ -356,6 +356,15 @@ async def _sync_message_embeddings(
 
     # Step 2: Compute chunk positions for vector IDs
     # Messages can be split into multiple chunks; we need {message_id}_{chunk_position}
+    #
+    # TODO: chunk_position is computed from MessageEmbedding row ordering by ID, which is
+    # fragile. If rows are deleted and re-created (e.g., during re-embedding), IDs change
+    # and positions shift, potentially causing vector ID mismatches with the external store.
+    # This doesn't break search (metadata.message_id is used, not vector ID), but can leave
+    # stale vectors. Consider either:
+    # 1. Persisting chunk_position in the MessageEmbedding table
+    # 2. Removing MessageEmbedding table entirely if it becomes unnecessary
+    # See: https://github.com/plastic-labs/honcho/issues/XXX
     message_ids = list({emb.message_id for emb in embeddings})
     sibling_stmt = (
         select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
