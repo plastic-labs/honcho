@@ -76,6 +76,10 @@ export class Honcho {
    * Private cached configuration for this workspace.
    */
   private _configuration?: Record<string, unknown>
+  /**
+   * Memoized workspace get-or-create call.
+   */
+  private _workspaceReady?: Promise<void>
 
   /**
    * Cached metadata for this workspace. May be stale if the workspace
@@ -153,11 +157,7 @@ export class Honcho {
       timeout: validatedOptions.timeout,
       maxRetries: validatedOptions.maxRetries,
       defaultHeaders: validatedOptions.defaultHeaders,
-    })
-
-    // Fire and forget workspace creation (suppress errors to avoid unhandled rejections)
-    this._getOrCreateWorkspace(this.workspaceId).catch(() => {
-      // Silently ignore - workspace will be created on first real API call if needed
+      defaultQuery: validatedOptions.defaultQuery,
     })
   }
 
@@ -179,6 +179,22 @@ export class Honcho {
         configuration: params?.configuration,
       },
     })
+  }
+
+  private async _ensureWorkspace(): Promise<void> {
+    /**
+     * Ensure the workspace exists on the server.
+     *
+     * The Honcho API uses get-or-create semantics for workspaces via `POST /v3/workspaces`.
+     * This SDK performs that call once per client instance (memoized) to guarantee that
+     * all workspace-scoped operations run against an existing workspace.
+     */
+    if (!this._workspaceReady) {
+      this._workspaceReady = this._getOrCreateWorkspace(this.workspaceId).then(
+        () => undefined
+      )
+    }
+    await this._workspaceReady
   }
 
   private async _updateWorkspace(
@@ -339,6 +355,7 @@ export class Honcho {
       configuration?: PeerConfig
     }
   ): Promise<Peer> {
+    await this._ensureWorkspace()
     const validatedId = PeerIdSchema.parse(id)
     const validatedMetadata = options?.metadata
       ? PeerMetadataSchema.parse(options.metadata)
@@ -358,11 +375,19 @@ export class Honcho {
         this.workspaceId,
         this._http,
         peerData.metadata ?? undefined,
-        peerData.configuration ?? undefined
+        peerData.configuration ?? undefined,
+        () => this._ensureWorkspace()
       )
     }
 
-    return new Peer(validatedId, this.workspaceId, this._http)
+    return new Peer(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      undefined,
+      undefined,
+      () => this._ensureWorkspace()
+    )
   }
 
   /**
@@ -375,6 +400,7 @@ export class Honcho {
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
   async peers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
+    await this._ensureWorkspace()
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const peersPage = await this._listPeers(this.workspaceId, {
       filters: validatedFilter,
@@ -399,7 +425,8 @@ export class Honcho {
           this.workspaceId,
           this._http,
           peer.metadata ?? undefined,
-          peer.configuration ?? undefined
+          peer.configuration ?? undefined,
+          () => this._ensureWorkspace()
         ),
       fetchNextPage
     )
@@ -433,6 +460,7 @@ export class Honcho {
       configuration?: SessionConfig
     }
   ): Promise<Session> {
+    await this._ensureWorkspace()
     const validatedId = SessionIdSchema.parse(id)
     const validatedMetadata = options?.metadata
       ? SessionMetadataSchema.parse(options.metadata)
@@ -452,11 +480,19 @@ export class Honcho {
         this.workspaceId,
         this._http,
         sessionData.metadata ?? undefined,
-        sessionData.configuration ?? undefined
+        sessionData.configuration ?? undefined,
+        () => this._ensureWorkspace()
       )
     }
 
-    return new Session(validatedId, this.workspaceId, this._http)
+    return new Session(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      undefined,
+      undefined,
+      () => this._ensureWorkspace()
+    )
   }
 
   /**
@@ -470,6 +506,7 @@ export class Honcho {
    *          in the workspace. Returns an empty page if no sessions exist
    */
   async sessions(filters?: Filters): Promise<Page<Session, SessionResponse>> {
+    await this._ensureWorkspace()
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const sessionsPage = await this._listSessions(this.workspaceId, {
       filters: validatedFilter,
@@ -494,7 +531,8 @@ export class Honcho {
           this.workspaceId,
           this._http,
           session.metadata ?? undefined,
-          session.configuration ?? undefined
+          session.configuration ?? undefined,
+          () => this._ensureWorkspace()
         ),
       fetchNextPage
     )
@@ -512,6 +550,7 @@ export class Honcho {
    *          Returns an empty dictionary if no metadata is set
    */
   async getMetadata(): Promise<Record<string, unknown>> {
+    await this._ensureWorkspace()
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
     return this._metadata
@@ -528,6 +567,7 @@ export class Honcho {
    *                   Keys must be strings, values can be any JSON-serializable type
    */
   async setMetadata(metadata: WorkspaceMetadata): Promise<void> {
+    await this._ensureWorkspace()
     const validatedMetadata = WorkspaceMetadataSchema.parse(metadata)
     await this._updateWorkspace(this.workspaceId, {
       metadata: validatedMetadata,
@@ -546,6 +586,7 @@ export class Honcho {
    *          Returns an empty dictionary if no configuration is set
    */
   async getConfiguration(): Promise<Record<string, unknown>> {
+    await this._ensureWorkspace()
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._configuration = workspace.configuration || {}
     return this._configuration
@@ -562,6 +603,7 @@ export class Honcho {
    *                        Keys must be strings, values can be any JSON-serializable type
    */
   async setConfiguration(configuration: WorkspaceConfig): Promise<void> {
+    await this._ensureWorkspace()
     const validatedConfig = WorkspaceConfigSchema.parse(configuration)
     await this._updateWorkspace(this.workspaceId, {
       configuration: validatedConfig,
@@ -576,6 +618,7 @@ export class Honcho {
    * associated with the current workspace and updates the cached properties.
    */
   async refresh(): Promise<void> {
+    await this._ensureWorkspace()
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
     this._configuration = workspace.configuration || {}
@@ -644,6 +687,7 @@ export class Honcho {
       limit?: number
     }
   ): Promise<Message[]> {
+    await this._ensureWorkspace()
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedFilters = options?.filters
       ? FilterSchema.parse(options.filters)
@@ -681,6 +725,7 @@ export class Honcho {
       session?: string | Session
     }
   ): Promise<QueueStatus> {
+    await this._ensureWorkspace()
     const resolvedObserverId = options?.observer
       ? typeof options.observer === 'string'
         ? options.observer
@@ -717,7 +762,7 @@ export class Honcho {
    * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
    * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
    * @param options.session - Optional session (ID string or Session object) to scope the status to
-   * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
+   * @param options.timeout - Optional timeout in seconds (default: 300 - 5 minutes)
    * @returns Promise resolving to the final queue status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
@@ -729,10 +774,12 @@ export class Honcho {
       observer?: string | Peer
       sender?: string | Peer
       session?: string | Session
+      timeout?: number
     }
   ): Promise<QueueStatus> {
-    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
-    return pollUntilComplete(() => this.queueStatus(options), timeoutMs)
+    await this._ensureWorkspace()
+    const timeout = options?.timeout ?? 300 // Default to 5 minutes
+    return pollUntilComplete(() => this.queueStatus(options), timeout)
   }
 
   /**

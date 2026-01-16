@@ -3,6 +3,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
 # Add the SDK src to the path to allow imports
@@ -35,8 +36,8 @@ def honcho_sync_test_client(client: TestClient) -> Honcho:
     return honcho_client
 
 
-@pytest.fixture
-def honcho_async_test_client(client: TestClient) -> Honcho:
+@pytest_asyncio.fixture
+async def honcho_async_test_client(client: TestClient):
     """
     Returns a Honcho SDK client configured to talk to the test API.
     Uses .aio accessor for async operations.
@@ -53,22 +54,31 @@ def honcho_async_test_client(client: TestClient) -> Honcho:
         base_url=str(client.base_url),
         http_client=http_client,
     )
+    # Warm the app via the TestClient transport before using ASGITransport.
+    # This avoids running the same ASGI app concurrently across two event loops,
+    # without mutating the Honcho client's local metadata/config caches.
+    res = client.post("/v3/workspaces", json={"id": honcho_client.workspace_id})
+    assert res.status_code in (200, 201)
 
     # Set up async HTTP client manually for the ASGI transport
     from sdks.python.src.honcho.http import AsyncHonchoHTTPClient
 
+    async_httpx_client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=client.app),
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
     async_http = AsyncHonchoHTTPClient(
         base_url=str(client.base_url),
         api_key=None,
-        http_client=httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=client.app),
-            base_url=str(client.base_url),
-            headers=client.headers,
-        ),
+        http_client=async_httpx_client,
     )
     honcho_client._async_http = async_http  # pyright: ignore
 
-    return honcho_client
+    try:
+        yield honcho_client
+    finally:
+        await async_httpx_client.aclose()
 
 
 @pytest.fixture(params=["sync", "async"])

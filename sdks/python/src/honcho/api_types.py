@@ -234,12 +234,6 @@ class SessionListParams(BaseModel):
     filters: dict[str, Any] | None = None
 
 
-class SessionCloneParams(BaseModel):
-    """Parameters for cloning a session."""
-
-    deep: bool = False
-
-
 # ==============================================================================
 # Summary Types
 # ==============================================================================
@@ -432,7 +426,7 @@ class DialecticParams(BaseModel):
 class DialecticResponse(BaseModel):
     """Dialectic chat API response."""
 
-    content: str
+    content: str | None
 
 
 class DialecticStreamDelta(BaseModel):

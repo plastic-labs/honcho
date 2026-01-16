@@ -4,10 +4,10 @@ import type { SessionContextResponse, SummaryResponse } from './types/api'
 
 export interface SummaryData {
   content: string
-  message_id: string
-  summary_type: string
-  created_at: string
-  token_count: number
+  messageId: string
+  summaryType: string
+  createdAt: string
+  tokenCount: number
 }
 
 /**
@@ -41,19 +41,19 @@ export class Summary {
 
   constructor(data: SummaryData) {
     this.content = data.content
-    this.messageId = data.message_id
-    this.summaryType = data.summary_type
-    this.createdAt = data.created_at
-    this.tokenCount = data.token_count
+    this.messageId = data.messageId
+    this.summaryType = data.summaryType
+    this.createdAt = data.createdAt
+    this.tokenCount = data.tokenCount
   }
 
   static fromApiResponse(data: SummaryResponse): Summary {
     return new Summary({
       content: data.content,
-      message_id: data.message_id,
-      summary_type: data.summary_type,
-      created_at: data.created_at,
-      token_count: data.token_count,
+      messageId: data.message_id,
+      summaryType: data.summary_type,
+      createdAt: data.created_at,
+      tokenCount: data.token_count,
     })
   }
 }

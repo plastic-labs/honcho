@@ -5,15 +5,17 @@ export {
 } from './client'
 export {
   AuthenticationError,
+  BadRequestError,
+  ConflictError,
   ConnectionError,
   createErrorFromResponse,
   HonchoError,
   NotFoundError,
-  PermissionError,
+  PermissionDeniedError,
   RateLimitError,
   ServerError,
   TimeoutError,
-  ValidationError,
+  UnprocessableEntityError,
 } from './errors'
 export {
   createDialecticStream,

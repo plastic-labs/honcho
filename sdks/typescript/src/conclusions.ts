@@ -12,7 +12,7 @@ import type {
 /**
  * Parameters for creating a conclusion.
  */
-export interface ConclusionCreateParam {
+export interface ConclusionCreateParams {
   /** The conclusion content/text */
   content: string
   /** The session this conclusion relates to (ID string or Session object) */
@@ -74,6 +74,7 @@ export class Conclusion {
  */
 export class ConclusionScope {
   private _http: HonchoHTTPClient
+  private _ensureWorkspace: () => Promise<void>
   readonly workspaceId: string
   readonly observer: string
   readonly observed: string
@@ -82,12 +83,14 @@ export class ConclusionScope {
     http: HonchoHTTPClient,
     workspaceId: string,
     observer: string,
-    observed: string
+    observed: string,
+    ensureWorkspace: () => Promise<void> = async () => undefined
   ) {
     this._http = http
     this.workspaceId = workspaceId
     this.observer = observer
     this.observed = observed
+    this._ensureWorkspace = ensureWorkspace
   }
 
   // ===========================================================================
@@ -99,6 +102,7 @@ export class ConclusionScope {
     page?: number
     size?: number
   }): Promise<PageResponse<ConclusionResponse>> {
+    await this._ensureWorkspace()
     return this._http.post<PageResponse<ConclusionResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/list`,
       {
@@ -114,6 +118,7 @@ export class ConclusionScope {
     distance?: number
     filters?: Record<string, unknown>
   }): Promise<ConclusionResponse[]> {
+    await this._ensureWorkspace()
     return this._http.post<ConclusionResponse[]>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/query`,
       { body: params }
@@ -128,6 +133,7 @@ export class ConclusionScope {
       observed_id: string
     }>
   }): Promise<ConclusionResponse[]> {
+    await this._ensureWorkspace()
     return this._http.post<ConclusionResponse[]>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions`,
       { body: params }
@@ -135,6 +141,7 @@ export class ConclusionScope {
   }
 
   private async _delete(conclusionId: string): Promise<void> {
+    await this._ensureWorkspace()
     await this._http.delete(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`
     )
@@ -151,6 +158,7 @@ export class ConclusionScope {
       max_conclusions?: number
     }
   ): Promise<RepresentationResponse> {
+    await this._ensureWorkspace()
     return this._http.post<RepresentationResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${peerId}/representation`,
       { body: params }
@@ -242,7 +250,7 @@ export class ConclusionScope {
    * Create conclusions in this scope.
    */
   async create(
-    conclusions: ConclusionCreateParam | ConclusionCreateParam[]
+    conclusions: ConclusionCreateParams | ConclusionCreateParams[]
   ): Promise<Conclusion[]> {
     const conclusionArray = Array.isArray(conclusions)
       ? conclusions

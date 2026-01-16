@@ -43,7 +43,9 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
+from .conclusions import Conclusion
 from .http import routes
+from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
@@ -59,7 +61,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from .client import Honcho
-    from .conclusions import ConclusionCreateParams, ConclusionScope
+    from .conclusions import ConclusionScope
 
 from .conclusions import ConclusionCreateParams
 from .peer import Peer
@@ -139,6 +141,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             A Peer object
         """
         if configuration is not None or metadata is not None:
+            await self._honcho._ensure_workspace_async()
             body: dict[str, Any] = {"id": id}
             if metadata is not None:
                 body["metadata"] = metadata
@@ -167,6 +170,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         Returns:
             An AsyncPage of Peer objects
         """
+        await self._honcho._ensure_workspace_async()
         data = await self._honcho._async_http_client.post(
             routes.peers_list(self._honcho.workspace_id),
             body={"filters": filters} if filters else None,
@@ -209,6 +213,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             A Session object
         """
         if configuration is not None or metadata is not None:
+            await self._honcho._ensure_workspace_async()
             body: dict[str, Any] = {"id": id}
             if metadata is not None:
                 body["metadata"] = metadata
@@ -237,6 +242,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         Returns:
             An AsyncPage of Session objects
         """
+        await self._honcho._ensure_workspace_async()
         data = await self._honcho._async_http_client.post(
             routes.sessions_list(self._honcho.workspace_id),
             body={"filters": filters} if filters else None,
@@ -260,17 +266,27 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
         return AsyncPage(data, SessionResponse, transform, fetch_next)
 
-    async def workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
+    async def workspaces(
+        self, filters: dict[str, object] | None = None
+    ) -> AsyncPage[WorkspaceResponse, str]:
         """Get all workspace IDs asynchronously."""
         data = await self._honcho._async_http_client.post(
             routes.workspaces_list(),
             body={"filters": filters} if filters else None,
         )
-        workspace_ids: list[str] = []
-        for item in data.get("items", []):
-            workspace = WorkspaceResponse.model_validate(item)
-            workspace_ids.append(workspace.id)
-        return workspace_ids
+
+        def transform(workspace: WorkspaceResponse) -> str:
+            return workspace.id
+
+        async def fetch_next(page: int) -> AsyncPage[WorkspaceResponse, str]:
+            next_data = await self._honcho._async_http_client.post(
+                routes.workspaces_list(),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return AsyncPage(next_data, WorkspaceResponse, transform, fetch_next)
+
+        return AsyncPage(data, WorkspaceResponse, transform, fetch_next)
 
     async def delete_workspace(self, workspace_id: str) -> None:
         """Delete a workspace asynchronously."""
@@ -286,13 +302,17 @@ class HonchoAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """Search for messages in the current workspace asynchronously."""
+        await self._honcho._ensure_workspace_async()
         data = await self._honcho._async_http_client.post(
             routes.workspace_search(self._honcho.workspace_id),
             body={"query": query, "filters": filters, "limit": limit},
         )
-        return [MessageResponse.model_validate(item) for item in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(item))
+            for item in data
+        ]
 
     async def queue_status(
         self,
@@ -301,6 +321,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         session: str | SessionBase | None = None,
     ) -> QueueStatusResponse:
         """Get queue processing status asynchronously."""
+        await self._honcho._ensure_workspace_async()
         resolved_observer_id = resolve_id(observer)
         resolved_sender_id = resolve_id(sender)
         resolved_session_id = resolve_id(session)
@@ -331,98 +352,6 @@ class HonchoAio(AsyncMetadataConfigMixin):
             lambda: self.queue_status(observer, sender, session),
             timeout=timeout,
         )
-
-    async def list_conclusions(
-        self,
-        filters: dict[str, object] | None = None,
-        reverse: bool = False,
-    ) -> AsyncPage[ConclusionResponse, ConclusionResponse]:
-        """List all conclusions in the current workspace asynchronously."""
-        data = await self._honcho._async_http_client.post(
-            routes.conclusions_list(self._honcho.workspace_id),
-            body={"filters": filters, "reverse": reverse},
-        )
-        return AsyncPage(data, ConclusionResponse)
-
-    @validate_call
-    async def query_conclusions(
-        self,
-        query: str = Field(..., min_length=1, description="Semantic search query"),
-        observer: str = Field(
-            ..., min_length=1, description="Observer peer ID (required)"
-        ),
-        observed: str = Field(
-            ..., min_length=1, description="Observed peer ID (required)"
-        ),
-        top_k: int = Field(
-            default=10, ge=1, le=100, description="Number of results to return"
-        ),
-        distance: float | None = Field(
-            default=None,
-            ge=0.0,
-            le=1.0,
-            description="Maximum cosine distance threshold for results",
-        ),
-        filters: dict[str, object] | None = Field(
-            None, description="Additional filters to apply"
-        ),
-    ) -> list[ConclusionResponse]:
-        """Query conclusions using semantic search asynchronously."""
-        query_filters: dict[str, object | str] = {
-            **(filters or {}),
-            "observer": observer,
-            "observed": observed,
-        }
-
-        body: dict[str, Any] = {
-            "query": query,
-            "top_k": top_k,
-            "filters": query_filters,
-        }
-        if distance is not None:
-            body["distance"] = distance
-
-        data = await self._honcho._async_http_client.post(
-            routes.conclusions_query(self._honcho.workspace_id),
-            body=body,
-        )
-        return [ConclusionResponse.model_validate(item) for item in data]
-
-    async def delete_conclusion(self, conclusion_id: str) -> None:
-        """Delete a specific conclusion by ID asynchronously."""
-        await self._honcho._async_http_client.delete(
-            routes.conclusion(self._honcho.workspace_id, conclusion_id)
-        )
-
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def update_message(
-        self,
-        message: MessageResponse | str = Field(
-            ..., description="The Message object or message ID to update"
-        ),
-        metadata: dict[str, object] = Field(
-            ..., description="The metadata to update for the message"
-        ),
-        session: str | SessionBase | None = Field(
-            None,
-            description="The session (ID string or Session object) - required if message is a string ID",
-        ),
-    ) -> MessageResponse:
-        """Update message metadata asynchronously."""
-        if isinstance(message, MessageResponse):
-            message_id = message.id
-            resolved_session_id = message.session_id
-        else:
-            message_id = message
-            if not session:
-                raise ValueError("session is required when message is a string ID")
-            resolved_session_id = resolve_id(session)
-
-        data = await self._honcho._async_http_client.put(
-            routes.message(self._honcho.workspace_id, resolved_session_id, message_id),
-            body={"metadata": metadata},
-        )
-        return MessageResponse.model_validate(data)
 
 
 class PeerAio(AsyncMetadataConfigMixin):
@@ -481,6 +410,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         | None = None,
     ) -> str | None:
         """Query the peer's representation asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
@@ -512,6 +442,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         | None = None,
     ) -> AsyncDialecticStreamResponse:
         """Query the peer's representation with streaming asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
@@ -538,6 +469,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         self, filters: dict[str, object] | None = None
     ) -> AsyncPage[SessionResponse, Session]:
         """Get all sessions this peer is a member of asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_sessions_list(self._peer.workspace_id, self._peer.id),
             body={"filters": filters} if filters else None,
@@ -566,13 +498,17 @@ class PeerAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """Search across all messages with this peer as author asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_search(self._peer.workspace_id, self._peer.id),
             body={"query": query, "filters": filters, "limit": limit},
         )
-        return [MessageResponse.model_validate(item) for item in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(item))
+            for item in data
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def card(
@@ -580,6 +516,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
         """Get the peer card asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
 
         query = {"target": target_id} if target_id else None
@@ -602,6 +539,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         max_conclusions: int | None = Field(None, ge=1, le=100),
     ) -> str:
         """Get a subset of the representation of the peer asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         session_id = resolve_id(session)
         target_id = resolve_id(target)
 
@@ -639,6 +577,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         max_conclusions: int | None = Field(None, ge=1, le=100),
     ) -> PeerContextResponse:
         """Get context for this peer asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
 
         query: dict[str, Any] = {}
@@ -718,8 +657,9 @@ class SessionAio(AsyncMetadataConfigMixin):
         | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]],
     ) -> None:
         """Add peers to this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         await self._session._honcho._async_http_client.post(
-            routes.session_peers_add(self._session.workspace_id, self._session.id),
+            routes.session_peers(self._session.workspace_id, self._session.id),
             body=normalize_peers_to_dict(peers),
         )
 
@@ -734,8 +674,9 @@ class SessionAio(AsyncMetadataConfigMixin):
         | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]],
     ) -> None:
         """Set the complete peer list for this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         await self._session._honcho._async_http_client.put(
-            routes.session_peers_set(self._session.workspace_id, self._session.id),
+            routes.session_peers(self._session.workspace_id, self._session.id),
             body=normalize_peers_to_dict(peers),
         )
 
@@ -744,18 +685,20 @@ class SessionAio(AsyncMetadataConfigMixin):
         peers: str | PeerBase | list[PeerBase | str],
     ) -> None:
         """Remove peers from this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         if not isinstance(peers, list):
             peers = [peers]
 
         peer_ids = [peer if isinstance(peer, str) else peer.id for peer in peers]
 
         await self._session._honcho._async_http_client.delete(
-            routes.session_peers_remove(self._session.workspace_id, self._session.id),
+            routes.session_peers(self._session.workspace_id, self._session.id),
             body=peer_ids,
         )
 
     async def peers(self) -> list[Peer]:
         """Get all peers in this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         data: dict[str, Any] = await self._session._honcho._async_http_client.get(
             routes.session_peers(self._session.workspace_id, self._session.id)
         )
@@ -768,6 +711,7 @@ class SessionAio(AsyncMetadataConfigMixin):
 
     async def peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
         """Get the configuration for a peer in this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         peer_id = peer if isinstance(peer, str) else peer.id
         data = await self._session._honcho._async_http_client.get(
             routes.session_peer_config(
@@ -783,6 +727,7 @@ class SessionAio(AsyncMetadataConfigMixin):
         self, peer: str | PeerBase, config: SessionPeerConfig
     ) -> None:
         """Set the configuration for a peer in this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         peer_id = peer if isinstance(peer, str) else peer.id
         body: dict[str, Any] = {}
         if config.observe_others is not None:
@@ -803,8 +748,9 @@ class SessionAio(AsyncMetadataConfigMixin):
         messages: MessageCreateParams | list[MessageCreateParams] = Field(
             ..., description="Messages to add to the session"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """Add one or more messages to this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         if not isinstance(messages, list):
             messages = [messages]
 
@@ -816,37 +762,46 @@ class SessionAio(AsyncMetadataConfigMixin):
             routes.messages(self._session.workspace_id, self._session.id),
             body={"messages": messages_data},
         )
-        return [MessageResponse.model_validate(msg) for msg in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in data
+        ]
 
     async def messages(
         self,
         *,
         filters: dict[str, object] | None = None,
-    ) -> AsyncPage[MessageResponse, MessageResponse]:
+    ) -> AsyncPage[MessageResponse, Message]:
         """Get messages from this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         data = await self._session._honcho._async_http_client.post(
             routes.messages_list(self._session.workspace_id, self._session.id),
             body={"filters": filters} if filters else None,
         )
 
-        async def fetch_next(page: int) -> AsyncPage[MessageResponse, MessageResponse]:
+        def transform(response: MessageResponse) -> Message:
+            return Message.from_api_response(response)
+
+        async def fetch_next(page: int) -> AsyncPage[MessageResponse, Message]:
             next_data = await self._session._honcho._async_http_client.post(
                 routes.messages_list(self._session.workspace_id, self._session.id),
                 body={"filters": filters} if filters else None,
                 query={"page": page},
             )
-            return AsyncPage(next_data, MessageResponse, None, fetch_next)
+            return AsyncPage(next_data, MessageResponse, transform, fetch_next)
 
-        return AsyncPage(data, MessageResponse, None, fetch_next)
+        return AsyncPage(data, MessageResponse, transform, fetch_next)
 
     async def delete(self) -> None:
         """Delete this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         await self._session._honcho._async_http_client.delete(
             routes.session(self._session.workspace_id, self._session.id)
         )
 
     async def clone(self, *, message_id: str | None = None) -> Session:
         """Clone this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         query: dict[str, Any] = {}
         if message_id is not None:
             query["message_id"] = message_id
@@ -863,7 +818,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             configuration=cloned.configuration,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def context(
         self,
         *,
@@ -875,7 +830,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             None,
             description="A peer ID to get context for.",
         ),
-        last_user_message: str | MessageResponse | None = Field(
+        last_user_message: str | Message | None = Field(
             None,
             description="The most recent message (string or Message object), used to fetch semantically relevant conclusions.",
         ),
@@ -911,6 +866,7 @@ class SessionAio(AsyncMetadataConfigMixin):
         ),
     ) -> SessionContext:
         """Get optimized context for this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         if peer_target is None and peer_perspective is not None:
             raise ValueError(
                 "You must provide a `peer_target` when `peer_perspective` is provided"
@@ -923,7 +879,7 @@ class SessionAio(AsyncMetadataConfigMixin):
 
         last_user_message_id = (
             last_user_message.id
-            if isinstance(last_user_message, MessageResponse)
+            if isinstance(last_user_message, Message)
             else last_user_message
         )
 
@@ -965,7 +921,8 @@ class SessionAio(AsyncMetadataConfigMixin):
             )
 
         messages = [
-            MessageResponse.model_validate(msg) for msg in data.get("messages", [])
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in data.get("messages", [])
         ]
 
         return SessionContext(
@@ -980,6 +937,7 @@ class SessionAio(AsyncMetadataConfigMixin):
 
     async def summaries(self) -> SessionSummaries:
         """Get available summaries for this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         data = await self._session._honcho._async_http_client.get(
             routes.session_summaries(self._session.workspace_id, self._session.id)
         )
@@ -1022,13 +980,17 @@ class SessionAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """Search for messages in this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         data = await self._session._honcho._async_http_client.post(
             routes.session_search(self._session.workspace_id, self._session.id),
             body={"query": query, "filters": filters, "limit": limit},
         )
-        return [MessageResponse.model_validate(msg) for msg in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in data
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def upload_file(
@@ -1052,8 +1014,9 @@ class SessionAio(AsyncMetadataConfigMixin):
             None,
             description="Optional created-at timestamp for the messages.",
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """Upload file to create message(s) in this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         filename, content_bytes, content_type = prepare_file_for_upload(file)
         resolved_peer_id = peer if isinstance(peer, str) else peer.id
 
@@ -1072,7 +1035,10 @@ class SessionAio(AsyncMetadataConfigMixin):
             data=data_dict,
         )
 
-        return [MessageResponse.model_validate(msg) for msg in response]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in response
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def representation(
@@ -1087,6 +1053,7 @@ class SessionAio(AsyncMetadataConfigMixin):
         max_conclusions: int | None = Field(None, ge=1, le=100),
     ) -> str:
         """Get a subset of the representation of the peer in this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         peer_id = resolve_id(peer)
         target_id = resolve_id(target)
 
@@ -1117,6 +1084,7 @@ class SessionAio(AsyncMetadataConfigMixin):
         sender: str | PeerBase | None = None,
     ) -> QueueStatusResponse:
         """Get the queue processing status for this session asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
         resolved_observer_id = resolve_id(observer)
         resolved_sender_id = resolve_id(sender)
 
@@ -1147,21 +1115,22 @@ class SessionAio(AsyncMetadataConfigMixin):
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def update_message(
         self,
-        message: MessageResponse | str = Field(
+        message: Message | str = Field(
             ..., description="The Message object or message ID to update"
         ),
         metadata: dict[str, object] = Field(
             ..., description="The metadata to update for the message"
         ),
-    ) -> MessageResponse:
+    ) -> Message:
         """Update message metadata in this session asynchronously."""
-        message_id = message.id if isinstance(message, MessageResponse) else message
+        await self._session._honcho._ensure_workspace_async()
+        message_id = message.id if isinstance(message, Message) else message
 
         data = await self._session._honcho._async_http_client.put(
             routes.message(self._session.workspace_id, self._session.id, message_id),
             body={"metadata": metadata},
         )
-        return MessageResponse.model_validate(data)
+        return Message.from_api_response(MessageResponse.model_validate(data))
 
 
 class ConclusionScopeAio:
@@ -1183,42 +1152,49 @@ class ConclusionScopeAio:
         page: int = 1,
         size: int = 50,
         session: str | SessionBase | None = None,
-    ) -> AsyncPage[ConclusionResponse, ConclusionResponse]:
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
         """List conclusions in this scope asynchronously."""
+        await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
         filters: dict[str, Any] = {
-            "observer": self._scope.observer,
-            "observed": self._scope.observed,
+            "observer_id": self._scope.observer,
+            "observed_id": self._scope.observed,
         }
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
         data = await self._scope._honcho._async_http_client.post(
             routes.conclusions_list(self._scope.workspace_id),
-            body={"filters": filters, "page": page, "size": size},
+            body={"filters": filters},
+            query={"page": page, "size": size},
         )
+
+        def transform(response: ConclusionResponse) -> Conclusion:
+            return Conclusion.from_api_response(response)
 
         async def fetch_next(
             page: int,
-        ) -> AsyncPage[ConclusionResponse, ConclusionResponse]:
+        ) -> AsyncPage[ConclusionResponse, Conclusion]:
             next_data = await self._scope._honcho._async_http_client.post(
                 routes.conclusions_list(self._scope.workspace_id),
-                body={"filters": filters, "page": page, "size": size},
+                body={"filters": filters},
+                query={"page": page, "size": size},
             )
-            return AsyncPage(next_data, ConclusionResponse, None, fetch_next)
+            return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
 
-        return AsyncPage(data, ConclusionResponse, None, fetch_next)
+        return AsyncPage(data, ConclusionResponse, transform, fetch_next)
 
     async def query(
         self,
         query: str,
         top_k: int = 10,
         distance: float | None = None,
-    ) -> list[ConclusionResponse]:
+    ) -> list[Conclusion]:
         """Semantic search for conclusions asynchronously."""
+        await self._scope._honcho._ensure_workspace_async()
         filters: dict[str, Any] = {
-            "observer": self._scope.observer,
-            "observed": self._scope.observed,
+            "observer_id": self._scope.observer,
+            "observed_id": self._scope.observed,
         }
 
         body: dict[str, Any] = {
@@ -1233,10 +1209,14 @@ class ConclusionScopeAio:
             routes.conclusions_query(self._scope.workspace_id),
             body=body,
         )
-        return [ConclusionResponse.model_validate(item) for item in data]
+        return [
+            Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+            for item in data
+        ]
 
     async def delete(self, conclusion_id: str) -> None:
         """Delete a conclusion by ID asynchronously."""
+        await self._scope._honcho._ensure_workspace_async()
         await self._scope._honcho._async_http_client.delete(
             routes.conclusion(self._scope.workspace_id, conclusion_id)
         )
@@ -1244,8 +1224,9 @@ class ConclusionScopeAio:
     async def create(
         self,
         conclusions: list[ConclusionCreateParams | dict[str, Any]],
-    ) -> list[ConclusionResponse]:
+    ) -> list[Conclusion]:
         """Create conclusions in this scope asynchronously."""
+        await self._scope._honcho._ensure_workspace_async()
         conclusion_params = [
             {
                 "content": c.content
@@ -1264,9 +1245,12 @@ class ConclusionScopeAio:
             routes.conclusions(self._scope.workspace_id),
             body={"conclusions": conclusion_params},
         )
-        return [ConclusionResponse.model_validate(item) for item in data]
+        return [
+            Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+            for item in data
+        ]
 
-    async def get_representation(
+    async def representation(
         self,
         search_query: str | None = None,
         search_top_k: int | None = None,
@@ -1275,21 +1259,22 @@ class ConclusionScopeAio:
         max_conclusions: int | None = None,
     ) -> str:
         """Get the computed representation for this scope asynchronously."""
-        query: dict[str, Any] = {"target": self._scope.observed}
+        await self._scope._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"target": self._scope.observed}
         if search_query is not None:
-            query["search_query"] = search_query
+            body["search_query"] = search_query
         if search_top_k is not None:
-            query["search_top_k"] = search_top_k
+            body["search_top_k"] = search_top_k
         if search_max_distance is not None:
-            query["search_max_distance"] = search_max_distance
+            body["search_max_distance"] = search_max_distance
         if include_most_frequent is not None:
-            query["include_most_frequent"] = include_most_frequent
+            body["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
-            query["max_conclusions"] = max_conclusions
+            body["max_conclusions"] = max_conclusions
 
-        data = await self._scope._honcho._async_http_client.get(
+        data = await self._scope._honcho._async_http_client.post(
             routes.peer_representation(self._scope.workspace_id, self._scope.observer),
-            query=query,
+            body=body,
         )
         response = RepresentationResponse.model_validate(data)
         return response.representation

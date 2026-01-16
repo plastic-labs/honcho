@@ -4,12 +4,12 @@
  * Tests for workspace-level operations via the Honcho client.
  *
  * Endpoints covered:
- * - POST /v1/workspaces (create/get workspace)
- * - POST /v1/workspaces/list (list workspaces)
- * - PUT /v1/workspaces/:id (update workspace)
- * - DELETE /v1/workspaces/:id (delete workspace)
- * - POST /v1/workspaces/:id/search (search messages)
- * - GET /v1/workspaces/:id/queue/status (queue status)
+ * - POST /v3/workspaces (get-or-create workspace)
+ * - POST /v3/workspaces/list (list workspaces)
+ * - PUT /v3/workspaces/:workspaceId (update workspace)
+ * - DELETE /v3/workspaces/:workspaceId (delete workspace)
+ * - POST /v3/workspaces/:workspaceId/search (search messages)
+ * - GET /v3/workspaces/:workspaceId/queue/status (queue status)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'

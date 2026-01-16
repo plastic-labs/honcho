@@ -42,10 +42,10 @@ Usage:
 
 from .aio import ConclusionScopeAio, HonchoAio, PeerAio, SessionAio
 from .api_types import MessageCreateParams
-from .api_types import MessageResponse as Message
 from .base import PeerBase, SessionBase
 from .client import Honcho
-from .conclusions import ConclusionScope
+from .conclusions import Conclusion, ConclusionScope
+from .message import Message
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -77,6 +77,7 @@ __all__ = [
     # Client
     "Honcho",
     # Domain classes
+    "Conclusion",
     "ConclusionScope",
     "Message",
     "MessageCreateParams",

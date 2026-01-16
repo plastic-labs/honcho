@@ -5,20 +5,22 @@
 export { Honcho } from './client'
 export {
   Conclusion,
-  type ConclusionCreateParam,
+  type ConclusionCreateParams,
   ConclusionScope,
 } from './conclusions'
 // HTTP infrastructure
 export {
   AuthenticationError,
+  BadRequestError,
+  ConflictError,
   ConnectionError,
   HonchoError,
   NotFoundError,
-  PermissionError,
+  PermissionDeniedError,
   RateLimitError,
   ServerError,
   TimeoutError,
-  ValidationError,
+  UnprocessableEntityError,
 } from './http/errors'
 // Streaming types
 export {

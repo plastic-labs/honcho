@@ -2,8 +2,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from sdks.python.src.honcho.api_types import MessageResponse, QueueStatusResponse
+from sdks.python.src.honcho.api_types import QueueStatusResponse
 from sdks.python.src.honcho.client import Honcho
+from sdks.python.src.honcho.message import Message
 from sdks.python.src.honcho.peer import Peer
 from sdks.python.src.honcho.session import Session, SessionPeerConfig
 
@@ -279,7 +280,7 @@ async def test_session_add_messages_return_value(
         result = await session.aio.add_messages(user.message("Hello assistant"))
         assert isinstance(result, list)
         assert len(result) == 1
-        assert isinstance(result[0], MessageResponse)
+        assert isinstance(result[0], Message)
         assert result[0].content == "Hello assistant"
         assert result[0].peer_id == user.id
 
@@ -292,7 +293,7 @@ async def test_session_add_messages_return_value(
         )
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all(isinstance(msg, MessageResponse) for msg in result)
+        assert all(isinstance(msg, Message) for msg in result)
         assert result[0].content == "How are you?"
         assert result[0].peer_id == user.id
         assert result[1].content == "I'm doing well, thank you!"
@@ -310,7 +311,7 @@ async def test_session_add_messages_return_value(
         result = session.add_messages(user.message("Hello assistant"))
         assert isinstance(result, list)
         assert len(result) == 1
-        assert isinstance(result[0], MessageResponse)
+        assert isinstance(result[0], Message)
         assert result[0].content == "Hello assistant"
         assert result[0].peer_id == user.id
 
@@ -323,7 +324,7 @@ async def test_session_add_messages_return_value(
         )
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all(isinstance(msg, MessageResponse) for msg in result)
+        assert all(isinstance(msg, Message) for msg in result)
         assert result[0].content == "How are you?"
         assert result[0].peer_id == user.id
         assert result[1].content == "I'm doing well, thank you!"

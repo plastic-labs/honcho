@@ -220,7 +220,7 @@ async def chat(
             reasoning_level=options.reasoning_level,
         ).inc()
 
-    return schemas.DialecticResponse(content=str(response))
+    return schemas.DialecticResponse(content=response if response else None)
 
 
 @router.post(

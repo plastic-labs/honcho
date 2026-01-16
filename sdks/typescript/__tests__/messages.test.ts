@@ -4,11 +4,11 @@
  * Tests for Message operations.
  *
  * Endpoints covered:
- * - POST /v1/workspaces/:id/sessions/:id/messages (create messages - batch)
- * - POST /v1/workspaces/:id/sessions/:id/messages/list (list messages)
- * - GET /v1/workspaces/:id/sessions/:id/messages/:id (get single message)
- * - PUT /v1/workspaces/:id/sessions/:id/messages/:id (update message)
- * - POST /v1/workspaces/:id/sessions/:id/messages/upload (file upload)
+ * - POST /v3/workspaces/:workspaceId/sessions/:sessionId/messages (create messages - batch)
+ * - POST /v3/workspaces/:workspaceId/sessions/:sessionId/messages/list (list messages)
+ * - GET /v3/workspaces/:workspaceId/sessions/:sessionId/messages/:messageId (get single message)
+ * - PUT /v3/workspaces/:workspaceId/sessions/:sessionId/messages/:messageId (update message)
+ * - POST /v3/workspaces/:workspaceId/sessions/:sessionId/messages/upload (file upload)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'

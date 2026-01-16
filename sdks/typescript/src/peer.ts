@@ -108,6 +108,7 @@ export class Peer {
    * Reference to the HTTP client instance.
    */
   private _http: HonchoHTTPClient
+  private _ensureWorkspace: () => Promise<void>
   /**
    * Private cached metadata for this peer.
    */
@@ -153,13 +154,15 @@ export class Peer {
     workspaceId: string,
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
-    configuration?: Record<string, unknown>
+    configuration?: Record<string, unknown>,
+    ensureWorkspace: () => Promise<void> = async () => undefined
   ) {
     this.id = id
     this.workspaceId = workspaceId
     this._http = http
     this._metadata = metadata
     this._configuration = configuration
+    this._ensureWorkspace = ensureWorkspace
   }
 
   // ===========================================================================
@@ -171,6 +174,7 @@ export class Peer {
     metadata?: Record<string, unknown>
     configuration?: Record<string, unknown>
   }): Promise<PeerResponse> {
+    await this._ensureWorkspace()
     return this._http.post<PeerResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers`,
       { body: params }
@@ -181,6 +185,7 @@ export class Peer {
     metadata?: Record<string, unknown>
     configuration?: Record<string, unknown>
   }): Promise<PeerResponse> {
+    await this._ensureWorkspace()
     return this._http.put<PeerResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}`,
       { body: params }
@@ -192,6 +197,7 @@ export class Peer {
     page?: number
     size?: number
   }): Promise<PageResponse<SessionResponse>> {
+    await this._ensureWorkspace()
     return this._http.post<PageResponse<SessionResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/sessions`,
       {
@@ -208,6 +214,7 @@ export class Peer {
     session_id?: string
     reasoning_level?: string
   }): Promise<PeerChatResponse> {
+    await this._ensureWorkspace()
     return this._http.post<PeerChatResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/chat`,
       { body: params }
@@ -220,6 +227,7 @@ export class Peer {
     session_id?: string
     reasoning_level?: string
   }): Promise<Response> {
+    await this._ensureWorkspace()
     return this._http.stream(
       'POST',
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/chat`,
@@ -237,6 +245,7 @@ export class Peer {
     filters?: Record<string, unknown>
     limit?: number
   }): Promise<MessageResponse[]> {
+    await this._ensureWorkspace()
     return this._http.post<MessageResponse[]>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/search`,
       { body: params }
@@ -252,6 +261,7 @@ export class Peer {
     include_most_frequent?: boolean
     max_conclusions?: number
   }): Promise<RepresentationResponse> {
+    await this._ensureWorkspace()
     return this._http.post<RepresentationResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/representation`,
       { body: params }
@@ -266,6 +276,7 @@ export class Peer {
     include_most_frequent?: boolean
     max_conclusions?: number
   }): Promise<PeerContextResponse> {
+    await this._ensureWorkspace()
     return this._http.get<PeerContextResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/context`,
       { query: params }
@@ -275,6 +286,7 @@ export class Peer {
   private async _getCard(params: {
     target?: string
   }): Promise<PeerCardResponse> {
+    await this._ensureWorkspace()
     return this._http.get<PeerCardResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/card`,
       { query: params }
@@ -349,7 +361,7 @@ export class Peer {
       session_id: chatParams.session,
       reasoning_level: chatParams.reasoningLevel,
     })
-    if (!response.content || response.content === 'None') {
+    if (!response.content) {
       return null
     }
     return response.content
@@ -801,7 +813,13 @@ export class Peer {
    * ```
    */
   get conclusions(): ConclusionScope {
-    return new ConclusionScope(this._http, this.workspaceId, this.id, this.id)
+    return new ConclusionScope(
+      this._http,
+      this.workspaceId,
+      this.id,
+      this.id,
+      () => this._ensureWorkspace()
+    )
   }
 
   /**
@@ -825,12 +843,18 @@ export class Peer {
    * const results = await bobConclusions.query('work history')
    *
    * // Get the representation from these conclusions
-   * const rep = await bobConclusions.getRepresentation()
+   * const rep = await bobConclusions.representation()
    * ```
    */
   conclusionsOf(target: string | Peer): ConclusionScope {
     const targetId = typeof target === 'string' ? target : target.id
-    return new ConclusionScope(this._http, this.workspaceId, this.id, targetId)
+    return new ConclusionScope(
+      this._http,
+      this.workspaceId,
+      this.id,
+      targetId,
+      () => this._ensureWorkspace()
+    )
   }
 
   /**

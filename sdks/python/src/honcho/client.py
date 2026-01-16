@@ -10,8 +10,8 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .aio import HonchoAio
 from .api_types import (
-    ConclusionResponse,
     MessageResponse,
     PeerResponse,
     QueueStatusResponse,
@@ -20,13 +20,12 @@ from .api_types import (
 )
 from .base import PeerBase, SessionBase
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
+from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
 from .utils import poll_until_complete, resolve_id
-
-from .aio import HonchoAio
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,6 @@ logger = logging.getLogger(__name__)
 ENVIRONMENTS = {
     "local": "http://localhost:8000",
     "production": "https://api.honcho.dev",
-    "demo": "https://demo.honcho.dev",
 }
 
 
@@ -67,6 +65,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     _async_http: AsyncHonchoHTTPClient | None = PrivateAttr(default=None)
     _http_config: dict[str, Any] = PrivateAttr()
     _base_url: str = PrivateAttr()
+    _workspace_ensured: bool = PrivateAttr(default=False)
 
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -133,7 +132,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     def __init__(
         self,
         api_key: str | None = None,
-        environment: Literal["local", "production", "demo"] | None = None,
+        environment: Literal["local", "production"] | None = None,
         base_url: str | None = Field(None, description="Base URL for the Honcho API"),
         workspace_id: str | None = Field(
             None, min_length=1, description="Workspace ID for scoping operations"
@@ -156,7 +155,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 API key for authentication. If not provided, will attempt to
                 read from HONCHO_API_KEY environment variable
             environment:
-                Environment to use (local, production, or demo)
+                Environment to use (local or production)
             base_url:
                 Base URL for the Honcho API. If not provided, will attempt to
                 read from HONCHO_URL environment variable or default to the
@@ -208,6 +207,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             http_kwargs["max_retries"] = max_retries
         if default_headers is not None:
             http_kwargs["default_headers"] = dict(default_headers)
+        if default_query is not None:
+            http_kwargs["default_query"] = dict(default_query)
 
         # Store config for lazy async client creation (without custom http_client)
         self._http_config = dict(http_kwargs)
@@ -217,8 +218,33 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
         self._http = HonchoHTTPClient(**http_kwargs)
 
-        # Get or create the workspace
+    def _ensure_workspace(self) -> None:
+        """
+        Ensure the workspace exists on the server.
+
+        The Honcho API uses get-or-create semantics for workspaces via
+        `POST /v3/workspaces`. This SDK uses that endpoint once per client
+        instance to guarantee that subsequent workspace-scoped calls (peers,
+        sessions, queue status, etc.) operate on an existing workspace.
+        """
+        if self._workspace_ensured:
+            return
         self._http.post(routes.workspaces(), body={"id": self.workspace_id})
+        self._workspace_ensured = True
+
+    async def _ensure_workspace_async(self) -> None:
+        """
+        Async version of `_ensure_workspace`.
+
+        This performs the same get-or-create call, but via the async HTTP client
+        used by `honcho.aio`.
+        """
+        if self._workspace_ensured:
+            return
+        await self._async_http_client.post(
+            routes.workspaces(), body={"id": self.workspace_id}
+        )
+        self._workspace_ensured = True
 
     @validate_call
     def peer(
@@ -273,6 +299,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         Returns:
             A SyncPage of Peer objects representing all peers in the workspace
         """
+        self._ensure_workspace()
         data = self._http.post(
             routes.peers_list(self.workspace_id),
             body={"filters": filters} if filters else None,
@@ -350,6 +377,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             A SyncPage of Session objects representing all sessions in the workspace.
             Returns an empty page if no sessions exist
         """
+        self._ensure_workspace()
         data = self._http.post(
             routes.sessions_list(self.workspace_id),
             body={"filters": filters} if filters else None,
@@ -373,7 +401,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
         return SyncPage(data, SessionResponse, transform, fetch_next)
 
-    def workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
+    def workspaces(
+        self, filters: dict[str, object] | None = None
+    ) -> SyncPage[WorkspaceResponse, str]:
         """
         Get all workspace IDs from the Honcho instance.
 
@@ -381,18 +411,25 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         user has access to.
 
         Returns:
-            A list of workspace ID strings. Returns an empty list if no workspaces
-            are accessible or none exist
+            A paginated SyncPage of workspace ID strings
         """
         data = self._http.post(
             routes.workspaces_list(),
             body={"filters": filters} if filters else None,
         )
-        workspace_ids: list[str] = []
-        for item in data.get("items", []):
-            workspace = WorkspaceResponse.model_validate(item)
-            workspace_ids.append(workspace.id)
-        return workspace_ids
+
+        def transform(workspace: WorkspaceResponse) -> str:
+            return workspace.id
+
+        def fetch_next(page: int) -> SyncPage[WorkspaceResponse, str]:
+            next_data = self._http.post(
+                routes.workspaces_list(),
+                body={"filters": filters} if filters else None,
+                query={"page": page},
+            )
+            return SyncPage(next_data, WorkspaceResponse, transform, fetch_next)
+
+        return SyncPage(data, WorkspaceResponse, transform, fetch_next)
 
     @validate_call
     def delete_workspace(
@@ -421,7 +458,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """
         Search for messages in the current workspace.
 
@@ -436,11 +473,15 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
+        self._ensure_workspace()
         data = self._http.post(
             routes.workspace_search(self.workspace_id),
             body={"query": query, "filters": filters, "limit": limit},
         )
-        return [MessageResponse.model_validate(item) for item in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(item))
+            for item in data
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def queue_status(
@@ -457,6 +498,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             sender: Optional sender (ID string or Peer object) to scope the status check
             session: Optional session (ID string or Session object) to scope the status check
         """
+        self._ensure_workspace()
         resolved_observer_id = resolve_id(observer)
         resolved_sender_id = resolve_id(sender)
         resolved_session_id = resolve_id(session)
@@ -511,179 +553,6 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             lambda: self.queue_status(observer, sender, session),
             timeout=timeout,
         )
-
-    @validate_call
-    def list_conclusions(
-        self,
-        filters: dict[str, object] | None = Field(
-            None, description="Filters to scope the conclusions"
-        ),
-        reverse: bool = Field(
-            False, description="Whether to reverse the order of results"
-        ),
-    ):
-        """
-        List all conclusions in the current workspace with optional filtering.
-
-        Makes an API call to retrieve conclusions that match the specified filters.
-        conclusions can be filtered by session_id, observer_id, and observed_id.
-
-        Args:
-            filters: Optional filter criteria for conclusions. Supported filters include:
-                    - session_id: Filter conclusions by session
-                    - observer_id: Filter conclusions by observer peer
-                    - observed_id: Filter conclusions by observed peer
-            reverse: Whether to reverse the order of results (default: False)
-
-        Returns:
-            A paginated list of conclusion objects matching the specified criteria
-
-        Example:
-            >>> conclusions = client.list_conclusions(
-            ...     filters={"observer_id": "user123", "observed_id": "assistant"}
-            ... )
-        """
-        data = self._http.post(
-            routes.conclusions_list(self.workspace_id),
-            body={"filters": filters, "reverse": reverse},
-        )
-        return SyncPage(data, ConclusionResponse)
-
-    @validate_call
-    def query_conclusions(
-        self,
-        query: str = Field(..., min_length=1, description="Semantic search query"),
-        observer: str = Field(
-            ..., min_length=1, description="Observer peer ID (required)"
-        ),
-        observed: str = Field(
-            ..., min_length=1, description="Observed peer ID (required)"
-        ),
-        top_k: int = Field(
-            default=10, ge=1, le=100, description="Number of results to return"
-        ),
-        distance: float | None = Field(
-            default=None,
-            ge=0.0,
-            le=1.0,
-            description="Maximum cosine distance threshold for results",
-        ),
-        filters: dict[str, object] | None = Field(
-            None, description="Additional filters to apply"
-        ),
-    ):
-        """
-        Query conclusions using semantic search.
-
-        Performs vector similarity search on conclusions to find semantically relevant results.
-        Observer and observed peer IDs are required for semantic search.
-
-        Args:
-            query: The semantic search query
-            observer: The observer peer ID (required)
-            observed: The observed peer ID (required)
-            top_k: Number of results to return (1-100, default: 10)
-            distance: Maximum cosine distance threshold for results (0.0-1.0)
-            filters: Optional filters to scope the query
-
-        Returns:
-            A list of conclusion objects matching the query
-
-        Example:
-            >>> conclusions = client.query_conclusions(
-            ...     query="user preferences about music",
-            ...     observer="user123",
-            ...     observed="assistant",
-            ...     top_k=5,
-            ...     distance=0.8
-            ... )
-        """
-        # Merge observer/observed into filters without mutating the input
-        query_filters: dict[str, object | str] = {
-            **(filters or {}),
-            "observer": observer,
-            "observed": observed,
-        }
-
-        body: dict[str, Any] = {
-            "query": query,
-            "top_k": top_k,
-            "filters": query_filters,
-        }
-        if distance is not None:
-            body["distance"] = distance
-
-        data = self._http.post(
-            routes.conclusions_query(self.workspace_id),
-            body=body,
-        )
-        return [ConclusionResponse.model_validate(item) for item in data]
-
-    @validate_call
-    def delete_conclusion(
-        self,
-        conclusion_id: str = Field(
-            ..., min_length=1, description="ID of the conclusion to delete"
-        ),
-    ) -> None:
-        """
-        Delete a specific conclusion by ID.
-
-        This permanently deletes the conclusion (document) from the theory-of-mind system.
-        This action cannot be undone.
-
-        Args:
-            conclusion_id: The ID of the conclusion to delete
-
-        Example:
-            >>> client.delete_conclusion('obs_123abc')
-        """
-        self._http.delete(routes.conclusion(self.workspace_id, conclusion_id))
-
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def update_message(
-        self,
-        message: MessageResponse | str = Field(
-            ..., description="The Message object or message ID to update"
-        ),
-        metadata: dict[str, object] = Field(
-            ..., description="The metadata to update for the message"
-        ),
-        session: str | SessionBase | None = Field(
-            None,
-            description="The session (ID string or Session object) - required if message is a string ID",
-        ),
-    ) -> MessageResponse:
-        """
-        Update the metadata of a message.
-
-        Makes an API call to update the metadata of a specific message within a session.
-
-        Args:
-            message: Either a Message object or a message ID string
-            metadata: The metadata to update for the message
-            session: The session (ID string or Session object) - required if message is a string ID, ignored if message is a Message object
-
-        Returns:
-            The updated Message object
-
-        Raises:
-            ValidationError: If message is a string ID but session_id is not provided
-        """
-        if isinstance(message, MessageResponse):
-            message_id = message.id
-            resolved_session_id = message.session_id
-        else:
-            message_id = message
-            if not session:
-                raise ValueError("session is required when message is a string ID")
-            resolved_session_id = resolve_id(session)
-
-        data = self._http.put(
-            routes.message(self.workspace_id, resolved_session_id, message_id),
-            body={"metadata": metadata},
-        )
-        return MessageResponse.model_validate(data)
 
     def __repr__(self) -> str:
         """

@@ -4,10 +4,10 @@
  * Tests for Conclusion operations via ConclusionScope.
  *
  * Endpoints covered:
- * - POST /v1/workspaces/:id/conclusions (create conclusions)
- * - POST /v1/workspaces/:id/conclusions/list (list conclusions)
- * - POST /v1/workspaces/:id/conclusions/query (semantic search)
- * - DELETE /v1/workspaces/:id/conclusions/:id (delete conclusion)
+ * - POST /v3/workspaces/:workspaceId/conclusions (create conclusions)
+ * - POST /v3/workspaces/:workspaceId/conclusions/list (list conclusions)
+ * - POST /v3/workspaces/:workspaceId/conclusions/query (semantic search)
+ * - DELETE /v3/workspaces/:workspaceId/conclusions/:conclusionId (delete conclusion)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'

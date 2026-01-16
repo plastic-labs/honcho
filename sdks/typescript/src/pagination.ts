@@ -58,6 +58,10 @@ export class Page<T, TOriginal = T> implements AsyncIterable<T> {
 
   /**
    * Async iterator for all transformed items across all pages.
+   *
+   * **Warning:** This iterator automatically fetches ALL subsequent pages as you iterate.
+   * For large datasets, this may result in many API calls. If you only need
+   * the current page, use the `items` property instead.
    */
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     // Yield items from current page

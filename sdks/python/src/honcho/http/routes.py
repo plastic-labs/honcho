@@ -94,18 +94,6 @@ def session_peers(workspace_id: str, session_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/sessions/{session_id}/peers"
 
 
-def session_peers_add(workspace_id: str, session_id: str) -> str:
-    return f"/{API_VERSION}/workspaces/{workspace_id}/sessions/{session_id}/peers"
-
-
-def session_peers_set(workspace_id: str, session_id: str) -> str:
-    return f"/{API_VERSION}/workspaces/{workspace_id}/sessions/{session_id}/peers"
-
-
-def session_peers_remove(workspace_id: str, session_id: str) -> str:
-    return f"/{API_VERSION}/workspaces/{workspace_id}/sessions/{session_id}/peers"
-
-
 def session_peer_config(workspace_id: str, session_id: str, peer_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config"
 

@@ -50,7 +50,14 @@ class SyncPage(Generic[T, U]):
         ]
 
     def __iter__(self) -> Iterator[U] | Iterator[T]:
-        """Iterate over all transformed items across all pages."""
+        """
+        Iterate over all transformed items across all pages.
+
+        Warning:
+            This iterator automatically fetches ALL subsequent pages as you iterate.
+            For large datasets, this may result in many API calls. If you only need
+            the current page, use the `items` property instead.
+        """
         page: SyncPage[T, U] | None = self
         while page is not None:
             for item in page._raw_items:
@@ -162,7 +169,14 @@ class AsyncPage(Generic[T, U]):
         ]
 
     async def __aiter__(self) -> AsyncIterator[U] | AsyncIterator[T]:
-        """Async iterate over all transformed items across all pages."""
+        """
+        Async iterate over all transformed items across all pages.
+
+        Warning:
+            This iterator automatically fetches ALL subsequent pages as you iterate.
+            For large datasets, this may result in many API calls. If you only need
+            the current page, use the `items` property instead.
+        """
         page: AsyncPage[T, U] | None = self
         while page is not None:
             for item in page._raw_items:

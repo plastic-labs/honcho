@@ -36,7 +36,9 @@ export const HonchoConfigSchema = z.object({
     .max(3, 'Max retries must be at most 3')
     .optional(),
   defaultHeaders: z.record(z.string(), z.string()).optional(),
-  defaultQuery: z.record(z.string(), z.unknown()).optional(),
+  defaultQuery: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+    .optional(),
 })
 
 /**
@@ -257,10 +259,7 @@ export const QueueStatusOptionsSchema = z.object({
   session: z
     .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
     .optional(),
-  timeoutMs: z
-    .number()
-    .positive('Timeout must be a positive number')
-    .optional(),
+  timeout: z.number().positive('Timeout must be a positive number').optional(),
 })
 
 /**

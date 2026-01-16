@@ -20,6 +20,7 @@ from .api_types import (
     SessionResponse,
 )
 from .base import PeerBase, SessionBase
+from .message import Message
 from .http import routes
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
@@ -75,6 +76,7 @@ class Session(SessionBase, MetadataConfigMixin):
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
+        self._honcho._ensure_workspace()
         return self._honcho._http
 
     def _get_fetch_route(self) -> str:
@@ -155,6 +157,7 @@ class Session(SessionBase, MetadataConfigMixin):
         self._configuration = configuration
 
         if configuration is not None or metadata is not None:
+            self._honcho._ensure_workspace()
             body: dict[str, Any] = {"id": session_id}
             if metadata is not None:
                 body["metadata"] = metadata
@@ -196,8 +199,9 @@ class Session(SessionBase, MetadataConfigMixin):
                 - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
+        self._honcho._ensure_workspace()
         self._honcho._http.post(
-            routes.session_peers_add(self.workspace_id, self.id),
+            routes.session_peers(self.workspace_id, self.id),
             body=normalize_peers_to_dict(peers),
         )
 
@@ -229,8 +233,9 @@ class Session(SessionBase, MetadataConfigMixin):
                 - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
                 - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
+        self._honcho._ensure_workspace()
         self._honcho._http.put(
-            routes.session_peers_set(self.workspace_id, self.id),
+            routes.session_peers(self.workspace_id, self.id),
             body=normalize_peers_to_dict(peers),
         )
 
@@ -253,13 +258,14 @@ class Session(SessionBase, MetadataConfigMixin):
                    - Peer: Single Peer object
                    - List[Union[Peer, str]]: List of Peer objects and/or peer IDs
         """
+        self._honcho._ensure_workspace()
         if not isinstance(peers, list):
             peers = [peers]
 
         peer_ids = [peer if isinstance(peer, str) else peer.id for peer in peers]
 
         self._honcho._http.delete(
-            routes.session_peers_remove(self.workspace_id, self.id),
+            routes.session_peers(self.workspace_id, self.id),
             body=peer_ids,
         )
 
@@ -274,6 +280,7 @@ class Session(SessionBase, MetadataConfigMixin):
         Returns:
             A list of Peer objects that are members of this session
         """
+        self._honcho._ensure_workspace()
         data: dict[str, Any] = self._honcho._http.get(
             routes.session_peers(self.workspace_id, self.id)
         )
@@ -288,6 +295,7 @@ class Session(SessionBase, MetadataConfigMixin):
         """
         Get the configuration for a peer in this session.
         """
+        self._honcho._ensure_workspace()
         peer_id = peer if isinstance(peer, str) else peer.id
         data = self._honcho._http.get(
             routes.session_peer_config(self.workspace_id, self.id, peer_id)
@@ -301,6 +309,7 @@ class Session(SessionBase, MetadataConfigMixin):
         """
         Set the configuration for a peer in this session.
         """
+        self._honcho._ensure_workspace()
         peer_id = peer if isinstance(peer, str) else peer.id
         body: dict[str, Any] = {}
         if config.observe_others is not None:
@@ -319,7 +328,7 @@ class Session(SessionBase, MetadataConfigMixin):
         messages: MessageCreateParams | list[MessageCreateParams] = Field(
             ..., description="Messages to add to the session"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """
         Add one or more messages to this session.
 
@@ -332,6 +341,7 @@ class Session(SessionBase, MetadataConfigMixin):
                       - MessageCreateParams: Single MessageCreateParams object
                       - List[MessageCreateParams]: List of MessageCreateParams objects
         """
+        self._honcho._ensure_workspace()
         if not isinstance(messages, list):
             messages = [messages]
 
@@ -343,7 +353,10 @@ class Session(SessionBase, MetadataConfigMixin):
             routes.messages(self.workspace_id, self.id),
             body={"messages": messages_data},
         )
-        return [MessageResponse.model_validate(msg) for msg in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in data
+        ]
 
     @validate_call
     def messages(
@@ -352,7 +365,7 @@ class Session(SessionBase, MetadataConfigMixin):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
-    ) -> SyncPage[MessageResponse, MessageResponse]:
+    ) -> SyncPage[MessageResponse, Message]:
         """
         Get messages from this session with optional filtering.
 
@@ -370,20 +383,24 @@ class Session(SessionBase, MetadataConfigMixin):
             A list of Message objects matching the specified criteria, ordered by
             creation time (most recent first)
         """
+        self._honcho._ensure_workspace()
         data = self._honcho._http.post(
             routes.messages_list(self.workspace_id, self.id),
             body={"filters": filters} if filters else None,
         )
 
-        def fetch_next(page: int) -> SyncPage[MessageResponse, MessageResponse]:
+        def transform(response: MessageResponse) -> Message:
+            return Message.from_api_response(response)
+
+        def fetch_next(page: int) -> SyncPage[MessageResponse, Message]:
             next_data = self._honcho._http.post(
                 routes.messages_list(self.workspace_id, self.id),
                 body={"filters": filters} if filters else None,
                 query={"page": page},
             )
-            return SyncPage(next_data, MessageResponse, None, fetch_next)
+            return SyncPage(next_data, MessageResponse, transform, fetch_next)
 
-        return SyncPage(data, MessageResponse, None, fetch_next)
+        return SyncPage(data, MessageResponse, transform, fetch_next)
 
     def delete(self) -> None:
         """
@@ -398,6 +415,7 @@ class Session(SessionBase, MetadataConfigMixin):
 
         This action cannot be undone.
         """
+        self._honcho._ensure_workspace()
         self._honcho._http.delete(routes.session(self.workspace_id, self.id))
 
     def clone(
@@ -430,6 +448,7 @@ class Session(SessionBase, MetadataConfigMixin):
             cloned = session.clone(message_id="msg_abc123")
             ```
         """
+        self._honcho._ensure_workspace()
         query: dict[str, Any] = {}
         if message_id is not None:
             query["message_id"] = message_id
@@ -446,7 +465,7 @@ class Session(SessionBase, MetadataConfigMixin):
             configuration=cloned.configuration,
         )
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def context(
         self,
         *,
@@ -458,7 +477,7 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.",
         ),
-        last_user_message: str | MessageResponse | None = Field(
+        last_user_message: str | Message | None = Field(
             None,
             description="The most recent message (string or Message object), used to fetch semantically relevant conclusions and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
         ),
@@ -523,6 +542,7 @@ class Session(SessionBase, MetadataConfigMixin):
             Token counting is performed using tiktoken. For models using different
             tokenizers, you may need to adjust the token limit accordingly.
         """
+        self._honcho._ensure_workspace()
 
         if peer_target is None and peer_perspective is not None:
             raise ValueError(
@@ -536,7 +556,7 @@ class Session(SessionBase, MetadataConfigMixin):
 
         last_user_message_id = (
             last_user_message.id
-            if isinstance(last_user_message, MessageResponse)
+            if isinstance(last_user_message, Message)
             else last_user_message
         )
 
@@ -578,9 +598,9 @@ class Session(SessionBase, MetadataConfigMixin):
                 token_count=s["token_count"],
             )
 
-        # Parse messages
         messages = [
-            MessageResponse.model_validate(msg) for msg in data.get("messages", [])
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in data.get("messages", [])
         ]
 
         return SessionContext(
@@ -613,6 +633,7 @@ class Session(SessionBase, MetadataConfigMixin):
             - The summary generation is still in progress
             - Summary generation is disabled for this session
         """
+        self._honcho._ensure_workspace()
         data = self._honcho._http.get(
             routes.session_summaries(self.workspace_id, self.id)
         )
@@ -655,7 +676,7 @@ class Session(SessionBase, MetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """
         Search for messages in this session.
 
@@ -670,11 +691,15 @@ class Session(SessionBase, MetadataConfigMixin):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
+        self._honcho._ensure_workspace()
         data = self._honcho._http.post(
             routes.session_search(self.workspace_id, self.id),
             body={"query": query, "filters": filters, "limit": limit},
         )
-        return [MessageResponse.model_validate(msg) for msg in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in data
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def upload_file(
@@ -698,7 +723,7 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="Optional created-at timestamp for the messages. Should be an ISO 8601 formatted string.",
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """
         Upload file to create message(s) in this session.
 
@@ -728,6 +753,7 @@ class Session(SessionBase, MetadataConfigMixin):
             Large files will be automatically split into multiple messages to fit
             within message size limits.
         """
+        self._honcho._ensure_workspace()
 
         # Prepare file for upload using shared utility
         filename, content_bytes, content_type = prepare_file_for_upload(file)
@@ -751,7 +777,10 @@ class Session(SessionBase, MetadataConfigMixin):
             data=data_dict,
         )
 
-        return [MessageResponse.model_validate(msg) for msg in response]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(msg))
+            for msg in response
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def representation(
@@ -798,6 +827,7 @@ class Session(SessionBase, MetadataConfigMixin):
             )
             ```
         """
+        self._honcho._ensure_workspace()
         peer_id = resolve_id(peer)
         target_id = resolve_id(target)
 
@@ -835,6 +865,7 @@ class Session(SessionBase, MetadataConfigMixin):
             observer: Optional observer (ID string or Peer object) to scope the status check
             sender: Optional sender (ID string or Peer object) to scope the status check
         """
+        self._honcho._ensure_workspace()
         resolved_observer_id = resolve_id(observer)
         resolved_sender_id = resolve_id(sender)
 
@@ -888,13 +919,13 @@ class Session(SessionBase, MetadataConfigMixin):
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def update_message(
         self,
-        message: MessageResponse | str = Field(
+        message: Message | str = Field(
             ..., description="The Message object or message ID to update"
         ),
         metadata: dict[str, object] = Field(
             ..., description="The metadata to update for the message"
         ),
-    ) -> MessageResponse:
+    ) -> Message:
         """
         Update the metadata of a message in this session.
 
@@ -907,13 +938,14 @@ class Session(SessionBase, MetadataConfigMixin):
         Returns:
             The updated Message object
         """
-        message_id = message.id if isinstance(message, MessageResponse) else message
+        self._honcho._ensure_workspace()
+        message_id = message.id if isinstance(message, Message) else message
 
         data = self._honcho._http.put(
             routes.message(self.workspace_id, self.id, message_id),
             body={"metadata": metadata},
         )
-        return MessageResponse.model_validate(data)
+        return Message.from_api_response(MessageResponse.model_validate(data))
 
     def __repr__(self) -> str:
         """

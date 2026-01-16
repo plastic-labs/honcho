@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -18,18 +19,76 @@ if TYPE_CHECKING:
     from .client import Honcho
 
 __all__ = [
-    "ConclusionResponse",
-    "ConclusionCreateResponse",
+    "Conclusion",
     "ConclusionScope",
     "ConclusionCreateParams",
 ]
-
-ConclusionCreateResponse = list[ConclusionResponse]
 
 
 class ConclusionCreateParams(BaseModel):
     content: str
     session_id: str
+
+
+class Conclusion:
+    """
+    A conclusion from Honcho's reasoning system.
+
+    Conclusions are facts derived from messages that help build a representation
+    of a peer.
+
+    Attributes:
+        id: Unique identifier for this conclusion
+        content: The conclusion content/text
+        observer_id: The peer ID who made this conclusion
+        observed_id: The peer ID this conclusion is about
+        session_id: The session this conclusion relates to
+        created_at: Timestamp for when the conclusion was created
+    """
+
+    id: str
+    content: str
+    observer_id: str
+    observed_id: str
+    session_id: str
+    created_at: datetime.datetime
+
+    def __init__(
+        self,
+        id: str,
+        content: str,
+        observer_id: str,
+        observed_id: str,
+        session_id: str,
+        created_at: datetime.datetime,
+    ) -> None:
+        self.id = id
+        self.content = content
+        self.observer_id = observer_id
+        self.observed_id = observed_id
+        self.session_id = session_id
+        self.created_at = created_at
+
+    @classmethod
+    def from_api_response(cls, data: ConclusionResponse) -> "Conclusion":
+        """Create a Conclusion from an API response."""
+        return cls(
+            id=data.id,
+            content=data.content,
+            observer_id=data.observer_id,
+            observed_id=data.observed_id,
+            session_id=data.session_id,
+            created_at=data.created_at,
+        )
+
+    def __repr__(self) -> str:
+        truncated = (
+            f"{self.content[:50]}..." if len(self.content) > 50 else self.content
+        )
+        return f"Conclusion(id='{self.id}', content='{truncated}')"
+
+    def __str__(self) -> str:
+        return self.content
 
 
 class ConclusionScope:
@@ -109,7 +168,7 @@ class ConclusionScope:
         page: int = 1,
         size: int = 50,
         session: str | SessionBase | None = None,
-    ) -> SyncPage[ConclusionResponse, ConclusionResponse]:
+    ) -> SyncPage[ConclusionResponse, Conclusion]:
         """
         List conclusions in this scope.
 
@@ -119,38 +178,44 @@ class ConclusionScope:
             session: Optional session (ID string or Session object) to filter by
 
         Returns:
-            Paginated response containing ConclusionResponse objects
+            Paginated response containing Conclusion objects
         """
+        self._honcho._ensure_workspace()
         resolved_session_id = resolve_id(session)
         filters: dict[str, Any] = {
-            "observer": self.observer,
-            "observed": self.observed,
+            "observer_id": self.observer,
+            "observed_id": self.observed,
         }
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
         data = self._honcho._http.post(
             routes.conclusions_list(self.workspace_id),
-            body={"filters": filters, "page": page, "size": size},
+            body={"filters": filters},
+            query={"page": page, "size": size},
         )
+
+        def transform(response: ConclusionResponse) -> Conclusion:
+            return Conclusion.from_api_response(response)
 
         def fetch_next(
             page: int,
-        ) -> SyncPage[ConclusionResponse, ConclusionResponse]:
+        ) -> SyncPage[ConclusionResponse, Conclusion]:
             next_data = self._honcho._http.post(
                 routes.conclusions_list(self.workspace_id),
-                body={"filters": filters, "page": page, "size": size},
+                body={"filters": filters},
+                query={"page": page, "size": size},
             )
-            return SyncPage(next_data, ConclusionResponse, None, fetch_next)
+            return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
 
-        return SyncPage(data, ConclusionResponse, None, fetch_next)
+        return SyncPage(data, ConclusionResponse, transform, fetch_next)
 
     def query(
         self,
         query: str,
         top_k: int = 10,
         distance: float | None = None,
-    ) -> list[ConclusionResponse]:
+    ) -> list[Conclusion]:
         """
         Semantic search for conclusions in this scope.
 
@@ -160,11 +225,12 @@ class ConclusionScope:
             distance: Maximum cosine distance threshold (0.0-1.0)
 
         Returns:
-            List of matching ConclusionResponse objects
+            List of matching Conclusion objects
         """
+        self._honcho._ensure_workspace()
         filters: dict[str, Any] = {
-            "observer": self.observer,
-            "observed": self.observed,
+            "observer_id": self.observer,
+            "observed_id": self.observed,
         }
 
         body: dict[str, Any] = {
@@ -179,7 +245,10 @@ class ConclusionScope:
             routes.conclusions_query(self.workspace_id),
             body=body,
         )
-        return [ConclusionResponse.model_validate(item) for item in data]
+        return [
+            Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+            for item in data
+        ]
 
     def delete(self, conclusion_id: str) -> None:
         """
@@ -188,12 +257,13 @@ class ConclusionScope:
         Args:
             conclusion_id: The ID of the conclusion to delete
         """
+        self._honcho._ensure_workspace()
         self._honcho._http.delete(routes.conclusion(self.workspace_id, conclusion_id))
 
     def create(
         self,
         conclusions: list[ConclusionCreateParams | dict[str, Any]],
-    ) -> list[ConclusionResponse]:
+    ) -> list[Conclusion]:
         """
         Create conclusions in this scope.
 
@@ -202,7 +272,7 @@ class ConclusionScope:
                 Each conclusion can be a ConclusionCreateParams object or a dictionary with 'content' and 'session_id' keys.
 
         Returns:
-            List of created ConclusionResponse objects
+            List of created Conclusion objects
 
         Example:
             ```python
@@ -212,6 +282,7 @@ class ConclusionScope:
             ])
             ```
         """
+        self._honcho._ensure_workspace()
         conclusion_params = [
             {
                 "content": c.content
@@ -230,9 +301,12 @@ class ConclusionScope:
             routes.conclusions(self.workspace_id),
             body={"conclusions": conclusion_params},
         )
-        return [ConclusionResponse.model_validate(item) for item in data]
+        return [
+            Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+            for item in data
+        ]
 
-    def get_representation(
+    def representation(
         self,
         search_query: str | None = None,
         search_top_k: int | None = None,
@@ -256,21 +330,22 @@ class ConclusionScope:
         Returns:
             A Representation string
         """
-        query: dict[str, Any] = {"target": self.observed}
+        self._honcho._ensure_workspace()
+        body: dict[str, Any] = {"target": self.observed}
         if search_query is not None:
-            query["search_query"] = search_query
+            body["search_query"] = search_query
         if search_top_k is not None:
-            query["search_top_k"] = search_top_k
+            body["search_top_k"] = search_top_k
         if search_max_distance is not None:
-            query["search_max_distance"] = search_max_distance
+            body["search_max_distance"] = search_max_distance
         if include_most_frequent is not None:
-            query["include_most_frequent"] = include_most_frequent
+            body["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
-            query["max_conclusions"] = max_conclusions
+            body["max_conclusions"] = max_conclusions
 
-        data = self._honcho._http.get(
+        data = self._honcho._http.post(
             routes.peer_representation(self.workspace_id, self.observer),
-            query=query,
+            body=body,
         )
         response = RepresentationResponse.model_validate(data)
         return response.representation

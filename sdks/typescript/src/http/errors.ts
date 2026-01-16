@@ -22,10 +22,10 @@ export class HonchoError extends Error {
 /**
  * Error thrown when request validation fails (400).
  */
-export class ValidationError extends HonchoError {
+export class BadRequestError extends HonchoError {
   constructor(message: string, body?: unknown) {
-    super(message, 400, { code: 'validation_error', body })
-    this.name = 'ValidationError'
+    super(message, 400, { code: 'bad_request', body })
+    this.name = 'BadRequestError'
   }
 }
 
@@ -42,10 +42,30 @@ export class AuthenticationError extends HonchoError {
 /**
  * Error thrown when the user lacks permission (403).
  */
-export class PermissionError extends HonchoError {
+export class PermissionDeniedError extends HonchoError {
   constructor(message = 'Permission denied') {
-    super(message, 403, { code: 'permission_error' })
-    this.name = 'PermissionError'
+    super(message, 403, { code: 'permission_denied' })
+    this.name = 'PermissionDeniedError'
+  }
+}
+
+/**
+ * Error thrown on resource conflict (409).
+ */
+export class ConflictError extends HonchoError {
+  constructor(message = 'Resource conflict', body?: unknown) {
+    super(message, 409, { code: 'conflict', body })
+    this.name = 'ConflictError'
+  }
+}
+
+/**
+ * Error thrown when entity cannot be processed (422).
+ */
+export class UnprocessableEntityError extends HonchoError {
+  constructor(message = 'Unprocessable entity', body?: unknown) {
+    super(message, 422, { code: 'unprocessable_entity', body })
+    this.name = 'UnprocessableEntityError'
   }
 }
 
@@ -113,13 +133,17 @@ export function createErrorFromResponse(
 ): HonchoError {
   switch (status) {
     case 400:
-      return new ValidationError(message, body)
+      return new BadRequestError(message, body)
     case 401:
       return new AuthenticationError(message)
     case 403:
-      return new PermissionError(message)
+      return new PermissionDeniedError(message)
     case 404:
       return new NotFoundError(message)
+    case 409:
+      return new ConflictError(message, body)
+    case 422:
+      return new UnprocessableEntityError(message, body)
     case 429:
       return new RateLimitError(message, retryAfter)
     default:

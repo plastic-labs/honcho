@@ -57,15 +57,16 @@ export function transformQueueStatus(status: QueueStatusResponse): QueueStatus {
  * The polling estimates sleep time by assuming each work unit takes 1 second.
  *
  * @param getStatus - A function that returns a Promise resolving to the current status
- * @param timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
+ * @param timeout - Optional timeout in seconds (default: 300 - 5 minutes)
  * @returns Promise resolving to the final status when processing is complete
  * @throws Error if timeout is exceeded before processing completes
  */
 export async function pollUntilComplete<T extends PollableQueueStatus>(
   getStatus: () => Promise<T>,
-  timeoutMs: number = 300000
+  timeout: number = 300
 ): Promise<T> {
   const startTime = Date.now()
+  const timeoutMs = timeout * 1000
 
   while (true) {
     const status = await getStatus()
@@ -77,7 +78,7 @@ export async function pollUntilComplete<T extends PollableQueueStatus>(
     const elapsedTime = Date.now() - startTime
     if (elapsedTime >= timeoutMs) {
       throw new Error(
-        `Polling timeout exceeded after ${timeoutMs}ms. ` +
+        `Polling timeout exceeded after ${timeout}s. ` +
           `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
       )
     }

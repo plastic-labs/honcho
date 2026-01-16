@@ -12,6 +12,7 @@ export interface HonchoHTTPClientConfig {
   timeout?: number
   maxRetries?: number
   defaultHeaders?: Record<string, string>
+  defaultQuery?: Record<string, string | number | boolean | undefined>
 }
 
 export interface RequestOptions {
@@ -36,6 +37,7 @@ export class HonchoHTTPClient {
   readonly timeout: number
   readonly maxRetries: number
   readonly defaultHeaders: Record<string, string>
+  readonly defaultQuery?: Record<string, string | number | boolean | undefined>
 
   constructor(config: HonchoHTTPClientConfig) {
     // Remove trailing slash from baseURL
@@ -47,6 +49,7 @@ export class HonchoHTTPClient {
       'Content-Type': 'application/json',
       ...config.defaultHeaders,
     }
+    this.defaultQuery = config.defaultQuery
   }
 
   /**
@@ -78,9 +81,11 @@ export class HonchoHTTPClient {
         )
 
         if (response.ok) {
-          // Handle empty responses
           const text = await response.text()
           if (!text) {
+            // Empty responses (204 No Content, etc.) - valid for DELETE and some PUT/POST
+            // Callers using void as T will get undefined which is correct
+            // Callers expecting data from an endpoint that returns empty will get undefined
             return undefined as T
           }
           return JSON.parse(text) as T
@@ -182,8 +187,15 @@ export class HonchoHTTPClient {
 
   /**
    * Make a DELETE request.
+   * Most DELETE endpoints return no content (204), so the default return type is void.
+   * For endpoints that return data, specify the type parameter explicitly.
    */
-  async delete<T>(path: string, options?: RequestOptions): Promise<T> {
+  async delete(path: string, options?: RequestOptions): Promise<void>
+  async delete<T>(path: string, options?: RequestOptions): Promise<T>
+  async delete<T = void>(
+    path: string,
+    options?: RequestOptions
+  ): Promise<T | void> {
     return this.request<T>('DELETE', path, options)
   }
 
@@ -267,6 +279,7 @@ export class HonchoHTTPClient {
 
     const text = await response.text()
     if (!text) {
+      // Empty upload responses are unusual but valid for some endpoints
       return undefined as T
     }
     return JSON.parse(text) as T
@@ -278,11 +291,14 @@ export class HonchoHTTPClient {
   ): string {
     const url = new URL(path, this.baseURL)
 
-    if (query) {
-      for (const [key, value] of Object.entries(query)) {
-        if (value !== undefined) {
-          url.searchParams.set(key, String(value))
-        }
+    const mergedQuery: Record<string, string | number | boolean | undefined> = {
+      ...(this.defaultQuery ?? {}),
+      ...(query ?? {}),
+    }
+
+    for (const [key, value] of Object.entries(mergedQuery)) {
+      if (value !== undefined) {
+        url.searchParams.set(key, String(value))
       }
     }
 

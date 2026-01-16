@@ -76,6 +76,7 @@ export class Session {
   private _http: HonchoHTTPClient
   private _metadata?: Record<string, unknown>
   private _configuration?: Record<string, unknown>
+  private _ensureWorkspace: () => Promise<void>
 
   /**
    * Cached metadata for this session. May be stale if the session
@@ -113,13 +114,15 @@ export class Session {
     workspaceId: string,
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
-    configuration?: Record<string, unknown>
+    configuration?: Record<string, unknown>,
+    ensureWorkspace: () => Promise<void> = async () => undefined
   ) {
     this.id = id
     this.workspaceId = workspaceId
     this._http = http
     this._metadata = metadata
     this._configuration = configuration
+    this._ensureWorkspace = ensureWorkspace
   }
 
   // ===========================================================================
@@ -131,6 +134,7 @@ export class Session {
     metadata?: Record<string, unknown>
     configuration?: Record<string, unknown>
   }): Promise<SessionResponse> {
+    await this._ensureWorkspace()
     return this._http.post<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions`,
       { body: params }
@@ -141,6 +145,7 @@ export class Session {
     metadata?: Record<string, unknown>
     configuration?: Record<string, unknown>
   }): Promise<SessionResponse> {
+    await this._ensureWorkspace()
     return this._http.put<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}`,
       { body: params }
@@ -148,6 +153,7 @@ export class Session {
   }
 
   private async _delete(): Promise<SessionResponse> {
+    await this._ensureWorkspace()
     return this._http.delete<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}`
     )
@@ -156,6 +162,7 @@ export class Session {
   private async _clone(params?: {
     message_id?: string
   }): Promise<SessionResponse> {
+    await this._ensureWorkspace()
     return this._http.post<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/clone`,
       { query: params }
@@ -174,6 +181,7 @@ export class Session {
     include_most_frequent?: boolean
     max_conclusions?: number
   }): Promise<SessionContextResponse> {
+    await this._ensureWorkspace()
     return this._http.get<SessionContextResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/context`,
       { query: params }
@@ -181,6 +189,7 @@ export class Session {
   }
 
   private async _getSummaries(): Promise<SessionSummariesResponse> {
+    await this._ensureWorkspace()
     return this._http.get<SessionSummariesResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/summaries`
     )
@@ -191,6 +200,7 @@ export class Session {
     filters?: Record<string, unknown>
     limit?: number
   }): Promise<MessageResponse[]> {
+    await this._ensureWorkspace()
     return this._http.post<MessageResponse[]>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/search`,
       { body: params }
@@ -203,6 +213,7 @@ export class Session {
       { observe_me?: boolean | null; observe_others?: boolean | null }
     >
   ): Promise<void> {
+    await this._ensureWorkspace()
     await this._http.post(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
       { body: peers }
@@ -215,6 +226,7 @@ export class Session {
       { observe_me?: boolean | null; observe_others?: boolean | null }
     >
   ): Promise<void> {
+    await this._ensureWorkspace()
     await this._http.put(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
       { body: peers }
@@ -222,6 +234,7 @@ export class Session {
   }
 
   private async _removePeers(peerIds: string[]): Promise<void> {
+    await this._ensureWorkspace()
     await this._http.delete(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`,
       { body: peerIds }
@@ -229,6 +242,7 @@ export class Session {
   }
 
   private async _listPeers(): Promise<PageResponse<PeerResponse>> {
+    await this._ensureWorkspace()
     return this._http.get<PageResponse<PeerResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers`
     )
@@ -237,6 +251,7 @@ export class Session {
   private async _getPeerConfig(
     peerId: string
   ): Promise<{ observe_me?: boolean | null; observe_others?: boolean | null }> {
+    await this._ensureWorkspace()
     return this._http.get<{
       observe_me?: boolean | null
       observe_others?: boolean | null
@@ -249,6 +264,7 @@ export class Session {
     peerId: string,
     config: { observe_me?: boolean | null; observe_others?: boolean | null }
   ): Promise<void> {
+    await this._ensureWorkspace()
     await this._http.put(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/peers/${peerId}/config`,
       { body: config }
@@ -264,6 +280,7 @@ export class Session {
       created_at?: string
     }>
   }): Promise<MessageResponse[]> {
+    await this._ensureWorkspace()
     return this._http.post<MessageResponse[]>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/messages`,
       { body: params }
@@ -275,6 +292,7 @@ export class Session {
     page?: number
     size?: number
   }): Promise<PageResponse<MessageResponse>> {
+    await this._ensureWorkspace()
     return this._http.post<PageResponse<MessageResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/messages/list`,
       {
@@ -285,6 +303,7 @@ export class Session {
   }
 
   private async _uploadFile(formData: FormData): Promise<MessageResponse[]> {
+    await this._ensureWorkspace()
     return this._http.upload<MessageResponse[]>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/messages/upload`,
       formData
@@ -294,6 +313,7 @@ export class Session {
   private async _getQueueStatus(
     params?: QueueStatusParams
   ): Promise<QueueStatusResponse> {
+    await this._ensureWorkspace()
     const query: Record<string, string | number | boolean | undefined> = {}
     if (params?.observer_id) query.observer_id = params.observer_id
     if (params?.sender_id) query.sender_id = params.sender_id
@@ -317,6 +337,7 @@ export class Session {
       max_conclusions?: number
     }
   ): Promise<RepresentationResponse> {
+    await this._ensureWorkspace()
     return this._http.post<RepresentationResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${peerId}/representation`,
       { body: params }
@@ -327,6 +348,7 @@ export class Session {
     messageId: string,
     params: { metadata: Record<string, unknown> }
   ): Promise<MessageResponse> {
+    await this._ensureWorkspace()
     return this._http.put<MessageResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/messages/${messageId}`,
       { body: params }
@@ -409,7 +431,15 @@ export class Session {
   async peers(): Promise<Peer[]> {
     const peersPage = await this._listPeers()
     return peersPage.items.map(
-      (peer) => new Peer(peer.id, this.workspaceId, this._http)
+      (peer) =>
+        new Peer(
+          peer.id,
+          this.workspaceId,
+          this._http,
+          undefined,
+          undefined,
+          () => this._ensureWorkspace()
+        )
     )
   }
 
@@ -619,7 +649,8 @@ export class Session {
       this.workspaceId,
       this._http,
       clonedSessionData.metadata ?? undefined,
-      clonedSessionData.configuration ?? undefined
+      clonedSessionData.configuration ?? undefined,
+      () => this._ensureWorkspace()
     )
   }
 
@@ -802,7 +833,7 @@ export class Session {
    * @param options - Configuration options for the status request
    * @param options.observer - Optional observer peer to scope the status to
    * @param options.sender - Optional sender peer to scope the status to
-   * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
+   * @param options.timeout - Optional timeout in seconds (default: 300 - 5 minutes)
    * @returns Promise resolving to the final queue status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
@@ -813,10 +844,11 @@ export class Session {
     > & {
       observer?: string | Peer
       sender?: string | Peer
+      timeout?: number
     }
   ): Promise<QueueStatus> {
-    const timeoutMs = options?.timeoutMs ?? 300000
-    return pollUntilComplete(() => this.queueStatus(options), timeoutMs)
+    const timeout = options?.timeout ?? 300
+    return pollUntilComplete(() => this.queueStatus(options), timeout)
   }
 
   /**

@@ -12,10 +12,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { Honcho, Peer } from '../src'
 import {
   HonchoError,
-  ValidationError,
+  BadRequestError,
   AuthenticationError,
   NotFoundError,
-  PermissionError,
+  PermissionDeniedError,
   RateLimitError,
   ServerError,
   TimeoutError,
@@ -45,12 +45,12 @@ describe('Error types (unit)', () => {
     expect(error.name).toBe('HonchoError')
   })
 
-  test('ValidationError has status 400', () => {
-    const error = new ValidationError('Invalid input', { field: 'name' })
+  test('BadRequestError has status 400', () => {
+    const error = new BadRequestError('Invalid input', { field: 'name' })
 
     expect(error).toBeInstanceOf(HonchoError)
     expect(error.status).toBe(400)
-    expect(error.code).toBe('validation_error')
+    expect(error.code).toBe('bad_request')
     expect(error.body).toEqual({ field: 'name' })
   })
 
@@ -62,12 +62,12 @@ describe('Error types (unit)', () => {
     expect(error.code).toBe('authentication_error')
   })
 
-  test('PermissionError has status 403', () => {
-    const error = new PermissionError('Access denied')
+  test('PermissionDeniedError has status 403', () => {
+    const error = new PermissionDeniedError('Access denied')
 
     expect(error).toBeInstanceOf(HonchoError)
     expect(error.status).toBe(403)
-    expect(error.code).toBe('permission_error')
+    expect(error.code).toBe('permission_denied')
   })
 
   test('NotFoundError has status 404', () => {
@@ -113,10 +113,10 @@ describe('Error types (unit)', () => {
 })
 
 describe('createErrorFromResponse (unit)', () => {
-  test('400 creates ValidationError', () => {
+  test('400 creates BadRequestError', () => {
     const error = createErrorFromResponse(400, 'Bad request', { field: 'x' })
 
-    expect(error).toBeInstanceOf(ValidationError)
+    expect(error).toBeInstanceOf(BadRequestError)
     expect(error.body).toEqual({ field: 'x' })
   })
 
@@ -126,10 +126,10 @@ describe('createErrorFromResponse (unit)', () => {
     expect(error).toBeInstanceOf(AuthenticationError)
   })
 
-  test('403 creates PermissionError', () => {
+  test('403 creates PermissionDeniedError', () => {
     const error = createErrorFromResponse(403, 'Forbidden')
 
-    expect(error).toBeInstanceOf(PermissionError)
+    expect(error).toBeInstanceOf(PermissionDeniedError)
   })
 
   test('404 creates NotFoundError', () => {
@@ -174,20 +174,20 @@ describe('Error messages (unit)', () => {
     expect(error.status).toBe(500)
   })
 
-  test('ValidationError preserves body', () => {
+  test('BadRequestError preserves body', () => {
     const body = {
       detail: [
         { loc: ['body', 'name'], msg: 'field required', type: 'value_error' },
       ],
     }
-    const error = new ValidationError('Validation failed', body)
+    const error = new BadRequestError('Validation failed', body)
 
     expect(error.body).toEqual(body)
   })
 
   test('default error messages are sensible', () => {
     expect(new AuthenticationError().message).toBe('Authentication failed')
-    expect(new PermissionError().message).toBe('Permission denied')
+    expect(new PermissionDeniedError().message).toBe('Permission denied')
     expect(new NotFoundError().message).toBe('Resource not found')
     expect(new RateLimitError().message).toBe('Rate limit exceeded')
     expect(new ServerError().message).toBe('Server error')
@@ -196,7 +196,7 @@ describe('Error messages (unit)', () => {
   })
 
   test('instanceof checks work correctly', () => {
-    const validation = new ValidationError('test')
+    const validation = new BadRequestError('test')
     const auth = new AuthenticationError('test')
     const notFound = new NotFoundError('test')
 

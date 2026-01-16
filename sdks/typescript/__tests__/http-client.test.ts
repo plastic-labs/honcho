@@ -16,7 +16,7 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:
 import { HonchoHTTPClient } from '../src/http/client'
 import {
   HonchoError,
-  ValidationError,
+  BadRequestError,
   AuthenticationError,
   NotFoundError,
   RateLimitError,
@@ -486,11 +486,11 @@ describe('Error responses', () => {
     globalThis.fetch = originalFetch
   })
 
-  test('400 throws ValidationError', async () => {
+  test('400 throws BadRequestError', async () => {
     globalThis.fetch = async () =>
       mockErrorResponse(400, { detail: 'Invalid input' })
 
-    await expect(client.get('/test')).rejects.toBeInstanceOf(ValidationError)
+    await expect(client.get('/test')).rejects.toBeInstanceOf(BadRequestError)
   })
 
   test('401 throws AuthenticationError', async () => {
@@ -529,8 +529,8 @@ describe('Error responses', () => {
       await client.get('/test')
       throw new Error('Should have thrown')
     } catch (error) {
-      expect(error).toBeInstanceOf(ValidationError)
-      expect((error as ValidationError).message).toBe('Name is required')
+      expect(error).toBeInstanceOf(BadRequestError)
+      expect((error as BadRequestError).message).toBe('Name is required')
     }
   })
 
@@ -684,7 +684,7 @@ describe('Retry logic', () => {
       return mockErrorResponse(400, { detail: 'Bad request' })
     }
 
-    await expect(client.get('/test')).rejects.toBeInstanceOf(ValidationError)
+    await expect(client.get('/test')).rejects.toBeInstanceOf(BadRequestError)
     expect(attempts).toBe(1) // No retries
   })
 
@@ -1309,7 +1309,7 @@ describe('upload() method', () => {
     formData.append('file', new Blob(['test']), 'test.txt')
 
     await expect(client.upload('/upload', formData)).rejects.toBeInstanceOf(
-      ValidationError
+      BadRequestError
     )
   })
 })

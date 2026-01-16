@@ -69,7 +69,7 @@ export interface PeerChatParams {
 }
 
 export interface PeerChatResponse {
-  content: string
+  content: string | null
 }
 
 export interface PeerRepresentationParams {

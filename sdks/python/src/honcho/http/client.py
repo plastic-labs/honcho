@@ -30,6 +30,7 @@ class HonchoHTTPClient:
     timeout: float
     max_retries: int
     default_headers: dict[str, str]
+    default_query: dict[str, Any] | None
     _owns_client: bool
     _client: httpx.Client
 
@@ -41,6 +42,7 @@ class HonchoHTTPClient:
         timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
         default_headers: dict[str, str] | None = None,
+        default_query: dict[str, Any] | None = None,
         http_client: httpx.Client | None = None,
     ) -> None:
         # Remove trailing slash from base_url
@@ -52,6 +54,7 @@ class HonchoHTTPClient:
             "Content-Type": "application/json",
             **(default_headers or {}),
         }
+        self.default_query = default_query
         self._owns_client = http_client is None
         self._client = http_client or httpx.Client(  # nosec B113
             base_url=self.base_url,
@@ -83,6 +86,7 @@ class HonchoHTTPClient:
         url = self._build_url(path)
         request_headers = self._build_headers(headers)
         request_timeout = timeout or self.timeout
+        merged_query = {**(self.default_query or {}), **(query or {})} or None
 
         last_error: Exception | None = None
         attempt = 0
@@ -93,7 +97,7 @@ class HonchoHTTPClient:
                     method,
                     url,
                     json=body if body is not None else None,
-                    params=self._clean_query_params(query),
+                    params=self._clean_query_params(merged_query),
                     headers=request_headers,
                     timeout=request_timeout,
                 )
@@ -243,12 +247,13 @@ class HonchoHTTPClient:
             "Accept": "text/event-stream",
         }
         request_timeout = timeout or self.timeout
+        merged_query = {**(self.default_query or {}), **(query or {})} or None
 
         with self._client.stream(
             method,
             url,
             json=body if body is not None else None,
-            params=self._clean_query_params(query),
+            params=self._clean_query_params(merged_query),
             headers=request_headers,
             timeout=request_timeout,
         ) as response:
@@ -281,12 +286,13 @@ class HonchoHTTPClient:
         request_headers = self._build_headers(headers)
         request_headers.pop("Content-Type", None)
         request_timeout = timeout or self.timeout
+        merged_query = {**(self.default_query or {}), **(query or {})} or None
 
         response = self._client.post(
             url,
             files=files,
             data=data,
-            params=self._clean_query_params(query),
+            params=self._clean_query_params(merged_query),
             headers=request_headers,
             timeout=request_timeout,
         )

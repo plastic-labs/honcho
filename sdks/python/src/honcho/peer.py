@@ -22,10 +22,11 @@ from .api_types import (
 from .base import PeerBase, SessionBase
 from .conclusions import ConclusionScope
 from .http import routes
+from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .types import DialecticStreamResponse
-from .utils import parse_sse_chunk, resolve_id
+from .utils import parse_datetime, parse_sse_chunk, resolve_id
 
 if TYPE_CHECKING:
     from .aio import PeerAio
@@ -68,6 +69,7 @@ class Peer(PeerBase, MetadataConfigMixin):
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
+        self._honcho._ensure_workspace()
         return self._honcho._http
 
     def _get_fetch_route(self) -> str:
@@ -149,6 +151,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         self._configuration = configuration
 
         if configuration is not None or metadata is not None:
+            self._honcho._ensure_workspace()
             body: dict[str, Any] = {"id": peer_id}
             if metadata is not None:
                 body["metadata"] = metadata
@@ -193,6 +196,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         Returns:
             Response string containing the answer, or None if no relevant information
         """
+        self._honcho._ensure_workspace()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
@@ -245,6 +249,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         Returns:
             DialecticStreamResponse object that can be iterated over and provides final response
         """
+        self._honcho._ensure_workspace()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
@@ -279,6 +284,7 @@ class Peer(PeerBase, MetadataConfigMixin):
             A paginated list of Session objects this peer belongs to. Returns an empty
             list if the peer is not a member of any sessions
         """
+        self._honcho._ensure_workspace()
         # Import here to avoid circular import (session.py imports Peer)
         from .session import Session
 
@@ -304,7 +310,7 @@ class Peer(PeerBase, MetadataConfigMixin):
     def message(
         self,
         content: str = Field(
-            ..., min_length=1, description="The text content for the message"
+            ..., min_length=0, description="The text content for the message"
         ),
         *,
         metadata: dict[str, object] | None = Field(
@@ -353,11 +359,10 @@ class Peer(PeerBase, MetadataConfigMixin):
         """
         from .api_types import MessageConfiguration
 
-        created_at_dt: datetime.datetime | None
-        if isinstance(created_at, str):
-            created_at_dt = datetime.datetime.fromisoformat(created_at)
-        else:
-            created_at_dt = created_at
+        if content != "" and content.strip() == "":
+            raise ValueError("Message content cannot be only whitespace")
+
+        created_at_dt = parse_datetime(created_at)
 
         config_obj = MessageConfiguration(**configuration) if configuration else None
 
@@ -379,7 +384,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[MessageResponse]:
+    ) -> list[Message]:
         """
         Search across all messages in the workspace with this peer as author.
 
@@ -394,11 +399,15 @@ class Peer(PeerBase, MetadataConfigMixin):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
+        self._honcho._ensure_workspace()
         data = self._honcho._http.post(
             routes.peer_search(self.workspace_id, self.id),
             body={"query": query, "filters": filters, "limit": limit},
         )
-        return [MessageResponse.model_validate(item) for item in data]
+        return [
+            Message.from_api_response(MessageResponse.model_validate(item))
+            for item in data
+        ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def card(
@@ -419,6 +428,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         Returns:
             A list of strings representing the peer card, or None if none is available
         """
+        self._honcho._ensure_workspace()
         target_id = resolve_id(target)
 
         query = {"target": target_id} if target_id else None
@@ -474,6 +484,7 @@ class Peer(PeerBase, MetadataConfigMixin):
             )
             ```
         """
+        self._honcho._ensure_workspace()
         session_id = resolve_id(session)
         target_id = resolve_id(target)
 
@@ -546,6 +557,7 @@ class Peer(PeerBase, MetadataConfigMixin):
             )
             ```
         """
+        self._honcho._ensure_workspace()
         target_id = resolve_id(target)
 
         query: dict[str, Any] = {}

@@ -4,15 +4,15 @@
  * Comprehensive tests for Peer operations.
  *
  * Endpoints covered:
- * - POST /v1/workspaces/:id/peers (create/get peer)
- * - POST /v1/workspaces/:id/peers/list (list peers)
- * - PUT /v1/workspaces/:id/peers/:id (update peer)
- * - POST /v1/workspaces/:id/peers/:id/sessions/list (list peer sessions)
- * - POST /v1/workspaces/:id/peers/:id/chat (dialectic chat)
- * - POST /v1/workspaces/:id/peers/:id/representation (get representation)
- * - POST /v1/workspaces/:id/peers/:id/card (get peer card)
- * - POST /v1/workspaces/:id/peers/:id/context (get peer context)
- * - POST /v1/workspaces/:id/peers/:id/search (search peer messages)
+ * - POST /v3/workspaces/:workspaceId/peers (get-or-create peer)
+ * - POST /v3/workspaces/:workspaceId/peers/list (list peers)
+ * - PUT /v3/workspaces/:workspaceId/peers/:peerId (update peer)
+ * - POST /v3/workspaces/:workspaceId/peers/:peerId/sessions (list peer sessions)
+ * - POST /v3/workspaces/:workspaceId/peers/:peerId/chat (dialectic chat)
+ * - POST /v3/workspaces/:workspaceId/peers/:peerId/representation (get representation)
+ * - GET /v3/workspaces/:workspaceId/peers/:peerId/card (get peer card)
+ * - GET /v3/workspaces/:workspaceId/peers/:peerId/context (get peer context)
+ * - POST /v3/workspaces/:workspaceId/peers/:peerId/search (search peer messages)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
