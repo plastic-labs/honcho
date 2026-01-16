@@ -6,7 +6,7 @@ from tests.alembic.registry import register_after_upgrade, register_before_upgra
 from tests.alembic.verifier import MigrationVerifier
 
 # The partial unique index created by this migration
-INDEX = ("queue", "ux_queue_dream_pending_work_unit_key")
+INDEX = ("queue", "uq_queue_dream_pending_work_unit_key")
 
 
 @register_before_upgrade("7c0d9a4e3b1f")

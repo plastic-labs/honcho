@@ -319,6 +319,12 @@ class MessageEmbedding(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        # Composite index for efficient reconciliation queries
+        Index(
+            "ix_message_embeddings_sync_state_last_sync_at",
+            "sync_state",
+            "last_sync_at",
+        ),
     )
 
 
@@ -455,6 +461,12 @@ class Document(Base):
             "source_ids",
             postgresql_using="gin",
         ),
+        # Composite index for efficient reconciliation queries
+        Index(
+            "ix_documents_sync_state_last_sync_at",
+            "sync_state",
+            "last_sync_at",
+        ),
     )
 
 
@@ -496,6 +508,20 @@ class QueueItem(Base):
             "work_unit_key",
             "processed",
             "id",
+        ),
+        # Partial unique index for reconciler task deduplication
+        Index(
+            "uq_queue_reconciler_pending_work_unit_key",
+            "work_unit_key",
+            unique=True,
+            postgresql_where=text("task_type = 'reconciler' AND processed = false"),
+        ),
+        # Partial unique index for dream task deduplication
+        Index(
+            "uq_queue_dream_pending_work_unit_key",
+            "work_unit_key",
+            unique=True,
+            postgresql_where=text("task_type = 'dream' AND processed = false"),
         ),
     )
 

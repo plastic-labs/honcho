@@ -28,7 +28,7 @@ schema = get_schema()
 def upgrade() -> None:
     """Add a partial unique index to prevent duplicate pending dream queue items."""
     op.create_index(
-        "ux_queue_dream_pending_work_unit_key",
+        "uq_queue_dream_pending_work_unit_key",
         "queue",
         ["work_unit_key"],
         unique=True,
@@ -40,5 +40,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop the partial unique index for pending dream queue items."""
     op.drop_index(
-        "ux_queue_dream_pending_work_unit_key", table_name="queue", schema=schema
+        "uq_queue_dream_pending_work_unit_key", table_name="queue", schema=schema
     )

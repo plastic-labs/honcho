@@ -12,7 +12,7 @@ INDEXES = (
     ("documents", "ix_documents_sync_state_last_sync_at"),
     ("message_embeddings", "ix_message_embeddings_sync_state"),
     ("message_embeddings", "ix_message_embeddings_sync_state_last_sync_at"),
-    ("queue", "uq_queue_work_unit_key"),
+    ("queue", "uq_queue_reconciler_pending_work_unit_key"),
 )
 
 
