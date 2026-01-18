@@ -119,6 +119,10 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_deletion(validated, workspace_name)
 
+    # Note: Top-down reasoning tasks (hypothesis_generation, prediction_testing,
+    # falsification, induction) are no longer processed here. They now run during
+    # reasoning dreams. See src/agents/dreamer/reasoning.py
+
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 

@@ -614,7 +614,10 @@ class Representation(BaseModel):
                     premises=doc.internal_metadata.get("premises", []),
                 )
                 for doc in documents
-                if doc.level == "deductive"
+                # Deductive observations: old "deductive" level (backward compatibility) or
+                # new "inductive" level without pattern_type metadata
+                if doc.level == "deductive"  # type: ignore[comparison-overlap]
+                or (doc.level == "inductive" and "pattern_type" not in doc.internal_metadata)
             ],
             inductive=[
                 InductiveObservation(
@@ -633,7 +636,8 @@ class Representation(BaseModel):
                     confidence=doc.internal_metadata.get("confidence", "medium"),
                 )
                 for doc in documents
-                if doc.level == "inductive"
+                # Inductive observations have pattern_type metadata to distinguish from deductive
+                if doc.level == "inductive" and "pattern_type" in doc.internal_metadata
             ],
             contradiction=[
                 ContradictionObservation(

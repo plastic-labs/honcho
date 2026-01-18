@@ -90,6 +90,14 @@ asyncio_default_fixture_loop_scope = "session"
 addopts = "--strict-markers --cov=src/ --cov=sdks/python/src/honcho --cov-report=term-missing --ignore=tests/alembic"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "benchmark: marks tests as performance benchmarks (deselect with '-m \"not benchmark\"')",
+    "slow: marks tests as slow running (deselect with '-m \"not slow\"')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::sqlalchemy.exc.SAWarning",
+]
 
 [tool.coverage.report]
 exclude_lines = [

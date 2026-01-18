@@ -495,7 +495,12 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
-    ENABLED_TYPES: list[str] = ["omni"]
+    ENABLED_TYPES: list[str] = ["omni", "reasoning"]
+
+    # Reasoning dream thresholds
+    REASONING_MIN_OBSERVATIONS: Annotated[int, Field(default=5, gt=0, le=100)] = 5
+    REASONING_MIN_UNFALSIFIED: Annotated[int, Field(default=5, gt=0, le=100)] = 5
+    REASONING_MAX_ITERATIONS: Annotated[int, Field(default=10, gt=0, le=50)] = 10
 
     PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-sonnet-4-20250514"

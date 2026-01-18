@@ -137,9 +137,9 @@ class RepresentationManager:
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
         for obs, embedding in zip(all_observations, embeddings, strict=True):
-            # NOTE: will add additional levels of reasoning in the future
+            # NOTE: DeductiveObservation mapped to "inductive" level (derived/inferred from premises)
             if isinstance(obs, DeductiveObservation):
-                obs_level = "deductive"
+                obs_level = "inductive"
                 obs_content = obs.conclusion
                 obs_premises = obs.premises
             else:

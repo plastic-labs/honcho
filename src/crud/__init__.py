@@ -1,3 +1,5 @@
+# Import modules for use as crud.hypothesis, crud.prediction, etc.
+from . import hypothesis, induction, prediction, trace
 from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
@@ -65,6 +67,11 @@ from .workspace import (
 )
 
 __all__ = [
+    # CRUD modules (for crud.hypothesis, crud.prediction, etc.)
+    "hypothesis",
+    "induction",
+    "prediction",
+    "trace",
     # Collection
     "get_collection",
     "get_or_create_collection",

@@ -199,7 +199,7 @@ class TestCreateObservations:
         db_session: AsyncSession,
         make_tool_context: Callable[..., ToolContext],
     ):
-        """Dialectic context (no current_messages) forces observations to be deductive."""
+        """Dialectic context (no current_messages) defaults observations to explicit level."""
         ctx = make_tool_context(current_messages=None)
 
         result = await _handle_create_observations(
@@ -209,26 +209,23 @@ class TestCreateObservations:
                     {
                         "content": "Inferred preference for quiet spaces",
                         "source_ids": ["premise1", "premise2"],
-                        "premises": [
-                            "User mentioned working in libraries",
-                            "User avoids noisy cafes",
-                        ],
                     },
                 ]
             },
         )
 
         assert "Created 1 observations" in result
-        assert "1 deductive" in result
+        assert "1 explicit" in result
 
-        # Verify the document was created as deductive with source_ids
+        # Verify the document was created as explicit (default level in Phase 1)
         stmt = select(models.Document).where(
             models.Document.content == "Inferred preference for quiet spaces"
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
-        assert doc.level == "deductive"
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.level == "explicit"
+        # source_ids should not be set for explicit level
+        assert doc.source_ids is None
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]

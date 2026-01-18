@@ -22,6 +22,7 @@ from pydantic import ConfigDict, Field, PrivateAttr, validate_call
 from .base import PeerBase, SessionBase
 from .conclusions import ConclusionScope
 from .pagination import SyncPage
+from .reasoning_types import Hypothesis, Induction
 from .session import Session
 from .types import DialecticStreamResponse
 
@@ -684,6 +685,124 @@ class Peer(PeerBase):
 
         target_id = target.id if isinstance(target, PeerBase) else target
         return _ConclusionScope(self._client, self.workspace_id, self.id, target_id)
+
+    def get_hypotheses(
+        self,
+        *,
+        target: str | PeerBase | None = None,
+        status: Literal["active", "superseded", "falsified"] | None = None,
+        tier: int | None = None,
+    ) -> list[Hypothesis]:
+        """
+        Get hypotheses for this peer.
+
+        Retrieves hypotheses where this peer is the observer. If target is provided,
+        retrieves hypotheses about the target peer (observer=self, observed=target).
+        Otherwise retrieves hypotheses about self (observer=self, observed=self).
+
+        Hypotheses are generated during reasoning dreams and represent theories about
+        observed patterns. They cannot be created via the API.
+
+        Args:
+            target: Optional target peer. If provided, gets hypotheses about the target.
+                   Can be a Peer object or peer ID string.
+            status: Filter by hypothesis status ("active", "superseded", "falsified")
+            tier: Filter by confidence tier (1=low, 2=medium, 3=high)
+
+        Returns:
+            A list of hypothesis objects
+
+        Example:
+            ```python
+            # Get active hypotheses about self
+            hypotheses = peer.get_hypotheses(status="active")
+
+            # Get hypotheses about another peer
+            hypotheses = peer.get_hypotheses(target="other-peer-id")
+            ```
+        """
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
+
+        params: dict[str, object] = {
+            "observer": self.id,
+            "observed": target_id if target_id is not None else self.id,
+        }
+        if status:
+            params["status"] = status
+        if tier is not None:
+            params["tier"] = tier
+
+        response = self._client.get(
+            f"/v2/workspaces/{self.workspace_id}/hypotheses",
+            params=params,
+        )
+        return response.get("items", [])
+
+    def get_inductions(
+        self,
+        *,
+        target: str | PeerBase | None = None,
+        pattern_type: Literal[
+            "preferential", "behavioral", "personality", "tendency"
+        ]
+        | None = None,
+        confidence: Literal["low", "medium", "high"] | None = None,
+    ) -> list[Induction]:
+        """
+        Get induction patterns for this peer.
+
+        Retrieves patterns extracted from unfalsified predictions during reasoning dreams.
+        If target is provided, gets patterns about the target peer (observer=self, observed=target).
+        Otherwise gets patterns about self (observer=self, observed=self).
+
+        Inductions represent stable patterns discovered through the falsification process.
+        They cannot be created via the API.
+
+        Args:
+            target: Optional target peer. If provided, gets patterns about the target.
+                   Can be a Peer object or peer ID string.
+            pattern_type: Filter by pattern type
+            confidence: Filter by confidence level
+
+        Returns:
+            A list of induction pattern objects
+
+        Example:
+            ```python
+            # Get high-confidence patterns about self
+            patterns = peer.get_inductions(confidence="high")
+
+            # Get behavioral patterns about another peer
+            patterns = peer.get_inductions(
+                target="other-peer-id",
+                pattern_type="behavioral"
+            )
+            ```
+        """
+        target_id = (
+            None
+            if target is None
+            else (target if isinstance(target, str) else target.id)
+        )
+
+        params: dict[str, object] = {
+            "observer": self.id,
+            "observed": target_id if target_id is not None else self.id,
+        }
+        if pattern_type:
+            params["pattern_type"] = pattern_type
+        if confidence:
+            params["confidence"] = confidence
+
+        response = self._client.get(
+            f"/v2/workspaces/{self.workspace_id}/inductions",
+            params=params,
+        )
+        return response.get("items", [])
 
     def __repr__(self) -> str:
         """

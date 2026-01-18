@@ -5,7 +5,7 @@ This module provides base configuration classes and utilities
 for agent configuration management.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -173,7 +173,7 @@ class DreamerConfig(AgentConfig):
 
 def create_config_from_dict(
     config_class: type[AgentConfig],
-    config_dict: Dict[str, Any],
+    config_dict: dict[str, Any],
 ) -> AgentConfig:
     """
     Create an agent configuration from a dictionary.

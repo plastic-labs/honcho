@@ -7,7 +7,7 @@ providing a consistent interface and common functionality.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,7 +48,7 @@ class BaseAgent(ABC):
         logger.debug(f"Initialized {self.agent_type} agent")
 
     @abstractmethod
-    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """
         Execute the agent's main task.
 
@@ -70,7 +70,7 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def validate_input(self, input_data: Dict[str, Any]) -> bool:
+    def validate_input(self, input_data: dict[str, Any]) -> bool:
         """
         Validate the input data before execution.
 
@@ -90,9 +90,9 @@ class BaseAgent(ABC):
 
     async def trace_execution(
         self,
-        input_data: Dict[str, Any],
-        output: Dict[str, Any],
-        metadata: Dict[str, Any] | None = None,
+        input_data: dict[str, Any],
+        output: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Record execution trace for provenance tracking.
@@ -121,7 +121,7 @@ class BaseAgent(ABC):
             },
         )
 
-    async def pre_execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def pre_execute(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """
         Hook called before execute(). Can be used for setup, validation, etc.
 
@@ -140,8 +140,8 @@ class BaseAgent(ABC):
         return input_data
 
     async def post_execute(
-        self, input_data: Dict[str, Any], output: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, input_data: dict[str, Any], output: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Hook called after execute(). Can be used for cleanup, logging, etc.
 
@@ -159,7 +159,7 @@ class BaseAgent(ABC):
         await self.trace_execution(input_data, output)
         return output
 
-    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """
         Run the full agent execution pipeline with hooks.
 

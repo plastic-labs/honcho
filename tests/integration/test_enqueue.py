@@ -1401,8 +1401,8 @@ class TestGenerateQueueRecordsSeqInSession:
         # Mock the CRUD function to track if it's called
         # Also enable summary generation in settings
         with (
-            patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
-            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", new=True),
+            patch("src.agents.extractor.enqueue.crud.get_message_seq_in_session") as mock_crud,
+            patch("src.agents.extractor.enqueue.settings.SUMMARY.ENABLED", new=True),
         ):
             mock_crud.return_value = 200
             mock_db_session = AsyncMock()
@@ -1478,8 +1478,8 @@ class TestGenerateQueueRecordsSeqInSession:
 
         # Mock the CRUD function and enable summary generation in settings
         with (
-            patch("src.deriver.enqueue.crud.get_message_seq_in_session") as mock_crud,
-            patch("src.deriver.enqueue.settings.SUMMARY.ENABLED", True),
+            patch("src.agents.extractor.enqueue.crud.get_message_seq_in_session") as mock_crud,
+            patch("src.agents.extractor.enqueue.settings.SUMMARY.ENABLED", True),
         ):
             mock_crud.return_value = (
                 60  # Multiple of MESSAGES_PER_LONG_SUMMARY to trigger summary creation

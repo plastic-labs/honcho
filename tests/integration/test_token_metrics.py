@@ -224,7 +224,7 @@ class TestDeriverIngestionMetrics:
         # Mock the LLM call and save_representation (we're testing metrics, not DB writes)
         with (
             patch(
-                "src.deriver.deriver.honcho_llm_call",
+                "src.agents.extractor.deriver.honcho_llm_call",
                 new=AsyncMock(return_value=mock_response),
             ),
             patch(
@@ -279,7 +279,7 @@ class TestDeriverIngestionMetrics:
 
         with (
             patch(
-                "src.deriver.deriver.honcho_llm_call",
+                "src.agents.extractor.deriver.honcho_llm_call",
                 new=AsyncMock(return_value=mock_response),
             ),
             patch(
@@ -334,7 +334,7 @@ class TestDeriverIngestionMetrics:
 
         with (
             patch(
-                "src.deriver.deriver.honcho_llm_call",
+                "src.agents.extractor.deriver.honcho_llm_call",
                 new=AsyncMock(return_value=mock_response),
             ),
             patch(
@@ -675,7 +675,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.agents.dialectic.core.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
@@ -722,7 +722,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.agents.dialectic.core.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
@@ -783,7 +783,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.agents.dialectic.core.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")

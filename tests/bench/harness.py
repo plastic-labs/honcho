@@ -491,7 +491,7 @@ class HonchoHarness:
         env.update(self.get_database_env_vars())
 
         process = subprocess.Popen(
-            [sys.executable, "-m", "src.deriver"],
+            [sys.executable, "-m", "src.agents.extractor"],
             cwd=self.project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

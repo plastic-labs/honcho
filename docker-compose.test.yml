@@ -1,0 +1,28 @@
+services:
+  database:
+    image: pgvector/pgvector:pg15
+    restart: always
+    ports:
+      - 5432:5432
+    command: ["postgres", "-c", "max_connections=800"]
+    environment:
+      - POSTGRES_DB=honcho_test
+      - POSTGRES_USER=testuser
+      - POSTGRES_PASSWORD=testpwd
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d honcho_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:8.2
+    restart: always
+    ports:
+      - 6379:6379
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

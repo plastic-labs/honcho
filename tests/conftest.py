@@ -555,15 +555,15 @@ def mock_tracked_db(db_session: AsyncSession):
 
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
+        patch("src.agents.extractor.queue_manager.tracked_db", mock_tracked_db_context),
+        patch("src.agents.extractor.consumer.tracked_db", mock_tracked_db_context),
+        patch("src.agents.extractor.enqueue.tracked_db", mock_tracked_db_context),
         patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dreamer.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
+        patch("src.agents.dreamer.dreamer.tracked_db", mock_tracked_db_context),
+        patch("src.agents.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
+        patch("src.agents.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
         patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
     ):
@@ -608,3 +608,7 @@ def mock_crud_collection_operations():
         mock_get_or_create_collection,
     ):
         yield
+
+
+# Import LLM mocking fixtures
+pytest_plugins = ["tests.fixtures.llm_mocks"]

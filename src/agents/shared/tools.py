@@ -5,15 +5,15 @@ This module provides common tool-related functionality that can be
 used across multiple agents.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 
 def create_tool_definition(
     name: str,
     description: str,
-    parameters: Dict[str, Any],
+    parameters: dict[str, Any],
     required: list[str] | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a standardized tool definition for LLM tool calling.
 
@@ -52,7 +52,7 @@ def create_tool_definition(
 
 
 def validate_tool_call(
-    tool_call: Dict[str, Any],
+    tool_call: dict[str, Any],
     expected_tools: list[str],
 ) -> bool:
     """
@@ -82,8 +82,8 @@ def validate_tool_call(
 
 
 def extract_tool_arguments(
-    tool_call: Dict[str, Any],
-) -> Dict[str, Any]:
+    tool_call: dict[str, Any],
+) -> dict[str, Any]:
     """
     Extract arguments from a tool call.
 
@@ -106,7 +106,7 @@ def format_tool_result(
     tool_name: str,
     result: Any,
     error: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Format a tool execution result.
 

@@ -121,7 +121,7 @@ def _extract_pattern_snippet(
 TOOLS: dict[str, dict[str, Any]] = {
     "create_observations": {
         "name": "create_observations",
-        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). Use this to record facts, logical inferences, patterns, or note when the user has said contradictory things.",
+        "description": "Create observations at any level: explicit (facts), inductive (patterns), or contradiction (conflicting statements). Use this to record facts, patterns, or note when the user has said contradictory things.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -139,21 +139,15 @@ TOOLS: dict[str, dict[str, Any]] = {
                                 "type": "string",
                                 "enum": [
                                     "explicit",
-                                    "deductive",
                                     "inductive",
                                     "contradiction",
                                 ],
-                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'contradiction' for conflicting statements",
+                                "description": "Level: 'explicit' for direct facts, 'inductive' for patterns, 'contradiction' for conflicting statements",
                             },
                             "source_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "(For deductive/inductive/contradiction) Document IDs of source/premise observations - REQUIRED",
-                            },
-                            "premises": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "(For deductive) Human-readable premise text for display",
+                                "description": "(For inductive/contradiction) Document IDs of source observations - REQUIRED",
                             },
                             "sources": {
                                 "type": "array",
@@ -592,11 +586,10 @@ async def create_observations(
         level: DocumentLevel
         if level_str == "inductive":
             level = "inductive"
-        elif level_str == "deductive":
-            level = "deductive"
         elif level_str == "contradiction":
             level = "contradiction"
         else:
+            # Default to explicit for any other value (including legacy "deductive")
             level = "explicit"
 
         # Generate embedding for the observation
@@ -607,10 +600,8 @@ async def create_observations(
             message_ids=message_ids,
             message_created_at=message_created_at,
             source_ids=obs.get("source_ids")
-            if level in ("deductive", "inductive", "contradiction")
+            if level in ("inductive", "contradiction")
             else None,
-            # Deductive-specific (human-readable premises)
-            premises=obs.get("premises") if level == "deductive" else None,
             # Inductive/Contradiction-specific (human-readable sources)
             sources=obs.get("sources")
             if level in ("inductive", "contradiction")
@@ -629,7 +620,7 @@ async def create_observations(
             metadata=metadata,
             embedding=embedding,
             source_ids=obs.get("source_ids")
-            if level in ("deductive", "inductive", "contradiction")
+            if level in ("inductive", "contradiction")
             else None,
         )
         documents.append(doc)
@@ -898,7 +889,7 @@ async def _handle_create_observations(
     if not observations:
         return "ERROR: observations list is empty"
 
-    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
+    valid_levels = ["explicit", "inductive", "contradiction"]
     valid_pattern_types = [
         "preference",
         "behavior",
@@ -925,27 +916,18 @@ async def _handle_create_observations(
         message_created_at = str(ctx.current_messages[-1].created_at)
         obs_session_name = ctx.session_name or ctx.current_messages[0].session_name
     else:
-        # Dreamer/Dialectic agent: allow deductive and inductive, no source messages
+        # Dreamer/Dialectic agent: allow inductive observations, no source messages
         if not ctx.session_name:
             return "ERROR: Cannot create observations without a session context"
 
         for i, obs in enumerate(observations):
             if "content" not in obs:
                 return f"ERROR: observation {i} missing 'content' field"
-            # Default to deductive for backwards compatibility
+            # Default to explicit if level not specified
             if "level" not in obs:
-                obs["level"] = "deductive"
+                obs["level"] = "explicit"
             if obs["level"] not in valid_levels:
                 return f"ERROR: observation {i} has invalid level '{obs['level']}'"
-
-            # Validate deductive-specific fields (tree linkage required)
-            if obs["level"] == "deductive":
-                if not obs.get("source_ids"):
-                    return f"ERROR: deductive observation {i} requires 'source_ids' field with document IDs of premises"
-                # Validate source_ids are strings
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
 
             # Validate inductive-specific fields (tree linkage required)
             if obs["level"] == "inductive":
@@ -991,12 +973,11 @@ async def _handle_create_observations(
         )
 
     explicit_count = sum(1 for o in observations if o.get("level") == "explicit")
-    deductive_count = sum(1 for o in observations if o.get("level") == "deductive")
     inductive_count = sum(1 for o in observations if o.get("level") == "inductive")
     contradiction_count = sum(
         1 for o in observations if o.get("level") == "contradiction"
     )
-    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive, {contradiction_count} contradiction)"
+    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {inductive_count} inductive, {contradiction_count} contradiction)"
 
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
@@ -1460,25 +1441,9 @@ async def _handle_get_reasoning_chain(
     level = doc.level or "explicit"
     output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
 
-    # Get premises/sources if requested
+    # Get sources if requested
     if direction in ("premises", "both"):
-        if level == "deductive" and doc.source_ids:
-            premises = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
-            )
-            if premises:
-                premise_lines: list[Any] = []
-                for p in premises:
-                    p_level = p.level or "explicit"
-                    premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
-                output_parts.append(
-                    f"\n**Premises ({len(premises)}):**\n" + "\n".join(premise_lines)
-                )
-            else:
-                output_parts.append(
-                    f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
-                )
-        elif level == "inductive" and doc.source_ids:
+        if level == "inductive" and doc.source_ids:
             sources = await crud.get_documents_by_ids(
                 ctx.db, ctx.workspace_name, doc.source_ids
             )

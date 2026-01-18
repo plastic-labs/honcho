@@ -25,6 +25,7 @@ class DreamType(str, Enum):
     """Types of dreams that can be triggered."""
 
     OMNI = "omni"
+    REASONING = "reasoning"  # Top-down reasoning: hypotheses, predictions, falsification, induction
 
 
 class ReasoningConfiguration(BaseModel):
@@ -86,6 +87,136 @@ class DreamConfiguration(BaseModel):
     )
 
 
+class AbducerConfig(BaseModel):
+    """Configuration for the Abducer agent (hypothesis generation)."""
+
+    max_hypotheses_per_cycle: int | None = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum number of hypotheses to generate per cycle",
+    )
+    min_confidence_threshold: float | None = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence for hypothesis acceptance",
+    )
+    max_source_premises: int | None = Field(
+        default=10,
+        ge=1,
+        description="Maximum number of source premises to consider",
+    )
+
+
+class PredictorConfig(BaseModel):
+    """Configuration for the Predictor agent (prediction generation)."""
+
+    predictions_per_hypothesis: int | None = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Number of predictions to generate per hypothesis",
+    )
+    blind_prediction_ratio: float | None = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Ratio of blind predictions (made without searching for contradictions)",
+    )
+
+
+class FalsifierConfig(BaseModel):
+    """Configuration for the Falsifier agent (prediction testing)."""
+
+    max_searches_per_prediction: int | None = Field(
+        default=7,
+        ge=1,
+        le=20,
+        description="Maximum number of search attempts per prediction",
+    )
+    search_cache_ttl: int | None = Field(
+        default=86400,
+        ge=0,
+        description="Search cache TTL in seconds (24 hours default)",
+    )
+    contradiction_threshold: float | None = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Similarity threshold for contradiction detection",
+    )
+
+
+class InductorConfig(BaseModel):
+    """Configuration for the Inductor agent (pattern extraction)."""
+
+    min_predictions_for_induction: int | None = Field(
+        default=3,
+        ge=2,
+        description="Minimum number of unfalsified predictions required for induction",
+    )
+    pattern_confidence_threshold: float | None = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold for pattern acceptance",
+    )
+    max_inductions_per_cycle: int | None = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum number of inductions per cycle",
+    )
+
+
+class TopDownConfiguration(BaseModel):
+    """Configuration for Top-Down reasoning system."""
+
+    enabled: bool | None = Field(
+        default=False,
+        description="Whether to enable Top-Down reasoning functionality",
+    )
+    unaccounted_threshold: int | None = Field(
+        default=50,
+        ge=1,
+        description="Number of unaccounted premises (|U_t|) that triggers hypothesis generation",
+    )
+    surprise_threshold: float | None = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Surprise score S(p_new) threshold that triggers hypothesis generation",
+    )
+    max_active_hypotheses: int | None = Field(
+        default=100,
+        ge=1,
+        description="Maximum number of active hypotheses to maintain",
+    )
+    max_unaccounted_ratio: float | None = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Maximum ratio of unaccounted premises before hypothesis cycle",
+    )
+    abducer_config: AbducerConfig | None = Field(
+        default_factory=AbducerConfig,
+        description="Configuration for the Abducer agent",
+    )
+    predictor_config: PredictorConfig | None = Field(
+        default_factory=PredictorConfig,
+        description="Configuration for the Predictor agent",
+    )
+    falsifier_config: FalsifierConfig | None = Field(
+        default_factory=FalsifierConfig,
+        description="Configuration for the Falsifier agent",
+    )
+    inductor_config: InductorConfig | None = Field(
+        default_factory=InductorConfig,
+        description="Configuration for the Inductor agent",
+    )
+
+
 class WorkspaceConfiguration(BaseModel):
     """
     The set of options that can be in a workspace DB-level configuration dictionary.
@@ -110,6 +241,10 @@ class WorkspaceConfiguration(BaseModel):
     dream: DreamConfiguration | None = Field(
         default=None,
         description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and these settings will be ignored.",
+    )
+    topdown: TopDownConfiguration | None = Field(
+        default=None,
+        description="Configuration for Top-Down reasoning functionality.",
     )
 
 
@@ -802,3 +937,357 @@ class WebhookEndpoint(WebhookEndpointBase):
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
+
+
+# Top-Down Reasoning schemas
+
+
+class HypothesisBase(BaseModel):
+    """Base schema for Hypothesis."""
+
+    content: str = Field(..., description="The hypothesis content/statement")
+    observer: str = Field(..., description="Peer name who observes")
+    observed: str = Field(..., description="Peer name being observed")
+
+
+class HypothesisCreate(HypothesisBase):
+    """Schema for creating a new Hypothesis."""
+
+    status: str | None = Field(
+        default="active",
+        description="Status of the hypothesis (active | superseded | falsified)",
+    )
+    confidence: float | None = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Confidence level (0.0 to 1.0)",
+    )
+    source_premise_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of source premises that led to this hypothesis",
+    )
+    unaccounted_premises_count: int | None = Field(
+        default=0,
+        ge=0,
+        description="Number of unaccounted premises",
+    )
+    search_coverage: int | None = Field(
+        default=0,
+        ge=0,
+        description="Search coverage metric",
+    )
+    tier: int | None = Field(
+        default=0,
+        ge=0,
+        description="Tier level for hypothesis prioritization",
+    )
+    reasoning_metadata: dict[str, Any] | None = Field(
+        default_factory=dict,
+        description="Additional metadata about reasoning process",
+    )
+    collection_id: str | None = Field(
+        default=None,
+        description="Collection ID for organization",
+    )
+
+
+class HypothesisUpdate(BaseModel):
+    """Schema for updating an existing Hypothesis."""
+
+    content: str | None = Field(default=None, description="The hypothesis content/statement")
+    status: str | None = Field(
+        default=None,
+        description="Status of the hypothesis (active | superseded | falsified)",
+    )
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence level (0.0 to 1.0)",
+    )
+    source_premise_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of source premises that led to this hypothesis",
+    )
+    unaccounted_premises_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of unaccounted premises",
+    )
+    search_coverage: int | None = Field(
+        default=None,
+        ge=0,
+        description="Search coverage metric",
+    )
+    tier: int | None = Field(
+        default=None,
+        ge=0,
+        description="Tier level for hypothesis prioritization",
+    )
+    reasoning_metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Additional metadata about reasoning process",
+    )
+    superseded_by_id: str | None = Field(
+        default=None,
+        description="ID of hypothesis that superseded this one",
+    )
+    supersedes_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of hypotheses this one supersedes",
+    )
+    collection_id: str | None = Field(
+        default=None,
+        description="Collection ID for organization",
+    )
+
+
+class Hypothesis(HypothesisBase):
+    """Response schema for Hypothesis."""
+
+    id: str = Field(..., description="Unique hypothesis ID")
+    status: str = Field(..., description="Status of the hypothesis")
+    confidence: float = Field(..., description="Confidence level (0.0 to 1.0)")
+    source_premise_ids: list[str] | None = Field(
+        default=None, description="IDs of source premises"
+    )
+    unaccounted_premises_count: int = Field(..., description="Number of unaccounted premises")
+    search_coverage: int = Field(..., description="Search coverage metric")
+    tier: int = Field(..., description="Tier level")
+    reasoning_metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Reasoning metadata"
+    )
+    workspace_name: str = Field(..., description="Workspace name", serialization_alias="workspace_id")
+    collection_id: str | None = Field(default=None, description="Collection ID")
+    created_at: datetime.datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime.datetime = Field(..., description="Last update timestamp")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
+
+
+# Alias for API responses
+HypothesisResponse = Hypothesis
+
+
+class HypothesisGenealogy(BaseModel):
+    """Schema for hypothesis genealogy/evolution tree."""
+
+    hypothesis: Hypothesis = Field(..., description="The hypothesis in question")
+    parents: list[Hypothesis] = Field(
+        default_factory=list, description="Parent hypotheses that this superseded or was derived from"
+    )
+    children: list[Hypothesis] = Field(
+        default_factory=list, description="Child hypotheses that superseded or were derived from this one"
+    )
+    reasoning_metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Reasoning metadata explaining the evolution"
+    )
+
+
+class PredictionBase(BaseModel):
+    """Base schema for Prediction."""
+
+    content: str = Field(..., description="The prediction content/statement")
+    hypothesis_id: str = Field(..., description="ID of the hypothesis this prediction tests")
+
+
+class PredictionCreate(PredictionBase):
+    """Schema for creating a new Prediction."""
+
+    status: str | None = Field(
+        default="untested",
+        description="Status of the prediction (unfalsified | falsified | untested)",
+    )
+    source_hypothesis_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of source hypotheses that contributed to this prediction",
+    )
+    is_blind: bool | None = Field(
+        default=True,
+        description="Whether this is a blind prediction (made without searching for contradictions)",
+    )
+    collection_id: str | None = Field(
+        default=None,
+        description="Collection ID for organization",
+    )
+
+
+class PredictionUpdate(BaseModel):
+    """Schema for updating an existing Prediction."""
+
+    status: str | None = Field(
+        default=None,
+        description="Status of the prediction (unfalsified | falsified | untested)",
+    )
+
+
+class Prediction(PredictionBase):
+    """Response schema for Prediction."""
+
+    id: str = Field(..., description="Unique prediction ID")
+    status: str = Field(..., description="Status of the prediction")
+    source_hypothesis_ids: list[str] | None = Field(
+        default=None, description="IDs of source hypotheses"
+    )
+    is_blind: bool = Field(..., description="Whether this is a blind prediction")
+    workspace_name: str = Field(..., description="Workspace name", serialization_alias="workspace_id")
+    collection_id: str | None = Field(default=None, description="Collection ID")
+    created_at: datetime.datetime = Field(..., description="Creation timestamp")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
+
+
+# Alias for API responses
+PredictionResponse = Prediction
+
+
+class FalsificationTraceBase(BaseModel):
+    """Base schema for FalsificationTrace."""
+
+    prediction_id: str = Field(..., description="ID of the prediction being tested")
+
+
+class FalsificationTraceCreate(FalsificationTraceBase):
+    """Schema for creating a new FalsificationTrace.
+
+    Note: FalsificationTrace is immutable once created (append-only).
+    """
+
+    search_queries: list[str] | None = Field(
+        default=None,
+        description="List of search queries executed during falsification",
+    )
+    contradicting_premise_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of premises that contradict the prediction",
+    )
+    reasoning_chain: dict[str, Any] | None = Field(
+        default_factory=dict,
+        description="Detailed trace of the reasoning process",
+    )
+    final_status: str | None = Field(
+        default="untested",
+        description="Final status (unfalsified | falsified | untested)",
+    )
+    search_count: int | None = Field(
+        default=0,
+        ge=0,
+        description="Number of searches performed",
+    )
+    search_efficiency_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Search efficiency score (0.0 to 1.0)",
+    )
+    collection_id: str | None = Field(
+        default=None,
+        description="Collection ID for organization",
+    )
+
+
+class FalsificationTrace(FalsificationTraceBase):
+    """Response schema for FalsificationTrace.
+
+    Note: FalsificationTrace is immutable (no update operations).
+    """
+
+    id: str = Field(..., description="Unique trace ID")
+    search_queries: list[str] | None = Field(
+        default=None, description="List of search queries executed"
+    )
+    contradicting_premise_ids: list[str] | None = Field(
+        default=None, description="IDs of contradicting premises"
+    )
+    reasoning_chain: dict[str, Any] = Field(
+        default_factory=dict, description="Reasoning process trace"
+    )
+    final_status: str = Field(..., description="Final status")
+    search_count: int = Field(..., description="Number of searches performed")
+    search_efficiency_score: float | None = Field(
+        default=None, description="Search efficiency score"
+    )
+    workspace_name: str = Field(..., description="Workspace name", serialization_alias="workspace_id")
+    collection_id: str | None = Field(default=None, description="Collection ID")
+    created_at: datetime.datetime = Field(..., description="Creation timestamp")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
+
+
+# Alias for API responses
+FalsificationTraceResponse = FalsificationTrace
+TraceResponse = FalsificationTrace  # Short alias
+
+
+class InductionBase(BaseModel):
+    """Base schema for Induction."""
+
+    content: str = Field(..., description="The induction content/pattern description")
+    observer: str = Field(..., description="Peer name who observes")
+    observed: str = Field(..., description="Peer name being observed")
+    pattern_type: str = Field(
+        ...,
+        description="Type of pattern (temporal | causal | correlational | structural)",
+    )
+
+
+class InductionCreate(InductionBase):
+    """Schema for creating a new Induction."""
+
+    source_prediction_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of source predictions that led to this induction",
+    )
+    source_premise_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of source premises that support this induction",
+    )
+    confidence: str | None = Field(
+        default="medium",
+        description="Confidence level (high | medium | low)",
+    )
+    stability_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Stability score (0.0 to 1.0)",
+    )
+    collection_id: str | None = Field(
+        default=None,
+        description="Collection ID for organization",
+    )
+
+
+class Induction(InductionBase):
+    """Response schema for Induction."""
+
+    id: str = Field(..., description="Unique induction ID")
+    source_prediction_ids: list[str] | None = Field(
+        default=None, description="IDs of source predictions"
+    )
+    source_premise_ids: list[str] | None = Field(
+        default=None, description="IDs of source premises"
+    )
+    confidence: str = Field(..., description="Confidence level")
+    stability_score: float | None = Field(default=None, description="Stability score")
+    workspace_name: str = Field(..., description="Workspace name", serialization_alias="workspace_id")
+    collection_id: str | None = Field(default=None, description="Collection ID")
+    created_at: datetime.datetime = Field(..., description="Creation timestamp")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
+
+# Alias for API responses
+InductionResponse = Induction
+
+
+class InductionSources(BaseModel):
+    """Schema for induction sources (predictions and premises)."""
+
+    induction: Induction = Field(..., description="The induction in question")
+    source_predictions: list[Prediction] = Field(
+        default_factory=list, description="Predictions that formed this pattern"
+    )
+    source_premises: list[Any] = Field(
+        default_factory=list, description="Original observations (premises)"
+    )

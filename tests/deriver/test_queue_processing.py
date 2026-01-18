@@ -368,7 +368,7 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_representation_batch",
+            "src.agents.extractor.queue_manager.process_representation_batch",
             side_effect=mock_process_representation_batch,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
@@ -791,7 +791,7 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_item",
+            "src.agents.extractor.queue_manager.process_item",
             side_effect=mock_process_item,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
@@ -929,7 +929,7 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_representation_batch",
+            "src.agents.extractor.queue_manager.process_representation_batch",
             side_effect=mock_process_representation_batch,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
@@ -1047,7 +1047,7 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_representation_batch",
+            "src.agents.extractor.queue_manager.process_representation_batch",
             side_effect=mock_process_representation_batch,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)

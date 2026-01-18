@@ -18,7 +18,7 @@ def dream_scheduler():
     scheduler = DreamScheduler()
     set_dream_scheduler(scheduler)
     # Patch DREAM.ENABLED to True so tests work regardless of local config
-    with patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True):
+    with patch("src.agents.dreamer.dream_scheduler.settings.DREAM.ENABLED", True):
         yield scheduler
     # Cleanup
     DreamScheduler.reset_singleton()
@@ -364,11 +364,11 @@ class TestDocumentCountAtExecutionTime:
 
         with (
             patch(
-                "src.dreamer.dream_scheduler.tracked_db",
+                "src.agents.dreamer.dream_scheduler.tracked_db",
                 mock_tracked_db,
             ),
             patch(
-                "src.deriver.enqueue.enqueue_dream",
+                "src.agents.extractor.enqueue.enqueue_dream",
                 side_effect=capture_enqueue_dream,
             ),
             patch(
@@ -450,7 +450,7 @@ class TestEnqueueCancelsDreamsCorrectly:
         assert len(dream_scheduler.pending_dreams) == 3
 
         # Mock the database operations in enqueue
-        with patch("src.deriver.enqueue.tracked_db"):
+        with patch("src.agents.extractor.enqueue.tracked_db"):
             # The enqueue function should cancel dreams via cancel_dreams_for_observed
             # We just test that the scheduler method was called correctly
             cancelled = await dream_scheduler.cancel_dreams_for_observed(

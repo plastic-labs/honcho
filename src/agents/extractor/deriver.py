@@ -209,3 +209,6 @@ async def process_representation_tasks_batch(
         )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observer}")
+
+    # Note: Hypothesis generation now happens during reasoning dreams, not real-time
+    # See src/agents/dreamer/reasoning.py for the dream-based reasoning workflow

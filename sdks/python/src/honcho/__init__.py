@@ -45,6 +45,14 @@ from .client import Honcho
 from .conclusions import AsyncConclusionScope, ConclusionScope
 from .pagination import SyncPage
 from .peer import Peer
+from .reasoning_types import (
+    FalsificationTrace,
+    Hypothesis,
+    HypothesisGenealogy,
+    Induction,
+    InductionSources,
+    Prediction,
+)
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
@@ -72,4 +80,11 @@ __all__ = [
     "Summary",
     "SyncPage",
     "DialecticStreamResponse",
+    # Reasoning artifact types
+    "Hypothesis",
+    "Prediction",
+    "FalsificationTrace",
+    "Induction",
+    "HypothesisGenealogy",
+    "InductionSources",
 ]

@@ -22,10 +22,14 @@ from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
+    hypotheses,
+    inductions,
     keys,
     messages,
     peers,
+    predictions,
     sessions,
+    traces,
     webhooks,
     workspaces,
 )
@@ -137,7 +141,35 @@ app = FastAPI(
     ],
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
-    description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
+    description="""
+Honcho is a platform for giving agents user-centric memory and social cognition.
+
+## Features
+
+- **Conversational Memory**: Store and retrieve conversation context across sessions
+- **Peer-Based Identity**: Unified model for users and AI agents as peers
+- **Dream-Based Reasoning**: Periodic consolidation that generates hypotheses, predictions, and patterns
+- **Read-Only Reasoning API**: Query reasoning artifacts generated during dreams
+- **Dialectic API**: Just-in-time context injection for personalized responses
+- **Multi-Peer Sessions**: Support for group conversations with multiple participants
+
+## Reasoning System
+
+Honcho includes a dream-based reasoning system that periodically analyzes observations:
+
+1. **Hypotheses**: Explanatory theories about observed patterns
+2. **Predictions**: Testable claims derived from hypotheses
+3. **Falsification**: Systematic search for contradictions
+4. **Inductions**: Stable patterns extracted from unfalsified predictions
+
+All reasoning artifacts are read-only via the API. They are generated exclusively
+during periodic reasoning dreams and cannot be created or modified directly.
+
+## Authentication
+
+All endpoints require JWT authentication scoped to workspace, peer, or session level.
+Use the `/v2/workspaces/{workspace_id}/keys` endpoint to create scoped tokens.
+    """,
     version="2.6.0",
     contact={
         "name": "Plastic Labs",
@@ -149,6 +181,40 @@ app = FastAPI(
         "identifier": "AGPL-3.0-only",
         "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
     },
+    openapi_tags=[
+        {
+            "name": "workspaces",
+            "description": "Workspace management - the root organizational unit",
+        },
+        {
+            "name": "peers",
+            "description": "Peer management - users and AI agents with identity",
+        },
+        {
+            "name": "sessions",
+            "description": "Session management - conversation contexts with multiple peers",
+        },
+        {
+            "name": "messages",
+            "description": "Message operations - conversation data and bulk creation",
+        },
+        {
+            "name": "conclusions",
+            "description": "Observations and conclusions about peers (formerly documents)",
+        },
+        {
+            "name": "reasoning",
+            "description": "**Read-only** access to reasoning artifacts generated during dreams (hypotheses, predictions, traces, inductions)",
+        },
+        {
+            "name": "keys",
+            "description": "Authentication key generation for scoped access",
+        },
+        {
+            "name": "webhooks",
+            "description": "Webhook management for event notifications",
+        },
+    ],
 )
 
 origins = [
@@ -173,6 +239,10 @@ app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
 app.include_router(conclusions.router, prefix="/v2")
+app.include_router(hypotheses.router, prefix="/v2")
+app.include_router(predictions.router, prefix="/v2")
+app.include_router(traces.router, prefix="/v2")
+app.include_router(inductions.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
 

@@ -5,6 +5,7 @@ import sentry_sdk
 from src.config import settings
 from src.dependencies import tracked_db
 from src.agents.dreamer.orchestrator import run_dream
+from src.agents.dreamer.reasoning import process_reasoning_dream
 from src.schemas import DreamType
 from src.utils.queue_payload import DreamPayload
 
@@ -40,6 +41,19 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         observed=payload.observed,
                         session_name=payload.session_name,
                     )
+
+            case DreamType.REASONING:
+                async with tracked_db("reasoning_dream") as db:
+                    metrics = await process_reasoning_dream(
+                        db=db,
+                        workspace_name=workspace_name,
+                        observer=payload.observer,
+                        observed=payload.observed,
+                        min_observations_threshold=settings.DREAM.REASONING_MIN_OBSERVATIONS,
+                        min_unfalsified_threshold=settings.DREAM.REASONING_MIN_UNFALSIFIED,
+                        max_iterations=settings.DREAM.REASONING_MAX_ITERATIONS,
+                    )
+                    logger.info(f"Reasoning dream completed: {metrics.to_dict()}")
 
     except Exception as e:
         logger.error(

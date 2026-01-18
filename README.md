@@ -638,6 +638,48 @@ particular session.
 Use this to quickly add context to a prompt without having to wait for an LLM
 response.
 
+#### Dream-Based Reasoning
+
+Honcho implements a **dream-based reasoning system** where AI agents periodically analyze accumulated observations to generate hypotheses, make predictions, test them through falsification, and extract stable patterns through induction.
+
+**Key Features**:
+- **Hypotheses**: Explanatory theories about observed patterns
+- **Predictions**: Testable claims derived from hypotheses
+- **Falsification**: Active search for contradictions to test predictions
+- **Inductions**: Stable patterns extracted from validated predictions
+
+**Read-Only API**: Query reasoning artifacts generated during dreams through comprehensive REST endpoints and SDK methods.
+
+**Documentation**:
+- [Dream-Based Reasoning Guide](./docs/DREAM_BASED_REASONING.md) - Conceptual overview and workflow
+- [API Reference](./docs/API_REFERENCE_REASONING.md) - Complete endpoint documentation
+- [Quickstart Tutorial](./docs/REASONING_QUICKSTART.md) - Step-by-step guide
+
+**Example**:
+```python
+# Trigger a reasoning dream
+client.core.workspaces.schedule_dream(
+    workspace_id=client.workspace_id,
+    dream_type="reasoning",
+    observer="assistant",
+    observed="user_123"
+)
+
+# Query generated hypotheses
+hypotheses = client.get_hypotheses(
+    observer="assistant",
+    observed="user_123",
+    status="active"
+)
+
+# Get extracted patterns
+patterns = client.get_inductions(
+    observer="assistant",
+    observed="user_123",
+    confidence="high"
+)
+```
+
 ## Contributing
 
 We welcome contributions to Honcho! Please read our [Contributing Guide](./CONTRIBUTING.md) for details on our development process, coding conventions, and how to submit pull requests.
