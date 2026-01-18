@@ -1895,52 +1895,146 @@ async def honcho_llm_call_inner(
                     thinking_content=extract_openai_reasoning_content(vllm_response),
                 )
             elif response_model:
-                openai_params["response_format"] = response_model
-                response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                    **openai_params
+                # Determine if we should use explicit JSON instructions (for OpenRouter/custom providers)
+                # or native structured output (.parse() for OpenAI)
+                use_explicit_json = provider == "custom" or (
+                    provider == "openai" and "anthropic" in model.lower()
                 )
-                # Extract the parsed object for structured output
-                parsed_content = response.choices[0].message.parsed
-                if parsed_content is None:
-                    raise ValueError("No parsed content in structured response")
 
-                usage = response.usage
-                finish_reason = response.choices[0].finish_reason
+                if use_explicit_json:
+                    # PRIMARY METHOD for OpenRouter and custom providers:
+                    # Use explicit JSON instructions in the prompt
+                    openai_params_explicit = openai_params.copy()
 
-                # Validate that parsed content matches the response model
-                if not isinstance(parsed_content, response_model):
-                    raise ValueError(
-                        f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                    # Add explicit JSON schema instructions to the last user message
+                    if openai_params_explicit["messages"]:
+                        last_message = openai_params_explicit["messages"][-1]
+                        if last_message.get("role") == "user" and isinstance(
+                            last_message.get("content"), str
+                        ):
+                            schema_json = json.dumps(
+                                response_model.model_json_schema(), indent=2
+                            )
+                            last_message["content"] += (
+                                f"\n\n**IMPORTANT: You MUST respond with ONLY valid JSON. "
+                                f"Do not include any markdown, explanations, code blocks, "
+                                f"or text outside the JSON object.**\n\n"
+                                f"Required JSON schema:\n{schema_json}\n\n"
+                                f"Your response must be a valid JSON object starting with {{ and ending with }}. "
+                                f"Do not use ```json``` or any other formatting."
+                            )
+
+                    # Make the request without response_format
+                    response_explicit: ChatCompletion = (
+                        await client.chat.completions.create(**openai_params_explicit)
                     )
 
-                # Extract tool calls if present (though unlikely with structured output)
-                parsed_tool_calls: list[dict[str, Any]] = []
-                if (
-                    hasattr(response.choices[0].message, "tool_calls")
-                    and response.choices[0].message.tool_calls
-                ):
-                    for tool_call in response.choices[0].message.tool_calls:
-                        parsed_tool_calls.append(
-                            {
-                                "id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "input": json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments
-                                else {},
-                            }
+                    raw_content = response_explicit.choices[0].message.content or ""
+
+                    # Extract JSON from response (handle markdown wrapping if present)
+                    json_content = raw_content.strip()
+
+                    # Remove markdown code block markers if present
+                    if json_content.startswith("```"):
+                        lines = json_content.split("\n")
+                        if lines[0].startswith("```"):
+                            lines = lines[1:]  # Remove opening ```
+                        if lines and lines[-1].strip() == "```":
+                            lines = lines[:-1]  # Remove closing ```
+                        json_content = "\n".join(lines).strip()
+
+                    # Remove any leading/trailing markdown formatting
+                    json_content = json_content.removeprefix("json").strip()
+
+                    # Parse and validate JSON
+                    try:
+                        parsed_json = json.loads(json_content)
+                        parsed_content_explicit = response_model.model_validate(
+                            parsed_json
                         )
 
-                cache_creation, cache_read = extract_openai_cache_tokens(usage)
-                return HonchoLLMCallResponse(
-                    content=parsed_content,
-                    input_tokens=usage.prompt_tokens if usage else 0,
-                    output_tokens=usage.completion_tokens if usage else 0,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                    finish_reasons=[finish_reason] if finish_reason else [],
-                    tool_calls_made=parsed_tool_calls,
-                    thinking_content=extract_openai_reasoning_content(response),
-                )
+                        usage_explicit = response_explicit.usage
+                        finish_reason_explicit = (
+                            response_explicit.choices[0].finish_reason
+                        )
+
+                        cache_creation_ex, cache_read_ex = extract_openai_cache_tokens(
+                            usage_explicit
+                        )
+
+                        return HonchoLLMCallResponse(
+                            content=parsed_content_explicit,
+                            input_tokens=usage_explicit.prompt_tokens
+                            if usage_explicit
+                            else 0,
+                            output_tokens=usage_explicit.completion_tokens
+                            if usage_explicit
+                            else 0,
+                            cache_creation_input_tokens=cache_creation_ex,
+                            cache_read_input_tokens=cache_read_ex,
+                            finish_reasons=[finish_reason_explicit]
+                            if finish_reason_explicit
+                            else [],
+                            tool_calls_made=[],
+                            thinking_content=extract_openai_reasoning_content(
+                                response_explicit
+                            ),
+                        )
+                    except (json.JSONDecodeError, ValidationError) as json_error:
+                        raise ValueError(
+                            f"Failed to parse explicit JSON response as {response_model}. "
+                            f"Error: {json_error}. Raw content: {raw_content[:500]}"
+                        ) from json_error
+
+                else:
+                    # NATIVE METHOD for OpenAI models: Use .parse() with structured output
+                    openai_params["response_format"] = response_model
+                    response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
+                        **openai_params
+                    )
+
+                    # Extract the parsed object for structured output
+                    parsed_content = response.choices[0].message.parsed
+                    if parsed_content is None:
+                        raise ValueError("No parsed content in structured response")
+
+                    usage = response.usage
+                    finish_reason = response.choices[0].finish_reason
+
+                    # Validate that parsed content matches the response model
+                    if not isinstance(parsed_content, response_model):
+                        raise ValueError(
+                            f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                        )
+
+                    # Extract tool calls if present (though unlikely with structured output)
+                    parsed_tool_calls: list[dict[str, Any]] = []
+                    if (
+                        hasattr(response.choices[0].message, "tool_calls")
+                        and response.choices[0].message.tool_calls
+                    ):
+                        for tool_call in response.choices[0].message.tool_calls:
+                            parsed_tool_calls.append(
+                                {
+                                    "id": tool_call.id,
+                                    "name": tool_call.function.name,
+                                    "input": json.loads(tool_call.function.arguments)
+                                    if tool_call.function.arguments
+                                    else {},
+                                }
+                            )
+
+                    cache_creation, cache_read = extract_openai_cache_tokens(usage)
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        input_tokens=usage.prompt_tokens if usage else 0,
+                        output_tokens=usage.completion_tokens if usage else 0,
+                        cache_creation_input_tokens=cache_creation,
+                        cache_read_input_tokens=cache_read,
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                        tool_calls_made=parsed_tool_calls,
+                        thinking_content=extract_openai_reasoning_content(response),
+                    )
             else:
                 response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                     **openai_params

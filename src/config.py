@@ -17,8 +17,9 @@ from pydantic_settings import (
 from src.utils.types import SupportedProviders
 
 # Load .env file for local development.
-# Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
-load_dotenv(override=True)
+# Use override=False to respect environment variables that are already set (e.g., by test harness)
+# This ensures subprocess-provided env vars take precedence over .env file values
+load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
