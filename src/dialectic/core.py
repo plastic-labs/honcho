@@ -13,9 +13,15 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, prometheus
+from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
+from src.telemetry import prometheus
+from src.telemetry.logging import (
+    accumulate_metric,
+    log_performance_metrics,
+    log_token_usage_metrics,
+)
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
 from src.utils.clients import (
     HonchoLLMCallResponse,
@@ -23,11 +29,6 @@ from src.utils.clients import (
     honcho_llm_call,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
-from src.utils.logging import (
-    accumulate_metric,
-    log_performance_metrics,
-    log_token_usage_metrics,
-)
 
 logger = logging.getLogger(__name__)
 

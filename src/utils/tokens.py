@@ -1,6 +1,6 @@
 import tiktoken
 
-from src import prometheus
+from src.telemetry import prometheus
 
 tokenizer = tiktoken.get_encoding("o200k_base")
 

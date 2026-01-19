@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from src import prometheus
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import engine, request_context
@@ -30,8 +29,9 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.sentry import initialize_sentry
-from src.utils.logging import get_route_template
+from src.telemetry import prometheus
+from src.telemetry.logging import get_route_template
+from src.telemetry.sentry import initialize_sentry
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint

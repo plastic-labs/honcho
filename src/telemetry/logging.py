@@ -18,7 +18,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from src.config import settings
-from src.utils.metrics_collector import append_metrics_to_file
+from src.telemetry.metrics_collector import append_metrics_to_file
 from src.utils.representation import (
     Representation,
 )

@@ -1,19 +1,20 @@
 import logging
 import time
 
-from src import crud, prometheus
+from src import crud
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
+from src.telemetry import prometheus
+from src.telemetry.logging import accumulate_metric, log_performance_metrics
+from src.telemetry.tracing import with_sentry_transaction
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
-from src.utils.logging import accumulate_metric, log_performance_metrics
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
-from src.utils.tracing import with_sentry_transaction
 
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
 

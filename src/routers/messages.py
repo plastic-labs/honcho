@@ -16,12 +16,13 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from src import crud, prometheus, schemas
+from src import crud, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
+from src.telemetry import prometheus
 from src.utils.files import process_file_uploads_for_messages
 
 logger = logging.getLogger(__name__)

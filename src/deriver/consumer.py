@@ -13,8 +13,8 @@ from src.models import Message
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
+from src.telemetry.logging import log_performance_metrics
 from src.utils import summarizer
-from src.utils.logging import log_performance_metrics
 from src.utils.queue_payload import (
     DeletionPayload,
     DreamPayload,

@@ -78,7 +78,7 @@ from honcho_core.types.workspaces.sessions.message_create_param import (
 from openai import AsyncOpenAI
 
 from src.config import settings
-from src.utils.metrics_collector import MetricsCollector
+from src.telemetry.metrics_collector import MetricsCollector
 
 from .locomo_common import (
     CATEGORY_NAMES,

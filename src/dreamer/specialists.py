@@ -19,16 +19,16 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import prometheus
 from src.config import settings
 from src.schemas import ResolvedConfiguration
+from src.telemetry import prometheus
+from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
-from src.utils.logging import accumulate_metric, log_performance_metrics
 
 logger = logging.getLogger(__name__)
 

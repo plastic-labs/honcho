@@ -22,9 +22,9 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
+from src.telemetry.logging import conditional_observe
+from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.json_parser import validate_and_repair_json
-from src.utils.logging import conditional_observe
-from src.utils.reasoning_traces import log_reasoning_trace
 from src.utils.representation import PromptRepresentation
 from src.utils.tokens import estimate_tokens
 from src.utils.types import SupportedProviders

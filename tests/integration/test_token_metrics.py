@@ -81,7 +81,7 @@ def metric_checker() -> MetricDeltaChecker:
 @pytest.fixture
 def enable_metrics(monkeypatch: pytest.MonkeyPatch):
     """Enable prometheus metrics with a test namespace."""
-    monkeypatch.setattr("src.prometheus.METRICS_ENABLED", True)
+    monkeypatch.setattr("src.telemetry.prometheus.METRICS_ENABLED", True)
     monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
     yield
 
@@ -746,7 +746,7 @@ class TestDialecticTokenMetrics:
         from src.dialectic.core import DialecticAgent
 
         # Explicitly disable metrics
-        monkeypatch.setattr("src.prometheus.METRICS_ENABLED", False)
+        monkeypatch.setattr("src.telemetry.prometheus.METRICS_ENABLED", False)
         monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
 
         workspace, peer = sample_data

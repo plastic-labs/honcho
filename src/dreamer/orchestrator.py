@@ -22,11 +22,11 @@ from src.config import settings
 from src.dreamer.specialists import SPECIALISTS
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SpecialistExecutionError, SurprisalError
-from src.utils.config_helpers import get_configuration
-from src.utils.logging import (
+from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
 )
+from src.utils.config_helpers import get_configuration
 
 logger = logging.getLogger(__name__)
 

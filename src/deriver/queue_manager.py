@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src import models, prometheus
+from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
@@ -35,7 +35,8 @@ from src.reconciler import (
     set_reconciler_scheduler,
 )
 from src.schemas import ResolvedConfiguration
-from src.sentry import initialize_sentry
+from src.telemetry import prometheus
+from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
