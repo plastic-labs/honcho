@@ -161,13 +161,11 @@ class BaseSpecialist(ABC):
                 count=response.input_tokens,
                 specialist_name=self.name,
                 token_type=prometheus.TokenTypes.INPUT.value,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
             otel_metrics.record_dreamer_tokens(
                 count=response.output_tokens,
                 specialist_name=self.name,
                 token_type=prometheus.TokenTypes.OUTPUT.value,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
 
         # Prometheus metrics (pull-based, legacy)

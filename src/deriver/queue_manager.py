@@ -778,12 +778,11 @@ class QueueManager:
             ):
                 # OTel metrics (push-based)
                 if settings.OTEL.ENABLED:
-                    for _ in range(len(items)):
-                        otel_metrics.record_deriver_queue_item(
-                            workspace_name=work_unit.workspace_name,
-                            task_type=work_unit.task_type,
-                            namespace=settings.METRICS.NAMESPACE or "honcho",
-                        )
+                    otel_metrics.record_deriver_queue_item(
+                        count=len(items),
+                        workspace_name=work_unit.workspace_name,
+                        task_type=work_unit.task_type,
+                    )
 
                 # Prometheus metrics (pull-based, legacy)
                 if prometheus.METRICS_ENABLED:

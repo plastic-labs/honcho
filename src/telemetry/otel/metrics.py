@@ -179,10 +179,13 @@ class OTelMetrics:
 
     This class provides a bridge during migration - the same metrics are
     available via both Prometheus (pull) and OTel (push).
+
+    Namespace is managed at the instance level (from settings), not per-call.
     """
 
     _instance: OTelMetrics | None = None
     _is_initialized: bool = False
+    _namespace: str = "honcho"
 
     # Meters (lazily initialized)
     _api_meter: Meter | None = None
@@ -208,6 +211,11 @@ class OTelMetrics:
         """Lazily initialize meters and instruments."""
         if self._is_initialized:
             return
+
+        # Get namespace from settings (same as Prometheus)
+        from src.config import settings
+
+        self._namespace = settings.METRICS.NAMESPACE or "honcho"
 
         # Get meters for different components
         self._api_meter = get_meter("honcho.api")
@@ -271,7 +279,6 @@ class OTelMetrics:
         method: str,
         endpoint: str,
         status_code: str,
-        namespace: str,
     ) -> None:
         """Record an API request metric."""
         self._ensure_initialized()
@@ -283,7 +290,7 @@ class OTelMetrics:
                 "method": method,
                 "endpoint": endpoint,
                 "status_code": status_code,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 
@@ -292,7 +299,6 @@ class OTelMetrics:
         *,
         count: int,
         workspace_name: str,
-        namespace: str,
     ) -> None:
         """Record messages created metric."""
         self._ensure_initialized()
@@ -302,7 +308,7 @@ class OTelMetrics:
             count,
             {
                 "workspace_name": workspace_name,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 
@@ -311,7 +317,6 @@ class OTelMetrics:
         *,
         workspace_name: str,
         reasoning_level: str,
-        namespace: str,
     ) -> None:
         """Record a dialectic call metric."""
         self._ensure_initialized()
@@ -322,27 +327,27 @@ class OTelMetrics:
             {
                 "workspace_name": workspace_name,
                 "reasoning_level": reasoning_level,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 
     def record_deriver_queue_item(
         self,
         *,
+        count: int,
         workspace_name: str,
         task_type: str,
-        namespace: str,
     ) -> None:
-        """Record a deriver queue item processed metric."""
+        """Record deriver queue items processed metric."""
         self._ensure_initialized()
         if self._deriver_queue_items is None:
             return  # Not initialized, skip silently
         self._deriver_queue_items.add(
-            1,
+            count,
             {
                 "workspace_name": workspace_name,
                 "task_type": task_type,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 
@@ -353,7 +358,6 @@ class OTelMetrics:
         task_type: str,
         token_type: str,
         component: str,
-        namespace: str,
     ) -> None:
         """Record deriver token usage metric."""
         self._ensure_initialized()
@@ -365,7 +369,7 @@ class OTelMetrics:
                 "task_type": task_type,
                 "token_type": token_type,
                 "component": component,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 
@@ -376,7 +380,6 @@ class OTelMetrics:
         token_type: str,
         component: str,
         reasoning_level: str,
-        namespace: str,
     ) -> None:
         """Record dialectic token usage metric."""
         self._ensure_initialized()
@@ -388,7 +391,7 @@ class OTelMetrics:
                 "token_type": token_type,
                 "component": component,
                 "reasoning_level": reasoning_level,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 
@@ -398,7 +401,6 @@ class OTelMetrics:
         count: int,
         specialist_name: str,
         token_type: str,
-        namespace: str,
     ) -> None:
         """Record dreamer token usage metric."""
         self._ensure_initialized()
@@ -409,7 +411,7 @@ class OTelMetrics:
             {
                 "specialist_name": specialist_name,
                 "token_type": token_type,
-                "namespace": namespace,
+                "namespace": self._namespace,
             },
         )
 

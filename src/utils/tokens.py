@@ -37,7 +37,6 @@ def track_deriver_input_tokens(
                 task_type=task_type.value,
                 token_type=prometheus.TokenTypes.INPUT.value,
                 component=component.value,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
 
         # Prometheus metrics (pull-based, legacy)

@@ -144,7 +144,6 @@ async def process_representation_tasks_batch(
             task_type=prometheus.DeriverTaskTypes.INGESTION.value,
             token_type=prometheus.TokenTypes.OUTPUT.value,
             component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
-            namespace=settings.METRICS.NAMESPACE or "honcho",
         )
 
     # Prometheus metrics (pull-based, legacy)

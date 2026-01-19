@@ -194,7 +194,6 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
 
     if request.url.path != "/metrics":
         template = get_route_template(request)
-        namespace = settings.METRICS.NAMESPACE or "honcho"
 
         # OTel metrics (push-based)
         if settings.OTEL.ENABLED:
@@ -202,7 +201,6 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
                 method=request.method,
                 endpoint=template,
                 status_code=str(exc.status_code),
-                namespace=namespace,
             )
 
         # Prometheus metrics (pull-based, legacy)
@@ -226,7 +224,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
     if request.url.path != "/metrics":
         template = get_route_template(request)
-        namespace = settings.METRICS.NAMESPACE or "honcho"
 
         # OTel metrics (push-based)
         if settings.OTEL.ENABLED:
@@ -234,7 +231,6 @@ async def global_exception_handler(request: Request, exc: Exception):
                 method=request.method,
                 endpoint=template,
                 status_code="500",
-                namespace=namespace,
             )
 
         # Prometheus metrics (pull-based, legacy)
@@ -271,7 +267,6 @@ async def track_request(
         # Track metrics if enabled
         if request.url.path != "/metrics":
             template = get_route_template(request)
-            namespace = settings.METRICS.NAMESPACE or "honcho"
 
             # OTel metrics (push-based)
             if settings.OTEL.ENABLED:
@@ -279,7 +274,6 @@ async def track_request(
                     method=request.method,
                     endpoint=template,
                     status_code=str(response.status_code),
-                    namespace=namespace,
                 )
 
             # Prometheus metrics (pull-based, legacy)

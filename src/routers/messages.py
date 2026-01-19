@@ -105,7 +105,6 @@ async def create_messages_for_session(
             otel_metrics.record_messages_created(
                 count=len(created_messages),
                 workspace_name=workspace_id,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
 
         # Prometheus metrics (pull-based, legacy)
@@ -211,7 +210,6 @@ async def create_messages_with_file(
         otel_metrics.record_messages_created(
             count=len(created_messages),
             workspace_name=workspace_id,
-            namespace=settings.METRICS.NAMESPACE or "honcho",
         )
 
     # Prometheus metrics (pull-based, legacy)

@@ -189,7 +189,6 @@ async def chat(
             otel_metrics.record_dialectic_call(
                 workspace_name=workspace_id,
                 reasoning_level=options.reasoning_level,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
 
         # Prometheus metrics (pull-based, legacy)
@@ -229,7 +228,6 @@ async def chat(
         otel_metrics.record_dialectic_call(
             workspace_name=workspace_id,
             reasoning_level=options.reasoning_level,
-            namespace=settings.METRICS.NAMESPACE or "honcho",
         )
 
     # Prometheus metrics (pull-based, legacy)

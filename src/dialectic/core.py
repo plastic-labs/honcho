@@ -316,14 +316,12 @@ class DialecticAgent:
                 token_type=prometheus.TokenTypes.INPUT.value,
                 component=prometheus.DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
             otel_metrics.record_dialectic_tokens(
                 count=output_tokens,
                 token_type=prometheus.TokenTypes.OUTPUT.value,
                 component=prometheus.DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
-                namespace=settings.METRICS.NAMESPACE or "honcho",
             )
 
         # Prometheus metrics (pull-based, legacy)
