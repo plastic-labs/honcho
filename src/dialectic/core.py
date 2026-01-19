@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
-from src.telemetry import prometheus
+from src.telemetry import otel_metrics, prometheus
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -309,7 +309,24 @@ class DialecticAgent:
         if not self.metric_key and run_id is not None:
             log_performance_metrics("dialectic_chat", run_id)
 
-        # Track prometheus metrics - actual token counts from API
+        # OTel metrics (push-based)
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_dialectic_tokens(
+                count=input_tokens,
+                token_type=prometheus.TokenTypes.INPUT.value,
+                component=prometheus.DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
+                namespace=settings.METRICS.NAMESPACE or "honcho",
+            )
+            otel_metrics.record_dialectic_tokens(
+                count=output_tokens,
+                token_type=prometheus.TokenTypes.OUTPUT.value,
+                component=prometheus.DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
+                namespace=settings.METRICS.NAMESPACE or "honcho",
+            )
+
+        # Prometheus metrics (pull-based, legacy)
         if prometheus.METRICS_ENABLED:
             prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
                 token_type=prometheus.TokenTypes.INPUT.value,

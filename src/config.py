@@ -68,6 +68,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "WEBHOOK": "webhook",
         "DREAM": "dream",
         "VECTOR_STORE": "vector_store",
+        "OTEL": "otel",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -446,6 +447,35 @@ class MetricsSettings(HonchoSettings):
     NAMESPACE: str | None = None
 
 
+class OpenTelemetrySettings(HonchoSettings):
+    """OpenTelemetry settings for push-based metrics via OTLP.
+
+    These settings configure the OTel SDK to push metrics via OTLP HTTP
+    to any compatible backend (Mimir, Grafana Cloud, etc.).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="OTEL_", extra="ignore")  # pyright: ignore
+
+    # Master toggle for OTel metrics
+    ENABLED: bool = False
+
+    # OTLP HTTP endpoint for metrics (e.g., "https://mimir.example.com/otlp/v1/metrics")
+    # For Mimir, the endpoint is typically: <mimir-url>/otlp/v1/metrics
+    # For Grafana Cloud: https://otlp-gateway-<region>.grafana.net/otlp/v1/metrics
+    ENDPOINT: str | None = None
+
+    # Optional headers for authentication (e.g., {"X-Scope-OrgID": "tenant"})
+    # Set via OTEL_HEADERS as JSON string: '{"X-Scope-OrgID": "honcho"}'
+    # For Grafana Cloud, use: {"Authorization": "Basic <base64-encoded-credentials>"}
+    HEADERS: dict[str, str] | None = None
+
+    # Export interval in milliseconds (default: 60 seconds)
+    EXPORT_INTERVAL_MILLIS: int = 60000
+
+    # Service name for resource attributes
+    SERVICE_NAME: str = "honcho"
+
+
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
@@ -616,6 +646,7 @@ class AppSettings(HonchoSettings):
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    OTEL: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)

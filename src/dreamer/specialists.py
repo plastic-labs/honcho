@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.schemas import ResolvedConfiguration
-from src.telemetry import prometheus
+from src.telemetry import otel_metrics, prometheus
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
@@ -155,6 +155,22 @@ class BaseSpecialist(ABC):
         accumulate_metric(task_name, "input_tokens", response.input_tokens, "count")
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "count")
 
+        # OTel metrics (push-based)
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_dreamer_tokens(
+                count=response.input_tokens,
+                specialist_name=self.name,
+                token_type=prometheus.TokenTypes.INPUT.value,
+                namespace=settings.METRICS.NAMESPACE or "honcho",
+            )
+            otel_metrics.record_dreamer_tokens(
+                count=response.output_tokens,
+                specialist_name=self.name,
+                token_type=prometheus.TokenTypes.OUTPUT.value,
+                namespace=settings.METRICS.NAMESPACE or "honcho",
+            )
+
+        # Prometheus metrics (pull-based, legacy)
         if prometheus.METRICS_ENABLED:
             prometheus.DREAMER_TOKENS_PROCESSED.labels(
                 specialist_name=self.name,

@@ -35,7 +35,7 @@ from src.reconciler import (
     set_reconciler_scheduler,
 )
 from src.schemas import ResolvedConfiguration
-from src.telemetry import prometheus
+from src.telemetry import initialize_telemetry, otel_metrics, prometheus
 from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -776,10 +776,21 @@ class QueueManager:
                 work_unit.task_type in ["representation", "summary"]
                 and work_unit.workspace_name is not None
             ):
-                prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
-                    workspace_name=work_unit.workspace_name,
-                    task_type=work_unit.task_type,
-                ).inc(len(items))
+                # OTel metrics (push-based)
+                if settings.OTEL.ENABLED:
+                    for _ in range(len(items)):
+                        otel_metrics.record_deriver_queue_item(
+                            workspace_name=work_unit.workspace_name,
+                            task_type=work_unit.task_type,
+                            namespace=settings.METRICS.NAMESPACE or "honcho",
+                        )
+
+                # Prometheus metrics (pull-based, legacy)
+                if prometheus.METRICS_ENABLED:
+                    prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
+                        workspace_name=work_unit.workspace_name,
+                        task_type=work_unit.task_type,
+                    ).inc(len(items))
 
     async def mark_queue_item_as_errored(
         self, item: QueueItem, work_unit_key: str, error: str
@@ -821,6 +832,9 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
+
+    # Initialize telemetry (OTel metrics)
+    initialize_telemetry()
 
     try:
         await init_cache()

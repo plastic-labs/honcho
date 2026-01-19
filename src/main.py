@@ -29,7 +29,7 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.telemetry import prometheus
+from src.telemetry import initialize_telemetry, otel_metrics, prometheus
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
 
@@ -115,6 +115,9 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Initialize telemetry (OTel metrics)
+    initialize_telemetry()
+
     try:
         await init_cache()
     except Exception as e:
@@ -189,13 +192,26 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
     logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
 
-    if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+    if request.url.path != "/metrics":
         template = get_route_template(request)
-        prometheus.API_REQUESTS.labels(
-            method=request.method,
-            endpoint=template,
-            status_code=str(exc.status_code),
-        ).inc()
+        namespace = settings.METRICS.NAMESPACE or "honcho"
+
+        # OTel metrics (push-based)
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_api_request(
+                method=request.method,
+                endpoint=template,
+                status_code=str(exc.status_code),
+                namespace=namespace,
+            )
+
+        # Prometheus metrics (pull-based, legacy)
+        if prometheus.METRICS_ENABLED:
+            prometheus.API_REQUESTS.labels(
+                method=request.method,
+                endpoint=template,
+                status_code=str(exc.status_code),
+            ).inc()
 
     return JSONResponse(
         status_code=exc.status_code,
@@ -208,13 +224,26 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
 
-    if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+    if request.url.path != "/metrics":
         template = get_route_template(request)
-        prometheus.API_REQUESTS.labels(
-            method=request.method,
-            endpoint=template,
-            status_code="500",
-        ).inc()
+        namespace = settings.METRICS.NAMESPACE or "honcho"
+
+        # OTel metrics (push-based)
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_api_request(
+                method=request.method,
+                endpoint=template,
+                status_code="500",
+                namespace=namespace,
+            )
+
+        # Prometheus metrics (pull-based, legacy)
+        if prometheus.METRICS_ENABLED:
+            prometheus.API_REQUESTS.labels(
+                method=request.method,
+                endpoint=template,
+                status_code="500",
+            ).inc()
 
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
@@ -239,14 +268,27 @@ async def track_request(
     try:
         response = await call_next(request)
 
-        # Track Prometheus metrics if enabled
-        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+        # Track metrics if enabled
+        if request.url.path != "/metrics":
             template = get_route_template(request)
-            prometheus.API_REQUESTS.labels(
-                method=request.method,
-                endpoint=template,
-                status_code=str(response.status_code),
-            ).inc()
+            namespace = settings.METRICS.NAMESPACE or "honcho"
+
+            # OTel metrics (push-based)
+            if settings.OTEL.ENABLED:
+                otel_metrics.record_api_request(
+                    method=request.method,
+                    endpoint=template,
+                    status_code=str(response.status_code),
+                    namespace=namespace,
+                )
+
+            # Prometheus metrics (pull-based, legacy)
+            if prometheus.METRICS_ENABLED:
+                prometheus.API_REQUESTS.labels(
+                    method=request.method,
+                    endpoint=template,
+                    status_code=str(response.status_code),
+                ).inc()
 
         return response
     finally:

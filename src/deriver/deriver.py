@@ -7,7 +7,7 @@ from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
-from src.telemetry import prometheus
+from src.telemetry import otel_metrics, prometheus
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.tracing import with_sentry_transaction
 from src.utils.clients import honcho_llm_call
@@ -137,11 +137,23 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type=prometheus.DeriverTaskTypes.INGESTION.value,
-        token_type=prometheus.TokenTypes.OUTPUT.value,
-        component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
-    ).inc(response.output_tokens)
+    # OTel metrics (push-based)
+    if settings.OTEL.ENABLED:
+        otel_metrics.record_deriver_tokens(
+            count=response.output_tokens,
+            task_type=prometheus.DeriverTaskTypes.INGESTION.value,
+            token_type=prometheus.TokenTypes.OUTPUT.value,
+            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
+            namespace=settings.METRICS.NAMESPACE or "honcho",
+        )
+
+    # Prometheus metrics (pull-based, legacy)
+    if prometheus.METRICS_ENABLED:
+        prometheus.DERIVER_TOKENS_PROCESSED.labels(
+            task_type=prometheus.DeriverTaskTypes.INGESTION.value,
+            token_type=prometheus.TokenTypes.OUTPUT.value,
+            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
+        ).inc(response.output_tokens)
 
     message_ids = [m.id for m in messages if m.peer_name == observed]
 
