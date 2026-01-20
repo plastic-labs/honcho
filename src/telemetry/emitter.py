@@ -50,9 +50,10 @@ class TelemetryEmitter:
     headers: dict[str, str]
     batch_size: int
     flush_interval: float
+    flush_threshold: int
     max_retries: int
+    max_buffer_size: int
     enabled: bool
-    instance_id: str | None
     _buffer: deque[CloudEvent]
     _flush_task: asyncio.Task[None] | None
     _client: httpx.AsyncClient | None
@@ -64,11 +65,11 @@ class TelemetryEmitter:
         endpoint: str | None = None,
         headers: dict[str, str] | None = None,
         batch_size: int = 100,
-        flush_interval_seconds: float = 5.0,
+        flush_interval_seconds: float = 1.0,
+        flush_threshold: int = 50,
         max_retries: int = 3,
         max_buffer_size: int = 10000,
         enabled: bool = True,
-        instance_id: str | None = None,
     ):
         """Initialize the telemetry emitter.
 
@@ -77,18 +78,19 @@ class TelemetryEmitter:
             headers: Optional HTTP headers for authentication
             batch_size: Maximum events per batch
             flush_interval_seconds: How often to flush the buffer
+            flush_threshold: Trigger flush when buffer reaches this size
             max_retries: Maximum retry attempts on failure
             max_buffer_size: Maximum events to buffer (oldest dropped if exceeded)
             enabled: Whether emission is enabled
-            instance_id: Optional instance identifier for the source field
         """
         self.endpoint = endpoint
         self.headers = headers or {}
         self.batch_size = batch_size
         self.flush_interval = flush_interval_seconds
+        self.flush_threshold = flush_threshold
         self.max_retries = max_retries
+        self.max_buffer_size = max_buffer_size
         self.enabled = enabled and endpoint is not None
-        self.instance_id = instance_id
 
         self._buffer = deque(maxlen=max_buffer_size)
         self._flush_task = None
@@ -148,6 +150,7 @@ class TelemetryEmitter:
 
         The event is converted to a CloudEvent and added to the buffer.
         If the buffer is full, the oldest events are dropped.
+        Triggers an immediate flush when buffer reaches flush_threshold.
 
         Args:
             event: The Honcho event to emit
@@ -155,13 +158,16 @@ class TelemetryEmitter:
         if not self.enabled:
             return
 
+        from src.config import settings
+
         # Generate deterministic event ID
         event_id = event.generate_id()
 
         # Determine source based on event category
+        namespace = settings.TELEMETRY.NAMESPACE
         source = f"/honcho/{event.category()}"
-        if self.instance_id:
-            source = f"/honcho/{self.instance_id}/{event.category()}"
+        if namespace:
+            source = f"/honcho/{namespace}/{event.category()}"
 
         # Create CloudEvent
         cloud_event = CloudEvent(
@@ -176,7 +182,22 @@ class TelemetryEmitter:
         )
 
         self._buffer.append(cloud_event)
-        logger.debug("Queued event %s (buffer size: %d)", event_id, len(self._buffer))
+        buffer_size = len(self._buffer)
+        logger.debug("Queued event %s (buffer size: %d)", event_id, buffer_size)
+
+        # Warning logs as buffer approaches max capacity
+        capacity_ratio = buffer_size / self.max_buffer_size
+        if capacity_ratio >= 0.8:
+            logger.warning(
+                "Telemetry buffer at %.0f%% capacity (%d/%d events)",
+                capacity_ratio * 100,
+                buffer_size,
+                self.max_buffer_size,
+            )
+
+        # Threshold-based flush trigger
+        if buffer_size >= self.flush_threshold and self._running:
+            asyncio.create_task(self.flush())
 
     async def flush(self) -> None:
         """Flush buffered events to the endpoint.
@@ -310,11 +331,11 @@ async def initialize_emitter(
     endpoint: str | None = None,
     headers: dict[str, str] | None = None,
     batch_size: int = 100,
-    flush_interval_seconds: float = 5.0,
+    flush_interval_seconds: float = 1.0,
+    flush_threshold: int = 50,
     max_retries: int = 3,
     max_buffer_size: int = 10000,
     enabled: bool = True,
-    instance_id: str | None = None,
 ) -> TelemetryEmitter:
     """Initialize and start the global telemetry emitter.
 
@@ -323,10 +344,10 @@ async def initialize_emitter(
         headers: Optional HTTP headers for authentication
         batch_size: Maximum events per batch
         flush_interval_seconds: How often to flush the buffer
+        flush_threshold: Trigger flush when buffer reaches this size
         max_retries: Maximum retry attempts on failure
         max_buffer_size: Maximum events to buffer
         enabled: Whether emission is enabled
-        instance_id: Optional instance identifier
 
     Returns:
         The initialized emitter instance
@@ -338,10 +359,10 @@ async def initialize_emitter(
         headers=headers,
         batch_size=batch_size,
         flush_interval_seconds=flush_interval_seconds,
+        flush_threshold=flush_threshold,
         max_retries=max_retries,
         max_buffer_size=max_buffer_size,
         enabled=enabled,
-        instance_id=instance_id,
     )
     await _emitter.start()
     return _emitter

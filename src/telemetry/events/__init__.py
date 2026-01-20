@@ -9,33 +9,23 @@ This module provides:
 Usage:
     from src.telemetry.events import emit, BaseEvent
 
-    # Define your event class
+    # Define your event class (subclasses define their own context fields)
     class MyEvent(BaseEvent):
         _event_type = "honcho.work.my_event"
         _schema_version = 1
         _category = "work"
 
+        # Define context fields as needed (not all events have workspace context)
+        workspace_id: str
         my_field: str
 
-        @classmethod
-        def event_type(cls) -> str:
-            return cls._event_type
-
-        @classmethod
-        def schema_version(cls) -> int:
-            return cls._schema_version
-
-        @classmethod
-        def category(cls) -> str:
-            return cls._category
-
         def get_resource_id(self) -> str:
-            return self.my_field
+            # Include workspace_id in resource_id if relevant for idempotency
+            return f"{self.workspace_id}:{self.my_field}"
 
     # Emit the event
     emit(MyEvent(
         workspace_id="ws_123",
-        workspace_name="my_workspace",
         my_field="some_value",
     ))
 """
@@ -73,24 +63,12 @@ def emit(event: BaseEvent) -> None:
     Example:
         from src.telemetry.events import emit
 
-        emit(RepresentationCompletedEvent(
-            workspace_id="ws_123",
-            workspace_name="my_workspace",
-            task_id="task_456",
+        emit(MyEvent(
+            my_field="some_value",
             ...
         ))
     """
-    from src.config import settings
     from src.telemetry.emitter import get_emitter
-
-    # Check if the event category is enabled
-    category = event.category()
-    if category == "work" and not settings.TELEMETRY.EMIT_WORK:
-        return
-    if category == "activity" and not settings.TELEMETRY.EMIT_ACTIVITY:
-        return
-    if category == "resource" and not settings.TELEMETRY.EMIT_RESOURCE:
-        return
 
     emitter = get_emitter()
     if emitter is None:
@@ -121,10 +99,10 @@ async def initialize_telemetry_events() -> None:
         headers=settings.TELEMETRY.HEADERS,
         batch_size=settings.TELEMETRY.BATCH_SIZE,
         flush_interval_seconds=settings.TELEMETRY.FLUSH_INTERVAL_SECONDS,
+        flush_threshold=settings.TELEMETRY.FLUSH_THRESHOLD,
         max_retries=settings.TELEMETRY.MAX_RETRIES,
         max_buffer_size=settings.TELEMETRY.MAX_BUFFER_SIZE,
         enabled=True,
-        instance_id=settings.TELEMETRY.INSTANCE_ID,
     )
 
     logger.info(

@@ -500,16 +500,10 @@ class TelemetrySettings(HonchoSettings):
     # Optional headers for authentication
     HEADERS: dict[str, str] | None = None
 
-    # Event categories to emit
-    EMIT_WORK: bool = True  # work.representation.completed, work.dream.completed, etc.
-    EMIT_ACTIVITY: bool = True  # activity.dialectic.completed
-    EMIT_RESOURCE: bool = (
-        True  # resource.message.created, resource.workspace.created, etc.
-    )
-
     # Batching configuration
     BATCH_SIZE: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
-    FLUSH_INTERVAL_SECONDS: Annotated[float, Field(default=5.0, gt=0.0, le=60.0)] = 5.0
+    FLUSH_INTERVAL_SECONDS: Annotated[float, Field(default=1.0, gt=0.0, le=60.0)] = 1.0
+    FLUSH_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
 
     # Retry configuration
     MAX_RETRIES: Annotated[int, Field(default=3, gt=0, le=10)] = 3
@@ -517,8 +511,8 @@ class TelemetrySettings(HonchoSettings):
     # Buffer configuration
     MAX_BUFFER_SIZE: Annotated[int, Field(default=10000, gt=0, le=100000)] = 10000
 
-    # Instance identification (auto-generated if not set)
-    INSTANCE_ID: str | None = None
+    # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
+    NAMESPACE: str | None = None
 
 
 class CacheSettings(HonchoSettings):
@@ -708,9 +702,9 @@ class AppSettings(HonchoSettings):
     def propagate_namespace(self) -> "AppSettings":
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
-        After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE, and
-        VECTOR_STORE.NAMESPACE are guaranteed to exist. Explicitly provided
-        nested namespaces are preserved.
+        After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE,
+        VECTOR_STORE.NAMESPACE, and TELEMETRY.NAMESPACE are guaranteed to exist.
+        Explicitly provided nested namespaces are preserved.
         """
         if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
@@ -718,6 +712,8 @@ class AppSettings(HonchoSettings):
             self.METRICS.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
+            self.TELEMETRY.NAMESPACE = self.NAMESPACE
 
         return self
 
