@@ -85,7 +85,7 @@ class HonchoHTTPClient:
         """Make an HTTP request with automatic retries and timeout handling."""
         url = self._build_url(path)
         request_headers = self._build_headers(headers)
-        request_timeout = timeout or self.timeout
+        request_timeout = timeout if timeout is not None else self.timeout
         merged_query = {**(self.default_query or {}), **(query or {})} or None
 
         last_error: Exception | None = None
@@ -246,7 +246,7 @@ class HonchoHTTPClient:
             **self._build_headers(headers),
             "Accept": "text/event-stream",
         }
-        request_timeout = timeout or self.timeout
+        request_timeout = timeout if timeout is not None else self.timeout
         merged_query = {**(self.default_query or {}), **(query or {})} or None
 
         with self._client.stream(
@@ -285,7 +285,7 @@ class HonchoHTTPClient:
         # Don't set Content-Type for multipart - httpx will set it with boundary
         request_headers = self._build_headers(headers)
         request_headers.pop("Content-Type", None)
-        request_timeout = timeout or self.timeout
+        request_timeout = timeout if timeout is not None else self.timeout
         merged_query = {**(self.default_query or {}), **(query or {})} or None
 
         response = self._client.post(
@@ -377,7 +377,7 @@ class HonchoHTTPClient:
 
     def _get_retry_delay(self, attempt: int, retry_after: float | None = None) -> float:
         """Calculate delay before next retry."""
-        if retry_after:
+        if retry_after is not None:
             return retry_after
         # Exponential backoff: 0.5s, 1s, 2s, etc.
         return INITIAL_RETRY_DELAY * (2**attempt)

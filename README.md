@@ -127,7 +127,7 @@ The Honcho project is split between several repositories with this one hosting
 the core service logic. This is implemented as a FastAPI server/API to store
 data about an application's state.
 
-There are also client sdks in implemented in the `sdks/` directory with support
+There are also client SDKs implemented in the `sdks/` directory with support
 for Python and TypeScript.
 
 - [Python](https://pypi.org/project/honcho-ai/)

@@ -53,7 +53,7 @@ from .types import AsyncDialecticStreamResponse
 from .utils import (
     datetime_to_iso,
     normalize_peers_to_dict,
-    parse_sse_chunk,
+    parse_sse_astream,
     prepare_file_for_upload,
     resolve_id,
 )
@@ -441,13 +441,14 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["reasoning_level"] = reasoning_level
 
         async def stream_response() -> AsyncGenerator[str, None]:
-            async for chunk in self._peer._honcho._async_http_client.stream(
-                "POST",
-                routes.peer_chat(self._peer.workspace_id, self._peer.id),
-                body=body,
+            async for content in parse_sse_astream(
+                self._peer._honcho._async_http_client.stream(
+                    "POST",
+                    routes.peer_chat(self._peer.workspace_id, self._peer.id),
+                    body=body,
+                )
             ):
-                for content in parse_sse_chunk(chunk):
-                    yield content
+                yield content
 
         return AsyncDialecticStreamResponse(stream_response())
 

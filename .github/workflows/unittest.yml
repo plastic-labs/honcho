@@ -87,6 +87,13 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
 
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install TypeScript SDK dependencies
+        run: bun install
+        working-directory: sdks/typescript
+
       - name: Install the project
         run: uv sync --all-extras --dev
 

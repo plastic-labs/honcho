@@ -26,7 +26,7 @@ from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .types import DialecticStreamResponse
-from .utils import parse_datetime, parse_sse_chunk, resolve_id
+from .utils import parse_datetime, parse_sse_stream, resolve_id
 
 if TYPE_CHECKING:
     from .aio import PeerAio
@@ -262,12 +262,13 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["reasoning_level"] = reasoning_level
 
         def stream_response() -> Generator[str, None, None]:
-            for chunk in self._honcho._http.stream(
-                "POST",
-                routes.peer_chat(self.workspace_id, self.id),
-                body=body,
-            ):
-                yield from parse_sse_chunk(chunk)
+            yield from parse_sse_stream(
+                self._honcho._http.stream(
+                    "POST",
+                    routes.peer_chat(self.workspace_id, self.id),
+                    body=body,
+                )
+            )
 
         return DialecticStreamResponse(stream_response())
 
