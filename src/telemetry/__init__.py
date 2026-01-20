@@ -50,7 +50,7 @@ def initialize_telemetry() -> None:
             headers=settings.OTEL.HEADERS,
             export_interval_millis=settings.OTEL.EXPORT_INTERVAL_MILLIS,
             service_name=settings.OTEL.SERVICE_NAME,
-            service_namespace=settings.METRICS.NAMESPACE,
+            service_namespace=settings.OTEL.SERVICE_NAMESPACE,
             enabled=True,
         )
 

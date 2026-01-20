@@ -6,15 +6,25 @@ This module provides:
 - BaseEvent: Base class for all event types
 - Concrete event types for all Honcho operations
 
-Event Types:
-    Work events (background processing):
+Event Categories:
+    representation: Message processing and observation extraction
     - RepresentationCompletedEvent: Message batch processed, observations extracted
-    - SummaryCompletedEvent: Session summary created/updated
-    - DreamCompletedEvent: Memory consolidation task completed
-    - ReconciliationCompletedEvent: Vector store sync/cleanup completed
+
+    dream: Memory consolidation operations
+    - DreamSummaryCompletedEvent: Session summary created/updated
+    - DreamPeerCardCompletedEvent: Peer card updated
+    - DreamDeductiveCompletedEvent: Deductive reasoning completed
+    - DreamInductiveCompletedEvent: Inductive reasoning completed
+    - DreamOmniCompletedEvent: Comprehensive dream cycle completed
+
+    reconciliation: Maintenance operations
+    - SyncVectorsCompletedEvent: Vector store sync completed
+    - CleanupQueueCompletedEvent: Queue cleanup completed
+
+    deletion: Resource removal
     - DeletionCompletedEvent: Resource deletion completed
 
-    Activity events (user-initiated):
+    dialectic: User-initiated queries
     - DialecticCompletedEvent: Chat query completed
 
 Usage:
@@ -43,14 +53,20 @@ Usage:
 import logging
 
 from src.telemetry.events.base import BaseEvent, generate_event_id
-from src.telemetry.events.types import (
-    DeletionCompletedEvent,
-    DialecticCompletedEvent,
-    DreamCompletedEvent,
-    ReconciliationCompletedEvent,
-    RepresentationCompletedEvent,
-    SummaryCompletedEvent,
+from src.telemetry.events.deletion import DeletionCompletedEvent
+from src.telemetry.events.dialectic import DialecticCompletedEvent
+from src.telemetry.events.dream import (
+    DreamDeductiveCompletedEvent,
+    DreamInductiveCompletedEvent,
+    DreamOmniCompletedEvent,
+    DreamPeerCardCompletedEvent,
+    DreamSummaryCompletedEvent,
 )
+from src.telemetry.events.reconciliation import (
+    CleanupQueueCompletedEvent,
+    SyncVectorsCompletedEvent,
+)
+from src.telemetry.events.representation import RepresentationCompletedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +75,20 @@ __all__ = [
     "emit",
     "BaseEvent",
     "generate_event_id",
-    # Work events
+    # Representation events
     "RepresentationCompletedEvent",
-    "SummaryCompletedEvent",
-    "DreamCompletedEvent",
-    "ReconciliationCompletedEvent",
+    # Dream events
+    "DreamSummaryCompletedEvent",
+    "DreamPeerCardCompletedEvent",
+    "DreamDeductiveCompletedEvent",
+    "DreamInductiveCompletedEvent",
+    "DreamOmniCompletedEvent",
+    # Reconciliation events
+    "SyncVectorsCompletedEvent",
+    "CleanupQueueCompletedEvent",
+    # Deletion events
     "DeletionCompletedEvent",
-    # Activity events
+    # Dialectic events
     "DialecticCompletedEvent",
     # Lifecycle
     "initialize_telemetry_events",

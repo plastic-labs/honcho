@@ -15,8 +15,9 @@ from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
 from src.telemetry.events import (
+    CleanupQueueCompletedEvent,
     DeletionCompletedEvent,
-    ReconciliationCompletedEvent,
+    SyncVectorsCompletedEvent,
     emit,
 )
 from src.telemetry.logging import log_performance_metrics
@@ -303,11 +304,9 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
 
         # Emit telemetry event
         emit(
-            ReconciliationCompletedEvent(
-                reconciler_type=reconciler_type.value,
+            SyncVectorsCompletedEvent(
                 documents_synced=metrics.documents_synced,
                 documents_failed=metrics.documents_failed,
-                documents_cleaned=metrics.documents_cleaned,
                 message_embeddings_synced=metrics.message_embeddings_synced,
                 message_embeddings_failed=metrics.message_embeddings_failed,
                 total_duration_ms=duration_ms,
@@ -322,8 +321,7 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
 
         # Emit telemetry event for cleanup_queue
         emit(
-            ReconciliationCompletedEvent(
-                reconciler_type=reconciler_type.value,
+            CleanupQueueCompletedEvent(
                 total_duration_ms=duration_ms,
             )
         )

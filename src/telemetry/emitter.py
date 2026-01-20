@@ -163,7 +163,8 @@ class TelemetryEmitter:
         # Generate deterministic event ID
         event_id = event.generate_id()
 
-        # Determine source based on event category
+        # Build source with namespace for tenant routing
+        # Format: /honcho/{namespace}/{category} or /honcho/{category}
         namespace = settings.TELEMETRY.NAMESPACE
         source = f"/honcho/{event.category()}"
         if namespace:
@@ -177,9 +178,6 @@ class TelemetryEmitter:
             "time": event.timestamp.isoformat(),
             "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
         }
-        # Add namespace extension for tenant routing (required by ingestion service)
-        if namespace:
-            attributes["namespace"] = namespace
 
         # Create CloudEvent
         cloud_event = CloudEvent(attributes, event.model_dump(mode="json"))

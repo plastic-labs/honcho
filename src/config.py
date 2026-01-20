@@ -478,8 +478,12 @@ class OpenTelemetrySettings(HonchoSettings):
     # Export interval in milliseconds (default: 60 seconds)
     EXPORT_INTERVAL_MILLIS: int = 60000
 
-    # Service name for resource attributes
+    # Service name for resource attributes (identifies what this service is)
     SERVICE_NAME: str = "honcho"
+
+    # Service namespace for resource attributes (defaults to top-level NAMESPACE if not set)
+    # Used for tenant/environment separation in metrics
+    SERVICE_NAMESPACE: str | None = None
 
 
 class TelemetrySettings(HonchoSettings):
@@ -703,8 +707,8 @@ class AppSettings(HonchoSettings):
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
         After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE,
-        VECTOR_STORE.NAMESPACE, and TELEMETRY.NAMESPACE are guaranteed to exist.
-        Explicitly provided nested namespaces are preserved.
+        VECTOR_STORE.NAMESPACE, TELEMETRY.NAMESPACE, and OTEL.SERVICE_NAMESPACE
+        are guaranteed to exist. Explicitly provided nested namespaces are preserved.
         """
         if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
@@ -714,6 +718,8 @@ class AppSettings(HonchoSettings):
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
+        if "SERVICE_NAMESPACE" not in self.OTEL.model_fields_set:
+            self.OTEL.SERVICE_NAMESPACE = self.NAMESPACE
 
         return self
 
