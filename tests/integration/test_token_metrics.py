@@ -493,7 +493,9 @@ class TestDeriverSummaryMetrics:
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),  # is_fallback=False
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, expected_output_tokens)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -556,7 +558,9 @@ class TestDeriverSummaryMetrics:
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -627,7 +631,9 @@ class TestDeriverSummaryMetrics:
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -697,7 +703,9 @@ class TestDeriverSummaryMetrics:
 
         with patch(
             "src.utils.summarizer._create_summary",
-            new=AsyncMock(return_value=(mock_summary, True)),  # is_fallback=True
+            new=AsyncMock(
+                return_value=(mock_summary, True, 0, 0)
+            ),  # (summary, is_fallback=True, llm_input_tokens, llm_output_tokens)
         ):
             await _create_and_save_summary(
                 db=db_session,
