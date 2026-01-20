@@ -19,12 +19,12 @@ class TestDeriverProcessing:
         """Test that work unit keys are generated correctly"""
 
         session, peers = sample_session_with_peers
-        peer1, peer2, _ = peers
+        peer1 = peers[0]
 
         # Create a payload for representation task
+        # Note: observer is no longer part of the work_unit_key for representation tasks
         representation_payload = {
             "session_name": session.name,
-            "observer": peer2.name,
             "observed": peer1.name,
             "task_type": "representation",
         }
@@ -33,7 +33,10 @@ class TestDeriverProcessing:
         work_unit_key = construct_work_unit_key(
             session.workspace_name, representation_payload
         )
-        expected_key = f"representation:{session.workspace_name}:{session.name}:{peer2.name}:{peer1.name}"
+        # Representation keys no longer include observer (deduplication change)
+        expected_key = (
+            f"representation:{session.workspace_name}:{session.name}:{peer1.name}"
+        )
         assert work_unit_key == expected_key
 
         # Create a payload for summary task

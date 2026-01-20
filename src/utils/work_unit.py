@@ -50,6 +50,10 @@ def construct_work_unit_key(
             if not dream_type:
                 raise ValueError("dream_type is required for dream tasks")
             return f"{task_type}:{dream_type}:{workspace_name}:{observer}:{observed}"
+        if task_type == "representation":
+            # Representation tasks don't include observer in the key since
+            # we process once and save to multiple collections
+            return f"{task_type}:{workspace_name}:{session_name}:{observed}"
         return f"{task_type}:{workspace_name}:{session_name}:{observer}:{observed}"
 
     if task_type == "webhook":
@@ -89,7 +93,20 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     parts = work_unit_key.split(":")
     task_type = parts[0]
 
-    if task_type in ["representation", "summary"]:
+    if task_type == "representation":
+        if len(parts) != 4:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=parts[2],
+            observer=None,
+            observed=parts[3],
+        )
+
+    if task_type == "summary":
         if len(parts) != 5:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"

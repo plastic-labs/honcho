@@ -438,10 +438,14 @@ class QueueManager:
                                 break
 
                             try:
+                                # Extract observers from the payload
+                                payload = items_to_process[0].payload
+                                observers = payload.get("observers", [])
+
                                 await process_representation_batch(
                                     messages_context,
                                     message_level_configuration,
-                                    observer=work_unit.observer,
+                                    observers=observers,
                                     observed=work_unit.observed,
                                 )
                                 await self.mark_queue_items_as_processed(
