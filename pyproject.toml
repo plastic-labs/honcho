@@ -39,6 +39,7 @@ dependencies = [
     "scikit-learn>=1.6.0",
     "opentelemetry-sdk>=1.36.0",
     "opentelemetry-exporter-otlp-proto-http>=1.36.0",
+    "cloudevents>=1.12.0",
 ]
 [dependency-groups]
 dev = [

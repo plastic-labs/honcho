@@ -229,8 +229,7 @@ def log_performance_metrics(
         return
     if metrics is None:
         metrics = []
-    metrics = accumulated_metrics.get(task_name, []) + metrics
-    accumulated_metrics[task_name].clear()
+    metrics = accumulated_metrics.pop(task_name, []) + metrics
 
     if COLLECT_METRICS_LOCAL:
         append_metrics_to_file(task_slug, task_name, metrics)

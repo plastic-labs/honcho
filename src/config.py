@@ -69,6 +69,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DREAM": "dream",
         "VECTOR_STORE": "vector_store",
         "OTEL": "otel",
+        "TELEMETRY": "telemetry",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -481,6 +482,45 @@ class OpenTelemetrySettings(HonchoSettings):
     SERVICE_NAME: str = "honcho"
 
 
+class TelemetrySettings(HonchoSettings):
+    """CloudEvents telemetry settings for analytics.
+
+    These settings configure the CloudEvents emitter for pushing
+    structured events to an analytics backend.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")  # pyright: ignore
+
+    # Master toggle for CloudEvents emission
+    ENABLED: bool = False
+
+    # CloudEvents HTTP endpoint (e.g., "https://telemetry.honcho.dev/v1/events")
+    ENDPOINT: str | None = None
+
+    # Optional headers for authentication
+    HEADERS: dict[str, str] | None = None
+
+    # Event categories to emit
+    EMIT_WORK: bool = True  # work.representation.completed, work.dream.completed, etc.
+    EMIT_ACTIVITY: bool = True  # activity.dialectic.completed
+    EMIT_RESOURCE: bool = (
+        True  # resource.message.created, resource.workspace.created, etc.
+    )
+
+    # Batching configuration
+    BATCH_SIZE: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
+    FLUSH_INTERVAL_SECONDS: Annotated[float, Field(default=5.0, gt=0.0, le=60.0)] = 5.0
+
+    # Retry configuration
+    MAX_RETRIES: Annotated[int, Field(default=3, gt=0, le=10)] = 3
+
+    # Buffer configuration
+    MAX_BUFFER_SIZE: Annotated[int, Field(default=10000, gt=0, le=100000)] = 10000
+
+    # Instance identification (auto-generated if not set)
+    INSTANCE_ID: str | None = None
+
+
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
@@ -652,6 +692,7 @@ class AppSettings(HonchoSettings):
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     OTEL: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
+    TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
