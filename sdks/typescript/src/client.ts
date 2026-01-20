@@ -14,7 +14,7 @@ import type {
   SessionResponse,
   WorkspaceResponse,
 } from './types/api'
-import { pollUntilComplete, transformQueueStatus } from './utils'
+import { resolveId, transformQueueStatus } from './utils'
 import {
   FilterSchema,
   type Filters,
@@ -743,29 +743,59 @@ export class Honcho {
     }
   ): Promise<QueueStatus> {
     await this._ensureWorkspace()
-    const resolvedObserverId = options?.observer
-      ? typeof options.observer === 'string'
-        ? options.observer
-        : options.observer.id
+    const observerId = options?.observer
+      ? resolveId(options.observer)
       : undefined
-    const resolvedSenderId = options?.sender
-      ? typeof options.sender === 'string'
-        ? options.sender
-        : options.sender.id
-      : undefined
-    const resolvedSessionId = options?.session
-      ? typeof options.session === 'string'
-        ? options.session
-        : options.session.id
-      : undefined
+    const senderId = options?.sender ? resolveId(options.sender) : undefined
+    const sessionId = options?.session ? resolveId(options.session) : undefined
 
     const queryParams: QueueStatusParams = {}
-    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
-    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
-    if (resolvedSessionId) queryParams.session_id = resolvedSessionId
+    if (observerId) queryParams.observer_id = observerId
+    if (senderId) queryParams.sender_id = senderId
+    if (sessionId) queryParams.session_id = sessionId
 
     const status = await this._getQueueStatus(this.workspaceId, queryParams)
     return transformQueueStatus(status)
+  }
+
+  /**
+   * Schedule a dream task for memory consolidation.
+   *
+   * Dreams are background processes that consolidate observations into higher-level
+   * insights and update peer cards. This method schedules a dream task for immediate
+   * processing.
+   *
+   * @param options - Configuration options for the dream
+   * @param options.observer - The observer peer (ID string or Peer object) whose perspective
+   *                          to use for the dream
+   * @param options.session - The session (ID string or Session object) to scope the dream to
+   * @param options.observed - Optional observed peer (ID string or Peer object). If not provided,
+   *                          defaults to the observer (self-reflection)
+   * @returns Promise that resolves when the dream is scheduled
+   */
+  async scheduleDream(options: {
+    observer: string | Peer
+    session: string | Session
+    observed?: string | Peer
+  }): Promise<void> {
+    await this._ensureWorkspace()
+    const observerId = resolveId(options.observer)
+    const sessionId = resolveId(options.session)
+    const observedId = options.observed
+      ? resolveId(options.observed)
+      : observerId
+
+    await this._http.post(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/schedule_dream`,
+      {
+        body: {
+          observer: observerId,
+          observed: observedId,
+          session_id: sessionId,
+          dream_type: 'omni',
+        },
+      }
+    )
   }
 
   /**

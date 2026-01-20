@@ -293,18 +293,11 @@ class UnifiedTestExecutor:
                 await self.wait_for_queue(step.timeout)
 
         elif isinstance(step, ScheduleDreamAction):
-            # Call the schedule_dream API endpoint directly
-            workspace_id = self.client.workspace_id
-            url = f"{self.client.base_url}/v3/workspaces/{workspace_id}/schedule_dream"
-            body = {
-                "observer": step.observer,
-                "observed": step.observed if step.observed else step.observer,
-                "session_id": step.session_id,
-                "dream_type": step.dream_type.value,
-            }
-            async with httpx.AsyncClient() as http_client:
-                response = await http_client.post(url, json=body)
-                response.raise_for_status()
+            await self.client.aio.schedule_dream(
+                observer=step.observer,
+                session=step.session_id,
+                observed=step.observed,
+            )
 
         elif isinstance(step, QueryAction):
             result = await self.perform_query(step)

@@ -17,7 +17,7 @@ import type {
   SessionResponse,
   SessionSummariesResponse,
 } from './types/api'
-import { pollUntilComplete, transformQueueStatus } from './utils'
+import { transformQueueStatus } from './utils'
 import {
   ContextParamsSchema,
   FileUploadSchema,

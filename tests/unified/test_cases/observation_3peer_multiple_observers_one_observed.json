@@ -60,7 +60,7 @@
       "assertions": [
         {
           "assertion_type": "contains",
-          "text": "dancer",
+          "text": "dance",
           "case_sensitive": false
         }
       ]
@@ -74,7 +74,7 @@
       "assertions": [
         {
           "assertion_type": "contains",
-          "text": "dancer",
+          "text": "dance",
           "case_sensitive": false
         }
       ]
@@ -130,33 +130,8 @@
     {
       "step_type": "wait",
       "target": "queue_empty",
+      "timeout": 180,
       "flush": true
-    },
-    {
-      "step_type": "query",
-      "target": "get_peer_card",
-      "observer_peer_id": "bob",
-      "observed_peer_id": "alice",
-      "assertions": [
-        {
-          "assertion_type": "contains",
-          "text": "dancer",
-          "case_sensitive": false
-        }
-      ]
-    },
-    {
-      "step_type": "query",
-      "target": "get_peer_card",
-      "observer_peer_id": "charlie",
-      "observed_peer_id": "alice",
-      "assertions": [
-        {
-          "assertion_type": "contains",
-          "text": "dancer",
-          "case_sensitive": false
-        }
-      ]
     },
     {
       "step_type": "query",

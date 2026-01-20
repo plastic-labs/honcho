@@ -557,6 +557,44 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         )
         return QueueStatusResponse.model_validate(data)
 
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def schedule_dream(
+        self,
+        observer: str | PeerBase,
+        session: str | SessionBase,
+        observed: str | PeerBase | None = None,
+    ) -> None:
+        """
+        Schedule a dream task for memory consolidation.
+
+        Dreams are background processes that consolidate observations into higher-level
+        insights and update peer cards. This method schedules a dream task for immediate
+        processing.
+
+        Args:
+            observer: The observer peer (ID string or Peer object) whose perspective
+                to use for the dream.
+            session: The session (ID string or Session object) to scope the dream to.
+            observed: Optional observed peer (ID string or Peer object). If not provided,
+                defaults to the observer (self-reflection).
+        """
+        self._ensure_workspace()
+        resolved_observer_id = resolve_id(observer)
+        resolved_session_id = resolve_id(session)
+        resolved_observed_id = (
+            resolve_id(observed) if observed else resolved_observer_id
+        )
+
+        self._http.post(
+            routes.workspace_schedule_dream(self.workspace_id),
+            body={
+                "observer": resolved_observer_id,
+                "observed": resolved_observed_id,
+                "session_id": resolved_session_id,
+                "dream_type": "omni",
+            },
+        )
+
     def __repr__(self) -> str:
         """
         Return a string representation of the Honcho client.
