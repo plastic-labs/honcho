@@ -31,7 +31,6 @@ dependencies = [
     "google-genai>=1.32.0",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
-    "prometheus-client>=0.20.0",
     "json-repair>=0.49.0",
     "turbopuffer>=1.8.1",
     "lancedb>=0.25.3",
@@ -116,7 +115,7 @@ reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
 reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow"]
+allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow", "opentelemetry"]
 reportImplicitOverride = false
 reportImportCycles = false
 

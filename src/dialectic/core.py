@@ -324,20 +324,6 @@ class DialecticAgent:
                 reasoning_level=self.reasoning_level,
             )
 
-        # Prometheus metrics (pull-based, legacy)
-        if prometheus.METRICS_ENABLED:
-            prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
-                token_type=prometheus.TokenTypes.INPUT.value,
-                component=prometheus.DialecticComponents.TOTAL.value,
-                reasoning_level=self.reasoning_level,
-            ).inc(input_tokens)
-
-            prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
-                token_type=prometheus.TokenTypes.OUTPUT.value,
-                component=prometheus.DialecticComponents.TOTAL.value,
-                reasoning_level=self.reasoning_level,
-            ).inc(output_tokens)
-
     async def answer(self, query: str) -> str:
         """
         Answer a query about the peer using agentic tool calling.

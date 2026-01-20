@@ -146,14 +146,6 @@ async def process_representation_tasks_batch(
             component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
         )
 
-    # Prometheus metrics (pull-based, legacy)
-    if prometheus.METRICS_ENABLED:
-        prometheus.DERIVER_TOKENS_PROCESSED.labels(
-            task_type=prometheus.DeriverTaskTypes.INGESTION.value,
-            token_type=prometheus.TokenTypes.OUTPUT.value,
-            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
-        ).inc(response.output_tokens)
-
     message_ids = [m.id for m in messages if m.peer_name == observed]
 
     # Convert to Representation and save

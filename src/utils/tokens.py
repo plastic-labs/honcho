@@ -38,11 +38,3 @@ def track_deriver_input_tokens(
                 token_type=prometheus.TokenTypes.INPUT.value,
                 component=component.value,
             )
-
-        # Prometheus metrics (pull-based, legacy)
-        if prometheus.METRICS_ENABLED:
-            prometheus.DERIVER_TOKENS_PROCESSED.labels(
-                task_type=task_type.value,
-                token_type=prometheus.TokenTypes.INPUT.value,
-                component=component.value,
-            ).inc(token_count)

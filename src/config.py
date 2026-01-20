@@ -441,9 +441,14 @@ class WebhookSettings(HonchoSettings):
 
 
 class MetricsSettings(HonchoSettings):
+    """Metrics settings for namespace configuration.
+
+    Note: The ENABLED field was removed as it was only used for Prometheus.
+    OTel enablement is now controlled via OTEL.ENABLED.
+    """
+
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
 
-    ENABLED: bool = False
     NAMESPACE: str | None = None
 
 

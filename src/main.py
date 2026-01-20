@@ -29,7 +29,7 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.telemetry import initialize_telemetry, otel_metrics, prometheus
+from src.telemetry import initialize_telemetry, otel_metrics
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
 
@@ -183,8 +183,6 @@ app.include_router(conclusions.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
 
-app.add_api_route("/metrics", prometheus.metrics, methods=["GET"])
-
 
 # Global exception handlers
 @app.exception_handler(HonchoException)
@@ -192,24 +190,13 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
     logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
 
-    if request.url.path != "/metrics":
-        template = get_route_template(request)
-
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_api_request(
-                method=request.method,
-                endpoint=template,
-                status_code=str(exc.status_code),
-            )
-
-        # Prometheus metrics (pull-based, legacy)
-        if prometheus.METRICS_ENABLED:
-            prometheus.API_REQUESTS.labels(
-                method=request.method,
-                endpoint=template,
-                status_code=str(exc.status_code),
-            ).inc()
+    template = get_route_template(request)
+    if settings.OTEL.ENABLED:
+        otel_metrics.record_api_request(
+            method=request.method,
+            endpoint=template,
+            status_code=str(exc.status_code),
+        )
 
     return JSONResponse(
         status_code=exc.status_code,
@@ -222,24 +209,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
 
-    if request.url.path != "/metrics":
-        template = get_route_template(request)
-
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_api_request(
-                method=request.method,
-                endpoint=template,
-                status_code="500",
-            )
-
-        # Prometheus metrics (pull-based, legacy)
-        if prometheus.METRICS_ENABLED:
-            prometheus.API_REQUESTS.labels(
-                method=request.method,
-                endpoint=template,
-                status_code="500",
-            ).inc()
+    template = get_route_template(request)
+    if settings.OTEL.ENABLED:
+        otel_metrics.record_api_request(
+            method=request.method,
+            endpoint=template,
+            status_code="500",
+        )
 
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
@@ -265,24 +241,13 @@ async def track_request(
         response = await call_next(request)
 
         # Track metrics if enabled
-        if request.url.path != "/metrics":
+        if settings.OTEL.ENABLED:
             template = get_route_template(request)
-
-            # OTel metrics (push-based)
-            if settings.OTEL.ENABLED:
-                otel_metrics.record_api_request(
-                    method=request.method,
-                    endpoint=template,
-                    status_code=str(response.status_code),
-                )
-
-            # Prometheus metrics (pull-based, legacy)
-            if prometheus.METRICS_ENABLED:
-                prometheus.API_REQUESTS.labels(
-                    method=request.method,
-                    endpoint=template,
-                    status_code=str(response.status_code),
-                ).inc()
+            otel_metrics.record_api_request(
+                method=request.method,
+                endpoint=template,
+                status_code=str(response.status_code),
+            )
 
         return response
     finally:

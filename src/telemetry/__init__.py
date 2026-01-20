@@ -3,8 +3,7 @@ Telemetry module for Honcho.
 
 This module consolidates all telemetry, metrics, and observability functionality:
 - Sentry: Error tracking and performance tracing
-- Prometheus: Pull-based metrics (legacy, being replaced by OTel)
-- OTel: Push-based metrics via Prometheus Remote Write
+- OTel: Push-based metrics via OTLP to any compatible backend (e.g., Mimir)
 - Logging: Langfuse integration, Rich console output, metric accumulation
 - Tracing: Sentry transaction decorators
 - Metrics Collector: JSON file-based benchmark aggregation

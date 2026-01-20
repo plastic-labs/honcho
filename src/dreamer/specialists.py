@@ -168,18 +168,6 @@ class BaseSpecialist(ABC):
                 token_type=prometheus.TokenTypes.OUTPUT.value,
             )
 
-        # Prometheus metrics (pull-based, legacy)
-        if prometheus.METRICS_ENABLED:
-            prometheus.DREAMER_TOKENS_PROCESSED.labels(
-                specialist_name=self.name,
-                token_type=prometheus.TokenTypes.INPUT.value,
-            ).inc(response.input_tokens)
-
-            prometheus.DREAMER_TOKENS_PROCESSED.labels(
-                specialist_name=self.name,
-                token_type=prometheus.TokenTypes.OUTPUT.value,
-            ).inc(response.output_tokens)
-
         logger.info(
             f"{self.name}: Completed in {duration_ms:.0f}ms, "
             + f"{len(response.tool_calls_made)} tool calls, "

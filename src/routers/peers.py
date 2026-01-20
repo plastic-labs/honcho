@@ -14,7 +14,7 @@ from src.dependencies import db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
-from src.telemetry import otel_metrics, prometheus
+from src.telemetry import otel_metrics
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -191,13 +191,6 @@ async def chat(
                 reasoning_level=options.reasoning_level,
             )
 
-        # Prometheus metrics (pull-based, legacy)
-        if prometheus.METRICS_ENABLED:
-            prometheus.DIALECTIC_CALLS.labels(
-                workspace_name=workspace_id,
-                reasoning_level=options.reasoning_level,
-            ).inc()
-
         return StreamingResponse(
             format_sse_stream(
                 agentic_chat_stream(
@@ -229,13 +222,6 @@ async def chat(
             workspace_name=workspace_id,
             reasoning_level=options.reasoning_level,
         )
-
-    # Prometheus metrics (pull-based, legacy)
-    if prometheus.METRICS_ENABLED:
-        prometheus.DIALECTIC_CALLS.labels(
-            workspace_name=workspace_id,
-            reasoning_level=options.reasoning_level,
-        ).inc()
 
     return schemas.DialecticResponse(content=str(response))
 
