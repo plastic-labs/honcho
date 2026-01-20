@@ -17,6 +17,7 @@ from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
 from src.telemetry import otel_metrics, prometheus
+from src.telemetry.events import SummaryCompletedEvent, emit
 from src.telemetry.logging import accumulate_metric, conditional_observe
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
@@ -409,7 +410,12 @@ async def _create_and_save_summary(
     previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
     input_tokens = messages_tokens + previous_summary_tokens
 
-    new_summary, is_fallback = await _create_summary(
+    (
+        new_summary,
+        is_fallback,
+        llm_input_tokens,
+        llm_output_tokens,
+    ) = await _create_summary(
         messages=messages,
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
@@ -472,6 +478,24 @@ async def _create_and_save_summary(
         "ms",
     )
 
+    # Emit telemetry event (only for non-fallback summaries)
+    if not is_fallback:
+        emit(
+            SummaryCompletedEvent(
+                workspace_id=workspace_name,
+                workspace_name=workspace_name,
+                session_id=session_name,
+                session_name=session_name,
+                message_id=message_public_id,
+                message_seq_in_session=message_seq_in_session,
+                summary_type="short" if summary_type == SummaryType.SHORT else "long",
+                summary_token_count=new_summary["token_count"],
+                total_duration_ms=summary_duration,
+                input_tokens=llm_input_tokens,
+                output_tokens=llm_output_tokens,
+            )
+        )
+
 
 async def _create_summary(
     messages: list[models.Message],
@@ -479,7 +503,7 @@ async def _create_summary(
     summary_type: SummaryType,
     input_tokens: int,
     message_public_id: str,
-) -> tuple[Summary, bool]:
+) -> tuple[Summary, bool, int, int]:
     """
     Generate a summary of the provided messages using an LLM.
 
@@ -489,12 +513,15 @@ async def _create_summary(
         summary_type: Type of summary to create ("short" or "long")
 
     Returns:
-        A tuple of (Summary, is_fallback) where is_fallback indicates if
-        the summary was generated using a fallback instead of an LLM call
+        A tuple of (Summary, is_fallback, llm_input_tokens, llm_output_tokens)
+        where is_fallback indicates if the summary was generated using a
+        fallback instead of an LLM call
     """
 
     response: HonchoLLMCallResponse[str] | None = None
     is_fallback = False
+    llm_input_tokens = 0
+    llm_output_tokens = 0
     try:
         if summary_type == SummaryType.SHORT:
             response = await create_short_summary(
@@ -505,6 +532,8 @@ async def _create_summary(
 
         summary_text = response.content
         summary_tokens = response.output_tokens
+        llm_input_tokens = response.input_tokens
+        llm_output_tokens = response.output_tokens
 
         # Detect potential issues with the summary
         if not summary_text.strip():
@@ -532,6 +561,8 @@ async def _create_summary(
             message_public_id=message_public_id,
         ),
         is_fallback,
+        llm_input_tokens,
+        llm_output_tokens,
     )
 
 

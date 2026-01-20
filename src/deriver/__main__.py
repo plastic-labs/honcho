@@ -5,7 +5,11 @@ import os
 import uvloop
 
 from src.config import settings
-from src.telemetry import initialize_telemetry, shutdown_otel_metrics
+from src.telemetry import (
+    initialize_telemetry,
+    initialize_telemetry_async,
+    shutdown_telemetry,
+)
 
 from .queue_manager import main
 
@@ -44,23 +48,33 @@ def setup_logging():
     logging.getLogger("groq._base_client").setLevel(logging.WARNING)
 
 
+async def run_deriver():
+    """Run the deriver with proper telemetry lifecycle management."""
+    # Initialize async telemetry (CloudEvents emitter)
+    await initialize_telemetry_async()
+    try:
+        await main()
+    finally:
+        # Shutdown telemetry (flush CloudEvents buffer, shutdown OTel metrics)
+        await shutdown_telemetry()
+
+
 if __name__ == "__main__":
     print("[DERIVER] Starting deriver queue processor")
 
     # Setup logging before starting the main loop
     setup_logging()
 
-    # Initialize OTel metrics if enabled
+    # Initialize sync telemetry (OTel metrics)
     initialize_telemetry()
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
         print("[DERIVER] Running main loop")
-        asyncio.run(main())
+        asyncio.run(run_deriver())
     except KeyboardInterrupt:
         print("[DERIVER] Shutdown initiated via KeyboardInterrupt")
     except Exception as e:
         print(f"[DERIVER] Error in main process: {str(e)}")
     finally:
-        shutdown_otel_metrics()
         print("[DERIVER] Deriver process exiting")

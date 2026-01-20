@@ -169,17 +169,20 @@ class TelemetryEmitter:
         if namespace:
             source = f"/honcho/{namespace}/{event.category()}"
 
+        # Build CloudEvent attributes
+        attributes: dict[str, str] = {
+            "id": event_id,
+            "source": source,
+            "type": event.event_type(),
+            "time": event.timestamp.isoformat(),
+            "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
+        }
+        # Add namespace extension for tenant routing (required by ingestion service)
+        if namespace:
+            attributes["namespace"] = namespace
+
         # Create CloudEvent
-        cloud_event = CloudEvent(
-            {
-                "id": event_id,
-                "source": source,
-                "type": event.event_type(),
-                "time": event.timestamp.isoformat(),
-                "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
-            },
-            event.model_dump(mode="json"),
-        )
+        cloud_event = CloudEvent(attributes, event.model_dump(mode="json"))
 
         self._buffer.append(cloud_event)
         buffer_size = len(self._buffer)

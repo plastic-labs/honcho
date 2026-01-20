@@ -6,6 +6,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.orchestrator import run_dream
 from src.schemas import DreamType
+from src.telemetry.events import DreamCompletedEvent, emit
 from src.utils.queue_payload import DreamPayload
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,31 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
         match payload.dream_type:
             case DreamType.OMNI:
                 async with tracked_db("dream_orchestrator") as db:
-                    await run_dream(
+                    result = await run_dream(
                         db=db,
                         workspace_name=workspace_name,
                         observer=payload.observer,
                         observed=payload.observed,
                         session_name=payload.session_name,
+                    )
+
+                # Emit telemetry event if dream ran
+                if result is not None:
+                    emit(
+                        DreamCompletedEvent(
+                            workspace_id=workspace_name,
+                            workspace_name=workspace_name,
+                            session_name=payload.session_name,
+                            observer=payload.observer,
+                            observed=payload.observed,
+                            dream_type=payload.dream_type.value,
+                            surprisal_observation_count=result.surprisal_observation_count,
+                            deduction_success=result.deduction_success,
+                            induction_success=result.induction_success,
+                            total_duration_ms=result.total_duration_ms,
+                            input_tokens=result.input_tokens,
+                            output_tokens=result.output_tokens,
+                        )
                     )
 
     except Exception as e:

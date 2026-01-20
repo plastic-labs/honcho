@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,20 @@ from src.telemetry.logging import (
 from src.utils.config_helpers import get_configuration
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DreamResult:
+    """Result of a dream cycle for telemetry reporting."""
+
+    deduction_success: bool
+    induction_success: bool
+    surprisal_observation_count: int
+    total_duration_ms: float
+    # Token tracking (aggregated from specialists - 0 for now, can be enhanced later)
+    input_tokens: int = 0
+    output_tokens: int = 0
+
 
 # Predefined probing questions to guide the specialists
 # These serve as semantic entry points for searching observations
@@ -57,7 +72,7 @@ async def run_dream(
     observer: str,
     observed: str,
     session_name: str,
-) -> None:
+) -> DreamResult | None:
     """
     Run a full dream cycle with optional surprisal-based sampling.
 
@@ -74,7 +89,7 @@ async def run_dream(
         session_name: Session identifier
     """
     if not settings.DREAM.ENABLED:
-        return
+        return None
 
     run_id = str(uuid.uuid4())[:8]
     task_name = f"dream_orchestrator_{run_id}"
@@ -94,7 +109,12 @@ async def run_dream(
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping dream"
         )
-        return
+        return None
+
+    # Track specialist outcomes
+    deduction_success = False
+    induction_success = False
+    surprisal_observation_count = 0
 
     # Phase 0: Surprisal-based sampling (if enabled)
     probing_questions = PROBING_QUESTIONS  # Default
@@ -114,6 +134,7 @@ async def run_dream(
             logger.info(
                 f"[{run_id}] Surprisal: Found {len(high_surprisal_obs)} high-surprisal observations"
             )
+            surprisal_observation_count = len(high_surprisal_obs)
             accumulate_metric(
                 task_name, "surprisal_observations", len(high_surprisal_obs), "count"
             )
@@ -169,6 +190,7 @@ async def run_dream(
         )
         logger.info(f"[{run_id}] Deduction completed: {deduction_result[:200]}...")
         accumulate_metric(task_name, "deduction_result", deduction_result, "blob")
+        deduction_success = True
     except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "deduction_error", str(e), "blob")
@@ -188,6 +210,7 @@ async def run_dream(
         )
         logger.info(f"[{run_id}] Induction completed: {induction_result[:200]}...")
         accumulate_metric(task_name, "induction_result", induction_result, "blob")
+        induction_success = True
     except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "induction_error", str(e), "blob")
@@ -198,6 +221,13 @@ async def run_dream(
 
     logger.info(f"[{run_id}] Dream cycle completed in {duration_ms:.0f}ms")
     log_performance_metrics("dream_orchestrator", run_id)
+
+    return DreamResult(
+        deduction_success=deduction_success,
+        induction_success=induction_success,
+        surprisal_observation_count=surprisal_observation_count,
+        total_duration_ms=duration_ms,
+    )
 
 
 def _create_queries_from_surprisal(

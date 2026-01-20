@@ -1,4 +1,5 @@
 import logging
+import time
 
 import sentry_sdk
 from pydantic import ValidationError
@@ -13,6 +14,11 @@ from src.models import Message
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
+from src.telemetry.events import (
+    DeletionCompletedEvent,
+    ReconciliationCompletedEvent,
+    emit,
+)
 from src.telemetry.logging import log_performance_metrics
 from src.utils import summarizer
 from src.utils.queue_payload import (
@@ -195,6 +201,8 @@ async def process_deletion(
     """
     deletion_type = payload.deletion_type
     resource_id = payload.resource_id
+    success = True
+    error_message: str | None = None
 
     logger.info(
         "Processing deletion task: type=%s, resource_id=%s, workspace=%s",
@@ -241,7 +249,21 @@ async def process_deletion(
                 )
 
         else:
-            raise ValueError(f"Unsupported deletion type: {deletion_type}")
+            success = False
+            error_message = f"Unsupported deletion type: {deletion_type}"
+            raise ValueError(error_message)
+
+    # Emit telemetry event
+    emit(
+        DeletionCompletedEvent(
+            workspace_id=workspace_name,
+            workspace_name=workspace_name,
+            deletion_type=deletion_type,
+            resource_id=resource_id,
+            success=success,
+            error_message=error_message,
+        )
+    )
 
 
 async def process_reconciler(payload: ReconcilerPayload) -> None:
@@ -257,10 +279,13 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
         payload: The reconciler payload containing the reconciler type
     """
     reconciler_type = payload.reconciler_type
+    start_time = time.perf_counter()
 
     if reconciler_type == ReconcilerType.SYNC_VECTORS:
         logger.debug("Processing sync_vectors task")
         metrics = await run_vector_reconciliation_cycle()
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
 
         if (
             metrics.total_synced > 0
@@ -276,9 +301,32 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                 metrics.documents_cleaned,
             )
 
+        # Emit telemetry event
+        emit(
+            ReconciliationCompletedEvent(
+                reconciler_type=reconciler_type.value,
+                documents_synced=metrics.documents_synced,
+                documents_failed=metrics.documents_failed,
+                documents_cleaned=metrics.documents_cleaned,
+                message_embeddings_synced=metrics.message_embeddings_synced,
+                message_embeddings_failed=metrics.message_embeddings_failed,
+                total_duration_ms=duration_ms,
+            )
+        )
+
     elif reconciler_type == ReconcilerType.CLEANUP_QUEUE:
         logger.debug("Processing cleanup_queue task")
         await cleanup_queue_items()
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Emit telemetry event for cleanup_queue
+        emit(
+            ReconciliationCompletedEvent(
+                reconciler_type=reconciler_type.value,
+                total_duration_ms=duration_ms,
+            )
+        )
 
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

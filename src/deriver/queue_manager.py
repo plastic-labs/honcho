@@ -35,7 +35,7 @@ from src.reconciler import (
     set_reconciler_scheduler,
 )
 from src.schemas import ResolvedConfiguration
-from src.telemetry import initialize_telemetry, otel_metrics
+from src.telemetry import otel_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -823,9 +823,6 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
-
-    # Initialize telemetry (OTel metrics)
-    initialize_telemetry()
 
     try:
         await init_cache()

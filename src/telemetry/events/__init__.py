@@ -4,46 +4,70 @@ CloudEvents telemetry event system for Honcho.
 This module provides:
 - emit(): Queue an event for emission to the telemetry backend
 - BaseEvent: Base class for all event types
-- Event type subclasses will be added here as they are defined
+- Concrete event types for all Honcho operations
+
+Event Types:
+    Work events (background processing):
+    - RepresentationCompletedEvent: Message batch processed, observations extracted
+    - SummaryCompletedEvent: Session summary created/updated
+    - DreamCompletedEvent: Memory consolidation task completed
+    - ReconciliationCompletedEvent: Vector store sync/cleanup completed
+    - DeletionCompletedEvent: Resource deletion completed
+
+    Activity events (user-initiated):
+    - DialecticCompletedEvent: Chat query completed
 
 Usage:
-    from src.telemetry.events import emit, BaseEvent
+    from src.telemetry.events import emit, RepresentationCompletedEvent
 
-    # Define your event class (subclasses define their own context fields)
-    class MyEvent(BaseEvent):
-        _event_type = "honcho.work.my_event"
-        _schema_version = 1
-        _category = "work"
-
-        # Define context fields as needed (not all events have workspace context)
-        workspace_id: str
-        my_field: str
-
-        def get_resource_id(self) -> str:
-            # Include workspace_id in resource_id if relevant for idempotency
-            return f"{self.workspace_id}:{self.my_field}"
-
-    # Emit the event
-    emit(MyEvent(
+    emit(RepresentationCompletedEvent(
         workspace_id="ws_123",
-        my_field="some_value",
+        workspace_name="my_workspace",
+        session_id="sess_456",
+        session_name="my_session",
+        observer="user_peer",
+        observed="assistant_peer",
+        earliest_message_id="msg_001",
+        latest_message_id="msg_010",
+        message_count=10,
+        explicit_observation_count=5,
+        deductive_observation_count=2,
+        context_preparation_ms=50.0,
+        llm_call_ms=1200.0,
+        total_duration_ms=1300.0,
+        input_tokens=5000,
+        output_tokens=500,
     ))
 """
 
 import logging
-from typing import TYPE_CHECKING
 
 from src.telemetry.events.base import BaseEvent, generate_event_id
-
-if TYPE_CHECKING:
-    pass
+from src.telemetry.events.types import (
+    DeletionCompletedEvent,
+    DialecticCompletedEvent,
+    DreamCompletedEvent,
+    ReconciliationCompletedEvent,
+    RepresentationCompletedEvent,
+    SummaryCompletedEvent,
+)
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    # Core
     "emit",
     "BaseEvent",
     "generate_event_id",
+    # Work events
+    "RepresentationCompletedEvent",
+    "SummaryCompletedEvent",
+    "DreamCompletedEvent",
+    "ReconciliationCompletedEvent",
+    "DeletionCompletedEvent",
+    # Activity events
+    "DialecticCompletedEvent",
+    # Lifecycle
     "initialize_telemetry_events",
     "shutdown_telemetry_events",
 ]

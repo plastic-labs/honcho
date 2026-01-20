@@ -29,7 +29,12 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.telemetry import initialize_telemetry, otel_metrics
+from src.telemetry import (
+    initialize_telemetry,
+    initialize_telemetry_async,
+    otel_metrics,
+    shutdown_telemetry,
+)
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
 
@@ -115,8 +120,9 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Initialize telemetry (OTel metrics)
+    # Initialize telemetry (OTel metrics + CloudEvents emitter)
     initialize_telemetry()
+    await initialize_telemetry_async()
 
     try:
         await init_cache()
@@ -134,6 +140,8 @@ async def lifespan(_: FastAPI):
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()
+        # Shutdown telemetry (flush CloudEvents buffer, shutdown OTel metrics)
+        await shutdown_telemetry()
 
 
 app = FastAPI(

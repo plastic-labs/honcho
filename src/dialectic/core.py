@@ -17,6 +17,7 @@ from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
 from src.telemetry import otel_metrics, prometheus
+from src.telemetry.events import DialecticCompletedEvent, emit
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -88,6 +89,7 @@ class DialecticAgent:
             }
         ]
         self._session_history_initialized: bool = False
+        self._prefetched_observation_count: int = 0
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -174,6 +176,11 @@ class DialecticAgent:
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
+
+            # Count prefetched observations for telemetry
+            explicit_count = len(explicit_repr.explicit) + len(explicit_repr.deductive)
+            derived_count = len(derived_repr.explicit) + len(derived_repr.deductive)
+            self._prefetched_observation_count = explicit_count + derived_count
 
             # Format as two separate sections
             parts: list[str] = []
@@ -323,6 +330,27 @@ class DialecticAgent:
                 component=prometheus.DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
             )
+
+        # Emit telemetry event
+        emit(
+            DialecticCompletedEvent(
+                workspace_id=self.workspace_name,
+                workspace_name=self.workspace_name,
+                peer_id=self.observed,
+                peer_name=self.observed,
+                session_id=self.session_name,
+                session_name=self.session_name,
+                reasoning_level=self.reasoning_level,
+                agentic=True,
+                prefetched_observation_count=self._prefetched_observation_count,
+                tool_calls_count=tool_calls_count,
+                total_duration_ms=elapsed_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_input_tokens or 0,
+                cache_creation_tokens=cache_creation_input_tokens or 0,
+            )
+        )
 
     async def answer(self, query: str) -> str:
         """

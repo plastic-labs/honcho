@@ -8,6 +8,7 @@ from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import otel_metrics, prometheus
+from src.telemetry.events import RepresentationCompletedEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.tracing import with_sentry_transaction
 from src.utils.clients import honcho_llm_call
@@ -213,3 +214,25 @@ async def process_representation_tasks_batch(
         )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observer}")
+
+    # Emit telemetry event
+    emit(
+        RepresentationCompletedEvent(
+            workspace_id=latest_message.workspace_name,
+            workspace_name=latest_message.workspace_name,
+            session_id=latest_message.session_name,
+            session_name=latest_message.session_name,
+            observer=observer,
+            observed=observed,
+            earliest_message_id=earliest_message.public_id,
+            latest_message_id=latest_message.public_id,
+            message_count=len(messages),
+            explicit_observation_count=len(observations.explicit),
+            deductive_observation_count=len(observations.deductive),
+            context_preparation_ms=context_prep_duration,
+            llm_call_ms=llm_duration,
+            total_duration_ms=overall_duration,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
+    )
