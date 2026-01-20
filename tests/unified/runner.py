@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from honcho.api_types import (
     MessageCreateParams,
@@ -177,9 +178,15 @@ async def save_results_to_s3(
 
 
 class UnifiedTestExecutor:
-    def __init__(self, honcho_client: Honcho, anthropic_client: AsyncAnthropic | None):
+    def __init__(
+        self,
+        honcho_client: Honcho,
+        anthropic_client: AsyncAnthropic | None,
+        redis_url: str,
+    ):
         self.client: Honcho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
+        self.redis_url: str = redis_url
 
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
         logger.info(f"Starting test: {test_name}")
@@ -281,18 +288,39 @@ class UnifiedTestExecutor:
             if step.duration:
                 await asyncio.sleep(step.duration)
             if step.target == "queue_empty":
+                if step.flush:
+                    await self.flush_deriver_queue()
                 await self.wait_for_queue(step.timeout)
 
         elif isinstance(step, ScheduleDreamAction):
-            # TODO: schedule_dream is not yet implemented in the new SDK
-            raise NotImplementedError(
-                "schedule_dream is not yet implemented in the new SDK. This test action needs the schedule_dream method to be added."
-            )
+            # Call the schedule_dream API endpoint directly
+            workspace_id = self.client.workspace_id
+            url = f"{self.client.base_url}/v3/workspaces/{workspace_id}/schedule_dream"
+            body = {
+                "observer": step.observer,
+                "observed": step.observed if step.observed else step.observer,
+                "session_id": step.session_id,
+                "dream_type": step.dream_type.value,
+            }
+            async with httpx.AsyncClient() as http_client:
+                response = await http_client.post(url, json=body)
+                response.raise_for_status()
 
         elif isinstance(step, QueryAction):
             result = await self.perform_query(step)
             for assertion in step.assertions:
                 await self.check_assertion(result, assertion)
+
+    async def flush_deriver_queue(self):
+        """Enable deriver flush mode to bypass batch token threshold."""
+        # Use direct Redis connection to set the flush key
+        # This avoids issues with settings being loaded before env vars are set
+        redis_client = aioredis.from_url(self.redis_url)  # pyright: ignore[reportUnknownMemberType]
+        try:
+            await redis_client.set("honcho:deriver:flush_mode", "1", ex=60)
+            logger.info("Enabled deriver flush mode")
+        finally:
+            await redis_client.aclose()
 
     async def wait_for_queue(self, timeout: int):
         # Poll deriver status
@@ -557,8 +585,9 @@ class UnifiedTestRunner:
                 base_url=f"http://localhost:{self.harness.api_port}",
                 workspace_id="default",  # Will be overridden per test
             )
+            redis_url = f"redis://localhost:{self.harness.redis_port}/0"
 
-            executor = UnifiedTestExecutor(client, self.anthropic)
+            executor = UnifiedTestExecutor(client, self.anthropic, redis_url)
 
             suite_start_time = time.time()
 

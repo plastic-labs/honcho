@@ -1,7 +1,6 @@
 {
   "description": "Test multiple observers watching single peer - Bob and Charlie both observe Alice",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -49,7 +48,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",
@@ -112,6 +112,25 @@
           "text": "## Deductive"
         }
       ]
+    },
+    {
+      "step_type": "schedule_dream",
+      "observer": "bob",
+      "observed": "alice",
+      "session_id": "session_all_watch_alice",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "schedule_dream",
+      "observer": "charlie",
+      "observed": "alice",
+      "session_id": "session_all_watch_alice",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",

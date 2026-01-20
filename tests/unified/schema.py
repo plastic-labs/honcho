@@ -72,6 +72,10 @@ class WaitAction(TestStep):
     )
     target: Literal["queue_empty"] = "queue_empty"
     timeout: int = 60
+    flush: bool = Field(
+        False,
+        description="Enable flush mode to bypass batch token threshold before waiting",
+    )
 
 
 # --- Dream Actions ---
