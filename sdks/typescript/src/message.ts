@@ -3,8 +3,8 @@ import type { MessageResponse } from './types/api'
 /**
  * Input for creating a message.
  *
- * This is the camelCase type returned by `Peer.message()` and accepted by
- * `Session.addMessages()`. The SDK converts to snake_case when sending to the API.
+ * This is the type returned by `Peer.message()` and accepted by
+ * `Session.addMessages()`.
  */
 export interface MessageInput {
   /** The peer ID who authored this message */
@@ -21,10 +21,6 @@ export interface MessageInput {
 
 /**
  * A message in a Honcho session.
- *
- * Messages represent communication between peers within a session.
- * This class wraps the API response with camelCase properties for consistency
- * with the rest of the SDK.
  */
 export class Message {
   /** Unique identifier for this message */

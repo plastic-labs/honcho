@@ -330,7 +330,7 @@ export interface QueueStatusParams {
 }
 
 /**
- * Session queue status with camelCase properties for SDK consumers.
+ * Queue status scoped to a single session.
  */
 export interface SessionQueueStatus {
   sessionId: string | null
@@ -341,7 +341,7 @@ export interface SessionQueueStatus {
 }
 
 /**
- * Queue status with camelCase properties for SDK consumers.
+ * Queue status scoped to a workspace.
  */
 export interface QueueStatus {
   totalWorkUnits: number

@@ -49,7 +49,9 @@ export const PeerMetadataSchema = z.record(z.string(), z.unknown())
 /**
  * Schema for peer configuration.
  */
-export const PeerConfigSchema = z.record(z.string(), z.unknown())
+export const PeerConfigSchema = z.object({
+  observeMe: z.boolean().nullable().optional(),
+})
 
 /**
  * Schema for peer ID validation.
@@ -120,7 +122,7 @@ export const MessageConfigurationSchema = z
   .optional()
 
 /**
- * Schema for message input (camelCase, user-facing).
+ * Schema for message input.
  */
 export const MessageInputSchema = z.object({
   peerId: PeerIdSchema,
@@ -357,6 +359,38 @@ export type SessionPeerConfigApi = {
 }
 
 /**
+ * API format for peer config.
+ */
+export type PeerConfigApi = {
+  observe_me?: boolean | null
+}
+
+/**
+ * Transform peer config to API format.
+ */
+export function peerConfigToApi(
+  config: { observeMe?: boolean | null } | undefined
+): PeerConfigApi | undefined {
+  if (!config) return undefined
+  return {
+    observe_me: config.observeMe,
+  }
+}
+
+/**
+ * Transform peer config from snake_case (API) to camelCase (SDK).
+ */
+export function peerConfigFromApi(
+  config: PeerConfigApi | Record<string, unknown> | undefined
+): { observeMe?: boolean | null } | undefined {
+  if (!config) return undefined
+  const apiConfig = config as PeerConfigApi
+  return {
+    observeMe: apiConfig.observe_me,
+  }
+}
+
+/**
  * Check if a value is a config object (has observeMe or observeOthers).
  */
 function isSessionPeerConfig(
@@ -437,7 +471,7 @@ export const PeerRemovalSchema = z.union([
 ])
 
 /**
- * Schema for message addition to session (camelCase input).
+ * Schema for message addition to session.
  */
 export const MessageAdditionSchema = z.union([
   MessageInputSchema,

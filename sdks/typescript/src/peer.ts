@@ -26,17 +26,17 @@ import {
   LimitSchema,
   MessageContentSchema,
   MessageMetadataSchema,
+  type PeerConfig,
   PeerConfigSchema,
   PeerGetRepresentationParamsSchema,
   PeerMetadataSchema,
+  peerConfigFromApi,
+  peerConfigToApi,
   SearchQuerySchema,
 } from './validation'
 
 /**
  * Represents context for a peer, including representation and peer card.
- *
- * This class wraps the API response with camelCase properties for consistency
- * with the rest of the SDK.
  */
 export class PeerContext {
   /**
@@ -116,7 +116,7 @@ export class Peer {
   /**
    * Private cached configuration for this peer.
    */
-  private _configuration?: Record<string, unknown>
+  private _configuration?: PeerConfig
 
   /**
    * Cached metadata for this peer. May be stale if the peer
@@ -136,7 +136,7 @@ export class Peer {
    * Call getConfiguration() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get configuration(): Record<string, unknown> | undefined {
+  get configuration(): PeerConfig | undefined {
     return this._configuration
   }
 
@@ -147,14 +147,14 @@ export class Peer {
    * @param workspaceId - Workspace ID for scoping operations
    * @param http - Reference to the HTTP client instance
    * @param metadata - Optional metadata to initialize the cached value
-   * @param configuration - Optional configuration to initialize the cached value
+   * @param configuration - Optional configuration to initialize the cached value (camelCase)
    */
   constructor(
     id: string,
     workspaceId: string,
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
-    configuration?: Record<string, unknown>,
+    configuration?: PeerConfig,
     ensureWorkspace: () => Promise<void> = async () => undefined
   ) {
     this.id = id
@@ -564,34 +564,32 @@ export class Peer {
    * Get the current workspace-level configuration for this peer.
    *
    * Makes an API call to retrieve configuration associated with this peer.
-   * Configuration currently includes one optional flag, `observe_me`.
+   * Configuration currently includes one optional flag, `observeMe`.
    * This method also updates the cached configuration property.
    *
-   * @returns Promise resolving to a dictionary containing the peer's configuration
+   * @returns Promise resolving to the peer's configuration
    */
-  async getConfiguration(): Promise<Record<string, unknown>> {
+  async getConfiguration(): Promise<PeerConfig> {
     const peer = await this._getOrCreate({ id: this.id })
-    this._configuration = peer.configuration || {}
+    this._configuration = peerConfigFromApi(peer.configuration) || {}
     return this._configuration
   }
 
   /**
    * Set the configuration for this peer. Currently the only supported configuration
-   * value is the `observe_me` flag, which controls whether derivation tasks
-   * should be created for this peer's global representation. Default is True.
+   * value is the `observeMe` flag, which controls whether derivation tasks
+   * should be created for this peer's global representation. Default is true.
    *
    * Makes an API call to update the configuration associated with this peer.
    * This will overwrite any existing configuration with the provided values.
    * This method also updates the cached configuration property.
    *
-   * @param configuration - A dictionary of configuration to associate with this peer.
-   *                        Keys must be strings, values can be any JSON-serializable type
+   * @param configuration - Configuration to associate with this peer.
+   *                        Supports `observeMe` (boolean) to control observation.
    */
-  async setConfiguration(
-    configuration: Record<string, unknown>
-  ): Promise<void> {
+  async setConfiguration(configuration: PeerConfig): Promise<void> {
     const validatedConfig = PeerConfigSchema.parse(configuration)
-    await this._update({ configuration: validatedConfig })
+    await this._update({ configuration: peerConfigToApi(validatedConfig) })
     this._configuration = validatedConfig
   }
 
@@ -604,7 +602,7 @@ export class Peer {
   async refresh(): Promise<void> {
     const peer = await this._getOrCreate({ id: this.id })
     this._metadata = peer.metadata || {}
-    this._configuration = peer.configuration || {}
+    this._configuration = peerConfigFromApi(peer.configuration) || {}
   }
 
   /**

@@ -26,6 +26,8 @@ import {
   PeerIdSchema,
   type PeerMetadata,
   PeerMetadataSchema,
+  peerConfigFromApi,
+  peerConfigToApi,
   type QueueStatusOptions,
   SearchQuerySchema,
   type SessionConfig,
@@ -367,7 +369,7 @@ export class Honcho {
     if (validatedConfiguration || validatedMetadata) {
       const peerData = await this._getOrCreatePeer(this.workspaceId, {
         id: validatedId,
-        configuration: validatedConfiguration,
+        configuration: peerConfigToApi(validatedConfiguration),
         metadata: validatedMetadata,
       })
       return new Peer(
@@ -375,7 +377,7 @@ export class Honcho {
         this.workspaceId,
         this._http,
         peerData.metadata ?? undefined,
-        peerData.configuration ?? undefined,
+        peerConfigFromApi(peerData.configuration) ?? undefined,
         () => this._ensureWorkspace()
       )
     }
@@ -425,7 +427,7 @@ export class Honcho {
           this.workspaceId,
           this._http,
           peer.metadata ?? undefined,
-          peer.configuration ?? undefined,
+          peerConfigFromApi(peer.configuration) ?? undefined,
           () => this._ensureWorkspace()
         ),
       fetchNextPage

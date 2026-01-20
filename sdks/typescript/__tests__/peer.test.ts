@@ -63,7 +63,7 @@ describe('Peer', () => {
     })
 
     test('creates peer with configuration', async () => {
-      const config = { observe_me: false }
+      const config = { observeMe: false }
       const peer = await client.peer('peer-with-config', { configuration: config })
 
       expect(peer.id).toBe('peer-with-config')
@@ -72,7 +72,7 @@ describe('Peer', () => {
 
     test('creates peer with both metadata and configuration', async () => {
       const metadata = { role: 'user' }
-      const config = { observe_me: true }
+      const config = { observeMe: true }
       const peer = await client.peer('peer-with-both', { metadata, configuration: config })
 
       expect(peer.metadata).toEqual(metadata)
@@ -155,10 +155,10 @@ describe('Peer', () => {
     test('setConfiguration updates peer configuration', async () => {
       const peer = await client.peer('config-update-peer')
 
-      await peer.setConfiguration({ observe_me: false })
+      await peer.setConfiguration({ observeMe: false })
       const config = await peer.getConfiguration()
 
-      expect(config).toEqual({ observe_me: false })
+      expect(config).toEqual({ observeMe: false })
     })
 
     test('refresh updates cached values', async () => {
