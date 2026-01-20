@@ -11,7 +11,16 @@ from typing import Any, cast
 
 import httpx
 from anthropic import AsyncAnthropic
-from honcho.api_types import MessageCreateParams, QueueStatusResponse
+from honcho.api_types import (
+    MessageCreateParams,
+    QueueStatusResponse,
+)
+from honcho.api_types import (
+    SessionConfiguration as SDKSessionConfiguration,
+)
+from honcho.api_types import (
+    WorkspaceConfiguration as SDKWorkspaceConfiguration,
+)
 from honcho.session import Session
 from honcho.session_context import SessionContext
 from pydantic import ValidationError
@@ -177,9 +186,10 @@ class UnifiedTestExecutor:
 
         # 1. Apply workspace config if present
         if test_def.workspace_config:
-            await self.client.aio.set_configuration(
+            sdk_config = SDKWorkspaceConfiguration.model_validate(
                 test_def.workspace_config.model_dump(exclude_none=True)
             )
+            await self.client.aio.set_configuration(sdk_config)
 
         for i, step in enumerate(test_def.steps):
             logger.info(f"Executing step {i + 1}: {step.step_type}")
@@ -194,22 +204,29 @@ class UnifiedTestExecutor:
 
     async def execute_step(self, step: Any):
         if isinstance(step, SetWorkspaceConfigAction):
-            await self.client.aio.set_configuration(
+            sdk_config = SDKWorkspaceConfiguration.model_validate(
                 step.config.model_dump(exclude_none=True)
             )
+            await self.client.aio.set_configuration(sdk_config)
 
         elif isinstance(step, SetSessionConfigAction):
             session = await self.client.aio.session(id=step.session_id)
-            await session.aio.set_configuration(
+            sdk_config = SDKSessionConfiguration.model_validate(
                 step.config.model_dump(exclude_none=True)
             )
+            await session.aio.set_configuration(sdk_config)
 
         elif isinstance(step, CreateSessionAction):
+            sdk_config = (
+                SDKSessionConfiguration.model_validate(
+                    step.config.model_dump(exclude_none=True)
+                )
+                if step.config
+                else None
+            )
             session = await self.client.aio.session(
                 id=step.session_id,
-                configuration=step.config.model_dump(exclude_none=True)
-                if step.config
-                else None,
+                configuration=sdk_config,
             )
 
             if step.peer_configs:

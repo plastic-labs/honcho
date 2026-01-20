@@ -34,12 +34,15 @@ from .api_types import (
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
+    PeerConfig,
     PeerContextResponse,
     PeerResponse,
     QueueStatusResponse,
     RepresentationResponse,
+    SessionConfiguration,
     SessionPeerConfig,
     SessionResponse,
+    WorkspaceConfiguration,
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
@@ -107,26 +110,52 @@ class HonchoAio(AsyncMetadataConfigMixin):
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
         workspace = WorkspaceResponse.model_validate(data)
-        return workspace.metadata or {}, workspace.configuration or {}
+        # Return configuration as dict for mixin compatibility
+        return workspace.metadata or {}, workspace.configuration.model_dump(
+            exclude_none=True
+        )
 
     def _set_metadata(self, metadata: dict[str, object]) -> None:
         self._honcho._metadata = metadata
 
     def _set_configuration(self, configuration: dict[str, object]) -> None:
-        self._honcho._configuration = configuration
+        # Convert dict to typed configuration
+        self._honcho._configuration = WorkspaceConfiguration.model_validate(
+            configuration
+        )
 
     def _get_metadata(self) -> dict[str, object]:
         return self._honcho._metadata or {}
 
     def _get_configuration(self) -> dict[str, object]:
-        return self._honcho._configuration or {}
+        if self._honcho._configuration is None:
+            return {}
+        return self._honcho._configuration.model_dump(exclude_none=True)
+
+    async def get_configuration(self) -> WorkspaceConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Get configuration from the server asynchronously."""
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        workspace = WorkspaceResponse.model_validate(data)
+        self._honcho._metadata = workspace.metadata or {}
+        self._honcho._configuration = workspace.configuration
+        return self._honcho._configuration
+
+    async def set_configuration(self, configuration: WorkspaceConfiguration) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Set configuration on the server asynchronously."""
+        await self._get_async_http_client().put(
+            self._get_update_route(),
+            body={"configuration": configuration.model_dump(exclude_none=True)},
+        )
+        self._honcho._configuration = configuration
 
     async def peer(
         self,
         id: str,
         *,
         metadata: dict[str, object] | None = None,
-        configuration: dict[str, object] | None = None,
+        configuration: PeerConfig | None = None,
     ) -> Peer:
         """
         Get or create a peer with the given ID asynchronously.
@@ -145,7 +174,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             if metadata is not None:
                 body["metadata"] = metadata
             if configuration is not None:
-                body["configuration"] = configuration
+                body["configuration"] = configuration.model_dump(exclude_none=True)
 
             data = await self._honcho._async_http_client.post(
                 routes.peers(self._honcho.workspace_id), body=body
@@ -198,7 +227,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         id: str,
         *,
         metadata: dict[str, object] | None = None,
-        configuration: dict[str, object] | None = None,
+        configuration: SessionConfiguration | None = None,
     ) -> Session:
         """
         Get or create a session with the given ID asynchronously.
@@ -217,7 +246,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             if metadata is not None:
                 body["metadata"] = metadata
             if configuration is not None:
-                body["configuration"] = configuration
+                body["configuration"] = configuration.model_dump(exclude_none=True)
 
             data = await self._honcho._async_http_client.post(
                 routes.sessions(self._honcho.workspace_id), body=body
@@ -371,19 +400,42 @@ class PeerAio(AsyncMetadataConfigMixin):
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
         peer = PeerResponse.model_validate(data)
-        return peer.metadata or {}, peer.configuration or {}
+        # Return configuration as dict for mixin compatibility
+        return peer.metadata or {}, peer.configuration.model_dump(exclude_none=True)
 
     def _set_metadata(self, metadata: dict[str, object]) -> None:
         self._peer._metadata = metadata
 
     def _set_configuration(self, configuration: dict[str, object]) -> None:
-        self._peer._configuration = configuration
+        # Convert dict to typed configuration
+        self._peer._configuration = PeerConfig.model_validate(configuration)
 
     def _get_metadata(self) -> dict[str, object]:
         return self._peer._metadata or {}
 
     def _get_configuration(self) -> dict[str, object]:
-        return self._peer._configuration or {}
+        if self._peer._configuration is None:
+            return {}
+        return self._peer._configuration.model_dump(exclude_none=True)
+
+    async def get_configuration(self) -> PeerConfig:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Get configuration from the server asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._peer._metadata = peer.metadata or {}
+        self._peer._configuration = peer.configuration
+        return self._peer._configuration
+
+    async def set_configuration(self, configuration: PeerConfig) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Set configuration on the server asynchronously."""
+        await self._get_async_http_client().put(
+            self._get_update_route(),
+            body={"configuration": configuration.model_dump(exclude_none=True)},
+        )
+        self._peer._configuration = configuration
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def chat(
@@ -619,19 +671,46 @@ class SessionAio(AsyncMetadataConfigMixin):
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
         session = SessionResponse.model_validate(data)
-        return session.metadata or {}, session.configuration or {}
+        # Return configuration as dict for mixin compatibility
+        return session.metadata or {}, session.configuration.model_dump(
+            exclude_none=True
+        )
 
     def _set_metadata(self, metadata: dict[str, object]) -> None:
         self._session._metadata = metadata
 
     def _set_configuration(self, configuration: dict[str, object]) -> None:
-        self._session._configuration = configuration
+        # Convert dict to typed configuration
+        self._session._configuration = SessionConfiguration.model_validate(
+            configuration
+        )
 
     def _get_metadata(self) -> dict[str, object]:
         return self._session._metadata or {}
 
     def _get_configuration(self) -> dict[str, object]:
-        return self._session._configuration or {}
+        if self._session._configuration is None:
+            return {}
+        return self._session._configuration.model_dump(exclude_none=True)
+
+    async def get_configuration(self) -> SessionConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Get configuration from the server asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        session = SessionResponse.model_validate(data)
+        self._session._metadata = session.metadata or {}
+        self._session._configuration = session.configuration
+        return self._session._configuration
+
+    async def set_configuration(self, configuration: SessionConfiguration) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Set configuration on the server asynchronously."""
+        await self._get_async_http_client().put(
+            self._get_update_route(),
+            body={"configuration": configuration.model_dump(exclude_none=True)},
+        )
+        self._session._configuration = configuration
 
     async def add_peers(
         self,

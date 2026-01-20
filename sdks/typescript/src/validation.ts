@@ -70,10 +70,56 @@ export const PeerIdSchema = z
  */
 export const SessionMetadataSchema = z.record(z.string(), z.unknown())
 
+// =============================================================================
+// Configuration Schemas (typed)
+// =============================================================================
+
+/**
+ * Schema for reasoning configuration.
+ * Used in workspace, session, and message configuration.
+ */
+export const ReasoningConfigSchema = z.object({
+  enabled: z.boolean().nullable().optional(),
+  customInstructions: z.string().nullable().optional(),
+})
+
+/**
+ * Schema for peer card configuration.
+ * Used in workspace and session configuration.
+ */
+export const PeerCardConfigSchema = z.object({
+  use: z.boolean().nullable().optional(),
+  create: z.boolean().nullable().optional(),
+})
+
+/**
+ * Schema for summary configuration.
+ * Used in workspace and session configuration.
+ */
+export const SummaryConfigSchema = z.object({
+  enabled: z.boolean().nullable().optional(),
+  messagesPerShortSummary: z.number().int().min(10).nullable().optional(),
+  messagesPerLongSummary: z.number().int().min(20).nullable().optional(),
+})
+
+/**
+ * Schema for dream configuration.
+ * Used in workspace and session configuration.
+ */
+export const DreamConfigSchema = z.object({
+  enabled: z.boolean().nullable().optional(),
+})
+
 /**
  * Schema for session configuration.
+ * Includes reasoning, peer card, summary, and dream settings.
  */
-export const SessionConfigSchema = z.record(z.string(), z.unknown())
+export const SessionConfigSchema = z.object({
+  reasoning: ReasoningConfigSchema.nullable().optional(),
+  peerCard: PeerCardConfigSchema.nullable().optional(),
+  summary: SummaryConfigSchema.nullable().optional(),
+  dream: DreamConfigSchema.nullable().optional(),
+})
 
 /**
  * Schema for session ID validation.
@@ -114,10 +160,12 @@ export const MessageMetadataSchema = z
 
 /**
  * Schema for message configuration.
- * Configuration can include deriver and peer_card settings.
+ * Only includes reasoning settings.
  */
 export const MessageConfigurationSchema = z
-  .record(z.string(), z.unknown())
+  .object({
+    reasoning: ReasoningConfigSchema.nullable().optional(),
+  })
   .nullable()
   .optional()
 
@@ -390,6 +438,285 @@ export function peerConfigFromApi(
   }
 }
 
+// =============================================================================
+// Configuration API Types
+// =============================================================================
+
+/**
+ * API format for reasoning config (snake_case).
+ */
+export type ReasoningConfigApi = {
+  enabled?: boolean | null
+  custom_instructions?: string | null
+}
+
+/**
+ * API format for peer card config (snake_case).
+ */
+export type PeerCardConfigApi = {
+  use?: boolean | null
+  create?: boolean | null
+}
+
+/**
+ * API format for summary config (snake_case).
+ */
+export type SummaryConfigApi = {
+  enabled?: boolean | null
+  messages_per_short_summary?: number | null
+  messages_per_long_summary?: number | null
+}
+
+/**
+ * API format for dream config (snake_case).
+ */
+export type DreamConfigApi = {
+  enabled?: boolean | null
+}
+
+/**
+ * API format for workspace configuration (snake_case).
+ */
+export type WorkspaceConfigApi = {
+  reasoning?: ReasoningConfigApi | null
+  peer_card?: PeerCardConfigApi | null
+  summary?: SummaryConfigApi | null
+  dream?: DreamConfigApi | null
+}
+
+/**
+ * API format for session configuration (same as workspace).
+ */
+export type SessionConfigApi = WorkspaceConfigApi
+
+/**
+ * API format for message configuration (snake_case).
+ */
+export type MessageConfigApi = {
+  reasoning?: ReasoningConfigApi | null
+}
+
+// =============================================================================
+// Configuration Conversion Functions
+// =============================================================================
+
+/**
+ * Transform reasoning config to API format.
+ */
+function reasoningConfigToApi(
+  config:
+    | { enabled?: boolean | null; customInstructions?: string | null }
+    | null
+    | undefined
+): ReasoningConfigApi | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    enabled: config.enabled,
+    custom_instructions: config.customInstructions,
+  }
+}
+
+/**
+ * Transform reasoning config from API format.
+ */
+function reasoningConfigFromApi(
+  config: ReasoningConfigApi | null | undefined
+):
+  | { enabled?: boolean | null; customInstructions?: string | null }
+  | null
+  | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    enabled: config.enabled,
+    customInstructions: config.custom_instructions,
+  }
+}
+
+/**
+ * Transform peer card config to API format.
+ */
+function peerCardConfigToApi(
+  config: { use?: boolean | null; create?: boolean | null } | null | undefined
+): PeerCardConfigApi | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    use: config.use,
+    create: config.create,
+  }
+}
+
+/**
+ * Transform peer card config from API format.
+ */
+function peerCardConfigFromApi(
+  config: PeerCardConfigApi | null | undefined
+): { use?: boolean | null; create?: boolean | null } | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    use: config.use,
+    create: config.create,
+  }
+}
+
+/**
+ * Transform summary config to API format.
+ */
+function summaryConfigToApi(
+  config:
+    | {
+        enabled?: boolean | null
+        messagesPerShortSummary?: number | null
+        messagesPerLongSummary?: number | null
+      }
+    | null
+    | undefined
+): SummaryConfigApi | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    enabled: config.enabled,
+    messages_per_short_summary: config.messagesPerShortSummary,
+    messages_per_long_summary: config.messagesPerLongSummary,
+  }
+}
+
+/**
+ * Transform summary config from API format.
+ */
+function summaryConfigFromApi(config: SummaryConfigApi | null | undefined):
+  | {
+      enabled?: boolean | null
+      messagesPerShortSummary?: number | null
+      messagesPerLongSummary?: number | null
+    }
+  | null
+  | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    enabled: config.enabled,
+    messagesPerShortSummary: config.messages_per_short_summary,
+    messagesPerLongSummary: config.messages_per_long_summary,
+  }
+}
+
+/**
+ * Transform dream config to API format.
+ */
+function dreamConfigToApi(
+  config: { enabled?: boolean | null } | null | undefined
+): DreamConfigApi | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    enabled: config.enabled,
+  }
+}
+
+/**
+ * Transform dream config from API format.
+ */
+function dreamConfigFromApi(
+  config: DreamConfigApi | null | undefined
+): { enabled?: boolean | null } | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    enabled: config.enabled,
+  }
+}
+
+/**
+ * Transform workspace config to API format (camelCase to snake_case).
+ */
+export function workspaceConfigToApi(
+  config: WorkspaceConfig | undefined
+): WorkspaceConfigApi | undefined {
+  if (!config) return undefined
+  return {
+    reasoning: reasoningConfigToApi(config.reasoning),
+    peer_card: peerCardConfigToApi(config.peerCard),
+    summary: summaryConfigToApi(config.summary),
+    dream: dreamConfigToApi(config.dream),
+  }
+}
+
+/**
+ * Transform workspace config from API format (snake_case to camelCase).
+ */
+export function workspaceConfigFromApi(
+  config: WorkspaceConfigApi | Record<string, unknown> | undefined
+): WorkspaceConfig | undefined {
+  if (!config) return undefined
+  const apiConfig = config as WorkspaceConfigApi
+  return {
+    reasoning: reasoningConfigFromApi(apiConfig.reasoning),
+    peerCard: peerCardConfigFromApi(apiConfig.peer_card),
+    summary: summaryConfigFromApi(apiConfig.summary),
+    dream: dreamConfigFromApi(apiConfig.dream),
+  }
+}
+
+/**
+ * Transform session config to API format (camelCase to snake_case).
+ */
+export function sessionConfigToApi(
+  config: SessionConfig | undefined
+): SessionConfigApi | undefined {
+  if (!config) return undefined
+  return {
+    reasoning: reasoningConfigToApi(config.reasoning),
+    peer_card: peerCardConfigToApi(config.peerCard),
+    summary: summaryConfigToApi(config.summary),
+    dream: dreamConfigToApi(config.dream),
+  }
+}
+
+/**
+ * Transform session config from API format (snake_case to camelCase).
+ */
+export function sessionConfigFromApi(
+  config: SessionConfigApi | Record<string, unknown> | undefined
+): SessionConfig | undefined {
+  if (!config) return undefined
+  const apiConfig = config as SessionConfigApi
+  return {
+    reasoning: reasoningConfigFromApi(apiConfig.reasoning),
+    peerCard: peerCardConfigFromApi(apiConfig.peer_card),
+    summary: summaryConfigFromApi(apiConfig.summary),
+    dream: dreamConfigFromApi(apiConfig.dream),
+  }
+}
+
+/**
+ * Transform message config to API format (camelCase to snake_case).
+ */
+export function messageConfigToApi(
+  config: MessageConfiguration | undefined
+): MessageConfigApi | undefined {
+  if (!config) return undefined
+  return {
+    reasoning: reasoningConfigToApi(config.reasoning),
+  }
+}
+
+/**
+ * Transform message config from API format (snake_case to camelCase).
+ */
+export function messageConfigFromApi(
+  config: MessageConfigApi | Record<string, unknown> | undefined
+): MessageConfiguration | undefined {
+  if (!config) return undefined
+  const apiConfig = config as MessageConfigApi
+  return {
+    reasoning: reasoningConfigFromApi(apiConfig.reasoning),
+  }
+}
+
 /**
  * Check if a value is a config object (has observeMe or observeOthers).
  */
@@ -488,7 +815,7 @@ export const MessageAdditionToApiSchema = MessageAdditionSchema.transform(
       peer_id: msg.peerId,
       content: msg.content,
       metadata: msg.metadata,
-      configuration: msg.configuration,
+      configuration: messageConfigToApi(msg.configuration ?? undefined),
       created_at: msg.createdAt,
     }))
   }
@@ -501,8 +828,14 @@ export const WorkspaceMetadataSchema = z.record(z.string(), z.unknown())
 
 /**
  * Schema for workspace configuration.
+ * Includes reasoning, peer card, summary, and dream settings.
  */
-export const WorkspaceConfigSchema = z.record(z.string(), z.unknown())
+export const WorkspaceConfigSchema = z.object({
+  reasoning: ReasoningConfigSchema.nullable().optional(),
+  peerCard: PeerCardConfigSchema.nullable().optional(),
+  summary: SummaryConfigSchema.nullable().optional(),
+  dream: DreamConfigSchema.nullable().optional(),
+})
 
 /**
  * Schema for limit.
@@ -559,5 +892,10 @@ export type PeerRemoval = z.infer<typeof PeerRemovalSchema>
 export type MessageAddition = z.infer<typeof MessageAdditionSchema>
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
+export type ReasoningConfig = z.infer<typeof ReasoningConfigSchema>
+export type PeerCardConfig = z.infer<typeof PeerCardConfigSchema>
+export type SummaryConfig = z.infer<typeof SummaryConfigSchema>
+export type DreamConfig = z.infer<typeof DreamConfigSchema>
+export type MessageConfiguration = z.infer<typeof MessageConfigurationSchema>
 export type Limit = z.infer<typeof LimitSchema>
 export type ConclusionQueryParams = z.infer<typeof ConclusionQueryParamsSchema>

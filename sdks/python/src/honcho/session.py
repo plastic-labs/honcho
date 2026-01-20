@@ -16,6 +16,7 @@ from .api_types import (
     PeerResponse,
     QueueStatusResponse,
     RepresentationResponse,
+    SessionConfiguration,
     SessionPeerConfig,
     SessionResponse,
 )
@@ -60,7 +61,7 @@ class Session(SessionBase, MetadataConfigMixin):
     """
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
-    _configuration: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: SessionConfiguration | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -69,7 +70,7 @@ class Session(SessionBase, MetadataConfigMixin):
         return self._metadata
 
     @property
-    def configuration(self) -> dict[str, object] | None:
+    def configuration(self) -> SessionConfiguration | None:
         """Cached configuration for this session. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
 
@@ -91,7 +92,45 @@ class Session(SessionBase, MetadataConfigMixin):
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
         session = SessionResponse.model_validate(data)
-        return session.metadata or {}, session.configuration or {}
+        # Return configuration as dict for mixin compatibility
+        return session.metadata or {}, session.configuration.model_dump(
+            exclude_none=True
+        )
+
+    def get_configuration(self) -> SessionConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """
+        Get configuration from the server and update the cache.
+
+        Returns:
+            A SessionConfiguration object containing the configuration settings.
+        """
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        session = SessionResponse.model_validate(data)
+        self._metadata = session.metadata or {}
+        self._configuration = session.configuration
+        return self._configuration
+
+    @validate_call
+    def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        configuration: SessionConfiguration = Field(
+            ..., description="Configuration to set"
+        ),
+    ) -> None:
+        """
+        Set configuration on the server and update the cache.
+
+        Args:
+            configuration: A SessionConfiguration object with configuration settings.
+        """
+        self._get_http_client().put(
+            self._get_update_route(),
+            body={"configuration": configuration.model_dump(exclude_none=True)},
+        )
+        self._configuration = configuration
 
     @property
     def aio(self) -> "SessionAio":
@@ -128,7 +167,7 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
         ),
-        configuration: dict[str, object] | None = Field(
+        configuration: SessionConfiguration | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
@@ -161,13 +200,13 @@ class Session(SessionBase, MetadataConfigMixin):
             if metadata is not None:
                 body["metadata"] = metadata
             if configuration is not None:
-                body["configuration"] = configuration
+                body["configuration"] = configuration.model_dump(exclude_none=True)
 
             data = honcho._http.post(routes.sessions(honcho.workspace_id), body=body)
             session_data = SessionResponse.model_validate(data)
             # Update cached values with API response
             self._metadata = session_data.metadata
-            self._configuration = session_data.configuration
+            self._configuration = session_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
 
     def add_peers(
         self,

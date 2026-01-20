@@ -35,10 +35,14 @@ import {
   SessionIdSchema,
   type SessionMetadata,
   SessionMetadataSchema,
+  sessionConfigFromApi,
+  sessionConfigToApi,
   type WorkspaceConfig,
   WorkspaceConfigSchema,
   type WorkspaceMetadata,
   WorkspaceMetadataSchema,
+  workspaceConfigFromApi,
+  workspaceConfigToApi,
 } from './validation'
 
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
@@ -77,7 +81,7 @@ export class Honcho {
   /**
    * Private cached configuration for this workspace.
    */
-  private _configuration?: Record<string, unknown>
+  private _configuration?: WorkspaceConfig
   /**
    * Memoized workspace get-or-create call.
    */
@@ -101,7 +105,7 @@ export class Honcho {
    * Call getConfiguration() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get configuration(): Record<string, unknown> | undefined {
+  get configuration(): WorkspaceConfig | undefined {
     return this._configuration
   }
 
@@ -171,14 +175,14 @@ export class Honcho {
     id: string,
     params?: {
       metadata?: Record<string, unknown>
-      configuration?: Record<string, unknown>
+      configuration?: WorkspaceConfig
     }
   ): Promise<WorkspaceResponse> {
     return this._http.post<WorkspaceResponse>(`/${API_VERSION}/workspaces`, {
       body: {
         id,
         metadata: params?.metadata,
-        configuration: params?.configuration,
+        configuration: workspaceConfigToApi(params?.configuration),
       },
     })
   }
@@ -203,12 +207,17 @@ export class Honcho {
     workspaceId: string,
     params: {
       metadata?: Record<string, unknown>
-      configuration?: Record<string, unknown>
+      configuration?: WorkspaceConfig
     }
   ): Promise<WorkspaceResponse> {
     return this._http.put<WorkspaceResponse>(
       `/${API_VERSION}/workspaces/${workspaceId}`,
-      { body: params }
+      {
+        body: {
+          metadata: params.metadata,
+          configuration: workspaceConfigToApi(params.configuration),
+        },
+      }
     )
   }
 
@@ -317,12 +326,18 @@ export class Honcho {
     params: {
       id: string
       metadata?: Record<string, unknown>
-      configuration?: Record<string, unknown>
+      configuration?: SessionConfig
     }
   ): Promise<SessionResponse> {
     return this._http.post<SessionResponse>(
       `/${API_VERSION}/workspaces/${workspaceId}/sessions`,
-      { body: params }
+      {
+        body: {
+          id: params.id,
+          metadata: params.metadata,
+          configuration: sessionConfigToApi(params.configuration),
+        },
+      }
     )
   }
 
@@ -482,7 +497,7 @@ export class Honcho {
         this.workspaceId,
         this._http,
         sessionData.metadata ?? undefined,
-        sessionData.configuration ?? undefined,
+        sessionConfigFromApi(sessionData.configuration) ?? undefined,
         () => this._ensureWorkspace()
       )
     }
@@ -533,7 +548,7 @@ export class Honcho {
           this.workspaceId,
           this._http,
           session.metadata ?? undefined,
-          session.configuration ?? undefined,
+          sessionConfigFromApi(session.configuration) ?? undefined,
           () => this._ensureWorkspace()
         ),
       fetchNextPage
@@ -584,13 +599,13 @@ export class Honcho {
    * Configuration includes settings that control workspace behavior.
    * This method also updates the cached configuration property.
    *
-   * @returns Promise resolving to a dictionary containing the workspace's configuration.
-   *          Returns an empty dictionary if no configuration is set
+   * @returns Promise resolving to the workspace's configuration.
+   *          Returns an empty object if no configuration is set
    */
-  async getConfiguration(): Promise<Record<string, unknown>> {
+  async getConfiguration(): Promise<WorkspaceConfig> {
     await this._ensureWorkspace()
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
-    this._configuration = workspace.configuration || {}
+    this._configuration = workspaceConfigFromApi(workspace.configuration) || {}
     return this._configuration
   }
 
@@ -601,8 +616,8 @@ export class Honcho {
    * This will overwrite any existing configuration with the provided values.
    * This method also updates the cached configuration property.
    *
-   * @param configuration - A dictionary of configuration to associate with the workspace.
-   *                        Keys must be strings, values can be any JSON-serializable type
+   * @param configuration - Configuration to associate with the workspace.
+   *                        Includes reasoning, peerCard, summary, and dream settings.
    */
   async setConfiguration(configuration: WorkspaceConfig): Promise<void> {
     await this._ensureWorkspace()
@@ -623,7 +638,7 @@ export class Honcho {
     await this._ensureWorkspace()
     const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
-    this._configuration = workspace.configuration || {}
+    this._configuration = workspaceConfigFromApi(workspace.configuration) || {}
   }
 
   /**

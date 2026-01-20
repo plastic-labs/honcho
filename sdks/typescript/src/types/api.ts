@@ -3,6 +3,12 @@
  * These types mirror the Pydantic schemas from the backend.
  */
 
+import type {
+  MessageConfigApi,
+  SessionConfigApi,
+  WorkspaceConfigApi,
+} from '../validation'
+
 // =============================================================================
 // Workspace Types
 // =============================================================================
@@ -10,19 +16,19 @@
 export interface WorkspaceResponse {
   id: string
   metadata: Record<string, unknown>
-  configuration: Record<string, unknown>
+  configuration: WorkspaceConfigApi
   created_at: string
 }
 
 export interface WorkspaceCreateParams {
   id: string
   metadata?: Record<string, unknown>
-  configuration?: Record<string, unknown>
+  configuration?: WorkspaceConfigApi
 }
 
 export interface WorkspaceUpdateParams {
   metadata?: Record<string, unknown>
-  configuration?: Record<string, unknown>
+  configuration?: WorkspaceConfigApi
 }
 
 export interface WorkspaceListParams {
@@ -115,20 +121,20 @@ export interface SessionResponse {
   workspace_id: string
   is_active: boolean
   metadata: Record<string, unknown>
-  configuration: Record<string, unknown>
+  configuration: SessionConfigApi
   created_at: string
 }
 
 export interface SessionCreateParams {
   id: string
   metadata?: Record<string, unknown>
-  configuration?: Record<string, unknown>
+  configuration?: SessionConfigApi
   peers?: Record<string, SessionPeerConfigParams>
 }
 
 export interface SessionUpdateParams {
   metadata?: Record<string, unknown>
-  configuration?: Record<string, unknown>
+  configuration?: SessionConfigApi
 }
 
 export interface SessionListParams {
@@ -204,7 +210,7 @@ export interface MessageCreateParams {
   peer_id: string
   content: string
   metadata?: Record<string, unknown>
-  configuration?: Record<string, unknown>
+  configuration?: MessageConfigApi
   created_at?: string
 }
 

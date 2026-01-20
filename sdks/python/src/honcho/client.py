@@ -13,9 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 from .aio import HonchoAio
 from .api_types import (
     MessageResponse,
+    PeerConfig,
     PeerResponse,
     QueueStatusResponse,
+    SessionConfiguration,
     SessionResponse,
+    WorkspaceConfiguration,
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
@@ -60,7 +63,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         description="Workspace ID for scoping operations",
     )
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
-    _configuration: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: WorkspaceConfiguration | None = PrivateAttr(default=None)
     _http: HonchoHTTPClient = PrivateAttr()
     _async_http: AsyncHonchoHTTPClient | None = PrivateAttr(default=None)
     _http_config: dict[str, Any] = PrivateAttr()
@@ -73,7 +76,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         return self._metadata
 
     @property
-    def configuration(self) -> dict[str, object] | None:
+    def configuration(self) -> WorkspaceConfiguration | None:
         """Cached configuration for this workspace. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
 
@@ -94,7 +97,44 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
         workspace = WorkspaceResponse.model_validate(data)
-        return workspace.metadata or {}, workspace.configuration or {}
+        # Return configuration as dict for mixin compatibility
+        return workspace.metadata or {}, workspace.configuration.model_dump(
+            exclude_none=True
+        )
+
+    def get_configuration(self) -> WorkspaceConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """
+        Get configuration from the server and update the cache.
+
+        Returns:
+            A WorkspaceConfiguration object containing the configuration settings.
+        """
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        workspace = WorkspaceResponse.model_validate(data)
+        self._metadata = workspace.metadata or {}
+        self._configuration = workspace.configuration
+        return self._configuration
+
+    @validate_call
+    def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        configuration: WorkspaceConfiguration = Field(
+            ..., description="Configuration to set"
+        ),
+    ) -> None:
+        """
+        Set configuration on the server and update the cache.
+
+        Args:
+            configuration: A WorkspaceConfiguration object with configuration settings.
+        """
+        self._get_http_client().put(
+            self._get_update_route(),
+            body={"configuration": configuration.model_dump(exclude_none=True)},
+        )
+        self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
 
     @property
     def base_url(self) -> str:
@@ -257,7 +297,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             None,
             description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
         ),
-        configuration: dict[str, object] | None = Field(
+        configuration: PeerConfig | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
@@ -334,7 +374,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             None,
             description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
         ),
-        configuration: dict[str, object] | None = Field(
+        configuration: SessionConfiguration | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),

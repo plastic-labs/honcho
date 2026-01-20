@@ -14,6 +14,7 @@ from .api_types import (
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
+    PeerConfig,
     PeerContextResponse,
     PeerResponse,
     RepresentationResponse,
@@ -54,7 +55,7 @@ class Peer(PeerBase, MetadataConfigMixin):
     """
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
-    _configuration: dict[str, object] | None = PrivateAttr(default=None)
+    _configuration: PeerConfig | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -63,7 +64,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         return self._metadata
 
     @property
-    def configuration(self) -> dict[str, object] | None:
+    def configuration(self) -> PeerConfig | None:
         """Cached configuration for this peer. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
 
@@ -85,7 +86,41 @@ class Peer(PeerBase, MetadataConfigMixin):
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
         peer = PeerResponse.model_validate(data)
-        return peer.metadata or {}, peer.configuration or {}
+        # Return configuration as dict for mixin compatibility
+        return peer.metadata or {}, peer.configuration.model_dump(exclude_none=True)
+
+    def get_configuration(self) -> PeerConfig:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """
+        Get configuration from the server and update the cache.
+
+        Returns:
+            A PeerConfig object containing the configuration settings.
+        """
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._metadata = peer.metadata or {}
+        self._configuration = peer.configuration
+        return self._configuration
+
+    @validate_call
+    def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        configuration: PeerConfig = Field(..., description="Configuration to set"),
+    ) -> None:
+        """
+        Set configuration on the server and update the cache.
+
+        Args:
+            configuration: A PeerConfig object with configuration settings.
+        """
+        self._get_http_client().put(
+            self._get_update_route(),
+            body={"configuration": configuration.model_dump(exclude_none=True)},
+        )
+        self._configuration = configuration
 
     @property
     def aio(self) -> "PeerAio":
@@ -123,7 +158,7 @@ class Peer(PeerBase, MetadataConfigMixin):
             None,
             description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
         ),
-        configuration: dict[str, object] | None = Field(
+        configuration: PeerConfig | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
@@ -156,13 +191,13 @@ class Peer(PeerBase, MetadataConfigMixin):
             if metadata is not None:
                 body["metadata"] = metadata
             if configuration is not None:
-                body["configuration"] = configuration
+                body["configuration"] = configuration.model_dump(exclude_none=True)
 
             data = honcho._http.post(routes.peers(honcho.workspace_id), body=body)
             peer_data = PeerResponse.model_validate(data)
             # Update cached values with API response
             self._metadata = peer_data.metadata
-            self._configuration = peer_data.configuration
+            self._configuration = peer_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def chat(

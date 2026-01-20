@@ -90,7 +90,7 @@ describe('Honcho Client', () => {
     test('refresh updates both metadata and configuration', async () => {
       // Set values
       await client.setMetadata({ a: 1 })
-      await client.setConfiguration({ b: 2 })
+      await client.setConfiguration({ reasoning: { enabled: true } })
 
       // Create new client with same workspace (simulates stale cache)
       const freshClient = new Honcho({
@@ -104,10 +104,9 @@ describe('Honcho Client', () => {
       expect(freshClient.configuration).toBeUndefined()
 
       // After refresh, cache is populated
-      // Note: server may add default configuration values like reasoning.enabled
       await freshClient.refresh()
       expect(freshClient.metadata).toEqual({ a: 1 })
-      expect(freshClient.configuration).toMatchObject({ b: 2 })
+      expect(freshClient.configuration).toMatchObject({ reasoning: { enabled: true } })
     })
   })
 

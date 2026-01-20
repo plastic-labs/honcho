@@ -71,6 +71,13 @@ class MessageConfiguration(BaseModel):
 # ==============================================================================
 
 
+class PeerConfig(BaseModel):
+    """Configuration for peer-level settings."""
+
+    observe_me: bool | None = None
+    """Whether Honcho will use reasoning to form a representation of this peer."""
+
+
 class SessionPeerConfig(BaseModel):
     """Configuration for a peer within a session."""
 
@@ -96,7 +103,9 @@ class WorkspaceResponse(BaseModel):
 
     id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: dict[str, Any] = Field(default_factory=dict)
+    configuration: WorkspaceConfiguration = Field(
+        default_factory=WorkspaceConfiguration
+    )
     created_at: datetime.datetime
 
 
@@ -137,7 +146,7 @@ class PeerResponse(BaseModel):
     workspace_id: str
     created_at: datetime.datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: dict[str, Any] = Field(default_factory=dict)
+    configuration: PeerConfig = Field(default_factory=PeerConfig)
 
 
 class PeerCreateParams(BaseModel):
@@ -145,14 +154,14 @@ class PeerCreateParams(BaseModel):
 
     id: str = Field(min_length=1, max_length=100)
     metadata: dict[str, Any] | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: PeerConfig | None = None
 
 
 class PeerUpdateParams(BaseModel):
     """Parameters for updating a peer."""
 
     metadata: dict[str, Any] | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: PeerConfig | None = None
 
 
 class PeerListParams(BaseModel):
@@ -208,7 +217,7 @@ class SessionResponse(BaseModel):
     is_active: bool
     workspace_id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: dict[str, Any] = Field(default_factory=dict)
+    configuration: SessionConfiguration = Field(default_factory=SessionConfiguration)
     created_at: datetime.datetime
 
 

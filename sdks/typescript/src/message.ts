@@ -1,4 +1,5 @@
 import type { MessageResponse } from './types/api'
+import type { MessageConfiguration } from './validation'
 
 /**
  * Input for creating a message.
@@ -13,8 +14,8 @@ export interface MessageInput {
   content: string
   /** Optional metadata to associate with the message */
   metadata?: Record<string, unknown>
-  /** Optional configuration for the message */
-  configuration?: Record<string, unknown>
+  /** Optional configuration for the message (reasoning settings) */
+  configuration?: MessageConfiguration
   /** Optional ISO 8601 timestamp for when the message was created */
   createdAt?: string
 }

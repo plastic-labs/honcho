@@ -24,6 +24,8 @@ import {
   FilterSchema,
   type Filters,
   LimitSchema,
+  type MessageConfiguration,
+  MessageConfigurationSchema,
   MessageContentSchema,
   MessageMetadataSchema,
   type PeerConfig,
@@ -505,13 +507,16 @@ export class Peer {
     content: string,
     options?: {
       metadata?: Record<string, unknown>
-      configuration?: Record<string, unknown>
+      configuration?: MessageConfiguration
       createdAt?: string | Date
     }
   ): MessageInput {
     const validatedContent = MessageContentSchema.parse(content)
     const validatedMetadata = options?.metadata
       ? MessageMetadataSchema.parse(options.metadata)
+      : undefined
+    const validatedConfiguration = options?.configuration
+      ? MessageConfigurationSchema.parse(options.configuration)
       : undefined
 
     const createdAt =
@@ -523,7 +528,7 @@ export class Peer {
       peerId: this.id,
       content: validatedContent,
       metadata: validatedMetadata,
-      configuration: options?.configuration,
+      configuration: validatedConfiguration,
       createdAt,
     }
   }

@@ -34,10 +34,13 @@ import {
   PeerRemovalSchema,
   type QueueStatusOptions,
   SearchQuerySchema,
+  type SessionConfig,
   SessionConfigSchema,
   SessionMetadataSchema,
   type SessionPeerConfig,
   SessionPeerConfigSchema,
+  sessionConfigFromApi,
+  sessionConfigToApi,
 } from './validation'
 
 /**
@@ -75,7 +78,7 @@ export class Session {
   readonly workspaceId: string
   private _http: HonchoHTTPClient
   private _metadata?: Record<string, unknown>
-  private _configuration?: Record<string, unknown>
+  private _configuration?: SessionConfig
   private _ensureWorkspace: () => Promise<void>
 
   /**
@@ -96,7 +99,7 @@ export class Session {
    * Call getConfiguration() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get configuration(): Record<string, unknown> | undefined {
+  get configuration(): SessionConfig | undefined {
     return this._configuration
   }
 
@@ -114,7 +117,7 @@ export class Session {
     workspaceId: string,
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
-    configuration?: Record<string, unknown>,
+    configuration?: SessionConfig,
     ensureWorkspace: () => Promise<void> = async () => undefined
   ) {
     this.id = id
@@ -132,23 +135,34 @@ export class Session {
   private async _getOrCreate(params: {
     id: string
     metadata?: Record<string, unknown>
-    configuration?: Record<string, unknown>
+    configuration?: SessionConfig
   }): Promise<SessionResponse> {
     await this._ensureWorkspace()
     return this._http.post<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions`,
-      { body: params }
+      {
+        body: {
+          id: params.id,
+          metadata: params.metadata,
+          configuration: sessionConfigToApi(params.configuration),
+        },
+      }
     )
   }
 
   private async _update(params: {
     metadata?: Record<string, unknown>
-    configuration?: Record<string, unknown>
+    configuration?: SessionConfig
   }): Promise<SessionResponse> {
     await this._ensureWorkspace()
     return this._http.put<SessionResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}`,
-      { body: params }
+      {
+        body: {
+          metadata: params.metadata,
+          configuration: sessionConfigToApi(params.configuration),
+        },
+      }
     )
   }
 
@@ -580,12 +594,12 @@ export class Session {
    * Makes an API call to retrieve configuration associated with this session.
    * This method also updates the cached configuration property.
    *
-   * @returns Promise resolving to a dictionary containing the session's configuration.
-   *          Returns an empty dictionary if no configuration is set
+   * @returns Promise resolving to the session's configuration.
+   *          Returns an empty object if no configuration is set
    */
-  async getConfiguration(): Promise<Record<string, unknown>> {
+  async getConfiguration(): Promise<SessionConfig> {
     const session = await this._getOrCreate({ id: this.id })
-    this._configuration = session.configuration || {}
+    this._configuration = sessionConfigFromApi(session.configuration) || {}
     return this._configuration
   }
 
@@ -596,12 +610,10 @@ export class Session {
    * This will overwrite any existing configuration with the provided values.
    * This method also updates the cached configuration property.
    *
-   * @param configuration - A dictionary of configuration to associate with this session.
-   *                        Keys must be strings, values can be any JSON-serializable type
+   * @param configuration - Configuration to associate with this session.
+   *                        Includes reasoning, peerCard, summary, and dream settings.
    */
-  async setConfiguration(
-    configuration: Record<string, unknown>
-  ): Promise<void> {
+  async setConfiguration(configuration: SessionConfig): Promise<void> {
     const validatedConfig = SessionConfigSchema.parse(configuration)
     await this._update({ configuration: validatedConfig })
     this._configuration = validatedConfig
@@ -616,7 +628,7 @@ export class Session {
   async refresh(): Promise<void> {
     const session = await this._getOrCreate({ id: this.id })
     this._metadata = session.metadata || {}
-    this._configuration = session.configuration || {}
+    this._configuration = sessionConfigFromApi(session.configuration) || {}
   }
 
   /**
@@ -649,7 +661,7 @@ export class Session {
       this.workspaceId,
       this._http,
       clonedSessionData.metadata ?? undefined,
-      clonedSessionData.configuration ?? undefined,
+      sessionConfigFromApi(clonedSessionData.configuration) ?? undefined,
       () => this._ensureWorkspace()
     )
   }

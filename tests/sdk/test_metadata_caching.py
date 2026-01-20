@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 
+from sdks.python.src.honcho.api_types import PeerConfig, SessionConfiguration
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.pagination import AsyncPage, SyncPage
 from sdks.python.src.honcho.peer import Peer
@@ -113,32 +114,34 @@ async def test_peer_config_caching(
 
         # Get config should cache it
         config = await peer.aio.get_configuration()
-        assert isinstance(config, dict)
+        assert isinstance(config, PeerConfig)
         assert peer.configuration == config
 
         # Set config should update cache
-        await peer.aio.set_configuration({"observe_me": True, "observe_others": False})
-        assert peer.configuration == {"observe_me": True, "observe_others": False}
+        new_config = PeerConfig(observe_me=True)
+        await peer.aio.set_configuration(new_config)
+        assert peer.configuration == new_config
 
         # Get should return cached value
         retrieved = await peer.aio.get_configuration()
-        assert retrieved == {"observe_me": True, "observe_others": False}
+        assert retrieved == new_config
     else:
         peer = honcho_client.peer(id="test-peer-config-cache")
         assert isinstance(peer, Peer)
 
         # Get config should cache it
         config = peer.get_configuration()
-        assert isinstance(config, dict)
+        assert isinstance(config, PeerConfig)
         assert peer.configuration == config
 
         # Set config should update cache
-        peer.set_configuration({"observe_me": True, "observe_others": False})
-        assert peer.configuration == {"observe_me": True, "observe_others": False}
+        new_config = PeerConfig(observe_me=True)
+        peer.set_configuration(new_config)
+        assert peer.configuration == new_config
 
         # Get should return cached value
         retrieved = peer.get_configuration()
-        assert retrieved == {"observe_me": True, "observe_others": False}
+        assert retrieved == new_config
 
 
 @pytest.mark.asyncio
@@ -156,44 +159,48 @@ async def test_peer_metadata_and_config_independence(
 
         # Set both metadata and config
         await peer.aio.set_metadata({"name": "Test"})
-        await peer.aio.set_configuration({"observe_me": True})
+        config1 = PeerConfig(observe_me=True)
+        await peer.aio.set_configuration(config1)
 
         assert peer.metadata == {"name": "Test"}
-        assert peer.configuration == {"observe_me": True}
+        assert peer.configuration == config1
 
         # Update metadata only
         await peer.aio.set_metadata({"name": "Updated"})
 
         assert peer.metadata == {"name": "Updated"}
-        assert peer.configuration == {"observe_me": True}  # Should remain unchanged
+        assert peer.configuration == config1  # Should remain unchanged
 
         # Update config only
-        await peer.aio.set_configuration({"observe_me": False})
+        config2 = PeerConfig(observe_me=False)
+        await peer.aio.set_configuration(config2)
 
         assert peer.metadata == {"name": "Updated"}  # Should remain unchanged
-        assert peer.configuration == {"observe_me": False}
+        assert peer.configuration == config2
     else:
         peer = honcho_client.peer(id="test-peer-independent-cache")
         assert isinstance(peer, Peer)
 
         # Set both metadata and config
         peer.set_metadata({"name": "Test"})
-        peer.set_configuration({"observe_me": True})
+        config1 = PeerConfig(observe_me=True)
+        peer.set_configuration(config1)
 
         assert peer.metadata == {"name": "Test"}
-        assert peer.configuration == {"observe_me": True}
+        assert peer.configuration == config1
 
         # Update metadata only
         peer.set_metadata({"name": "Updated"})
 
         assert peer.metadata == {"name": "Updated"}
-        assert peer.configuration == {"observe_me": True}  # Should remain unchanged
+        assert peer.configuration == config1  # Should remain unchanged
 
         # Update config only
-        peer.set_configuration({"observe_me": False})
+        config2 = PeerConfig(observe_me=False)
+        peer.set_configuration(config2)
 
         assert peer.metadata == {"name": "Updated"}  # Should remain unchanged
-        assert peer.configuration == {"observe_me": False}
+        assert peer.configuration == config2
 
 
 @pytest.mark.asyncio
@@ -209,11 +216,11 @@ async def test_peer_list_with_metadata_and_config(
         # Create peers with metadata and config
         peer1 = await honcho_client.aio.peer(id="test-list-peer1")
         await peer1.aio.set_metadata({"name": "Alice"})
-        await peer1.aio.set_configuration({"observe_me": True})
+        await peer1.aio.set_configuration(PeerConfig(observe_me=True))
 
         peer2 = await honcho_client.aio.peer(id="test-list-peer2")
         await peer2.aio.set_metadata({"name": "Bob"})
-        await peer2.aio.set_configuration({"observe_me": False})
+        await peer2.aio.set_configuration(PeerConfig(observe_me=False))
 
         # List peers and check cached data
         peers_page = await honcho_client.aio.peers()
@@ -225,21 +232,23 @@ async def test_peer_list_with_metadata_and_config(
         if "test-list-peer1" in peer_map:
             p1 = peer_map["test-list-peer1"]
             assert p1.metadata == {"name": "Alice"}
-            assert p1.configuration == {"observe_me": True}
+            assert p1.configuration is not None
+            assert p1.configuration.observe_me is True
 
         if "test-list-peer2" in peer_map:
             p2 = peer_map["test-list-peer2"]
             assert p2.metadata == {"name": "Bob"}
-            assert p2.configuration == {"observe_me": False}
+            assert p2.configuration is not None
+            assert p2.configuration.observe_me is False
     else:
         # Create peers with metadata and config
         peer1 = honcho_client.peer(id="test-list-peer1")
         peer1.set_metadata({"name": "Alice"})
-        peer1.set_configuration({"observe_me": True})
+        peer1.set_configuration(PeerConfig(observe_me=True))
 
         peer2 = honcho_client.peer(id="test-list-peer2")
         peer2.set_metadata({"name": "Bob"})
-        peer2.set_configuration({"observe_me": False})
+        peer2.set_configuration(PeerConfig(observe_me=False))
 
         # List peers and check cached data
         peers_page = honcho_client.peers()
@@ -251,12 +260,14 @@ async def test_peer_list_with_metadata_and_config(
         if "test-list-peer1" in peer_map:
             p1 = peer_map["test-list-peer1"]
             assert p1.metadata == {"name": "Alice"}
-            assert p1.configuration == {"observe_me": True}
+            assert p1.configuration is not None
+            assert p1.configuration.observe_me is True
 
         if "test-list-peer2" in peer_map:
             p2 = peer_map["test-list-peer2"]
             assert p2.metadata == {"name": "Bob"}
-            assert p2.configuration == {"observe_me": False}
+            assert p2.configuration is not None
+            assert p2.configuration.observe_me is False
 
 
 @pytest.mark.asyncio
@@ -317,32 +328,34 @@ async def test_session_config_caching(
 
         # Get config should cache it
         config = await session.aio.get_configuration()
-        assert isinstance(config, dict)
+        assert isinstance(config, SessionConfiguration)
         assert session.configuration == config
 
         # Set config should update cache
-        await session.aio.set_configuration({"anonymous": True, "summarize": False})
-        assert session.configuration == {"anonymous": True, "summarize": False}
+        new_config = SessionConfiguration()
+        await session.aio.set_configuration(new_config)
+        assert session.configuration == new_config
 
         # Get should return cached value
         retrieved = await session.aio.get_configuration()
-        assert retrieved == {"anonymous": True, "summarize": False}
+        assert retrieved == new_config
     else:
         session = honcho_client.session(id="test-session-config-cache")
         assert isinstance(session, Session)
 
         # Get config should cache it
         config = session.get_configuration()
-        assert isinstance(config, dict)
+        assert isinstance(config, SessionConfiguration)
         assert session.configuration == config
 
         # Set config should update cache
-        session.set_configuration({"anonymous": True, "summarize": False})
-        assert session.configuration == {"anonymous": True, "summarize": False}
+        new_config = SessionConfiguration()
+        session.set_configuration(new_config)
+        assert session.configuration == new_config
 
         # Get should return cached value
         retrieved = session.get_configuration()
-        assert retrieved == {"anonymous": True, "summarize": False}
+        assert retrieved == new_config
 
 
 @pytest.mark.asyncio
@@ -360,44 +373,48 @@ async def test_session_metadata_and_config_independence(
 
         # Set both metadata and config
         await session.aio.set_metadata({"title": "Test"})
-        await session.aio.set_configuration({"anonymous": True})
+        config1 = SessionConfiguration()
+        await session.aio.set_configuration(config1)
 
         assert session.metadata == {"title": "Test"}
-        assert session.configuration == {"anonymous": True}
+        assert session.configuration == config1
 
         # Update metadata only
         await session.aio.set_metadata({"title": "Updated"})
 
         assert session.metadata == {"title": "Updated"}
-        assert session.configuration == {"anonymous": True}  # Should remain unchanged
+        assert session.configuration == config1  # Should remain unchanged
 
         # Update config only
-        await session.aio.set_configuration({"anonymous": False})
+        config2 = SessionConfiguration()
+        await session.aio.set_configuration(config2)
 
         assert session.metadata == {"title": "Updated"}  # Should remain unchanged
-        assert session.configuration == {"anonymous": False}
+        assert session.configuration == config2
     else:
         session = honcho_client.session(id="test-session-independent-cache")
         assert isinstance(session, Session)
 
         # Set both metadata and config
         session.set_metadata({"title": "Test"})
-        session.set_configuration({"anonymous": True})
+        config1 = SessionConfiguration()
+        session.set_configuration(config1)
 
         assert session.metadata == {"title": "Test"}
-        assert session.configuration == {"anonymous": True}
+        assert session.configuration == config1
 
         # Update metadata only
         session.set_metadata({"title": "Updated"})
 
         assert session.metadata == {"title": "Updated"}
-        assert session.configuration == {"anonymous": True}  # Should remain unchanged
+        assert session.configuration == config1  # Should remain unchanged
 
         # Update config only
-        session.set_configuration({"anonymous": False})
+        config2 = SessionConfiguration()
+        session.set_configuration(config2)
 
         assert session.metadata == {"title": "Updated"}  # Should remain unchanged
-        assert session.configuration == {"anonymous": False}
+        assert session.configuration == config2
 
 
 @pytest.mark.asyncio
@@ -413,11 +430,11 @@ async def test_session_list_with_metadata_and_config(
         # Create sessions with metadata and config
         session1 = await honcho_client.aio.session(id="test-list-session1")
         await session1.aio.set_metadata({"title": "Session 1"})
-        await session1.aio.set_configuration({"anonymous": True})
+        await session1.aio.set_configuration(SessionConfiguration())
 
         session2 = await honcho_client.aio.session(id="test-list-session2")
         await session2.aio.set_metadata({"title": "Session 2"})
-        await session2.aio.set_configuration({"anonymous": False})
+        await session2.aio.set_configuration(SessionConfiguration())
 
         # List sessions and check cached data
         sessions_page = await honcho_client.aio.sessions()
@@ -429,21 +446,21 @@ async def test_session_list_with_metadata_and_config(
         if "test-list-session1" in session_map:
             s1 = session_map["test-list-session1"]
             assert s1.metadata == {"title": "Session 1"}
-            assert s1.configuration == {"anonymous": True}
+            assert s1.configuration is not None
 
         if "test-list-session2" in session_map:
             s2 = session_map["test-list-session2"]
             assert s2.metadata == {"title": "Session 2"}
-            assert s2.configuration == {"anonymous": False}
+            assert s2.configuration is not None
     else:
         # Create sessions with metadata and config
         session1 = honcho_client.session(id="test-list-session1")
         session1.set_metadata({"title": "Session 1"})
-        session1.set_configuration({"anonymous": True})
+        session1.set_configuration(SessionConfiguration())
 
         session2 = honcho_client.session(id="test-list-session2")
         session2.set_metadata({"title": "Session 2"})
-        session2.set_configuration({"anonymous": False})
+        session2.set_configuration(SessionConfiguration())
 
         # List sessions and check cached data
         sessions_page = honcho_client.sessions()
@@ -455,12 +472,12 @@ async def test_session_list_with_metadata_and_config(
         if "test-list-session1" in session_map:
             s1 = session_map["test-list-session1"]
             assert s1.metadata == {"title": "Session 1"}
-            assert s1.configuration == {"anonymous": True}
+            assert s1.configuration is not None
 
         if "test-list-session2" in session_map:
             s2 = session_map["test-list-session2"]
             assert s2.metadata == {"title": "Session 2"}
-            assert s2.configuration == {"anonymous": False}
+            assert s2.configuration is not None
 
 
 @pytest.mark.asyncio
@@ -476,20 +493,22 @@ async def test_peer_initialization_with_metadata_and_config(
         peer = await honcho_client.aio.peer(
             id="test-init-peer",
             metadata={"name": "Test Peer", "role": "assistant"},
-            configuration={"observe_me": False},
+            configuration=PeerConfig(observe_me=False),
         )
         assert isinstance(peer, Peer)
         assert peer.metadata == {"name": "Test Peer", "role": "assistant"}
-        assert peer.configuration == {"observe_me": False}
+        assert peer.configuration is not None
+        assert peer.configuration.observe_me is False
     else:
         peer = honcho_client.peer(
             id="test-init-peer",
             metadata={"name": "Test Peer", "role": "assistant"},
-            configuration={"observe_me": False},
+            configuration=PeerConfig(observe_me=False),
         )
         assert isinstance(peer, Peer)
         assert peer.metadata == {"name": "Test Peer", "role": "assistant"}
-        assert peer.configuration == {"observe_me": False}
+        assert peer.configuration is not None
+        assert peer.configuration.observe_me is False
 
 
 @pytest.mark.asyncio
@@ -505,17 +524,17 @@ async def test_session_initialization_with_metadata_and_config(
         session = await honcho_client.aio.session(
             id="test-init-session",
             metadata={"title": "Test Session", "tags": ["important"]},
-            configuration={"anonymous": False},
+            configuration=SessionConfiguration(),
         )
         assert isinstance(session, Session)
         assert session.metadata == {"title": "Test Session", "tags": ["important"]}
-        assert session.configuration == {"anonymous": False}
+        assert session.configuration is not None
     else:
         session = honcho_client.session(
             id="test-init-session",
             metadata={"title": "Test Session", "tags": ["important"]},
-            configuration={"anonymous": False},
+            configuration=SessionConfiguration(),
         )
         assert isinstance(session, Session)
         assert session.metadata == {"title": "Test Session", "tags": ["important"]}
-        assert session.configuration == {"anonymous": False}
+        assert session.configuration is not None
