@@ -349,20 +349,6 @@ for (const sessionData of conversationData.sessions) {
   await session.addMessages(messages);
 }
 
-// Wait for Honcho to process the conversation history
-async function waitForProcessing() {
-  let status = await honcho.queueStatus();
-  while (status.pendingWorkUnits > 0 || status.inProgressWorkUnits > 0) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    status = await honcho.pollQueueStatus();
-  }
-}
-
-console.log("Processing conversation history...");
-const startTime = Date.now();
-await waitForProcessing();
-const elapsed = Math.floor((Date.now() - startTime) / 1000);
-console.log(`Done in ${elapsed}s! Querying user insights...\n`);
 
 // Query insights about the user based on conversation history
 const response = await user.chat("What should I know about this user? 3 sentences max");

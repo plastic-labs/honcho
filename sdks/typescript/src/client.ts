@@ -769,37 +769,6 @@ export class Honcho {
   }
 
   /**
-   * Poll queueStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
-   * This allows you to guarantee that all messages have been processed by the queue for
-   * use with the dialectic endpoint.
-   *
-   * The polling estimates sleep time by assuming each work unit takes 1 second.
-   *
-   * @param options - Configuration options for the status request
-   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
-   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
-   * @param options.session - Optional session (ID string or Session object) to scope the status to
-   * @param options.timeout - Optional timeout in seconds (default: 300 - 5 minutes)
-   * @returns Promise resolving to the final queue status when processing is complete
-   * @throws Error if timeout is exceeded before processing completes
-   */
-  async pollQueueStatus(
-    options?: Omit<
-      QueueStatusOptions,
-      'observerId' | 'senderId' | 'sessionId'
-    > & {
-      observer?: string | Peer
-      sender?: string | Peer
-      session?: string | Session
-      timeout?: number
-    }
-  ): Promise<QueueStatus> {
-    await this._ensureWorkspace()
-    const timeout = options?.timeout ?? 300 // Default to 5 minutes
-    return pollUntilComplete(() => this.queueStatus(options), timeout)
-  }
-
-  /**
    * Return a string representation of the Honcho client.
    *
    * @returns A string representation suitable for debugging

@@ -101,8 +101,11 @@ export const QueueStatusOptionsSchema = z.object({
 ```
 </CodeGroup>
 
-Additionally, there are queue status and polling queue status methods
-available on the session objects in each of the SDKs.
+Additionally, there are queue status methods available on the session objects in each of the SDKs.
+
+<Warning>
+**Do not wait for the queue to be empty.** The queue is a continuous processing system—new messages may arrive at any time, and "completion" is not a meaningful state. Design your application to work without assuming the queue will ever be fully drained. Use `queueStatus()` for observability and debugging, not for synchronization.
+</Warning>
 
 Below are the function signatures for the session level queue status method:
 

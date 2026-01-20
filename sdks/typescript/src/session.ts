@@ -836,34 +836,6 @@ export class Session {
   }
 
   /**
-   * Poll queue status until all processing is complete for this session.
-   *
-   * Repeatedly checks the queue status until pendingWorkUnits and inProgressWorkUnits
-   * are both 0. This allows you to wait for all messages to be processed before
-   * querying the dialectic endpoint.
-   *
-   * @param options - Configuration options for the status request
-   * @param options.observer - Optional observer peer to scope the status to
-   * @param options.sender - Optional sender peer to scope the status to
-   * @param options.timeout - Optional timeout in seconds (default: 300 - 5 minutes)
-   * @returns Promise resolving to the final queue status when processing is complete
-   * @throws Error if timeout is exceeded before processing completes
-   */
-  async pollQueueStatus(
-    options?: Omit<
-      QueueStatusOptions,
-      'sessionId' | 'observerId' | 'senderId'
-    > & {
-      observer?: string | Peer
-      sender?: string | Peer
-      timeout?: number
-    }
-  ): Promise<QueueStatus> {
-    const timeout = options?.timeout ?? 300
-    return pollUntilComplete(() => this.queueStatus(options), timeout)
-  }
-
-  /**
    * Upload a file to this session as a message.
    *
    * Makes an API call to upload a file, which is processed and stored as one or

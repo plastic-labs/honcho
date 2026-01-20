@@ -119,12 +119,11 @@ context = session.get_context(tokens=2000)  # Leaves room for prompt + response
 Ensure representations are current:
 
 ```python
-# Check if representation is being generated
+# Check queue status for observability
 status = honcho.queue_status(session_id=session.id)
 
-# Wait for processing if needed
-if status.pending > 0:
-    time.sleep(1)  # Or implement proper polling
+# Note: Don't wait for the queue to be empty—it's a continuous system.
+# The context endpoint will work with whatever reasoning is available.
 ```
 
 ### Caching Strategies
