@@ -409,7 +409,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -471,7 +470,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -541,7 +539,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -605,7 +602,6 @@ class TestDeriverSummaryMetrics:
             new=AsyncMock(return_value=(mock_summary, True)),  # is_fallback=True
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
