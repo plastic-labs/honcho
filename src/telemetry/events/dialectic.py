@@ -3,6 +3,7 @@ Dialectic events for Honcho telemetry.
 
 Dialectic tasks answer questions about peers by gathering context from memory.
 These are user-initiated operations that query the representation system.
+The run_id field enables correlation with agent.iteration events.
 """
 
 from typing import ClassVar
@@ -18,11 +19,17 @@ class DialecticCompletedEvent(BaseEvent):
     Dialectic queries answer questions about peers by gathering context
     from memory. This event captures the full context of the query and
     its execution metrics.
+
+    The run_id correlates with AgentIterationEvent and AgentTool* events
+    for detailed analytics.
     """
 
     _event_type: ClassVar[str] = "dialectic.completed"
     _schema_version: ClassVar[int] = 1
     _category: ClassVar[str] = "dialectic"
+
+    # Run identification (for correlating with iteration/tool events)
+    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
 
     # Workspace context
     workspace_id: str = Field(..., description="Workspace ID")
@@ -45,8 +52,11 @@ class DialecticCompletedEvent(BaseEvent):
     agentic: bool = Field(..., description="Whether agentic mode was used")
 
     # Execution metrics
-    prefetched_observation_count: int = Field(
-        default=0, description="Number of observations prefetched"
+    total_iterations: int = Field(
+        default=1, description="Number of LLM iterations"
+    )
+    prefetched_conclusion_count: int = Field(
+        default=0, description="Number of conclusions prefetched"
     )
     tool_calls_count: int = Field(default=0, description="Number of tool calls made")
 
@@ -64,9 +74,8 @@ class DialecticCompletedEvent(BaseEvent):
     )
 
     def get_resource_id(self) -> str:
-        """Resource ID includes workspace, peer, and session for uniqueness."""
-        session_part = self.session_id or "none"
-        return f"{self.workspace_id}:{self.peer_id}:{session_part}"
+        """Resource ID is the run_id for uniqueness."""
+        return self.run_id
 
 
 __all__ = ["DialecticCompletedEvent"]

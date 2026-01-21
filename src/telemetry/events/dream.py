@@ -1,12 +1,9 @@
 """
 Dream events for Honcho telemetry.
 
-Dream tasks handle memory consolidation operations including:
-- Session summarization
-- Peer card updates
-- Deductive reasoning (inferring new facts from existing observations)
-- Inductive reasoning (generalizing patterns from observations)
-- Omni dreams (comprehensive consolidation combining multiple operations)
+Dream tasks handle memory consolidation through specialist agents (deduction, induction).
+Events track both the overall dream run and individual specialist executions,
+with run_id correlation for analytics queries.
 """
 
 from typing import ClassVar
@@ -16,193 +13,36 @@ from pydantic import Field
 from src.telemetry.events.base import BaseEvent
 
 
-class DreamSummaryCompletedEvent(BaseEvent):
-    """Emitted when a session summary is created or updated.
+class DreamRunEvent(BaseEvent):
+    """Emitted when a full dream orchestration completes.
 
-    Summary tasks create rolling summaries of session history at two granularities:
-    - Short summaries: Every 20 messages
-    - Long summaries: Every 60 messages
+    This is the top-level event for a dream run, providing aggregate metrics
+    across all specialists. Individual specialist details are captured in
+    DreamSpecialistEvent with the same run_id for correlation.
     """
 
-    _event_type: ClassVar[str] = "dream.summary.completed"
+    _event_type: ClassVar[str] = "dream.run"
     _schema_version: ClassVar[int] = 1
     _category: ClassVar[str] = "dream"
+
+    # Run identification (for correlating with specialist/iteration/tool events)
+    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
 
     # Workspace context
     workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Session context
-    session_id: str = Field(..., description="Session ID")
-    session_name: str = Field(..., description="Session name")
-
-    # Message context
-    message_id: str = Field(..., description="Trigger message ID")
-    message_seq_in_session: int = Field(
-        ..., description="Message sequence number in session"
-    )
-
-    # Summary details
-    summary_type: str = Field(..., description="Summary type: 'short' or 'long'")
-    summary_token_count: int = Field(
-        ..., description="Token count of generated summary"
-    )
-
-    # Timing metrics (milliseconds)
-    total_duration_ms: float = Field(..., description="Total processing time")
-
-    # Token usage
-    input_tokens: int = Field(..., description="Input tokens used")
-    output_tokens: int = Field(..., description="Output tokens generated")
-
-    def get_resource_id(self) -> str:
-        """Resource ID includes workspace, session, message, and type for uniqueness."""
-        return f"{self.workspace_id}:{self.session_id}:{self.message_id}:{self.summary_type}"
-
-
-class DreamPeerCardCompletedEvent(BaseEvent):
-    """Emitted when a peer card update completes.
-
-    Peer card updates consolidate observations into a structured summary
-    of what is known about a peer.
-    """
-
-    _event_type: ClassVar[str] = "dream.peer_card.completed"
-    _schema_version: ClassVar[int] = 1
-    _category: ClassVar[str] = "dream"
-
-    # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
-    workspace_name: str = Field(..., description="Workspace name")
-
-    # Peer context
-    observer: str = Field(..., description="Observer peer name")
-    observed: str = Field(..., description="Observed peer name")
-
-    # Update details
-    card_updated: bool = Field(..., description="Whether the peer card was updated")
-
-    # Timing metrics (milliseconds)
-    total_duration_ms: float = Field(..., description="Total processing time")
-
-    # Token usage
-    input_tokens: int = Field(..., description="Input tokens used")
-    output_tokens: int = Field(..., description="Output tokens generated")
-
-    def get_resource_id(self) -> str:
-        """Resource ID includes workspace and peer context for uniqueness."""
-        return f"{self.workspace_id}:{self.observer}:{self.observed}:peer_card"
-
-
-class DreamDeductiveCompletedEvent(BaseEvent):
-    """Emitted when a deductive reasoning task completes.
-
-    Deductive tasks infer new facts from existing observations through
-    logical reasoning and pattern matching.
-    """
-
-    _event_type: ClassVar[str] = "dream.deductive.completed"
-    _schema_version: ClassVar[int] = 1
-    _category: ClassVar[str] = "dream"
-
-    # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
-    workspace_name: str = Field(..., description="Workspace name")
-
-    # Peer context
-    observer: str = Field(..., description="Observer peer name")
-    observed: str = Field(..., description="Observed peer name")
-
-    # Deduction results
-    observations_created: int = Field(
-        default=0, description="Number of new observations created"
-    )
-    observations_deleted: int = Field(
-        default=0, description="Number of observations deleted/consolidated"
-    )
-    success: bool = Field(..., description="Whether deduction succeeded")
-
-    # Timing metrics (milliseconds)
-    total_duration_ms: float = Field(..., description="Total processing time")
-
-    # Token usage
-    input_tokens: int = Field(..., description="Input tokens used")
-    output_tokens: int = Field(..., description="Output tokens generated")
-
-    def get_resource_id(self) -> str:
-        """Resource ID includes workspace and peer context for uniqueness."""
-        return f"{self.workspace_id}:{self.observer}:{self.observed}:deductive"
-
-
-class DreamInductiveCompletedEvent(BaseEvent):
-    """Emitted when an inductive reasoning task completes.
-
-    Inductive tasks generalize patterns from existing observations,
-    creating higher-level insights about the peer.
-    """
-
-    _event_type: ClassVar[str] = "dream.inductive.completed"
-    _schema_version: ClassVar[int] = 1
-    _category: ClassVar[str] = "dream"
-
-    # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
-    workspace_name: str = Field(..., description="Workspace name")
-
-    # Peer context
-    observer: str = Field(..., description="Observer peer name")
-    observed: str = Field(..., description="Observed peer name")
-
-    # Induction results
-    observations_created: int = Field(
-        default=0, description="Number of new observations created"
-    )
-    observations_deleted: int = Field(
-        default=0, description="Number of observations deleted/consolidated"
-    )
-    success: bool = Field(..., description="Whether induction succeeded")
-
-    # Timing metrics (milliseconds)
-    total_duration_ms: float = Field(..., description="Total processing time")
-
-    # Token usage
-    input_tokens: int = Field(..., description="Input tokens used")
-    output_tokens: int = Field(..., description="Output tokens generated")
-
-    def get_resource_id(self) -> str:
-        """Resource ID includes workspace and peer context for uniqueness."""
-        return f"{self.workspace_id}:{self.observer}:{self.observed}:inductive"
-
-
-class DreamOmniCompletedEvent(BaseEvent):
-    """Emitted when an omni dream task completes.
-
-    Omni dreams run comprehensive memory consolidation that may include
-    multiple specialist operations (deduction, induction, peer card updates).
-    This event provides an aggregate view of the entire dream cycle.
-    """
-
-    _event_type: ClassVar[str] = "dream.omni.completed"
-    _schema_version: ClassVar[int] = 1
-    _category: ClassVar[str] = "dream"
-
-    # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
-    workspace_name: str = Field(..., description="Workspace name")
-
-    # Session context (most recent session with documents)
     session_name: str = Field(..., description="Most recent session name")
 
     # Peer context
     observer: str = Field(..., description="Observer peer name")
     observed: str = Field(..., description="Observed peer name")
 
-    # Surprisal sampling (optional - may not run if disabled)
-    surprisal_observation_count: int = Field(
-        default=0, description="High-surprisal observations found"
+    # What ran
+    specialists_run: list[str] = Field(
+        ..., description="Specialists executed (e.g., ['deduction', 'induction'])"
     )
-
-    # Specialist outcomes
     deduction_success: bool = Field(
         ..., description="Whether deduction specialist succeeded"
     )
@@ -210,22 +50,72 @@ class DreamOmniCompletedEvent(BaseEvent):
         ..., description="Whether induction specialist succeeded"
     )
 
-    # Timing metrics (milliseconds)
+    # Surprisal sampling (optional phase)
+    surprisal_enabled: bool = Field(
+        default=False, description="Whether surprisal sampling was enabled"
+    )
+    surprisal_conclusion_count: int = Field(
+        default=0, description="High-surprisal conclusions found"
+    )
+
+    # Aggregated metrics across all specialists
+    total_iterations: int = Field(
+        ..., description="Total LLM iterations across all specialists"
+    )
+    total_input_tokens: int = Field(
+        ..., description="Total input tokens across all specialists"
+    )
+    total_output_tokens: int = Field(
+        ..., description="Total output tokens across all specialists"
+    )
     total_duration_ms: float = Field(..., description="Total processing time")
 
-    # Aggregated token usage from specialists
-    input_tokens: int = Field(..., description="Total input tokens used")
-    output_tokens: int = Field(..., description="Total output tokens generated")
+    def get_resource_id(self) -> str:
+        """Resource ID is the run_id for uniqueness."""
+        return self.run_id
+
+
+class DreamSpecialistEvent(BaseEvent):
+    """Emitted when an individual dream specialist completes.
+
+    Each specialist (deduction, induction) emits its own event with
+    the same run_id as the parent DreamRunEvent for correlation.
+    """
+
+    _event_type: ClassVar[str] = "dream.specialist"
+    _schema_version: ClassVar[int] = 1
+    _category: ClassVar[str] = "dream"
+
+    # Run identification (correlates with parent dream.run)
+    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+
+    # Specialist info
+    specialist_type: str = Field(
+        ..., description="Specialist type: 'deduction' or 'induction'"
+    )
+
+    # Workspace context
+    workspace_id: str = Field(..., description="Workspace ID")
+    workspace_name: str = Field(..., description="Workspace name")
+
+    # Peer context
+    observer: str = Field(..., description="Observer peer name")
+    observed: str = Field(..., description="Observed peer name")
+
+    # Execution metrics
+    iterations: int = Field(..., description="Number of LLM iterations")
+    tool_calls_count: int = Field(..., description="Total tool calls made")
+    input_tokens: int = Field(..., description="Input tokens used")
+    output_tokens: int = Field(..., description="Output tokens generated")
+    duration_ms: float = Field(..., description="Processing time")
+    success: bool = Field(..., description="Whether the specialist succeeded")
 
     def get_resource_id(self) -> str:
-        """Resource ID includes workspace, peers, and dream type for uniqueness."""
-        return f"{self.workspace_id}:{self.observer}:{self.observed}:omni"
+        """Resource ID includes run_id and specialist type for uniqueness."""
+        return f"{self.run_id}:{self.specialist_type}"
 
 
 __all__ = [
-    "DreamSummaryCompletedEvent",
-    "DreamPeerCardCompletedEvent",
-    "DreamDeductiveCompletedEvent",
-    "DreamInductiveCompletedEvent",
-    "DreamOmniCompletedEvent",
+    "DreamRunEvent",
+    "DreamSpecialistEvent",
 ]

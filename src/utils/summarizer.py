@@ -17,7 +17,7 @@ from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
 from src.telemetry import otel_metrics, prometheus
-from src.telemetry.events import DreamSummaryCompletedEvent, emit
+from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.logging import accumulate_metric, conditional_observe
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
@@ -479,20 +479,21 @@ async def _create_and_save_summary(
     )
 
     # Emit telemetry event (only for non-fallback summaries)
+    # Note: Using AgentToolSummaryCreatedEvent with dummy run_id/iteration since
+    # this is called from the deriver, not from an agentic loop
     if not is_fallback:
         emit(
-            DreamSummaryCompletedEvent(
+            AgentToolSummaryCreatedEvent(
+                run_id="deriver",  # Placeholder - not from an agentic run
+                iteration=0,  # Placeholder - not from an agentic loop
+                parent_category="deriver",
+                agent_type="summarizer",
                 workspace_id=workspace_name,
                 workspace_name=workspace_name,
                 session_id=session_name,
                 session_name=session_name,
-                message_id=message_public_id,
-                message_seq_in_session=message_seq_in_session,
                 summary_type="short" if summary_type == SummaryType.SHORT else "long",
                 summary_token_count=new_summary["token_count"],
-                total_duration_ms=summary_duration,
-                input_tokens=llm_input_tokens,
-                output_tokens=llm_output_tokens,
             )
         )
 

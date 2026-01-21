@@ -6,7 +6,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.orchestrator import run_dream
 from src.schemas import DreamType
-from src.telemetry.events import DreamOmniCompletedEvent, emit
+from src.telemetry.events import DreamRunEvent, emit
 from src.utils.queue_payload import DreamPayload
 
 logger = logging.getLogger(__name__)
@@ -45,18 +45,22 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                 # Emit telemetry event if dream ran
                 if result is not None:
                     emit(
-                        DreamOmniCompletedEvent(
+                        DreamRunEvent(
+                            run_id=result.run_id,
                             workspace_id=workspace_name,
                             workspace_name=workspace_name,
                             session_name=payload.session_name,
                             observer=payload.observer,
                             observed=payload.observed,
-                            surprisal_observation_count=result.surprisal_observation_count,
+                            specialists_run=result.specialists_run,
                             deduction_success=result.deduction_success,
                             induction_success=result.induction_success,
+                            surprisal_enabled=result.surprisal_enabled,
+                            surprisal_conclusion_count=result.surprisal_conclusion_count,
+                            total_iterations=result.total_iterations,
+                            total_input_tokens=result.input_tokens,
+                            total_output_tokens=result.output_tokens,
                             total_duration_ms=result.total_duration_ms,
-                            input_tokens=result.input_tokens,
-                            output_tokens=result.output_tokens,
                         )
                     )
 

@@ -1,9 +1,9 @@
 """
 Representation events for Honcho telemetry.
 
-Representation tasks extract observations from messages to build peer
+Representation tasks extract conclusions from messages to build peer
 representations. These events track the processing of message batches
-and the observations extracted from them.
+and the conclusions extracted from them.
 """
 
 from typing import ClassVar
@@ -16,7 +16,7 @@ from src.telemetry.events.base import BaseEvent
 class RepresentationCompletedEvent(BaseEvent):
     """Emitted when a representation task completes processing a message batch.
 
-    Representation tasks extract observations from messages to build peer
+    Representation tasks extract conclusions from messages to build peer
     representations. This event captures the full context of what was processed
     and what was extracted.
     """
@@ -42,12 +42,12 @@ class RepresentationCompletedEvent(BaseEvent):
     latest_message_id: str = Field(..., description="Last message ID in batch")
     message_count: int = Field(..., description="Number of messages processed")
 
-    # Observation counts
-    explicit_observation_count: int = Field(
-        ..., description="Number of explicit observations extracted"
+    # Conclusion counts
+    explicit_conclusion_count: int = Field(
+        ..., description="Number of explicit conclusions extracted"
     )
-    deductive_observation_count: int = Field(
-        ..., description="Number of deductive observations inferred"
+    deductive_conclusion_count: int = Field(
+        ..., description="Number of deductive conclusions inferred"
     )
 
     # Timing metrics (milliseconds)

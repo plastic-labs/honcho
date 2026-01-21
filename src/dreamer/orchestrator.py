@@ -36,11 +36,21 @@ logger = logging.getLogger(__name__)
 class DreamResult:
     """Result of a dream cycle for telemetry reporting."""
 
+    # Run identification
+    run_id: str
+    specialists_run: list[str]
+
+    # Specialist outcomes
     deduction_success: bool
     induction_success: bool
-    surprisal_observation_count: int
+
+    # Surprisal sampling
+    surprisal_enabled: bool
+    surprisal_conclusion_count: int
+
+    # Aggregate metrics
+    total_iterations: int
     total_duration_ms: float
-    # Token tracking (aggregated from specialists - 0 for now, can be enhanced later)
     input_tokens: int = 0
     output_tokens: int = 0
 
@@ -223,9 +233,13 @@ async def run_dream(
     log_performance_metrics("dream_orchestrator", run_id)
 
     return DreamResult(
+        run_id=run_id,
+        specialists_run=["deduction", "induction"],
         deduction_success=deduction_success,
         induction_success=induction_success,
-        surprisal_observation_count=surprisal_observation_count,
+        surprisal_enabled=settings.DREAM.SURPRISAL.ENABLED,
+        surprisal_conclusion_count=surprisal_observation_count,
+        total_iterations=0,  # TODO: Track actual iterations from specialists
         total_duration_ms=duration_ms,
     )
 

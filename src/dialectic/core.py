@@ -89,7 +89,8 @@ class DialecticAgent:
             }
         ]
         self._session_history_initialized: bool = False
-        self._prefetched_observation_count: int = 0
+        self._prefetched_conclusion_count: int = 0
+        self._run_id: str = str(uuid.uuid4())[:8]  # Always generate for event correlation
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -177,10 +178,10 @@ class DialecticAgent:
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
 
-            # Count prefetched observations for telemetry
+            # Count prefetched conclusions for telemetry
             explicit_count = len(explicit_repr.explicit) + len(explicit_repr.deductive)
             derived_count = len(derived_repr.explicit) + len(derived_repr.deductive)
-            self._prefetched_observation_count = explicit_count + derived_count
+            self._prefetched_conclusion_count = explicit_count + derived_count
 
             # Format as two separate sections
             parts: list[str] = []
@@ -334,6 +335,7 @@ class DialecticAgent:
         # Emit telemetry event
         emit(
             DialecticCompletedEvent(
+                run_id=self._run_id,
                 workspace_id=self.workspace_name,
                 workspace_name=self.workspace_name,
                 peer_id=self.observed,
@@ -342,7 +344,8 @@ class DialecticAgent:
                 session_name=self.session_name,
                 reasoning_level=self.reasoning_level,
                 agentic=True,
-                prefetched_observation_count=self._prefetched_observation_count,
+                total_iterations=1,  # TODO: Track actual iterations from tool loop
+                prefetched_conclusion_count=self._prefetched_conclusion_count,
                 tool_calls_count=tool_calls_count,
                 total_duration_ms=elapsed_ms,
                 input_tokens=input_tokens,

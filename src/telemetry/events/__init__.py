@@ -7,25 +7,29 @@ This module provides:
 - Concrete event types for all Honcho operations
 
 Event Categories:
-    representation: Message processing and observation extraction
-    - RepresentationCompletedEvent: Message batch processed, observations extracted
+    representation: Message processing and conclusion extraction
+    - RepresentationCompletedEvent: Message batch processed, conclusions extracted
 
     dream: Memory consolidation operations
-    - DreamSummaryCompletedEvent: Session summary created/updated
-    - DreamPeerCardCompletedEvent: Peer card updated
-    - DreamDeductiveCompletedEvent: Deductive reasoning completed
-    - DreamInductiveCompletedEvent: Inductive reasoning completed
-    - DreamOmniCompletedEvent: Comprehensive dream cycle completed
+    - DreamRunEvent: Full dream orchestration completed
+    - DreamSpecialistEvent: Individual specialist (deduction/induction) completed
 
-    reconciliation: Maintenance operations
-    - SyncVectorsCompletedEvent: Vector store sync completed
-    - CleanupQueueCompletedEvent: Queue cleanup completed
+    dialectic: User-initiated queries
+    - DialecticCompletedEvent: Chat query completed
+
+    agent: Agentic loop tracking (correlates via run_id)
+    - AgentIterationEvent: Per-LLM-call metrics
+    - AgentToolConclusionsCreatedEvent: Conclusions created by agent
+    - AgentToolConclusionsDeletedEvent: Conclusions deleted by agent
+    - AgentToolPeerCardUpdatedEvent: Peer card updated by agent
+    - AgentToolSummaryCreatedEvent: Summary created by agent (future)
 
     deletion: Resource removal
     - DeletionCompletedEvent: Resource deletion completed
 
-    dialectic: User-initiated queries
-    - DialecticCompletedEvent: Chat query completed
+    reconciliation: Maintenance operations
+    - SyncVectorsCompletedEvent: Vector store sync completed
+    - CleanupQueueCompletedEvent: Queue cleanup completed
 
 Usage:
     from src.telemetry.events import emit, RepresentationCompletedEvent
@@ -40,8 +44,8 @@ Usage:
         earliest_message_id="msg_001",
         latest_message_id="msg_010",
         message_count=10,
-        explicit_observation_count=5,
-        deductive_observation_count=2,
+        explicit_conclusion_count=5,
+        deductive_conclusion_count=2,
         context_preparation_ms=50.0,
         llm_call_ms=1200.0,
         total_duration_ms=1300.0,
@@ -52,15 +56,19 @@ Usage:
 
 import logging
 
+from src.telemetry.events.agent import (
+    AgentIterationEvent,
+    AgentToolConclusionsCreatedEvent,
+    AgentToolConclusionsDeletedEvent,
+    AgentToolPeerCardUpdatedEvent,
+    AgentToolSummaryCreatedEvent,
+)
 from src.telemetry.events.base import BaseEvent, generate_event_id
 from src.telemetry.events.deletion import DeletionCompletedEvent
 from src.telemetry.events.dialectic import DialecticCompletedEvent
 from src.telemetry.events.dream import (
-    DreamDeductiveCompletedEvent,
-    DreamInductiveCompletedEvent,
-    DreamOmniCompletedEvent,
-    DreamPeerCardCompletedEvent,
-    DreamSummaryCompletedEvent,
+    DreamRunEvent,
+    DreamSpecialistEvent,
 )
 from src.telemetry.events.reconciliation import (
     CleanupQueueCompletedEvent,
@@ -78,18 +86,21 @@ __all__ = [
     # Representation events
     "RepresentationCompletedEvent",
     # Dream events
-    "DreamSummaryCompletedEvent",
-    "DreamPeerCardCompletedEvent",
-    "DreamDeductiveCompletedEvent",
-    "DreamInductiveCompletedEvent",
-    "DreamOmniCompletedEvent",
+    "DreamRunEvent",
+    "DreamSpecialistEvent",
+    # Dialectic events
+    "DialecticCompletedEvent",
+    # Agent events
+    "AgentIterationEvent",
+    "AgentToolConclusionsCreatedEvent",
+    "AgentToolConclusionsDeletedEvent",
+    "AgentToolPeerCardUpdatedEvent",
+    "AgentToolSummaryCreatedEvent",
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupQueueCompletedEvent",
     # Deletion events
     "DeletionCompletedEvent",
-    # Dialectic events
-    "DialecticCompletedEvent",
     # Lifecycle
     "initialize_telemetry_events",
     "shutdown_telemetry_events",
