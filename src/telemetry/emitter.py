@@ -196,8 +196,10 @@ class TelemetryEmitter:
                 self.max_buffer_size,
             )
 
+        logger.debug("Event added to emitter (buffer size: %d)", buffer_size)
         # Threshold-based flush trigger
         if buffer_size >= self.flush_threshold and self._running:
+            logger.debug("Triggering flush (buffer size: %d)", buffer_size)
             asyncio.create_task(self.flush())
 
     async def flush(self) -> None:

@@ -22,9 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.schemas import ResolvedConfiguration
-from src.telemetry import otel_metrics, prometheus
+from src.telemetry import otel_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
+from src.telemetry.otel.metrics import TokenTypes
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
@@ -190,12 +191,12 @@ class BaseSpecialist(ABC):
             otel_metrics.record_dreamer_tokens(
                 count=response.input_tokens,
                 specialist_name=self.name,
-                token_type=prometheus.TokenTypes.INPUT.value,
+                token_type=TokenTypes.INPUT.value,
             )
             otel_metrics.record_dreamer_tokens(
                 count=response.output_tokens,
                 specialist_name=self.name,
-                token_type=prometheus.TokenTypes.OUTPUT.value,
+                token_type=TokenTypes.OUTPUT.value,
             )
 
         logger.info(

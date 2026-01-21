@@ -441,18 +441,6 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
-class MetricsSettings(HonchoSettings):
-    """Metrics settings for namespace configuration.
-
-    Note: The ENABLED field was removed as it was only used for Prometheus.
-    OTel enablement is now controlled via OTEL.ENABLED.
-    """
-
-    model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
-
-    NAMESPACE: str | None = None
-
-
 class OpenTelemetrySettings(HonchoSettings):
     """OpenTelemetry settings for push-based metrics via OTLP.
 
@@ -688,7 +676,6 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
-    METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     OTEL: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
@@ -706,14 +693,12 @@ class AppSettings(HonchoSettings):
     def propagate_namespace(self) -> "AppSettings":
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
-        After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE,
+        After this validator runs, CACHE.NAMESPACE,
         VECTOR_STORE.NAMESPACE, TELEMETRY.NAMESPACE, and OTEL.SERVICE_NAMESPACE
         are guaranteed to exist. Explicitly provided nested namespaces are preserved.
         """
         if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
-        if "NAMESPACE" not in self.METRICS.model_fields_set:
-            self.METRICS.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:

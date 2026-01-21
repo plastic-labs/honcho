@@ -16,13 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
-from src.telemetry import otel_metrics, prometheus
+from src.telemetry import otel_metrics
 from src.telemetry.events import DialecticCompletedEvent, emit
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
     log_token_usage_metrics,
 )
+from src.telemetry.otel.metrics import DialecticComponents, TokenTypes
 from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
 from src.utils.clients import (
     HonchoLLMCallResponse,
@@ -286,6 +287,7 @@ class DialecticAgent:
         cache_creation_input_tokens: int | None,
         tool_calls_count: int,
         thinking_content: str | None,
+        iterations: int,
     ) -> None:
         """
         Log metrics common to both streaming and non-streaming responses.
@@ -301,6 +303,7 @@ class DialecticAgent:
             cache_creation_input_tokens: Cache creation tokens (if any)
             tool_calls_count: Number of tool calls made
             thinking_content: Thinking trace content (if any)
+            iterations: Number of iterations in the tool execution loop
         """
         accumulate_metric(task_name, "tool_calls", tool_calls_count, "count")
 
@@ -326,14 +329,14 @@ class DialecticAgent:
         if settings.OTEL.ENABLED:
             otel_metrics.record_dialectic_tokens(
                 count=input_tokens,
-                token_type=prometheus.TokenTypes.INPUT.value,
-                component=prometheus.DialecticComponents.TOTAL.value,
+                token_type=TokenTypes.INPUT.value,
+                component=DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
             )
             otel_metrics.record_dialectic_tokens(
                 count=output_tokens,
-                token_type=prometheus.TokenTypes.OUTPUT.value,
-                component=prometheus.DialecticComponents.TOTAL.value,
+                token_type=TokenTypes.OUTPUT.value,
+                component=DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
             )
 
@@ -348,7 +351,7 @@ class DialecticAgent:
                 session_id=self.session_name,
                 session_name=self.session_name,
                 reasoning_level=self.reasoning_level,
-                total_iterations=1,  # TODO: Track actual iterations from tool loop
+                total_iterations=iterations,
                 prefetched_conclusion_count=self._prefetched_conclusion_count,
                 tool_calls_count=tool_calls_count,
                 total_duration_ms=elapsed_ms,
@@ -405,6 +408,7 @@ class DialecticAgent:
             cache_creation_input_tokens=response.cache_creation_input_tokens,
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
+            iterations=response.iterations,
         )
 
         return response.content
@@ -466,4 +470,5 @@ class DialecticAgent:
             cache_creation_input_tokens=response.cache_creation_input_tokens,
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
+            iterations=response.iterations,
         )

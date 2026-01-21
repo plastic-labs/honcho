@@ -156,9 +156,9 @@ def otel_test_setup(
     # Reset the otel_metrics singleton instance so it reinitializes with our test provider
     _reset_otel_metrics_singleton()
 
-    # Enable OTEL in settings
+    # Enable OTEL in settings and set namespace for test assertions
     monkeypatch.setattr("src.config.settings.OTEL.ENABLED", True)
-    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
+    monkeypatch.setattr("src.config.settings.OTEL.SERVICE_NAMESPACE", "test")
 
     checker = OTelMetricChecker(reader)
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+from enum import Enum
 from typing import TYPE_CHECKING, final
 
 from opentelemetry import metrics
@@ -34,6 +35,36 @@ if TYPE_CHECKING:
     from opentelemetry.metrics import Counter, Meter
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Metric label enums
+# =============================================================================
+
+
+class TokenTypes(Enum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class DeriverTaskTypes(Enum):
+    INGESTION = "ingestion"
+    SUMMARY = "summary"
+
+
+class DeriverComponents(Enum):
+    PROMPT = "prompt"  # used in ingestion and summary
+    MESSAGES = "messages"  # used in ingestion and summary
+    PREVIOUS_SUMMARY = "previous_summary"  # only used for summary
+    OUTPUT_TOTAL = "output_total"
+
+
+class DialecticComponents(Enum):
+    TOTAL = "total"
+
+
+# =============================================================================
+# OTel metrics infrastructure
+# =============================================================================
 
 # Global state
 _meter_provider: MeterProvider | None = None
@@ -215,7 +246,7 @@ class OTelMetrics:
         # Get namespace from settings (same as Prometheus)
         from src.config import settings
 
-        self._namespace = settings.METRICS.NAMESPACE or "honcho"
+        self._namespace = settings.OTEL.SERVICE_NAMESPACE or "honcho"
 
         # Get meters for different components
         self._api_meter = get_meter("honcho.api")

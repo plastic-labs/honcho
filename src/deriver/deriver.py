@@ -7,10 +7,11 @@ from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
-from src.telemetry import otel_metrics, prometheus
+from src.telemetry import otel_metrics
 from src.telemetry.events import RepresentationCompletedEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
-from src.telemetry.tracing import with_sentry_transaction
+from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
+from src.telemetry.sentry import with_sentry_transaction
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
@@ -92,10 +93,10 @@ async def process_representation_tasks_batch(
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
     messages_tokens = estimate_tokens(formatted_messages)
     track_deriver_input_tokens(
-        task_type=prometheus.DeriverTaskTypes.INGESTION,
+        task_type=DeriverTaskTypes.INGESTION,
         components={
-            prometheus.DeriverComponents.PROMPT: prompt_tokens,
-            prometheus.DeriverComponents.MESSAGES: messages_tokens,
+            DeriverComponents.PROMPT: prompt_tokens,
+            DeriverComponents.MESSAGES: messages_tokens,
         },
     )
 
@@ -144,9 +145,9 @@ async def process_representation_tasks_batch(
     if settings.OTEL.ENABLED:
         otel_metrics.record_deriver_tokens(
             count=response.output_tokens,
-            task_type=prometheus.DeriverTaskTypes.INGESTION.value,
-            token_type=prometheus.TokenTypes.OUTPUT.value,
-            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
+            task_type=DeriverTaskTypes.INGESTION.value,
+            token_type=TokenTypes.OUTPUT.value,
+            component=DeriverComponents.OUTPUT_TOTAL.value,
         )
 
     message_ids = [m.id for m in messages if m.peer_name == observed]

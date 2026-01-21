@@ -490,6 +490,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     cache_read_input_tokens: int = 0
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
+    iterations: int = 0
+    """Number of iterations in the tool execution loop. 0 if no tools were used."""
     thinking_content: str | None = None
     # Full thinking blocks with signatures for multi-turn conversation replay (Anthropic only)
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
@@ -529,6 +531,7 @@ class StreamingResponseWithMetadata:
     cache_creation_input_tokens: int
     cache_read_input_tokens: int
     thinking_content: str | None
+    iterations: int
 
     def __init__(
         self,
@@ -539,6 +542,7 @@ class StreamingResponseWithMetadata:
         cache_creation_input_tokens: int,
         cache_read_input_tokens: int,
         thinking_content: str | None = None,
+        iterations: int = 0,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -547,6 +551,7 @@ class StreamingResponseWithMetadata:
         self.cache_creation_input_tokens = cache_creation_input_tokens
         self.cache_read_input_tokens = cache_read_input_tokens
         self.thinking_content = thinking_content
+        self.iterations = iterations
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         return self._stream.__aiter__()
@@ -796,6 +801,7 @@ async def _execute_tool_loop(
                     cache_creation_input_tokens=total_cache_creation_tokens,
                     cache_read_input_tokens=total_cache_read_tokens,
                     thinking_content=response.thinking_content,
+                    iterations=iteration + 1,
                 )
 
             response.tool_calls_made = all_tool_calls
@@ -803,6 +809,7 @@ async def _execute_tool_loop(
             response.output_tokens = total_output_tokens
             response.cache_creation_input_tokens = total_cache_creation_tokens
             response.cache_read_input_tokens = total_cache_read_tokens
+            response.iterations = iteration + 1
             return response
 
         # Determine which provider we're using (reuse the helper)
@@ -924,6 +931,7 @@ async def _execute_tool_loop(
             cache_creation_input_tokens=total_cache_creation_tokens,
             cache_read_input_tokens=total_cache_read_tokens,
             thinking_content=None,  # No thinking content at max iterations
+            iterations=iteration,
         )
 
     # Make one final call to get a text response
@@ -967,6 +975,7 @@ async def _execute_tool_loop(
 
     final_response = await final_call_func()
     final_response.tool_calls_made = all_tool_calls
+    final_response.iterations = iteration
     # Include accumulated tokens from all iterations plus the final call
     final_response.input_tokens = total_input_tokens + final_response.input_tokens
     final_response.output_tokens = total_output_tokens + final_response.output_tokens

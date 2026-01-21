@@ -8,7 +8,7 @@ from sqlalchemy import select
 from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
-from src.dreamer.dreamer import process_dream
+from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
 from src.reconciler.queue_cleanup import cleanup_queue_items

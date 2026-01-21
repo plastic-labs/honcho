@@ -16,9 +16,10 @@ from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
-from src.telemetry import otel_metrics, prometheus
+from src.telemetry import otel_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.logging import accumulate_metric, conditional_observe
+from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
@@ -432,11 +433,11 @@ async def _create_and_save_summary(
             prompt_tokens = estimate_long_summary_prompt_tokens()
 
         track_deriver_input_tokens(
-            task_type=prometheus.DeriverTaskTypes.SUMMARY,
+            task_type=DeriverTaskTypes.SUMMARY,
             components={
-                prometheus.DeriverComponents.PROMPT: prompt_tokens,
-                prometheus.DeriverComponents.MESSAGES: messages_tokens,
-                prometheus.DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
+                DeriverComponents.PROMPT: prompt_tokens,
+                DeriverComponents.MESSAGES: messages_tokens,
+                DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
             },
         )
 
@@ -444,9 +445,9 @@ async def _create_and_save_summary(
         if settings.OTEL.ENABLED:
             otel_metrics.record_deriver_tokens(
                 count=new_summary["token_count"],
-                task_type=prometheus.DeriverTaskTypes.SUMMARY.value,
-                token_type=prometheus.TokenTypes.OUTPUT.value,
-                component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
+                task_type=DeriverTaskTypes.SUMMARY.value,
+                token_type=TokenTypes.OUTPUT.value,
+                component=DeriverComponents.OUTPUT_TOTAL.value,
             )
 
         # Save summary to database
