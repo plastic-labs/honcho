@@ -1,0 +1,48 @@
+Chat Levels Test Results
+============================================================
+Timestamp: 2026-01-21T14:03:17.062724
+Workspace: three
+Peer: Caroline
+Query: When did melanie run the charity race?
+============================================================
+
+--- Level: minimal ---
+Time: 2.80s
+Response (90 chars):
+Melanie ran the charity race for mental health "last Saturday" relative to May 25th, 2023.
+
+--- Level: low ---
+Time: 10.50s
+Response (286 chars):
+Melanie ran the charity race for mental health on **Saturday, May 20, 2023**. 
+
+In a message dated Thursday, May 25, 2023, she mentioned that she had completed the race "last Saturday," describing it as a rewarding experience that prompted her to prioritize self-care and mental health.
+
+--- Level: medium ---
+Time: 4.76s
+Response (291 chars):
+Based on the conversation history, **Melanie ran the charity race last Saturday from the date she mentioned it on May 25, 2023** — so that would be **Saturday, May 20, 2023**. 
+
+She specifically told Caroline: "I ran a charity race for mental health last Saturday – it was really rewarding."
+
+--- Level: high ---
+Time: 12.20s
+Response (251 chars):
+Based on my search, Melanie ran the charity race for mental health **last Saturday** before May 25, 2023 — so that would be **Saturday, May 20, 2023**. The race was focused on raising awareness for mental health, and Melanie found it really rewarding.
+
+--- Level: max ---
+Time: 11.19s
+Response (287 chars):
+Based on the conversation history, Melanie ran the charity race for mental health **last Saturday before May 25, 2023** - which would be **Saturday, May 20, 2023**.
+
+On May 25, 2023, Melanie told Caroline: "I ran a charity race for mental health last Saturday – it was really rewarding."
+
+============================================================
+Summary:
+Level          Time          Tokens  Tools    Chars
+--------------------------------------------------
+minimal       2.80s             N/A      -       90
+low          10.50s             N/A      -      286
+medium        4.76s             N/A      -      291
+high         12.20s             N/A      -      251
+max          11.19s             N/A      -      287
