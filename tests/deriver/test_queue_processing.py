@@ -346,7 +346,7 @@ class TestQueueProcessing:
             _message_level_configuration: Any,
             *,
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            observer: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
@@ -908,7 +908,7 @@ class TestQueueProcessing:
             _message_level_configuration: Any,
             *,
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            observer: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
@@ -1026,7 +1026,7 @@ class TestQueueProcessing:
             _message_level_configuration: Any,
             *,
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            observer: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {

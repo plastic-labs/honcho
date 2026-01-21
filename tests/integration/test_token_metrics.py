@@ -235,7 +235,7 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observer=peer.name,
+                observers=[peer.name],
                 observed=peer.name,
             )
 
@@ -290,7 +290,7 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observer=peer.name,
+                observers=[peer.name],
                 observed=peer.name,
             )
 
@@ -345,7 +345,7 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observer=peer.name,
+                observers=[peer.name],
                 observed=peer.name,
             )
 

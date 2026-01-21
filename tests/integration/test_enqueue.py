@@ -220,30 +220,12 @@ class TestEnqueueFunction:
         )
         queue_items = result.scalars().all()
 
-        # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation
-        expected_payloads: list[dict[str, Any]] = []
-        for _ in range(NUM_MESSAGES):
-            expected_payloads.append(
-                {
-                    "observed": test_peer1.name,
-                    "observer": test_peer1.name,
-                    "task_type": "representation",
-                }
-            )
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
-        assert len(actual_payloads) == len(expected_payloads)
-
-        # Assert that all expected payloads are present in actual_payloads
-        for expected in expected_payloads:
-            assert expected in actual_payloads
+        # With deduplication, each message creates 1 queue item with observers list
+        # For each message, we expect a representation with observers=[sender]
+        for item in queue_items:
+            assert item.payload.get("task_type") == "representation"
+            assert item.payload.get("observed") == test_peer1.name
+            assert item.payload.get("observers") == [test_peer1.name]
 
     @pytest.mark.asyncio
     async def test_session_with_multiple_peers_all_observe_others(
@@ -288,46 +270,22 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create NUM_MESSAGES * 2 queue items:
-        # 1 representation for sender, 1 local representation for observer
-        assert final_count - initial_count == NUM_MESSAGES * 2
+        # With deduplication: 1 queue item per message (with all observers in a list)
+        assert final_count - initial_count == NUM_MESSAGES
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a local representation for observer
-        expected_payloads: list[dict[str, Any]] = []
-        for _ in range(NUM_MESSAGES):
-            expected_payloads.append(
-                {
-                    "observed": test_peer1.name,
-                    "observer": test_peer1.name,
-                    "task_type": "representation",
-                }
-            )
-            expected_payloads.append(
-                {
-                    "observed": test_peer1.name,
-                    "observer": test_peer2.name,
-                    "task_type": "representation",
-                }
-            )
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
-        assert len(actual_payloads) == len(expected_payloads)
-
-        # Assert that all expected payloads are present in actual_payloads
-        for expected in expected_payloads:
-            assert expected in actual_payloads
+        # Each queue item should have both observers in the list
+        for item in queue_items:
+            assert item.payload.get("task_type") == "representation"
+            assert item.payload.get("observed") == test_peer1.name
+            observers = item.payload.get("observers")
+            assert observers is not None
+            assert test_peer1.name in observers  # self-observation
+            assert test_peer2.name in observers  # peer2 observes others
 
     @pytest.mark.asyncio
     async def test_session_with_multiple_peers_some_observe_others(
@@ -382,50 +340,25 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create NUM_MESSAGES * 2 queue items:
-        # 1 representation for sender, 1 local representation for 1 peer observer
-        assert final_count - initial_count == NUM_MESSAGES * 2
+        # With deduplication: 1 queue item per message (with all observers in a list)
+        assert final_count - initial_count == NUM_MESSAGES
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a local representation for observer
-        expected_payloads: list[dict[str, Any]] = []
-        for _ in range(NUM_MESSAGES):
-            expected_payloads.append(
-                {
-                    "observed": test_peer1.name,
-                    "observer": test_peer1.name,
-                    "task_type": "representation",
-                }
-            )
-            expected_payloads.append(
-                {
-                    "observed": test_peer1.name,
-                    "observer": observing_peer.name,
-                    "task_type": "representation",
-                }
-            )
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
-        assert len(actual_payloads) == len(expected_payloads)
-
-        # Assert that all expected payloads are present in actual_payloads
-        for expected in expected_payloads:
-            assert expected in actual_payloads
-
-        assert unobserving_peer.name not in [
-            item.payload.get("observer") for item in queue_items
-        ]
+        # Each queue item should have sender and observing_peer as observers
+        for item in queue_items:
+            assert item.payload.get("task_type") == "representation"
+            assert item.payload.get("observed") == test_peer1.name
+            observers = item.payload.get("observers")
+            assert observers is not None
+            assert test_peer1.name in observers  # self-observation
+            assert observing_peer.name in observers  # observing_peer observes others
+            assert (
+                unobserving_peer.name not in observers
+            )  # unobserving_peer does not observe
 
     @pytest.mark.asyncio
     async def test_session_peer_config_overrides_peer_config(
@@ -525,53 +458,31 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create 4 queue items:
-        # 1 representation for test_peer1 (sender) and observer_peer (target)
-        # 1 representation for additional_sender_peer (sender) and observer_peer (target)
-        assert final_count - initial_count == 4
+        # With deduplication: 1 queue item per message (2 messages total)
+        assert final_count - initial_count == 2
 
         # Verify the correct representations were created
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
-        queue_items = result.all()
+        queue_items = result.scalars().all()
 
-        # Build expected payloads for this scenario
-        expected_payloads: list[dict[str, Any]] = []
-        # 2 messages: one from test_peer1, one from additional_sender_peer
-        for sender in [test_peer1.name, additional_sender_peer.name]:
-            # representation for sender (self)
-            expected_payloads.append(
-                {
-                    "task_type": "representation",
-                    "observed": sender,
-                    "observer": sender,
-                }
-            )
-            # representation for observer_peer (observe_others=True)
-            expected_payloads.append(
-                {
-                    "task_type": "representation",
-                    "observed": sender,
-                    "observer": observer_peer.name,
-                }
-            )
+        # Each message should have a queue item with observers list containing
+        # the sender and observer_peer
+        senders_found: set[str] = set()
+        for item in queue_items:
+            assert item.payload.get("task_type") == "representation"
+            observed = item.payload.get("observed")
+            observers = item.payload.get("observers")
+            assert observed is not None
+            assert observers is not None
+            senders_found.add(observed)
+            assert observed in observers  # self-observation
+            assert observer_peer.name in observers  # observer_peer observes others
 
-        # Extract actual payloads (task_type, observed, observer) from queue_items
-        actual_payloads = [
-            {
-                "task_type": item[0].payload.get("task_type"),
-                "observed": item[0].payload.get("observed"),
-                "observer": item[0].payload.get("observer"),
-            }
-            for item in queue_items
-        ]
-
-        assert len(actual_payloads) == len(expected_payloads)
-
-        # For each expected payload, assert it is present in actual_payloads
-        for expected in expected_payloads:
-            assert expected in actual_payloads
+        # Both senders should have queue items
+        assert test_peer1.name in senders_found
+        assert additional_sender_peer.name in senders_found
 
     # RACE CONDITION TESTS - Testing the new logic for peers that have left
     @pytest.mark.asyncio
@@ -632,40 +543,22 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create 2 queue items:
-        # 1 representation for sender (using default config since they left)
-        # 1 representation for observer (still in session and observing others)
-        assert final_count - initial_count == 2
+        # With deduplication: 1 queue item per message with all observers
+        assert final_count - initial_count == 1
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        expected_payloads = [
-            {
-                "observed": sender_peer.name,
-                "observer": sender_peer.name,
-                "task_type": "representation",
-            },
-            {
-                "observed": sender_peer.name,
-                "observer": observer_peer.name,
-                "task_type": "representation",
-            },
-        ]
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
-
-        assert len(actual_payloads) == len(expected_payloads)
-        for expected in expected_payloads:
-            assert expected in actual_payloads
+        assert len(queue_items) == 1
+        item = queue_items[0]
+        assert item.payload.get("task_type") == "representation"
+        assert item.payload.get("observed") == sender_peer.name
+        observers = item.payload.get("observers")
+        assert observers is not None
+        assert sender_peer.name in observers  # self-observation (default config)
+        assert observer_peer.name in observers  # observer still in session
 
     @pytest.mark.asyncio
     async def test_observer_left_session_no_queue_items_generated(
@@ -731,18 +624,19 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create 2 queue items:
-        # 1 representation for sender
-        # 1 representation for observer_who_stayed (observer_who_left should be skipped)
-        assert final_count - initial_count == 2
+        # With deduplication: 1 queue item per message with all observers
+        assert final_count - initial_count == 1
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        # Verify observer_who_left is NOT in the target names
-        observers = [item.payload.get("observer") for item in queue_items]
+        assert len(queue_items) == 1
+        item = queue_items[0]
+        observers = item.payload.get("observers")
+        assert observers is not None
+        # Verify observer_who_left is NOT in the observers list
         assert observer_who_left.name not in observers
         assert observer_who_stayed.name in observers
         assert sender_peer.name in observers
@@ -792,40 +686,22 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create 2 queue items:
-        # 1 representation for unknown sender (using default observe_me=True)
-        # 1 representation for observer (observing others)
-        assert final_count - initial_count == 2
+        # With deduplication: 1 queue item per message with all observers
+        assert final_count - initial_count == 1
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        expected_payloads = [
-            {
-                "observed": existing_peer.name,
-                "observer": existing_peer.name,
-                "task_type": "representation",
-            },
-            {
-                "observed": existing_peer.name,
-                "observer": observer_peer.name,
-                "task_type": "representation",
-            },
-        ]
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
-
-        assert len(actual_payloads) == len(expected_payloads)
-        for expected in expected_payloads:
-            assert expected in actual_payloads
+        assert len(queue_items) == 1
+        item = queue_items[0]
+        assert item.payload.get("task_type") == "representation"
+        assert item.payload.get("observed") == existing_peer.name
+        observers = item.payload.get("observers")
+        assert observers is not None
+        assert existing_peer.name in observers  # self-observation (default)
+        assert observer_peer.name in observers  # observer (observing others)
 
     @pytest.mark.asyncio
     async def test_mixed_active_inactive_peers_complex_scenario(
@@ -912,46 +788,24 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create 2 queue items:
-        # 1 representation for sender (observe_me=True)
-        # 1 representation for active_observer (observe_others=True and still active)
-        # inactive_observer should be skipped (left session)
-        # active_non_observer should be skipped (observe_others=False)
-        # inactive_non_observer should be skipped (left session)
-        assert final_count - initial_count == 2
+        # With deduplication: 1 queue item per message with all observers
+        assert final_count - initial_count == 1
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        expected_payloads = [
-            {
-                "observed": sender_peer.name,
-                "observer": sender_peer.name,
-                "task_type": "representation",
-            },
-            {
-                "observed": sender_peer.name,
-                "observer": active_observer.name,
-                "task_type": "representation",
-            },
-        ]
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
+        assert len(queue_items) == 1
+        item = queue_items[0]
+        assert item.payload.get("task_type") == "representation"
+        assert item.payload.get("observed") == sender_peer.name
+        observers = item.payload.get("observers")
+        assert observers is not None
+        assert sender_peer.name in observers  # self-observation
+        assert active_observer.name in observers  # active and observing
 
-        assert len(actual_payloads) == len(expected_payloads)
-        for expected in expected_payloads:
-            assert expected in actual_payloads
-
-        # Verify inactive peers are not in target names
-        observers = [item.payload.get("observer") for item in queue_items]
+        # Verify inactive and non-observing peers are not in observers list
         assert inactive_observer.name not in observers
         assert inactive_non_observer.name not in observers
         assert active_non_observer.name not in observers
@@ -1196,7 +1050,7 @@ class TestAdvancedEnqueueEdgeCases:
 
         assert len(queue_items) == 1
         assert queue_items[0].payload["observed"] == sender_peer.name
-        assert queue_items[0].payload["observer"] == sender_peer.name
+        assert queue_items[0].payload["observers"] == [sender_peer.name]
         assert queue_items[0].payload["task_type"] == "representation"
 
     @pytest.mark.asyncio
@@ -1282,7 +1136,7 @@ class TestAdvancedEnqueueEdgeCases:
 
         assert len(queue_items) == 1
         assert queue_items[0].payload["observed"] == sender_peer.name
-        assert queue_items[0].payload["observer"] == sender_peer.name
+        assert queue_items[0].payload["observers"] == [sender_peer.name]
         assert queue_items[0].payload["task_type"] == "representation"
 
     @pytest.mark.asyncio
@@ -1328,40 +1182,22 @@ class TestAdvancedEnqueueEdgeCases:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # Should create 2 queue items:
-        # 1 for never_joined_peer (using default config)
-        # 1 for observer (observe_others=True)
-        assert final_count - initial_count == 2
+        # With deduplication: 1 queue item per message with all observers
+        assert final_count - initial_count == 1
 
         result = await db_session.execute(
             select(QueueItem).where(QueueItem.session_id == test_session.id)
         )
         queue_items = result.scalars().all()
 
-        expected_payloads = [
-            {
-                "observed": existing_peer.name,
-                "observer": existing_peer.name,
-                "task_type": "representation",
-            },
-            {
-                "observed": existing_peer.name,
-                "observer": observer_peer.name,
-                "task_type": "representation",
-            },
-        ]
-        actual_payloads = [
-            {
-                "observed": item.payload.get("observed"),
-                "observer": item.payload.get("observer"),
-                "task_type": item.payload.get("task_type"),
-            }
-            for item in queue_items
-        ]
-
-        assert len(actual_payloads) == len(expected_payloads)
-        for expected in expected_payloads:
-            assert expected in actual_payloads
+        assert len(queue_items) == 1
+        item = queue_items[0]
+        assert item.payload.get("task_type") == "representation"
+        assert item.payload.get("observed") == existing_peer.name
+        observers = item.payload.get("observers")
+        assert observers is not None
+        assert existing_peer.name in observers  # self-observation (default)
+        assert observer_peer.name in observers  # observer (observing others)
 
 
 @pytest.mark.asyncio

@@ -438,10 +438,21 @@ class QueueManager:
                                 break
 
                             try:
+                                # Extract observers from the payload (handle both old and new format)
+                                payload = items_to_process[0].payload
+                                observers = payload.get("observers")
+                                if observers is None:
+                                    # Legacy format: single observer string
+                                    legacy_observer = payload.get("observer")
+                                    if legacy_observer:
+                                        observers = [legacy_observer]
+                                    else:
+                                        observers = []
+
                                 await process_representation_batch(
                                     messages_context,
                                     message_level_configuration,
-                                    observer=work_unit.observer,
+                                    observers=observers,
                                     observed=work_unit.observed,
                                 )
                                 await self.mark_queue_items_as_processed(
