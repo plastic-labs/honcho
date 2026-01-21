@@ -440,6 +440,7 @@ class QueueManager:
                                     message_level_configuration,
                                     observer=work_unit.observer,
                                     observed=work_unit.observed,
+                                    queue_items_count=len(items_to_process),
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key

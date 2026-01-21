@@ -15,7 +15,7 @@ from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
 from src.telemetry.events import (
-    CleanupQueueCompletedEvent,
+    CleanupStaleItemsCompletedEvent,
     DeletionCompletedEvent,
     SyncVectorsCompletedEvent,
     emit,
@@ -158,6 +158,7 @@ async def process_representation_batch(
     *,
     observer: str | None,
     observed: str | None,
+    queue_items_count: int,
 ) -> None:
     """
     Prepares and processes a batch of messages for representation tasks.
@@ -180,6 +181,7 @@ async def process_representation_batch(
         message_level_configuration,
         observer=observer,
         observed=observed,
+        queue_items_count=queue_items_count,
     )
 
 
@@ -319,9 +321,9 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Emit telemetry event for cleanup_queue
+        # Emit telemetry event for cleanup stale items
         emit(
-            CleanupQueueCompletedEvent(
+            CleanupStaleItemsCompletedEvent(
                 total_duration_ms=duration_ms,
             )
         )

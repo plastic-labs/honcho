@@ -1,6 +1,21 @@
+from contextvars import ContextVar
 from typing import Generic, Literal, NamedTuple, TypeVar
 
 T = TypeVar("T")
+
+# Context variable for tracking current iteration in tool execution loop
+# This is used for telemetry to associate tool calls with their iteration
+_current_iteration: ContextVar[int] = ContextVar("current_iteration", default=0)
+
+
+def set_current_iteration(iteration: int) -> None:
+    """Set the current iteration number for telemetry context."""
+    _current_iteration.set(iteration)
+
+
+def get_current_iteration() -> int:
+    """Get the current iteration number from telemetry context."""
+    return _current_iteration.get()
 
 
 class GetOrCreateResult(NamedTuple, Generic[T]):

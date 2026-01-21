@@ -22,14 +22,14 @@ Event Categories:
     - AgentToolConclusionsCreatedEvent: Conclusions created by agent
     - AgentToolConclusionsDeletedEvent: Conclusions deleted by agent
     - AgentToolPeerCardUpdatedEvent: Peer card updated by agent
-    - AgentToolSummaryCreatedEvent: Summary created by agent (future)
+    - AgentToolSummaryCreatedEvent: Summary created
 
     deletion: Resource removal
-    - DeletionCompletedEvent: Resource deletion completed
+    - DeletionCompletedEvent: Resource deletion completed (with cascade counts)
 
     reconciliation: Maintenance operations
     - SyncVectorsCompletedEvent: Vector store sync completed
-    - CleanupQueueCompletedEvent: Queue cleanup completed
+    - CleanupStaleItemsCompletedEvent: Stale items cleanup completed
 
 Usage:
     from src.telemetry.events import emit, RepresentationCompletedEvent
@@ -39,13 +39,12 @@ Usage:
         workspace_name="my_workspace",
         session_id="sess_456",
         session_name="my_session",
-        observer="user_peer",
         observed="assistant_peer",
+        queue_items_processed=3,
         earliest_message_id="msg_001",
         latest_message_id="msg_010",
         message_count=10,
         explicit_conclusion_count=5,
-        deductive_conclusion_count=2,
         context_preparation_ms=50.0,
         llm_call_ms=1200.0,
         total_duration_ms=1300.0,
@@ -71,7 +70,7 @@ from src.telemetry.events.dream import (
     DreamSpecialistEvent,
 )
 from src.telemetry.events.reconciliation import (
-    CleanupQueueCompletedEvent,
+    CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
 )
 from src.telemetry.events.representation import RepresentationCompletedEvent
@@ -98,7 +97,7 @@ __all__ = [
     "AgentToolSummaryCreatedEvent",
     # Reconciliation events
     "SyncVectorsCompletedEvent",
-    "CleanupQueueCompletedEvent",
+    "CleanupStaleItemsCompletedEvent",
     # Deletion events
     "DeletionCompletedEvent",
     # Lifecycle

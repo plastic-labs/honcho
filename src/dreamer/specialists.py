@@ -15,6 +15,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.schemas import ResolvedConfiguration
 from src.telemetry import otel_metrics, prometheus
+from src.telemetry.events import DreamSpecialistEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
@@ -31,6 +33,21 @@ from src.utils.agent_tools import (
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SpecialistResult:
+    """Result of a specialist run for telemetry and aggregation."""
+
+    run_id: str
+    specialist_type: str
+    iterations: int
+    tool_calls_count: int
+    input_tokens: int
+    output_tokens: int
+    duration_ms: float
+    success: bool
+    content: str
 
 
 # Tool names to exclude when peer card creation is disabled
@@ -81,7 +98,8 @@ class BaseSpecialist(ABC):
         session_name: str,
         probing_questions: list[str],
         configuration: ResolvedConfiguration | None = None,
-    ) -> str:
+        parent_run_id: str | None = None,
+    ) -> SpecialistResult:
         """
         Run the specialist agent.
 
@@ -93,11 +111,12 @@ class BaseSpecialist(ABC):
             session_name: Session identifier
             probing_questions: Entry point questions to guide exploration
             configuration: Resolved configuration for checking feature flags (optional)
+            parent_run_id: Optional run_id from orchestrator for correlation
 
         Returns:
-            Summary of work done
+            SpecialistResult with metrics and content
         """
-        run_id = str(uuid.uuid4())[:8]
+        run_id = parent_run_id or str(uuid.uuid4())[:8]
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 
@@ -115,7 +134,7 @@ class BaseSpecialist(ABC):
             {"role": "user", "content": self.build_user_prompt(probing_questions)},
         ]
 
-        # Create tool executor
+        # Create tool executor with telemetry context
         tool_executor: Callable[
             [str, dict[str, Any]], Any
         ] = await create_tool_executor(
@@ -127,11 +146,21 @@ class BaseSpecialist(ABC):
             include_observation_ids=True,
             history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
             configuration=configuration,
+            run_id=run_id,
+            agent_type=self.name,
+            parent_category="dream",
         )
 
         # Get model with potential override
         model = self.get_model()
         llm_settings = settings.DREAM.model_copy(update={"MODEL": model})
+
+        # Track iterations via callback
+        iteration_count = 0
+
+        def iteration_callback(data: Any) -> None:
+            nonlocal iteration_count
+            iteration_count = data.iteration
 
         # Run the agent loop
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
@@ -144,6 +173,7 @@ class BaseSpecialist(ABC):
             max_tool_iterations=self.get_max_iterations(),
             messages=messages,
             track_name=f"Dreamer/{self.name}",
+            iteration_callback=iteration_callback,
         )
 
         # Log metrics
@@ -176,7 +206,35 @@ class BaseSpecialist(ABC):
 
         log_performance_metrics(f"dreamer_{self.name}", run_id)
 
-        return response.content
+        # Emit telemetry event
+        emit(
+            DreamSpecialistEvent(
+                run_id=run_id,
+                specialist_type=self.name,
+                workspace_id=workspace_name,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                iterations=iteration_count,
+                tool_calls_count=len(response.tool_calls_made),
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                duration_ms=duration_ms,
+                success=True,
+            )
+        )
+
+        return SpecialistResult(
+            run_id=run_id,
+            specialist_type=self.name,
+            iterations=iteration_count,
+            tool_calls_count=len(response.tool_calls_made),
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            duration_ms=duration_ms,
+            success=True,
+            content=response.content,
+        )
 
 
 class DeductionSpecialist(BaseSpecialist):

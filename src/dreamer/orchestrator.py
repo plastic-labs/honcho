@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import settings
-from src.dreamer.specialists import SPECIALISTS
+from src.dreamer.specialists import SPECIALISTS, SpecialistResult
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SpecialistExecutionError, SurprisalError
+from src.telemetry.events import DreamRunEvent, emit
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -51,8 +52,8 @@ class DreamResult:
     # Aggregate metrics
     total_iterations: int
     total_duration_ms: float
-    input_tokens: int = 0
-    output_tokens: int = 0
+    input_tokens: int
+    output_tokens: int
 
 
 # Predefined probing questions to guide the specialists
@@ -125,6 +126,8 @@ async def run_dream(
     deduction_success = False
     induction_success = False
     surprisal_observation_count = 0
+    deduction_result: SpecialistResult | None = None
+    induction_result: SpecialistResult | None = None
 
     # Phase 0: Surprisal-based sampling (if enabled)
     probing_questions = PROBING_QUESTIONS  # Default
@@ -197,10 +200,15 @@ async def run_dream(
             session_name=session_name,
             probing_questions=probing_questions,
             configuration=configuration,
+            parent_run_id=run_id,
         )
-        logger.info(f"[{run_id}] Deduction completed: {deduction_result[:200]}...")
-        accumulate_metric(task_name, "deduction_result", deduction_result, "blob")
-        deduction_success = True
+        logger.info(
+            f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
+        )
+        accumulate_metric(
+            task_name, "deduction_result", deduction_result.content, "blob"
+        )
+        deduction_success = deduction_result.success
     except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "deduction_error", str(e), "blob")
@@ -217,10 +225,15 @@ async def run_dream(
             session_name=session_name,
             probing_questions=probing_questions,
             configuration=configuration,
+            parent_run_id=run_id,
         )
-        logger.info(f"[{run_id}] Induction completed: {induction_result[:200]}...")
-        accumulate_metric(task_name, "induction_result", induction_result, "blob")
-        induction_success = True
+        logger.info(
+            f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
+        )
+        accumulate_metric(
+            task_name, "induction_result", induction_result.content, "blob"
+        )
+        induction_success = induction_result.success
     except SpecialistExecutionError as e:
         logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "induction_error", str(e), "blob")
@@ -232,6 +245,38 @@ async def run_dream(
     logger.info(f"[{run_id}] Dream cycle completed in {duration_ms:.0f}ms")
     log_performance_metrics("dream_orchestrator", run_id)
 
+    # Aggregate metrics from specialist results
+    total_iterations = (deduction_result.iterations if deduction_result else 0) + (
+        induction_result.iterations if induction_result else 0
+    )
+    total_input_tokens = (deduction_result.input_tokens if deduction_result else 0) + (
+        induction_result.input_tokens if induction_result else 0
+    )
+    total_output_tokens = (
+        deduction_result.output_tokens if deduction_result else 0
+    ) + (induction_result.output_tokens if induction_result else 0)
+
+    # Emit DreamRunEvent with aggregated metrics
+    emit(
+        DreamRunEvent(
+            run_id=run_id,
+            workspace_id=workspace_name,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            observer=observer,
+            observed=observed,
+            specialists_run=["deduction", "induction"],
+            deduction_success=deduction_success,
+            induction_success=induction_success,
+            surprisal_enabled=settings.DREAM.SURPRISAL.ENABLED,
+            surprisal_conclusion_count=surprisal_observation_count,
+            total_iterations=total_iterations,
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_duration_ms=duration_ms,
+        )
+    )
+
     return DreamResult(
         run_id=run_id,
         specialists_run=["deduction", "induction"],
@@ -239,8 +284,10 @@ async def run_dream(
         induction_success=induction_success,
         surprisal_enabled=settings.DREAM.SURPRISAL.ENABLED,
         surprisal_conclusion_count=surprisal_observation_count,
-        total_iterations=0,  # TODO: Track actual iterations from specialists
+        total_iterations=total_iterations,
         total_duration_ms=duration_ms,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
     )
 
 

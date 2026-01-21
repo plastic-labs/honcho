@@ -12,6 +12,7 @@ from src.dependencies import db
 from src.deriver.enqueue import enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
+from src.telemetry.events import DeletionCompletedEvent, emit
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -114,7 +115,22 @@ async def delete_workspace(
 
     This action cannot be undone.
     """
-    await crud.delete_workspace(db, workspace_name=workspace_id)
+    result = await crud.delete_workspace(db, workspace_name=workspace_id)
+
+    # Emit telemetry event with cascade counts
+    emit(
+        DeletionCompletedEvent(
+            workspace_id=workspace_id,
+            workspace_name=workspace_id,
+            deletion_type="workspace",
+            resource_id=workspace_id,
+            success=True,
+            peers_deleted=result.peers_deleted,
+            sessions_deleted=result.sessions_deleted,
+            messages_deleted=result.messages_deleted,
+            conclusions_deleted=result.conclusions_deleted,
+        )
+    )
 
 
 @router.post(

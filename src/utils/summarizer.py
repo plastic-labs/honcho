@@ -492,8 +492,12 @@ async def _create_and_save_summary(
                 workspace_name=workspace_name,
                 session_id=session_name,
                 session_name=session_name,
+                message_id=message_public_id,
+                message_count=len(messages),
+                message_seq_in_session=message_seq_in_session,
                 summary_type="short" if summary_type == SummaryType.SHORT else "long",
-                summary_token_count=new_summary["token_count"],
+                input_tokens=llm_input_tokens,
+                output_tokens=llm_output_tokens,
             )
         )
 

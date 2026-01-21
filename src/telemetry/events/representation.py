@@ -34,8 +34,12 @@ class RepresentationCompletedEvent(BaseEvent):
     session_name: str = Field(..., description="Session name")
 
     # Peer context
-    observer: str = Field(..., description="Observer peer name")
     observed: str = Field(..., description="Observed peer name")
+
+    # Queue processing info
+    queue_items_processed: int = Field(
+        ..., description="Number of QueueItem records dequeued and processed"
+    )
 
     # Message batch info
     earliest_message_id: str = Field(..., description="First message ID in batch")
@@ -45,9 +49,6 @@ class RepresentationCompletedEvent(BaseEvent):
     # Conclusion counts
     explicit_conclusion_count: int = Field(
         ..., description="Number of explicit conclusions extracted"
-    )
-    deductive_conclusion_count: int = Field(
-        ..., description="Number of deductive conclusions inferred"
     )
 
     # Timing metrics (milliseconds)

@@ -3,7 +3,7 @@ Reconciliation events for Honcho telemetry.
 
 Reconciliation tasks handle maintenance operations:
 - Sync vectors: Synchronize documents and message embeddings to external vector stores
-- Cleanup queue: Clean up soft-deleted records and expired queue items
+- Cleanup stale items: Clean up soft-deleted records and expired queue items
 """
 
 from typing import ClassVar
@@ -50,16 +50,16 @@ class SyncVectorsCompletedEvent(BaseEvent):
         return "sync_vectors"
 
 
-class CleanupQueueCompletedEvent(BaseEvent):
-    """Emitted when a queue cleanup cycle completes.
+class CleanupStaleItemsCompletedEvent(BaseEvent):
+    """Emitted when a stale items cleanup cycle completes.
 
-    Cleanup tasks remove soft-deleted records and expired queue items.
+    Cleanup tasks remove soft-deleted documents and expired queue items.
     These run periodically and operate across all workspaces.
 
     Note: This event has no workspace context as it operates globally.
     """
 
-    _event_type: ClassVar[str] = "reconciliation.cleanup_queue.completed"
+    _event_type: ClassVar[str] = "reconciliation.cleanup_stale_items.completed"
     _schema_version: ClassVar[int] = 1
     _category: ClassVar[str] = "reconciliation"
 
@@ -76,10 +76,10 @@ class CleanupQueueCompletedEvent(BaseEvent):
 
     def get_resource_id(self) -> str:
         """Resource ID is fixed for this global operation."""
-        return "cleanup_queue"
+        return "cleanup_stale_items"
 
 
 __all__ = [
     "SyncVectorsCompletedEvent",
-    "CleanupQueueCompletedEvent",
+    "CleanupStaleItemsCompletedEvent",
 ]

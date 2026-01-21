@@ -36,7 +36,9 @@ class AgentIterationEvent(BaseEvent):
     run_id: str = Field(..., description="8-char UUID prefix for run correlation")
 
     # Context
-    parent_category: str = Field(..., description="Parent category: 'dream' or 'dialectic'")
+    parent_category: str = Field(
+        ..., description="Parent category: 'dream' or 'dialectic'"
+    )
     agent_type: str = Field(
         ..., description="Agent type: 'deduction', 'induction', or 'dialectic'"
     )
@@ -89,7 +91,9 @@ class AgentToolConclusionsCreatedEvent(BaseEvent):
     iteration: int = Field(..., description="Iteration number when this occurred")
 
     # Context
-    parent_category: str = Field(..., description="Parent category: 'dream' or 'dialectic'")
+    parent_category: str = Field(
+        ..., description="Parent category: 'dream' or 'dialectic'"
+    )
     agent_type: str = Field(
         ..., description="Agent type: 'deduction', 'induction', or 'dialectic'"
     )
@@ -162,9 +166,7 @@ class AgentToolPeerCardUpdatedEvent(BaseEvent):
 
     # Context
     parent_category: str = Field(..., description="Parent category (typically 'dream')")
-    agent_type: str = Field(
-        ..., description="Agent type: 'deduction' or 'induction'"
-    )
+    agent_type: str = Field(..., description="Agent type: 'deduction' or 'induction'")
     workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
@@ -181,16 +183,17 @@ class AgentToolPeerCardUpdatedEvent(BaseEvent):
 
 
 class AgentToolSummaryCreatedEvent(BaseEvent):
-    """Emitted when the create_summary tool is executed.
+    """Emitted when a summary is created.
 
-    Tracks summary creation during agent execution (for future use).
+    Tracks summary creation with full context about what was summarized
+    and the resources consumed.
     """
 
     _event_type: ClassVar[str] = "agent.tool.summary.created"
     _schema_version: ClassVar[int] = 1
     _category: ClassVar[str] = "agent"
 
-    # Run identification
+    # Run identification (may be placeholder if not from an agentic loop)
     run_id: str = Field(..., description="8-char UUID prefix for run correlation")
     iteration: int = Field(..., description="Iteration number when this occurred")
 
@@ -204,11 +207,23 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     session_id: str = Field(..., description="Session ID")
     session_name: str = Field(..., description="Session name")
 
+    # Message context - what was summarized
+    message_id: str = Field(..., description="Message ID the summary covers up to")
+    message_count: int = Field(
+        ..., description="Number of messages included in summary"
+    )
+    message_seq_in_session: int = Field(
+        ..., description="Sequence number of the base message in session"
+    )
+
     # Summary details
     summary_type: str = Field(..., description="Summary type: 'short' or 'long'")
-    summary_token_count: int = Field(
-        ..., description="Token count of generated summary"
+
+    # Token usage
+    input_tokens: int = Field(
+        ..., description="Input tokens used for summary generation"
     )
+    output_tokens: int = Field(..., description="Output tokens (summary token count)")
 
     def get_resource_id(self) -> str:
         """Resource ID includes run_id and iteration for uniqueness."""

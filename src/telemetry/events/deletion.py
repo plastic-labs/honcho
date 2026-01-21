@@ -1,8 +1,8 @@
 """
 Deletion events for Honcho telemetry.
 
-Deletion tasks handle async removal of resources like sessions and observations,
-ensuring proper cleanup across all storage layers.
+Deletion tasks handle async removal of resources like workspaces, sessions,
+and conclusions, ensuring proper cleanup across all storage layers.
 """
 
 from typing import ClassVar
@@ -15,8 +15,9 @@ from src.telemetry.events.base import BaseEvent
 class DeletionCompletedEvent(BaseEvent):
     """Emitted when a deletion task completes.
 
-    Deletion tasks handle async removal of sessions and observations,
-    ensuring proper cleanup across all storage layers.
+    Deletion tasks handle async removal of workspaces, sessions, and conclusions,
+    ensuring proper cleanup across all storage layers. For workspace deletions,
+    cascade counts track how many child resources were also deleted.
     """
 
     _event_type: ClassVar[str] = "deletion.completed"
@@ -29,12 +30,26 @@ class DeletionCompletedEvent(BaseEvent):
 
     # Deletion details
     deletion_type: str = Field(
-        ..., description="Type of deletion: 'session' or 'observation'"
+        ..., description="Type of deletion: 'workspace', 'session', or 'conclusions'"
     )
     resource_id: str = Field(..., description="ID of the deleted resource")
 
     # Outcome
     success: bool = Field(..., description="Whether deletion succeeded")
+
+    # Cascade counts (populated for workspace deletion)
+    peers_deleted: int = Field(
+        default=0, description="Number of peers deleted (workspace deletion)"
+    )
+    sessions_deleted: int = Field(
+        default=0, description="Number of sessions deleted (workspace deletion)"
+    )
+    messages_deleted: int = Field(
+        default=0, description="Number of messages deleted (workspace deletion)"
+    )
+    conclusions_deleted: int = Field(
+        default=0, description="Number of conclusions deleted (workspace deletion)"
+    )
 
     # Optional error info
     error_message: str | None = Field(

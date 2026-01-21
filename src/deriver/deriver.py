@@ -29,6 +29,7 @@ async def process_representation_tasks_batch(
     *,
     observer: str,
     observed: str,
+    queue_items_count: int,
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, no peer card.
@@ -38,6 +39,7 @@ async def process_representation_tasks_batch(
         message_level_configuration: Optional configuration override.
         observer: The observer peer ID.
         observed: The observed peer ID.
+        queue_items_count: Number of QueueItem records being processed in this batch.
     """
     if not messages:
         return
@@ -222,13 +224,12 @@ async def process_representation_tasks_batch(
             workspace_name=latest_message.workspace_name,
             session_id=latest_message.session_name,
             session_name=latest_message.session_name,
-            observer=observer,
             observed=observed,
+            queue_items_processed=queue_items_count,
             earliest_message_id=earliest_message.public_id,
             latest_message_id=latest_message.public_id,
             message_count=len(messages),
             explicit_conclusion_count=len(observations.explicit),
-            deductive_conclusion_count=len(observations.deductive),
             context_preparation_ms=context_prep_duration,
             llm_call_ms=llm_duration,
             total_duration_ms=overall_duration,

@@ -90,7 +90,9 @@ class DialecticAgent:
         ]
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
-        self._run_id: str = str(uuid.uuid4())[:8]  # Always generate for event correlation
+        self._run_id: str = str(uuid.uuid4())[
+            :8
+        ]  # Always generate for event correlation
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -265,6 +267,9 @@ class DialecticAgent:
             observer=self.observer,
             observed=self.observed,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
+            run_id=self._run_id,
+            agent_type="dialectic",
+            parent_category="dialectic",
         )
 
         return tool_executor, task_name, run_id, start_time
@@ -343,7 +348,6 @@ class DialecticAgent:
                 session_id=self.session_name,
                 session_name=self.session_name,
                 reasoning_level=self.reasoning_level,
-                agentic=True,
                 total_iterations=1,  # TODO: Track actual iterations from tool loop
                 prefetched_conclusion_count=self._prefetched_conclusion_count,
                 tool_calls_count=tool_calls_count,

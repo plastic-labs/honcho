@@ -49,12 +49,9 @@ class DialecticCompletedEvent(BaseEvent):
     reasoning_level: str = Field(
         ..., description="Reasoning level: minimal, low, medium, high, max"
     )
-    agentic: bool = Field(..., description="Whether agentic mode was used")
 
     # Execution metrics
-    total_iterations: int = Field(
-        default=1, description="Number of LLM iterations"
-    )
+    total_iterations: int = Field(default=1, description="Number of LLM iterations")
     prefetched_conclusion_count: int = Field(
         default=0, description="Number of conclusions prefetched"
     )

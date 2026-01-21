@@ -57,6 +57,7 @@ from .webhook import (
     list_webhook_endpoints,
 )
 from .workspace import (
+    WorkspaceDeletionResult,
     delete_workspace,
     get_all_workspaces,
     get_or_create_workspace,
@@ -124,6 +125,7 @@ __all__ = [
     "delete_webhook_endpoint",
     "list_webhook_endpoints",
     # Workspace
+    "WorkspaceDeletionResult",
     "delete_workspace",
     "get_or_create_workspace",
     "get_workspace",
