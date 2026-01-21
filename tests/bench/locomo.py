@@ -59,24 +59,19 @@ Optional arguments:
 
 import argparse
 import asyncio
-import logging
-import os
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-import httpx
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
-from honcho import Honcho
 from honcho.api_types import MessageCreateParams
 from honcho.session import SessionPeerConfig
 from openai import AsyncOpenAI
 
 from src.config import settings
-from src.utils.metrics_collector import MetricsCollector
 
 from .locomo_common import (
     CATEGORY_NAMES,
@@ -93,6 +88,15 @@ from .locomo_common import (
     load_locomo_data,
     parse_locomo_date,
     print_summary,
+)
+from .runner_common import (
+    ReasoningLevel,
+    RunnerMixin,
+    add_common_arguments,
+    create_anthropic_client,
+    create_openai_client,
+    export_metrics,
+    validate_common_arguments,
 )
 
 # Load .env from bench directory
@@ -165,7 +169,7 @@ def determine_question_target(question: str, speaker_a: str, speaker_b: str) -> 
         return speaker_a
 
 
-class LoCoMoRunner:
+class LoCoMoRunner(RunnerMixin):
     """
     Executes LoCoMo benchmark tests against a Honcho instance.
     """
@@ -178,6 +182,8 @@ class LoCoMoRunner:
         timeout_seconds: int | None = None,
         cleanup_workspace: bool = False,
         use_get_context: bool = False,
+        redis_url: str = "redis://localhost:6379/0",
+        reasoning_level: ReasoningLevel | None = None,
     ):
         """
         Initialize the LoCoMo test runner.
@@ -189,149 +195,27 @@ class LoCoMoRunner:
             timeout_seconds: Timeout for deriver queue in seconds
             cleanup_workspace: If True, delete workspace after executing conversation
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
+            redis_url: Redis URL for flush mode signaling (default: redis://localhost:6379/0)
+            reasoning_level: Reasoning level for dialectic chat (default: None)
         """
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
-        self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 600
         )
         self.cleanup_workspace: bool = cleanup_workspace
         self.use_get_context: bool = use_get_context
+        self.redis_url: str = redis_url
+        self.reasoning_level: ReasoningLevel | None = reasoning_level
 
-        # Initialize metrics collector
-        self.metrics_collector: MetricsCollector = MetricsCollector()
-        self.metrics_collector.start_collection(
-            f"locomo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Initialize common components (metrics, logging)
+        self._init_common("locomo")
+
+        # Initialize LLM clients
+        self.anthropic_client: AsyncAnthropic = create_anthropic_client(
+            anthropic_api_key
         )
-
-        # Configure logging
-        logging.basicConfig(
-            level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-        self.logger: logging.Logger = logging.getLogger(__name__)
-
-        # Suppress HTTP request logs from the Honcho SDK
-        logging.getLogger("httpx").setLevel(logging.ERROR)
-        logging.getLogger("httpcore").setLevel(logging.ERROR)
-
-        if self.anthropic_api_key:
-            self.anthropic_client: AsyncAnthropic = AsyncAnthropic(
-                api_key=self.anthropic_api_key
-            )
-        else:
-            api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
-            self.anthropic_client = AsyncAnthropic(api_key=api_key)
-
-        # Initialize OpenAI client for judging responses
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY is not set")
-        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
-
-    def get_honcho_url_for_index(self, index: int) -> str:
-        """Get the Honcho URL for a given index using round-robin distribution."""
-        instance_id = index % self.pool_size
-        port = self.base_api_port + instance_id
-        return f"http://localhost:{port}"
-
-    def create_honcho_client(self, workspace_id: str, honcho_url: str) -> Honcho:
-        """Create a Honcho client for a specific workspace."""
-        return Honcho(
-            environment="local",
-            workspace_id=workspace_id,
-            base_url=honcho_url,
-        )
-
-    async def wait_for_deriver_queue_empty(
-        self, honcho_client: Honcho, session_id: str | None = None
-    ) -> bool:
-        """Wait for the deriver queue to be empty."""
-        start_time = time.time()
-        while True:
-            try:
-                status = await honcho_client.aio.queue_status(session=session_id)
-            except Exception:
-                await asyncio.sleep(1)
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= self.timeout_seconds:
-                    return False
-                continue
-
-            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
-                return True
-
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= self.timeout_seconds:
-                return False
-            await asyncio.sleep(1)
-
-    async def trigger_dream_and_wait(
-        self,
-        honcho_client: Honcho,
-        workspace_id: str,
-        observer: str,
-        observed: str | None = None,
-        session_id: str | None = None,
-    ) -> bool:
-        """
-        Trigger a dream task and wait for it to complete.
-
-        Args:
-            honcho_client: Honcho client instance
-            workspace_id: Workspace identifier
-            observer: Observer peer name
-            observed: Observed peer name (defaults to observer)
-            session_id: Session ID to scope the dream to
-
-        Returns:
-            True if dream completed successfully, False on timeout
-        """
-        observed = observed or observer
-        honcho_url = self.get_honcho_url_for_index(0)
-
-        url = f"{honcho_url}/v3/workspaces/{workspace_id}/schedule_dream"
-        payload = {
-            "observer": observer,
-            "observed": observed,
-            "dream_type": "omni",
-            "session_id": session_id or f"{workspace_id}_session",
-        }
-
-        print(f"[{workspace_id}] Triggering dream at {url}")
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    timeout=30.0,
-                )
-                if response.status_code != 204:
-                    print(
-                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
-                    )
-                    print(f"[{workspace_id}] Response body: {response.text}")
-                    return False
-        except Exception as e:
-            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
-            return False
-
-        print(
-            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
-        )
-
-        # Wait for dream queue to empty
-        print(f"[{workspace_id}] Waiting for dream to complete...")
-        await asyncio.sleep(2)
-        success = await self.wait_for_deriver_queue_empty(honcho_client)
-        if success:
-            print(f"[{workspace_id}] Dream queue empty")
-        else:
-            print(f"[{workspace_id}] Dream queue timeout")
-        return success
+        self.openai_client: AsyncOpenAI = create_openai_client()
 
     async def execute_conversation(
         self,
@@ -452,6 +336,7 @@ class LoCoMoRunner:
 
             # Wait for deriver queue to empty
             await asyncio.sleep(1)
+            await self.flush_deriver_queue()
             queue_empty = await self.wait_for_deriver_queue_empty(honcho_client)
             if not queue_empty:
                 result["error"] = "Deriver queue timeout"
@@ -549,7 +434,9 @@ class LoCoMoRunner:
                     else:
                         # Use dialectic .chat endpoint on the appropriate peer
                         actual_response = await target_peer.aio.chat(
-                            question, session=session_id
+                            question,
+                            session=session_id,
+                            reasoning_level=self.reasoning_level,
                         )
                         actual_response = (
                             actual_response if isinstance(actual_response, str) else ""
@@ -732,6 +619,7 @@ Examples:
   %(prog)s --data-file locomo10.json --pool-size 4
   %(prog)s --data-file locomo10.json --sample-id "sample_0"
   %(prog)s --data-file locomo10.json --test-count 5 --question-count 20
+  %(prog)s --data-file locomo10.json --reasoning-level high
         """,
     )
 
@@ -742,56 +630,14 @@ Examples:
         help="Path to LoCoMo JSON file (required)",
     )
 
-    parser.add_argument(
-        "--base-api-port",
-        type=int,
-        default=8000,
-        help="Base port for Honcho API instances (default: 8000)",
-    )
+    # Add common arguments shared across all runners
+    add_common_arguments(parser)
 
-    parser.add_argument(
-        "--pool-size",
-        type=int,
-        default=1,
-        help="Number of Honcho instances in the pool (default: 1)",
-    )
-
+    # LoCoMo-specific arguments
     parser.add_argument(
         "--anthropic-api-key",
         type=str,
         help="Anthropic API key for response judging (optional)",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=None,
-        help="Timeout for deriver queue to empty in seconds (default: 10 minutes)",
-    )
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=1,
-        help="Number of conversations to run concurrently in each batch (default: 1)",
-    )
-
-    parser.add_argument(
-        "--json-output",
-        type=Path,
-        help="Path to write JSON summary results for analytics (optional)",
-    )
-
-    parser.add_argument(
-        "--cleanup-workspace",
-        action="store_true",
-        help="Delete workspace after executing each conversation (default: False)",
-    )
-
-    parser.add_argument(
-        "--use-get-context",
-        action="store_true",
-        help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
     )
 
     parser.add_argument(
@@ -814,17 +660,15 @@ Examples:
 
     args = parser.parse_args()
 
-    # Validate arguments
+    # Validate common arguments
+    error = validate_common_arguments(args)
+    if error:
+        print(error)
+        return 1
+
+    # Validate locomo-specific arguments
     if not args.data_file.exists():
         print(f"Error: Data file {args.data_file} does not exist")
-        return 1
-
-    if args.batch_size <= 0:
-        print(f"Error: Batch size must be positive, got {args.batch_size}")
-        return 1
-
-    if args.pool_size <= 0:
-        print(f"Error: Pool size must be positive, got {args.pool_size}")
         return 1
 
     # Create test runner
@@ -835,6 +679,8 @@ Examples:
         timeout_seconds=args.timeout,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
+        redis_url=args.redis_url,
+        reasoning_level=args.reasoning_level,
     )
 
     try:
@@ -869,6 +715,7 @@ Examples:
                 "base_api_port": runner.base_api_port,
                 "pool_size": runner.pool_size,
                 "timeout_seconds": runner.timeout_seconds,
+                "reasoning_level": runner.reasoning_level,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
                 "dream_settings": settings.DREAM.model_dump(),
@@ -877,11 +724,7 @@ Examples:
         )
 
         # Export metrics to JSON file
-        metrics_output = Path(
-            f"tests/bench/perf_metrics/locomo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        )
-        runner.metrics_collector.export_to_json(metrics_output)
-        runner.metrics_collector.cleanup_collection()
+        export_metrics(runner.metrics_collector, "locomo")
 
         # Return exit code based on results
         avg_score = (

@@ -3,6 +3,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from src.config import ReasoningLevel
 from src.schemas import (
     DreamType,
     MessageConfiguration,
@@ -144,6 +145,9 @@ class QueryAction(TestStep):
 
     observed_peer_id: str | None = None
     observer_peer_id: str | None = None
+
+    # for chat - reasoning level
+    reasoning_level: ReasoningLevel | None = None
 
     assertions: list[
         LLMJudgeAssertion
