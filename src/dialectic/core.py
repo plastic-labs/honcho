@@ -13,9 +13,17 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, prometheus
+from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
+from src.telemetry import otel_metrics
+from src.telemetry.events import DialecticCompletedEvent, emit
+from src.telemetry.logging import (
+    accumulate_metric,
+    log_performance_metrics,
+    log_token_usage_metrics,
+)
+from src.telemetry.otel.metrics import DialecticComponents, TokenTypes
 from src.utils.agent_tools import (
     DIALECTIC_TOOLS,
     DIALECTIC_TOOLS_MINIMAL,
@@ -28,11 +36,6 @@ from src.utils.clients import (
     honcho_llm_call,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
-from src.utils.logging import (
-    accumulate_metric,
-    log_performance_metrics,
-    log_token_usage_metrics,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,10 @@ class DialecticAgent:
             }
         ]
         self._session_history_initialized: bool = False
+        self._prefetched_conclusion_count: int = 0
+        self._run_id: str = str(uuid.uuid4())[
+            :8
+        ]  # Always generate for event correlation
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -186,6 +193,11 @@ class DialecticAgent:
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
 
+            # Count prefetched conclusions for telemetry
+            explicit_count = len(explicit_repr.explicit) + len(explicit_repr.deductive)
+            derived_count = len(derived_repr.explicit) + len(derived_repr.deductive)
+            self._prefetched_conclusion_count = explicit_count + derived_count
+
             # Format as two separate sections
             parts: list[str] = []
 
@@ -268,6 +280,9 @@ class DialecticAgent:
             observer=self.observer,
             observed=self.observed,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
+            run_id=self._run_id,
+            agent_type="dialectic",
+            parent_category="dialectic",
         )
 
         return tool_executor, task_name, run_id, start_time
@@ -284,6 +299,7 @@ class DialecticAgent:
         cache_creation_input_tokens: int | None,
         tool_calls_count: int,
         thinking_content: str | None,
+        iterations: int,
     ) -> None:
         """
         Log metrics common to both streaming and non-streaming responses.
@@ -299,6 +315,7 @@ class DialecticAgent:
             cache_creation_input_tokens: Cache creation tokens (if any)
             tool_calls_count: Number of tool calls made
             thinking_content: Thinking trace content (if any)
+            iterations: Number of iterations in the tool execution loop
         """
         accumulate_metric(task_name, "tool_calls", tool_calls_count, "count")
 
@@ -320,19 +337,39 @@ class DialecticAgent:
         if not self.metric_key and run_id is not None:
             log_performance_metrics("dialectic_chat", run_id)
 
-        # Track prometheus metrics - actual token counts from API
-        if prometheus.METRICS_ENABLED:
-            prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
-                token_type=prometheus.TokenTypes.INPUT.value,
-                component=prometheus.DialecticComponents.TOTAL.value,
+        # OTel metrics (push-based)
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_dialectic_tokens(
+                count=input_tokens,
+                token_type=TokenTypes.INPUT.value,
+                component=DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
-            ).inc(input_tokens)
+            )
+            otel_metrics.record_dialectic_tokens(
+                count=output_tokens,
+                token_type=TokenTypes.OUTPUT.value,
+                component=DialecticComponents.TOTAL.value,
+                reasoning_level=self.reasoning_level,
+            )
 
-            prometheus.DIALECTIC_TOKENS_PROCESSED.labels(
-                token_type=prometheus.TokenTypes.OUTPUT.value,
-                component=prometheus.DialecticComponents.TOTAL.value,
+        # Emit telemetry event
+        emit(
+            DialecticCompletedEvent(
+                run_id=self._run_id,
+                workspace_name=self.workspace_name,
+                peer_name=self.observed,
+                session_name=self.session_name,
                 reasoning_level=self.reasoning_level,
-            ).inc(output_tokens)
+                total_iterations=iterations,
+                prefetched_conclusion_count=self._prefetched_conclusion_count,
+                tool_calls_count=tool_calls_count,
+                total_duration_ms=elapsed_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_input_tokens or 0,
+                cache_creation_tokens=cache_creation_input_tokens or 0,
+            )
+        )
 
     async def answer(self, query: str) -> str:
         """
@@ -393,6 +430,7 @@ class DialecticAgent:
             cache_creation_input_tokens=response.cache_creation_input_tokens,
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
+            iterations=response.iterations,
         )
 
         return response.content
@@ -467,4 +505,5 @@ class DialecticAgent:
             cache_creation_input_tokens=response.cache_creation_input_tokens,
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
+            iterations=response.iterations,
         )

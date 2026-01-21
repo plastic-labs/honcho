@@ -5,6 +5,7 @@ and a conditional observe decorator that only applies when Langfuse is configure
 """
 
 import datetime
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import ParamSpec, TypeVar, overload
 
@@ -18,7 +19,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from src.config import settings
-from src.utils.metrics_collector import append_metrics_to_file
+from src.telemetry.metrics_collector import append_metrics_to_file
 from src.utils.representation import (
     Representation,
 )
@@ -80,8 +81,16 @@ def conditional_observe(
         return decorator
 
 
-# dict[task_name, list[tuple[metric_name, metric_value, metric_unit]]]
-accumulated_metrics: dict[str, list[tuple[str, str | int | float, str]]] = {}
+# Bounded OrderedDict for accumulated metrics to prevent memory leaks.
+# If an exception occurs between accumulate_metric() and log_performance_metrics(),
+# the metrics would stay in memory forever. Using OrderedDict allows us to evict
+# the oldest entries (FIFO) when exceeding MAX_ACCUMULATED_TASKS.
+MAX_ACCUMULATED_TASKS = 1000
+
+# OrderedDict[task_name, list[tuple[metric_name, metric_value, metric_unit]]]
+accumulated_metrics: OrderedDict[str, list[tuple[str, str | int | float, str]]] = (
+    OrderedDict()
+)
 
 
 def format_reasoning_inputs_as_markdown(
@@ -157,11 +166,25 @@ def accumulate_metric(
 ) -> None:
     """
     Accumulate a metric value to be printed the next time log_performance_metrics is called.
+
+    This function uses a bounded OrderedDict to prevent memory leaks. If the number of
+    tracked tasks exceeds MAX_ACCUMULATED_TASKS, the oldest entries are evicted (FIFO).
+
     Args:
+        task_name: Task identifier
         label: Metric label
         value: Metric value
         unit: Metric unit
     """
+    # Evict oldest entries if we've exceeded the maximum to prevent memory leaks.
+    # This handles the case where exceptions occur before log_performance_metrics is called.
+    while (
+        len(accumulated_metrics) >= MAX_ACCUMULATED_TASKS
+        and task_name not in accumulated_metrics
+    ):
+        # popitem(last=False) removes the oldest (first inserted) entry
+        accumulated_metrics.popitem(last=False)
+
     accumulated_metrics.setdefault(task_name, []).append((label, value, unit))
 
 
@@ -225,12 +248,14 @@ def log_performance_metrics(
         title: Table title
     """
     task_name = f"{task_slug}_{task_name}"
+    # No-op if metrics were evicted (due to MAX_ACCUMULATED_TASKS limit) and no
+    # additional metrics are passed. This handles the case where an exception
+    # caused old metrics to be evicted before log_performance_metrics was called.
     if not accumulated_metrics.get(task_name) and not metrics:
         return
     if metrics is None:
         metrics = []
-    metrics = accumulated_metrics.get(task_name, []) + metrics
-    accumulated_metrics[task_name].clear()
+    metrics = accumulated_metrics.pop(task_name, []) + metrics
 
     if COLLECT_METRICS_LOCAL:
         append_metrics_to_file(task_slug, task_name, metrics)

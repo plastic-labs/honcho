@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from src import prometheus
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import engine, request_context
@@ -30,8 +29,14 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.sentry import initialize_sentry
-from src.utils.logging import get_route_template
+from src.telemetry import (
+    initialize_telemetry,
+    initialize_telemetry_async,
+    otel_metrics,
+    shutdown_telemetry,
+)
+from src.telemetry.logging import get_route_template
+from src.telemetry.sentry import initialize_sentry
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
@@ -115,6 +120,10 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Initialize telemetry (OTel metrics + CloudEvents emitter)
+    initialize_telemetry()
+    await initialize_telemetry_async()
+
     try:
         await init_cache()
     except Exception as e:
@@ -131,6 +140,8 @@ async def lifespan(_: FastAPI):
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()
+        # Shutdown telemetry (flush CloudEvents buffer, shutdown OTel metrics)
+        await shutdown_telemetry()
 
 
 app = FastAPI(
@@ -180,22 +191,12 @@ app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
 
-app.add_api_route("/metrics", prometheus.metrics, methods=["GET"])
-
 
 # Global exception handlers
 @app.exception_handler(HonchoException)
-async def honcho_exception_handler(request: Request, exc: HonchoException):
+async def honcho_exception_handler(_request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
     logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
-
-    if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
-        template = get_route_template(request)
-        prometheus.API_REQUESTS.labels(
-            method=request.method,
-            endpoint=template,
-            status_code=str(exc.status_code),
-        ).inc()
 
     return JSONResponse(
         status_code=exc.status_code,
@@ -204,17 +205,9 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(_request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
-
-    if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
-        template = get_route_template(request)
-        prometheus.API_REQUESTS.labels(
-            method=request.method,
-            endpoint=template,
-            status_code="500",
-        ).inc()
 
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
@@ -239,14 +232,14 @@ async def track_request(
     try:
         response = await call_next(request)
 
-        # Track Prometheus metrics if enabled
-        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+        # Track metrics if enabled
+        if settings.OTEL.ENABLED:
             template = get_route_template(request)
-            prometheus.API_REQUESTS.labels(
+            otel_metrics.record_api_request(
                 method=request.method,
                 endpoint=template,
                 status_code=str(response.status_code),
-            ).inc()
+            )
 
         return response
     finally:

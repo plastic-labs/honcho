@@ -38,6 +38,7 @@ from .representation import (
     get_working_representation,
 )
 from .session import (
+    SessionDeletionResult,
     clone_session,
     delete_session,
     get_or_create_session,
@@ -57,6 +58,7 @@ from .webhook import (
     list_webhook_endpoints,
 )
 from .workspace import (
+    WorkspaceDeletionResult,
     delete_workspace,
     get_all_workspaces,
     get_or_create_workspace,
@@ -107,6 +109,7 @@ __all__ = [
     # Representation
     "get_working_representation",
     # Session
+    "SessionDeletionResult",
     "get_sessions",
     "get_or_create_session",
     "get_session",
@@ -124,6 +127,7 @@ __all__ = [
     "delete_webhook_endpoint",
     "list_webhook_endpoints",
     # Workspace
+    "WorkspaceDeletionResult",
     "delete_workspace",
     "get_or_create_workspace",
     "get_workspace",

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
@@ -15,6 +16,18 @@ from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
 logger = getLogger(__name__)
+
+
+@dataclass
+class WorkspaceDeletionResult:
+    """Result of a workspace deletion including cascade counts."""
+
+    workspace: schemas.Workspace
+    peers_deleted: int
+    sessions_deleted: int
+    messages_deleted: int
+    conclusions_deleted: int
+
 
 WORKSPACE_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}"
 WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
@@ -214,7 +227,9 @@ async def update_workspace(
     return honcho_workspace
 
 
-async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Workspace:
+async def delete_workspace(
+    db: AsyncSession, workspace_name: str
+) -> WorkspaceDeletionResult:
     """
     Delete a workspace.
 
@@ -223,7 +238,8 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         workspace_name: Name of the workspace
 
     Returns:
-        A snapshot of the deleted workspace as a Pydantic schema
+        WorkspaceDeletionResult containing a snapshot of the deleted workspace
+        and cascade counts for deleted resources
     """
     logger.warning("Deleting workspace %s", workspace_name)
     stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
@@ -240,6 +256,40 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         h_metadata=honcho_workspace.h_metadata,
         configuration=honcho_workspace.configuration,
         created_at=honcho_workspace.created_at,
+    )
+
+    # Count resources before deletion for telemetry
+    peers_count = int(
+        await db.scalar(
+            select(func.count(models.Peer.id)).where(
+                models.Peer.workspace_name == workspace_name
+            )
+        )
+        or 0
+    )
+    sessions_count = int(
+        await db.scalar(
+            select(func.count(models.Session.id)).where(
+                models.Session.workspace_name == workspace_name
+            )
+        )
+        or 0
+    )
+    messages_count = int(
+        await db.scalar(
+            select(func.count(models.Message.id)).where(
+                models.Message.workspace_name == workspace_name
+            )
+        )
+        or 0
+    )
+    conclusions_count = int(
+        await db.scalar(
+            select(func.count(models.Document.id)).where(
+                models.Document.workspace_name == workspace_name
+            )
+        )
+        or 0
     )
 
     # order is important here.
@@ -394,4 +444,10 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         await db.rollback()
         raise
 
-    return workspace_snapshot
+    return WorkspaceDeletionResult(
+        workspace=workspace_snapshot,
+        peers_deleted=peers_count,
+        sessions_deleted=sessions_count,
+        messages_deleted=messages_count,
+        conclusions_deleted=conclusions_count,
+    )

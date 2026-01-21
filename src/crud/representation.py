@@ -14,8 +14,8 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.schemas import ResolvedConfiguration
+from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
-from src.utils.logging import accumulate_metric
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,

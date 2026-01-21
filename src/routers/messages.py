@@ -16,12 +16,13 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from src import crud, prometheus, schemas
+from src import crud, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
+from src.telemetry import otel_metrics
 from src.utils.files import process_file_uploads_for_messages
 
 logger = logging.getLogger(__name__)
@@ -99,9 +100,12 @@ async def create_messages_for_session(
             session_name=session_id,
         )
 
-        prometheus.MESSAGES_CREATED.labels(
-            workspace_name=workspace_id,
-        ).inc(len(created_messages))
+        # OTel metrics (push-based)
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_messages_created(
+                count=len(created_messages),
+                workspace_name=workspace_id,
+            )
 
         # Enqueue for processing (existing logic)
         payloads = [
@@ -194,9 +198,13 @@ async def create_messages_with_file(
         "Batch of %s messages created from file uploads and queued for processing",
         len(created_messages),
     )
-    prometheus.MESSAGES_CREATED.labels(
-        workspace_name=workspace_id,
-    ).inc(len(created_messages))
+
+    # OTel metrics (push-based)
+    if settings.OTEL.ENABLED:
+        otel_metrics.record_messages_created(
+            count=len(created_messages),
+            workspace_name=workspace_id,
+        )
 
     return created_messages
 

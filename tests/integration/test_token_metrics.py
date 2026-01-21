@@ -1,20 +1,23 @@
-"""Integration tests for prometheus token metrics tracking.
+"""Integration tests for OpenTelemetry token metrics tracking.
 
-These tests verify that DERIVER_TOKENS_PROCESSED and DIALECTIC_TOKENS_PROCESSED
-metrics are correctly emitted with accurate token counts when processing messages
-and dialectic queries.
+These tests verify that deriver and dialectic token metrics are correctly
+emitted with accurate token counts when processing messages and dialectic queries.
 
-The approach uses delta-based verification:
+The approach uses delta-based verification with OTel's InMemoryMetricReader:
 1. Capture counter values before test execution
 2. Run the code under test (with mocked LLM)
 3. Verify deltas match expected values
 """
 
+from collections.abc import Iterator
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from prometheus_client import REGISTRY
+from opentelemetry.metrics import Meter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -26,6 +29,7 @@ from src.schemas import (
     ResolvedReasoningConfiguration,
     ResolvedSummaryConfiguration,
 )
+from src.telemetry.otel.metrics import otel_metrics
 from src.utils.clients import HonchoLLMCallResponse
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.summarizer import (
@@ -39,17 +43,43 @@ from src.utils.summarizer import (
 # =============================================================================
 
 
-class MetricDeltaChecker:
-    """Utility class to capture and verify prometheus counter deltas."""
+class OTelMetricChecker:
+    """Utility class to capture and verify OTel counter deltas."""
+
+    _reader: InMemoryMetricReader
+
+    def __init__(self, reader: InMemoryMetricReader):
+        self._reader = reader
+
+    def _get_metric_value(self, metric_name: str, labels: dict[str, str]) -> float:
+        """Get current value of a counter with specific labels.
+
+        Note: The OTel SDK's MetricsData types are not fully typed, so we cast
+        to Any to avoid type warnings when traversing the metrics data structure.
+        """
+        raw_data = self._reader.get_metrics_data()  # pyright: ignore[reportUnknownVariableType]
+        if raw_data is None:
+            return 0.0
+        data = cast(Any, raw_data)
+
+        for resource_metrics in data.resource_metrics:
+            for scope_metrics in resource_metrics.scope_metrics:
+                for metric in scope_metrics.metrics:
+                    if metric.name == metric_name and hasattr(
+                        metric.data, "data_points"
+                    ):
+                        for point in metric.data.data_points:
+                            # Check if labels match
+                            point_attrs: dict[str, str] = (
+                                dict(point.attributes) if point.attributes else {}
+                            )
+                            if all(point_attrs.get(k) == v for k, v in labels.items()):
+                                return float(point.value)
+        return 0.0
 
     def capture(self, metric_name: str, labels: dict[str, str]) -> float:
         """Capture current value of a counter with specific labels."""
-        # Counters have _total suffix in prometheus
-        full_name = (
-            metric_name if metric_name.endswith("_total") else f"{metric_name}_total"
-        )
-        value = REGISTRY.get_sample_value(full_name, labels=labels)
-        return value or 0.0
+        return self._get_metric_value(metric_name, labels)
 
     def get_delta(
         self, metric_name: str, labels: dict[str, str], before: float
@@ -72,18 +102,78 @@ class MetricDeltaChecker:
         ), f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
 
 
-@pytest.fixture
-def metric_checker() -> MetricDeltaChecker:
-    """Fixture providing a metric delta checker instance."""
-    return MetricDeltaChecker()
+def _reset_otel_metrics_singleton() -> None:
+    """Reset the otel_metrics singleton instance so it reinitializes with a new provider.
+
+    This clears all instance attributes so _ensure_initialized() will create
+    new meters tied to the current global MeterProvider.
+    """
+    # Reset initialization flag (instance attribute shadows class attribute)
+    otel_metrics._is_initialized = False  # pyright: ignore[reportPrivateUsage]
+
+    # Reset all meters
+    otel_metrics._api_meter = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._deriver_meter = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._dialectic_meter = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._dreamer_meter = None  # pyright: ignore[reportPrivateUsage]
+
+    # Reset all counters
+    otel_metrics._api_requests = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._messages_created = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._dialectic_calls = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._deriver_queue_items = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._deriver_tokens = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._dialectic_tokens = None  # pyright: ignore[reportPrivateUsage]
+    otel_metrics._dreamer_tokens = None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
-def enable_metrics(monkeypatch: pytest.MonkeyPatch):
-    """Enable prometheus metrics with a test namespace."""
-    monkeypatch.setattr("src.prometheus.METRICS_ENABLED", True)
-    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
-    yield
+def otel_test_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[InMemoryMetricReader, OTelMetricChecker]]:
+    """Set up OTel metrics with in-memory reader for testing.
+
+    The OTel SDK only allows set_meter_provider() to be called once per process.
+    To work around this for testing, we patch get_meter() to return meters
+    from our test provider directly.
+
+    Yields:
+        Tuple of (reader, checker) for verifying metrics
+    """
+    # Create in-memory reader
+    reader = InMemoryMetricReader()
+
+    # Create a test meter provider
+    provider = MeterProvider(metric_readers=[reader])
+
+    # Patch get_meter to return meters from our test provider
+    # This is necessary because set_meter_provider() can only be called once per process
+    def test_get_meter(name: str, version: str = "") -> Meter:
+        return provider.get_meter(name, version)
+
+    monkeypatch.setattr("src.telemetry.otel.metrics.get_meter", test_get_meter)
+
+    # Reset the otel_metrics singleton instance so it reinitializes with our test provider
+    _reset_otel_metrics_singleton()
+
+    # Enable OTEL in settings and set namespace for test assertions
+    monkeypatch.setattr("src.config.settings.OTEL.ENABLED", True)
+    monkeypatch.setattr("src.config.settings.OTEL.SERVICE_NAMESPACE", "test")
+
+    checker = OTelMetricChecker(reader)
+
+    yield reader, checker
+
+    # Cleanup: reset singleton so other tests aren't affected
+    _reset_otel_metrics_singleton()
+
+
+@pytest.fixture
+def metric_checker(
+    otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+) -> OTelMetricChecker:
+    """Fixture providing a metric checker instance."""
+    return otel_test_setup[1]
 
 
 # =============================================================================
@@ -188,7 +278,6 @@ def create_mock_dialectic_response(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_metrics")
 class TestDeriverIngestionMetrics:
     """Test token metrics for deriver INGESTION task type."""
 
@@ -196,11 +285,12 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify OUTPUT_TOTAL tokens match response.output_tokens from LLM."""
         from src.deriver.deriver import process_representation_tasks_batch
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -237,6 +327,7 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
+                queue_items_count=len(messages),
             )
 
         # Verify output tokens metric
@@ -252,12 +343,13 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify PROMPT component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
         from src.deriver.prompts import estimate_minimal_deriver_prompt_tokens
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -292,6 +384,7 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
+                queue_items_count=len(messages),
             )
 
         metric_checker.assert_delta(
@@ -306,11 +399,12 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify MESSAGES component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -347,6 +441,7 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
+                queue_items_count=len(messages),
             )
 
         # Verify messages tokens were tracked (should be > 0)
@@ -360,7 +455,6 @@ class TestDeriverIngestionMetrics:
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_metrics")
 class TestDeriverSummaryMetrics:
     """Test token metrics for deriver SUMMARY task type."""
 
@@ -368,10 +462,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify OUTPUT_TOTAL tokens are tracked for summary."""
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -401,7 +496,9 @@ class TestDeriverSummaryMetrics:
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),  # is_fallback=False
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, expected_output_tokens)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -409,7 +506,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -432,10 +528,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify PROMPT component is tracked for summary input."""
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -463,7 +560,9 @@ class TestDeriverSummaryMetrics:
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -471,7 +570,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -493,10 +591,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify MESSAGES component is tracked for summary input."""
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -533,7 +632,9 @@ class TestDeriverSummaryMetrics:
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -541,7 +642,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -562,10 +662,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify metrics are NOT emitted when _create_summary returns is_fallback=True."""
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -602,10 +703,11 @@ class TestDeriverSummaryMetrics:
 
         with patch(
             "src.utils.summarizer._create_summary",
-            new=AsyncMock(return_value=(mock_summary, True)),  # is_fallback=True
+            new=AsyncMock(
+                return_value=(mock_summary, True, 0, 0)
+            ),  # (summary, is_fallback=True, llm_input_tokens, llm_output_tokens)
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -637,7 +739,6 @@ class TestDeriverSummaryMetrics:
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_metrics")
 class TestDialecticTokenMetrics:
     """Test token metrics for dialectic calls."""
 
@@ -645,11 +746,12 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify INPUT tokens are tracked from LLM response."""
         from src.dialectic.core import DialecticAgent
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -692,11 +794,12 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
     ):
         """Verify OUTPUT tokens are tracked from LLM response."""
         from src.dialectic.core import DialecticAgent
 
+        _, metric_checker = otel_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -739,15 +842,16 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """Verify metrics are NOT emitted when METRICS_ENABLED=False."""
+        """Verify metrics are NOT emitted when OTEL.ENABLED=False."""
         from src.dialectic.core import DialecticAgent
 
-        # Explicitly disable metrics
-        monkeypatch.setattr("src.prometheus.METRICS_ENABLED", False)
-        monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
+        _, metric_checker = otel_test_setup
+
+        # Explicitly disable OTEL metrics
+        monkeypatch.setattr("src.config.settings.OTEL.ENABLED", False)
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -761,11 +865,13 @@ class TestDialecticTokenMetrics:
             "namespace": "test",
             "token_type": "input",
             "component": "total",
+            "reasoning_level": "low",
         }
         output_labels = {
             "namespace": "test",
             "token_type": "output",
             "component": "total",
+            "reasoning_level": "low",
         }
         before_input = metric_checker.capture(
             "dialectic_tokens_processed", input_labels

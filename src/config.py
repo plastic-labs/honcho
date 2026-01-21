@@ -68,6 +68,8 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "WEBHOOK": "webhook",
         "DREAM": "dream",
         "VECTOR_STORE": "vector_store",
+        "OTEL": "otel",
+        "TELEMETRY": "telemetry",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -443,10 +445,65 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
-class MetricsSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
+class OpenTelemetrySettings(HonchoSettings):
+    """OpenTelemetry settings for push-based metrics via OTLP.
 
+    These settings configure the OTel SDK to push metrics via OTLP HTTP
+    to any compatible backend (Mimir, Grafana Cloud, etc.).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="OTEL_", extra="ignore")  # pyright: ignore
+
+    # Master toggle for OTel metrics
     ENABLED: bool = False
+
+    # OTLP HTTP endpoint for metrics (e.g., "https://mimir.example.com/otlp/v1/metrics")
+    # For Mimir, the endpoint is typically: <mimir-url>/otlp/v1/metrics
+    # For Grafana Cloud: https://otlp-gateway-<region>.grafana.net/otlp/v1/metrics
+    ENDPOINT: str | None = None
+
+    HEADERS: dict[str, str] | None = None
+
+    # Export interval in milliseconds (default: 60 seconds)
+    EXPORT_INTERVAL_MILLIS: int = 60000
+
+    # Service name for resource attributes (identifies what this service is)
+    SERVICE_NAME: str = "honcho"
+
+    # Service namespace for resource attributes (defaults to top-level NAMESPACE if not set)
+    SERVICE_NAMESPACE: str | None = None
+
+
+class TelemetrySettings(HonchoSettings):
+    """CloudEvents telemetry settings for analytics.
+
+    These settings configure the CloudEvents emitter for pushing
+    structured events to an analytics backend.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")  # pyright: ignore
+
+    # Master toggle for CloudEvents emission
+    ENABLED: bool = False
+
+    # CloudEvents HTTP endpoint (e.g., "https://telemetry.honcho.dev/v1/events")
+    ENDPOINT: str | None = None
+
+    # Optional headers for authentication
+    HEADERS: dict[str, str] | None = None
+
+    # Batching configuration
+    BATCH_SIZE: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
+    FLUSH_INTERVAL_SECONDS: Annotated[float, Field(default=1.0, gt=0.0, le=60.0)] = 1.0
+    FLUSH_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
+
+    # Retry configuration
+    MAX_RETRIES: Annotated[int, Field(default=3, gt=0, le=10)] = 3
+
+    # Buffer configuration
+    MAX_BUFFER_SIZE: Annotated[int, Field(default=10000, gt=0, le=100000)] = 10000
+
+    # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
 
@@ -619,7 +676,8 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
-    METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    OTEL: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
+    TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
@@ -635,16 +693,18 @@ class AppSettings(HonchoSettings):
     def propagate_namespace(self) -> "AppSettings":
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
-        After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE, and
-        VECTOR_STORE.NAMESPACE are guaranteed to exist. Explicitly provided
-        nested namespaces are preserved.
+        After this validator runs, CACHE.NAMESPACE,
+        VECTOR_STORE.NAMESPACE, TELEMETRY.NAMESPACE, and OTEL.SERVICE_NAMESPACE
+        are guaranteed to exist. Explicitly provided nested namespaces are preserved.
         """
         if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
-        if "NAMESPACE" not in self.METRICS.model_fields_set:
-            self.METRICS.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
+            self.TELEMETRY.NAMESPACE = self.NAMESPACE
+        if "SERVICE_NAMESPACE" not in self.OTEL.model_fields_set:
+            self.OTEL.SERVICE_NAMESPACE = self.NAMESPACE
 
         return self
 

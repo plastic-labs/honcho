@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src import models, prometheus
+from src import models
 from src.cache.client import close_cache, init_cache, is_deriver_flush_enabled
 from src.config import settings
 from src.dependencies import tracked_db
@@ -35,7 +35,8 @@ from src.reconciler import (
     set_reconciler_scheduler,
 )
 from src.schemas import ResolvedConfiguration
-from src.sentry import initialize_sentry
+from src.telemetry import otel_metrics
+from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -454,6 +455,7 @@ class QueueManager:
                                     message_level_configuration,
                                     observers=observers,
                                     observed=work_unit.observed,
+                                    queue_items_count=len(items_to_process),
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
@@ -789,11 +791,13 @@ class QueueManager:
             if (
                 work_unit.task_type in ["representation", "summary"]
                 and work_unit.workspace_name is not None
+                and settings.OTEL.ENABLED
             ):
-                prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
+                otel_metrics.record_deriver_queue_item(
+                    count=len(items),
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,
-                ).inc(len(items))
+                )
 
     async def mark_queue_item_as_errored(
         self, item: QueueItem, work_unit_key: str, error: str

@@ -3,7 +3,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,12 +13,19 @@ from src.config import settings
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
+from src.telemetry.events import (
+    AgentToolConclusionsCreatedEvent,
+    AgentToolConclusionsDeletedEvent,
+    AgentToolPeerCardUpdatedEvent,
+    emit,
+)
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import DocumentLevel
+from src.utils.types import DocumentLevel, get_current_iteration
 
 logger = logging.getLogger(__name__)
+
 
 # Module-level lock registry for thread-safe observation creation.
 # Keyed by (workspace_name, observer, observed) to ensure all tool executors
@@ -894,6 +901,10 @@ class ToolContext:
     db_lock: asyncio.Lock
     # Optional resolved configuration for checking feature flags
     configuration: ResolvedConfiguration | None = None
+    # Telemetry context fields
+    run_id: str | None = None
+    agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
+    parent_category: str | None = None  # Parent category for CloudEvents
 
 
 async def _handle_create_observations(
@@ -1003,6 +1014,23 @@ async def _handle_create_observations(
     contradiction_count = sum(
         1 for o in observations if o.get("level") == "contradiction"
     )
+
+    # Emit telemetry event if context is available
+    if ctx.run_id and ctx.agent_type and ctx.parent_category:
+        emit(
+            AgentToolConclusionsCreatedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                conclusion_count=len(observations),
+                levels=[o.get("level", "explicit") for o in observations],
+            )
+        )
+
     return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive, {contradiction_count} contradiction)"
 
 
@@ -1017,17 +1045,44 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
             "Peer card creation is disabled for this workspace/session configuration."
         )
 
+    peer_card_content = tool_input["content"]
     async with ctx.db_lock:
         await crud.set_peer_card(
             ctx.db,
             workspace_name=ctx.workspace_name,
-            peer_card=tool_input["content"],
+            peer_card=peer_card_content,
             observer=ctx.observer,
             observed=ctx.observed,
         )
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
     )
+
+    # Emit telemetry event if context is available
+    if ctx.run_id and ctx.agent_type and ctx.parent_category:
+        # Count facts in peer card (content is a list of strings per tool schema)
+        facts_count: int
+        if isinstance(peer_card_content, list):
+            content_list = cast(list[str], peer_card_content)
+            facts_count = len([line for line in content_list if line.strip()])
+        else:
+            # Fallback for string (defensive)
+            facts_count = len(
+                [line for line in str(peer_card_content).split("\n") if line.strip()]
+            )
+        emit(
+            AgentToolPeerCardUpdatedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                facts_count=facts_count,
+            )
+        )
+
     return f"Updated peer card for {ctx.observed} by {ctx.observer}"
 
 
@@ -1377,6 +1432,22 @@ async def _handle_delete_observations(
                 deleted_count += 1
             except Exception as e:
                 logger.warning(f"Failed to delete observation {obs_id}: {e}")
+
+    # Emit telemetry event if context is available
+    if deleted_count > 0 and ctx.run_id and ctx.agent_type and ctx.parent_category:
+        emit(
+            AgentToolConclusionsDeletedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                conclusion_count=deleted_count,
+            )
+        )
+
     return f"Deleted {deleted_count} observations"
 
 
@@ -1564,6 +1635,9 @@ async def create_tool_executor(
     include_observation_ids: bool = False,
     history_token_limit: int = 8192,
     configuration: ResolvedConfiguration | None = None,
+    run_id: str | None = None,
+    agent_type: str | None = None,
+    parent_category: str | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1581,6 +1655,9 @@ async def create_tool_executor(
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
         history_token_limit: Maximum tokens for get_recent_history (default: 8192)
         configuration: Resolved configuration for checking feature flags (optional)
+        run_id: Optional run ID for telemetry correlation
+        agent_type: Optional agent type for telemetry (dialectic, deriver, dreamer)
+        parent_category: Optional parent category for CloudEvents
 
     Returns:
         An async callable that executes tools with the captured context
@@ -1600,6 +1677,9 @@ async def create_tool_executor(
         history_token_limit=history_token_limit,
         db_lock=shared_lock,
         configuration=configuration,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

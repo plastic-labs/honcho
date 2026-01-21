@@ -22,7 +22,7 @@ from honcho import Honcho
 from openai import AsyncOpenAI
 from redis.asyncio.client import Redis
 
-from src.utils.metrics_collector import MetricsCollector
+from src.telemetry.metrics_collector import MetricsCollector
 
 # Valid reasoning levels for dialectic chat
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]

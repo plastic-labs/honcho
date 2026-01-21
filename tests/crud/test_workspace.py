@@ -380,18 +380,25 @@ class TestWorkspaceCRUD:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Test that delete_workspace returns the deleted workspace object"""
+        """Test that delete_workspace returns WorkspaceDeletionResult with cascade counts"""
         test_workspace, _test_peer = sample_data
 
         # Store workspace details before deletion
         workspace_name = test_workspace.name
 
         # Delete workspace
-        deleted_workspace = await crud.delete_workspace(db_session, test_workspace.name)
+        result = await crud.delete_workspace(db_session, test_workspace.name)
 
-        # Verify returned workspace matches the deleted workspace
-        assert deleted_workspace.name == workspace_name
-        assert isinstance(deleted_workspace, schemas.Workspace)
+        # Verify returned result is WorkspaceDeletionResult with correct workspace
+        assert isinstance(result, crud.WorkspaceDeletionResult)
+        assert result.workspace.name == workspace_name
+        assert isinstance(result.workspace, schemas.Workspace)
+
+        # Verify cascade counts are present (should have 1 peer from sample_data)
+        assert result.peers_deleted == 1
+        assert result.sessions_deleted >= 0
+        assert result.messages_deleted >= 0
+        assert result.conclusions_deleted >= 0
 
     @pytest.mark.asyncio
     async def test_delete_workspace_complex_cascade(
