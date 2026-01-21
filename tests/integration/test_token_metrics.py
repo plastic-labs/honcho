@@ -506,7 +506,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -571,7 +570,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -644,7 +642,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -711,7 +708,6 @@ class TestDeriverSummaryMetrics:
             ),  # (summary, is_fallback=True, llm_input_tokens, llm_output_tokens)
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
