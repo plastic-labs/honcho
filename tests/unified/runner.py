@@ -338,7 +338,10 @@ class UnifiedTestExecutor:
             peer = await self.client.aio.peer(id=step.observer_peer_id)
 
             response = await peer.aio.chat(
-                step.input, session=step.session_id, target=step.observed_peer_id
+                step.input,
+                session=step.session_id,
+                target=step.observed_peer_id,
+                reasoning_level=step.reasoning_level,
             )
             return response
 

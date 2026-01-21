@@ -1,0 +1,135 @@
+{
+  "description": "Test all dialectic reasoning levels (minimal, low, medium, high, max) to ensure each level works correctly",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "reasoning_levels_test",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "reasoning_levels_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "Hi! My name is Jordan and I'm a software engineer from Seattle.",
+          "created_at": "2024-01-15T10:00:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Nice to meet you, Jordan! Seattle is a great city for tech. What kind of software do you work on?",
+          "created_at": "2024-01-15T10:01:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I mainly work on backend systems using Python and Go. I've been at my current company for about 3 years now.",
+          "created_at": "2024-01-15T10:02:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's a solid combination! Python and Go complement each other well - Python for rapid development and Go for performance-critical services.",
+          "created_at": "2024-01-15T10:03:00"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 120,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Test minimal reasoning level",
+      "target": "chat",
+      "session_id": "reasoning_levels_test",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "reasoning_level": "minimal",
+      "input": "What is the user's name?",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "Jordan"
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Test low reasoning level",
+      "target": "chat",
+      "session_id": "reasoning_levels_test",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "reasoning_level": "low",
+      "input": "What programming languages does this person use?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response mention Python and/or Go as programming languages the user works with?",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Test medium reasoning level",
+      "target": "chat",
+      "session_id": "reasoning_levels_test",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "reasoning_level": "medium",
+      "input": "What city does this person live in?",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "Seattle"
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Test high reasoning level",
+      "target": "chat",
+      "session_id": "reasoning_levels_test",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "reasoning_level": "high",
+      "input": "What is this person's profession?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response indicate the person is a software engineer or works in software/tech?",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Test max reasoning level",
+      "target": "chat",
+      "session_id": "reasoning_levels_test",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "reasoning_level": "max",
+      "input": "How long has this person been at their current job?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response mention approximately 3 years of tenure at the current company?",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
