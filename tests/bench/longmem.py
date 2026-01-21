@@ -77,7 +77,7 @@ from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 from src.config import settings
-from src.utils.metrics_collector import MetricsCollector
+from src.telemetry.metrics_collector import MetricsCollector
 
 from .longmem_common import (
     calculate_timing_statistics,

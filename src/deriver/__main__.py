@@ -3,9 +3,13 @@ import logging
 import os
 
 import uvloop
-from prometheus_client import start_http_server
 
 from src.config import settings
+from src.telemetry import (
+    initialize_telemetry,
+    initialize_telemetry_async,
+    shutdown_telemetry,
+)
 
 from .queue_manager import main
 
@@ -44,14 +48,15 @@ def setup_logging():
     logging.getLogger("groq._base_client").setLevel(logging.WARNING)
 
 
-def start_metrics_server() -> None:
-    """Start Prometheus metrics HTTP server on port 9090."""
+async def run_deriver():
+    """Run the deriver with proper telemetry lifecycle management."""
+    # Initialize async telemetry (CloudEvents emitter)
+    await initialize_telemetry_async()
     try:
-        # Uses default REGISTRY from prometheus_client
-        start_http_server(9090, addr="0.0.0.0")  # nosec B104
-        print("[DERIVER] Starting Prometheus metrics server on port 9090")
-    except Exception as e:
-        print(f"[DERIVER] Failed to start Prometheus metrics server: {str(e)}")
+        await main()
+    finally:
+        # Shutdown telemetry (flush CloudEvents buffer, shutdown OTel metrics)
+        await shutdown_telemetry()
 
 
 if __name__ == "__main__":
@@ -62,10 +67,10 @@ if __name__ == "__main__":
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
+        # Initialize sync telemetry (OTel metrics)
+        initialize_telemetry()
         print("[DERIVER] Running main loop")
-        if settings.METRICS.ENABLED:
-            start_metrics_server()
-        asyncio.run(main())
+        asyncio.run(run_deriver())
     except KeyboardInterrupt:
         print("[DERIVER] Shutdown initiated via KeyboardInterrupt")
     except Exception as e:

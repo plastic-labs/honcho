@@ -9,16 +9,19 @@ from typing import TypedDict
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import prometheus, schemas
+from src import schemas
 from src.cache.client import cache as cache_client
 from src.config import settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
+from src.telemetry import otel_metrics
+from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
+from src.telemetry.logging import accumulate_metric, conditional_observe
+from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
-from src.utils.logging import accumulate_metric, conditional_observe
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .. import crud, models
@@ -412,7 +415,12 @@ async def _create_and_save_summary(
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
         input_tokens = messages_tokens + previous_summary_tokens
 
-    new_summary, is_fallback = await _create_summary(
+    (
+        new_summary,
+        is_fallback,
+        llm_input_tokens,
+        llm_output_tokens,
+    ) = await _create_summary(
         formatted_messages=formatted_messages,
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
@@ -432,20 +440,22 @@ async def _create_and_save_summary(
             prompt_tokens = estimate_long_summary_prompt_tokens()
 
         track_deriver_input_tokens(
-            task_type=prometheus.DeriverTaskTypes.SUMMARY,
+            task_type=DeriverTaskTypes.SUMMARY,
             components={
-                prometheus.DeriverComponents.PROMPT: prompt_tokens,
-                prometheus.DeriverComponents.MESSAGES: messages_tokens,
-                prometheus.DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
+                DeriverComponents.PROMPT: prompt_tokens,
+                DeriverComponents.MESSAGES: messages_tokens,
+                DeriverComponents.PREVIOUS_SUMMARY: previous_summary_tokens,
             },
         )
 
         # Track output tokens
-        prometheus.DERIVER_TOKENS_PROCESSED.labels(
-            task_type=prometheus.DeriverTaskTypes.SUMMARY.value,
-            token_type=prometheus.TokenTypes.OUTPUT.value,
-            component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
-        ).inc(new_summary["token_count"])
+        if settings.OTEL.ENABLED:
+            otel_metrics.record_deriver_tokens(
+                count=new_summary["token_count"],
+                task_type=DeriverTaskTypes.SUMMARY.value,
+                token_type=TokenTypes.OUTPUT.value,
+                component=DeriverComponents.OUTPUT_TOTAL.value,
+            )
 
         # Save summary to database with new transaction
         async with tracked_db("summary.save") as db:
@@ -477,6 +487,27 @@ async def _create_and_save_summary(
         "ms",
     )
 
+    # Emit telemetry event (only for non-fallback summaries)
+    # Note: Using AgentToolSummaryCreatedEvent with dummy run_id/iteration since
+    # this is called from the deriver, not from an agentic loop
+    if not is_fallback:
+        emit(
+            AgentToolSummaryCreatedEvent(
+                run_id="deriver",  # Placeholder - not from an agentic run
+                iteration=0,  # Placeholder - not from an agentic loop
+                parent_category="deriver",
+                agent_type="summarizer",
+                workspace_name=workspace_name,
+                session_name=session_name,
+                message_id=message_public_id,
+                message_count=len(messages),
+                message_seq_in_session=message_seq_in_session,
+                summary_type="short" if summary_type == SummaryType.SHORT else "long",
+                input_tokens=llm_input_tokens,
+                output_tokens=llm_output_tokens,
+            )
+        )
+
 
 async def _create_summary(
     formatted_messages: str,
@@ -487,7 +518,7 @@ async def _create_summary(
     last_message_id: int,
     last_message_content_preview: str,
     message_count: int,
-) -> tuple[Summary, bool]:
+) -> tuple[Summary, bool, int, int]:
     """
     Generate a summary of the provided messages using an LLM.
 
@@ -502,12 +533,16 @@ async def _create_summary(
         message_count: Number of messages for fallback
 
     Returns:
-        A tuple of (Summary, is_fallback) where is_fallback indicates if
-        the summary was generated using a fallback instead of an LLM call
+        A tuple of (Summary, is_fallback, llm_input_tokens, llm_output_tokens)
+        where is_fallback indicates if the summary was generated using a
+        fallback instead of an LLM call, and the token counts are from the LLM call
+        (0 if fallback was used)
     """
 
     response: HonchoLLMCallResponse[str] | None = None
     is_fallback = False
+    llm_input_tokens = 0
+    llm_output_tokens = 0
     try:
         if summary_type == SummaryType.SHORT:
             response = await create_short_summary(
@@ -520,6 +555,8 @@ async def _create_summary(
 
         summary_text = response.content
         summary_tokens = response.output_tokens
+        llm_input_tokens = response.input_tokens
+        llm_output_tokens = response.output_tokens
 
         # Detect potential issues with the summary
         if not summary_text.strip():
@@ -547,6 +584,8 @@ async def _create_summary(
             message_public_id=message_public_id,
         ),
         is_fallback,
+        llm_input_tokens,
+        llm_output_tokens,
     )
 
 

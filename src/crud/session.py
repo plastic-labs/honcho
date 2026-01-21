@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
@@ -25,6 +26,15 @@ from .peer import get_or_create_peers, get_peer
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
+
+
+@dataclass
+class SessionDeletionResult:
+    """Result of a session deletion including cascade counts."""
+
+    messages_deleted: int
+    conclusions_deleted: int
+
 
 SESSION_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:session:{session_name}"
 SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
@@ -375,7 +385,7 @@ async def _batch_delete_matching(
 
 async def delete_session(
     db: AsyncSession, workspace_name: str, session_name: str
-) -> bool:
+) -> SessionDeletionResult:
     """
     Delete a session and all associated data (hard delete).
 
@@ -394,7 +404,7 @@ async def delete_session(
         session_name: Name of the session
 
     Returns:
-        True if the session was deleted successfully
+        SessionDeletionResult containing cascade counts
 
     Raises:
         ResourceNotFoundException: If the session does not exist
@@ -518,7 +528,7 @@ async def delete_session(
                     )
 
         # Delete Document entries associated with this session in batches
-        await _batch_delete_matching(
+        conclusions_deleted = await _batch_delete_matching(
             db,
             models.Document,
             [
@@ -529,7 +539,7 @@ async def delete_session(
         )
 
         # Delete Message entries in batches
-        await _batch_delete_matching(
+        messages_deleted = await _batch_delete_matching(
             db,
             models.Message,
             [
@@ -556,7 +566,10 @@ async def delete_session(
         await db.rollback()
         raise e
 
-    return True
+    return SessionDeletionResult(
+        messages_deleted=messages_deleted,
+        conclusions_deleted=conclusions_deleted,
+    )
 
 
 async def clone_session(

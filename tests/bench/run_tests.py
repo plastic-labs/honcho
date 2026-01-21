@@ -452,12 +452,12 @@ Evaluate whether the actual response contains the core correct information from 
                     if session_name and observed:
                         response_text = await query_peer.chat(
                             query,
-                            session_id=session_name,
+                            session=session_name,
                             target=peers[observed],
                         )
                     elif session_name:
                         response_text = await query_peer.chat(
-                            query, session_id=session_name
+                            query, session=session_name
                         )
                     elif observed:
                         response_text = await query_peer.chat(
