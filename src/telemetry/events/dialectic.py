@@ -32,15 +32,12 @@ class DialecticCompletedEvent(BaseEvent):
     run_id: str = Field(..., description="8-char UUID prefix for run correlation")
 
     # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Peer context
-    peer_id: str = Field(..., description="Peer ID being queried about")
     peer_name: str = Field(..., description="Peer name being queried about")
 
     # Session context (optional - dialectic can run without session)
-    session_id: str | None = Field(default=None, description="Session ID if provided")
     session_name: str | None = Field(
         default=None, description="Session name if provided"
     )

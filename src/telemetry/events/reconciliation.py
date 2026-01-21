@@ -33,6 +33,9 @@ class SyncVectorsCompletedEvent(BaseEvent):
     documents_failed: int = Field(
         default=0, description="Documents that failed to sync"
     )
+    documents_cleaned: int = Field(
+        default=0, description="Soft-deleted documents cleaned up during sync"
+    )
 
     # Message embedding metrics
     message_embeddings_synced: int = Field(

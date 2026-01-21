@@ -35,9 +35,7 @@ Usage:
     from src.telemetry.events import emit, RepresentationCompletedEvent
 
     emit(RepresentationCompletedEvent(
-        workspace_id="ws_123",
         workspace_name="my_workspace",
-        session_id="sess_456",
         session_name="my_session",
         observed="assistant_peer",
         queue_items_processed=3,
@@ -113,6 +111,7 @@ def emit(event: BaseEvent) -> None:
     Events are buffered and sent asynchronously to the configured endpoint.
 
     If telemetry is disabled or not initialized, this is a no-op.
+    Telemetry failures are caught and logged to Sentry to avoid blocking operations.
 
     Args:
         event: The event to emit (must be a BaseEvent subclass instance)
@@ -125,14 +124,25 @@ def emit(event: BaseEvent) -> None:
             ...
         ))
     """
-    from src.telemetry.emitter import get_emitter
+    try:
+        from src.telemetry.emitter import get_emitter
 
-    emitter = get_emitter()
-    if emitter is None:
-        logger.debug("Telemetry emitter not initialized, dropping event")
-        return
+        emitter = get_emitter()
+        if emitter is None:
+            logger.debug("Telemetry emitter not initialized, dropping event")
+            return
 
-    emitter.emit(event)
+        emitter.emit(event)
+    except Exception as e:
+        # Log to Sentry but don't block the main operation
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(e)
+        logger.warning(
+            "Failed to emit telemetry event %s: %s",
+            type(event).__name__,
+            str(e),
+        )
 
 
 async def initialize_telemetry_events() -> None:

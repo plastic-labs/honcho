@@ -344,11 +344,8 @@ class DialecticAgent:
         emit(
             DialecticCompletedEvent(
                 run_id=self._run_id,
-                workspace_id=self.workspace_name,
                 workspace_name=self.workspace_name,
-                peer_id=self.observed,
                 peer_name=self.observed,
-                session_id=self.session_name,
                 session_name=self.session_name,
                 reasoning_level=self.reasoning_level,
                 total_iterations=iterations,

@@ -304,6 +304,15 @@ class OTelMetrics:
 
         self._is_initialized = True
 
+    def _handle_metric_error(self, method_name: str, error: Exception) -> None:
+        """Handle errors from metric recording by logging to Sentry."""
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(error)
+        logger.warning(
+            "Failed to record OTel metric in %s: %s", method_name, str(error)
+        )
+
     def record_api_request(
         self,
         *,
@@ -312,18 +321,21 @@ class OTelMetrics:
         status_code: str,
     ) -> None:
         """Record an API request metric."""
-        self._ensure_initialized()
-        if self._api_requests is None:
-            return  # Not initialized, skip silently
-        self._api_requests.add(
-            1,
-            {
-                "method": method,
-                "endpoint": endpoint,
-                "status_code": status_code,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._api_requests is None:
+                return  # Not initialized, skip silently
+            self._api_requests.add(
+                1,
+                {
+                    "method": method,
+                    "endpoint": endpoint,
+                    "status_code": status_code,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_api_request", e)
 
     def record_messages_created(
         self,
@@ -332,16 +344,19 @@ class OTelMetrics:
         workspace_name: str,
     ) -> None:
         """Record messages created metric."""
-        self._ensure_initialized()
-        if self._messages_created is None:
-            return  # Not initialized, skip silently
-        self._messages_created.add(
-            count,
-            {
-                "workspace_name": workspace_name,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._messages_created is None:
+                return  # Not initialized, skip silently
+            self._messages_created.add(
+                count,
+                {
+                    "workspace_name": workspace_name,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_messages_created", e)
 
     def record_dialectic_call(
         self,
@@ -350,17 +365,20 @@ class OTelMetrics:
         reasoning_level: str,
     ) -> None:
         """Record a dialectic call metric."""
-        self._ensure_initialized()
-        if self._dialectic_calls is None:
-            return  # Not initialized, skip silently
-        self._dialectic_calls.add(
-            1,
-            {
-                "workspace_name": workspace_name,
-                "reasoning_level": reasoning_level,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._dialectic_calls is None:
+                return  # Not initialized, skip silently
+            self._dialectic_calls.add(
+                1,
+                {
+                    "workspace_name": workspace_name,
+                    "reasoning_level": reasoning_level,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_dialectic_call", e)
 
     def record_deriver_queue_item(
         self,
@@ -370,17 +388,20 @@ class OTelMetrics:
         task_type: str,
     ) -> None:
         """Record deriver queue items processed metric."""
-        self._ensure_initialized()
-        if self._deriver_queue_items is None:
-            return  # Not initialized, skip silently
-        self._deriver_queue_items.add(
-            count,
-            {
-                "workspace_name": workspace_name,
-                "task_type": task_type,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._deriver_queue_items is None:
+                return  # Not initialized, skip silently
+            self._deriver_queue_items.add(
+                count,
+                {
+                    "workspace_name": workspace_name,
+                    "task_type": task_type,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_deriver_queue_item", e)
 
     def record_deriver_tokens(
         self,
@@ -391,18 +412,21 @@ class OTelMetrics:
         component: str,
     ) -> None:
         """Record deriver token usage metric."""
-        self._ensure_initialized()
-        if self._deriver_tokens is None:
-            return  # Not initialized, skip silently
-        self._deriver_tokens.add(
-            count,
-            {
-                "task_type": task_type,
-                "token_type": token_type,
-                "component": component,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._deriver_tokens is None:
+                return  # Not initialized, skip silently
+            self._deriver_tokens.add(
+                count,
+                {
+                    "task_type": task_type,
+                    "token_type": token_type,
+                    "component": component,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_deriver_tokens", e)
 
     def record_dialectic_tokens(
         self,
@@ -413,18 +437,21 @@ class OTelMetrics:
         reasoning_level: str,
     ) -> None:
         """Record dialectic token usage metric."""
-        self._ensure_initialized()
-        if self._dialectic_tokens is None:
-            return  # Not initialized, skip silently
-        self._dialectic_tokens.add(
-            count,
-            {
-                "token_type": token_type,
-                "component": component,
-                "reasoning_level": reasoning_level,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._dialectic_tokens is None:
+                return  # Not initialized, skip silently
+            self._dialectic_tokens.add(
+                count,
+                {
+                    "token_type": token_type,
+                    "component": component,
+                    "reasoning_level": reasoning_level,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_dialectic_tokens", e)
 
     def record_dreamer_tokens(
         self,
@@ -434,17 +461,20 @@ class OTelMetrics:
         token_type: str,
     ) -> None:
         """Record dreamer token usage metric."""
-        self._ensure_initialized()
-        if self._dreamer_tokens is None:
-            return  # Not initialized, skip silently
-        self._dreamer_tokens.add(
-            count,
-            {
-                "specialist_name": specialist_name,
-                "token_type": token_type,
-                "namespace": self._namespace,
-            },
-        )
+        try:
+            self._ensure_initialized()
+            if self._dreamer_tokens is None:
+                return  # Not initialized, skip silently
+            self._dreamer_tokens.add(
+                count,
+                {
+                    "specialist_name": specialist_name,
+                    "token_type": token_type,
+                    "namespace": self._namespace,
+                },
+            )
+        except Exception as e:
+            self._handle_metric_error("record_dreamer_tokens", e)
 
 
 # Singleton instance

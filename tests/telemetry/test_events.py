@@ -104,9 +104,7 @@ class TestBaseEvent:
         """Events without explicit timestamp get current UTC time."""
         # Create event without timestamp
         event = RepresentationCompletedEvent(
-            workspace_id="ws_123",
             workspace_name="test",
-            session_id="sess_456",
             session_name="test_session",
             observed="user",
             queue_items_processed=1,
@@ -157,7 +155,7 @@ class TestRepresentationCompletedEvent:
     ):
         """get_resource_id() returns workspace:session:message format."""
         resource_id = sample_representation_event.get_resource_id()
-        assert resource_id == "ws_123abc:sess_456def:msg_010"
+        assert resource_id == "test_workspace:test_session:msg_010"
 
     def test_generate_id_deterministic(
         self, sample_representation_event: RepresentationCompletedEvent
@@ -178,7 +176,7 @@ class TestRepresentationCompletedEvent:
     ):
         """Event can be serialized to dict."""
         data = sample_representation_event.model_dump(mode="json")
-        assert data["workspace_id"] == "ws_123abc"
+        assert data["workspace_name"] == "test_workspace"
         assert data["message_count"] == 10
         assert data["explicit_conclusion_count"] == 5
 
@@ -289,16 +287,13 @@ class TestDialecticCompletedEvent:
         event = DialecticCompletedEvent(
             timestamp=fixed_timestamp,
             run_id="test123",
-            workspace_id="ws_123",
             workspace_name="test",
-            peer_id="peer_456",
             peer_name="user",
             reasoning_level="low",
             total_duration_ms=1000.0,
             input_tokens=500,
             output_tokens=100,
         )
-        assert event.session_id is None
         assert event.session_name is None
 
     def test_cache_token_defaults(self, fixed_timestamp: datetime):
@@ -306,9 +301,7 @@ class TestDialecticCompletedEvent:
         event = DialecticCompletedEvent(
             timestamp=fixed_timestamp,
             run_id="test123",
-            workspace_id="ws_123",
             workspace_name="test",
-            peer_id="peer_456",
             peer_name="user",
             reasoning_level="low",
             total_duration_ms=1000.0,
@@ -363,7 +356,6 @@ class TestAgentIterationEvent:
             run_id="test123",
             parent_category="dialectic",
             agent_type="dialectic",
-            workspace_id="ws_123",
             workspace_name="test",
             iteration=1,
             input_tokens=100,
@@ -371,7 +363,6 @@ class TestAgentIterationEvent:
         )
         assert event.observer is None
         assert event.observed is None
-        assert event.peer_id is None
 
 
 # =============================================================================
@@ -517,9 +508,7 @@ class TestAgentToolSummaryCreatedEvent:
                 iteration=1,
                 parent_category="representation",
                 agent_type="summarizer",
-                workspace_id="ws_123",
                 workspace_name="test",
-                session_id="sess_456",
                 session_name="test_session",
                 message_id="msg_1",
                 message_count=10,
@@ -554,14 +543,14 @@ class TestDeletionCompletedEvent:
     def test_get_resource_id(self, sample_deletion_event: DeletionCompletedEvent):
         """get_resource_id() returns workspace:type:resource format."""
         assert (
-            sample_deletion_event.get_resource_id() == "ws_123abc:workspace:ws_123abc"
+            sample_deletion_event.get_resource_id()
+            == "test_workspace:workspace:ws_123abc"
         )
 
     def test_cascade_counts_default_to_zero(self, fixed_timestamp: datetime):
         """Cascade counts default to 0 for non-workspace deletions."""
         event = DeletionCompletedEvent(
             timestamp=fixed_timestamp,
-            workspace_id="ws_123",
             workspace_name="test",
             deletion_type="session",
             resource_id="sess_456",
@@ -576,7 +565,6 @@ class TestDeletionCompletedEvent:
         """error_message is optional and defaults to None."""
         event = DeletionCompletedEvent(
             timestamp=fixed_timestamp,
-            workspace_id="ws_123",
             workspace_name="test",
             deletion_type="session",
             resource_id="sess_456",
@@ -588,7 +576,6 @@ class TestDeletionCompletedEvent:
         """Failed deletion can include error message."""
         event = DeletionCompletedEvent(
             timestamp=fixed_timestamp,
-            workspace_id="ws_123",
             workspace_name="test",
             deletion_type="session",
             resource_id="sess_456",

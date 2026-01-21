@@ -32,9 +32,7 @@ def create_test_event(message_id: str = "msg_001") -> RepresentationCompletedEve
     """Create a minimal test event."""
     return RepresentationCompletedEvent(
         timestamp=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
-        workspace_id="ws_123",
         workspace_name="test_workspace",
-        session_id="sess_456",
         session_name="test_session",
         observed="user_peer",
         queue_items_processed=1,

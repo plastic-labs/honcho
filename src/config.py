@@ -458,9 +458,6 @@ class OpenTelemetrySettings(HonchoSettings):
     # For Grafana Cloud: https://otlp-gateway-<region>.grafana.net/otlp/v1/metrics
     ENDPOINT: str | None = None
 
-    # Optional headers for authentication (e.g., {"X-Scope-OrgID": "tenant"})
-    # Set via OTEL_HEADERS as JSON string: '{"X-Scope-OrgID": "honcho"}'
-    # For Grafana Cloud, use: {"Authorization": "Basic <base64-encoded-credentials>"}
     HEADERS: dict[str, str] | None = None
 
     # Export interval in milliseconds (default: 60 seconds)
@@ -470,7 +467,6 @@ class OpenTelemetrySettings(HonchoSettings):
     SERVICE_NAME: str = "honcho"
 
     # Service namespace for resource attributes (defaults to top-level NAMESPACE if not set)
-    # Used for tenant/environment separation in metrics
     SERVICE_NAMESPACE: str | None = None
 
 

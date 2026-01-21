@@ -130,9 +130,7 @@ def create_representation_event(
     """Create a RepresentationCompletedEvent."""
     return RepresentationCompletedEvent(
         timestamp=timestamp,
-        workspace_id=f"ws_123{suffix}",
         workspace_name="test_workspace",
-        session_id="sess_456",
         session_name="test_session",
         observed="user_peer",
         queue_items_processed=3,
@@ -153,7 +151,6 @@ def create_dream_run_event(timestamp: datetime) -> DreamRunEvent:
     return DreamRunEvent(
         timestamp=timestamp,
         run_id="abc12345",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         session_name="test_session",
         observer="assistant",
@@ -174,7 +171,6 @@ def create_dream_specialist_event(timestamp: datetime) -> DreamSpecialistEvent:
         timestamp=timestamp,
         run_id="abc12345",
         specialist_type="deduction",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         observer="assistant",
         observed="user_peer",
@@ -192,9 +188,7 @@ def create_dialectic_event(timestamp: datetime) -> DialecticCompletedEvent:
     return DialecticCompletedEvent(
         timestamp=timestamp,
         run_id="def67890",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
-        peer_id="peer_789",
         peer_name="user_peer",
         reasoning_level="medium",
         total_duration_ms=3500.0,
@@ -210,7 +204,6 @@ def create_agent_iteration_event(timestamp: datetime) -> AgentIterationEvent:
         run_id="abc12345",
         parent_category="dream",
         agent_type="deduction",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         observer="assistant",
         observed="user_peer",
@@ -231,7 +224,6 @@ def create_conclusions_created_event(
         iteration=3,
         parent_category="dream",
         agent_type="deduction",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         observer="assistant",
         observed="user_peer",
@@ -250,7 +242,6 @@ def create_conclusions_deleted_event(
         iteration=5,
         parent_category="dream",
         agent_type="deduction",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         observer="assistant",
         observed="user_peer",
@@ -268,7 +259,6 @@ def create_peer_card_updated_event(
         iteration=7,
         parent_category="dream",
         agent_type="induction",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         observer="assistant",
         observed="user_peer",
@@ -284,9 +274,7 @@ def create_summary_created_event(timestamp: datetime) -> AgentToolSummaryCreated
         iteration=1,
         parent_category="representation",
         agent_type="summarizer",
-        workspace_id="ws_123",
         workspace_name="test_workspace",
-        session_id="sess_456",
         session_name="test_session",
         message_id="msg_020",
         message_count=20,
@@ -301,7 +289,6 @@ def create_deletion_event(timestamp: datetime) -> DeletionCompletedEvent:
     """Create a DeletionCompletedEvent."""
     return DeletionCompletedEvent(
         timestamp=timestamp,
-        workspace_id="ws_123",
         workspace_name="test_workspace",
         deletion_type="workspace",
         resource_id="ws_123",
@@ -445,7 +432,7 @@ class TestBasicEventSending:
 
         # Verify data contains event fields
         data = received["data"]
-        assert data["workspace_id"] == "ws_123"
+        assert data["workspace_name"] == "test_workspace"
         assert data["message_count"] == 10
 
 

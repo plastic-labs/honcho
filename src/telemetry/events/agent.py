@@ -42,7 +42,6 @@ class AgentIterationEvent(BaseEvent):
     agent_type: str = Field(
         ..., description="Agent type: 'deduction', 'induction', or 'dialectic'"
     )
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Peer context (for dream agents)
@@ -50,7 +49,7 @@ class AgentIterationEvent(BaseEvent):
     observed: str | None = Field(default=None, description="Observed peer name")
 
     # Peer context (for dialectic agent)
-    peer_id: str | None = Field(default=None, description="Peer ID being queried")
+    peer_name: str | None = Field(default=None, description="Peer name being queried")
 
     # Iteration info
     iteration: int = Field(..., description="Iteration number (1-indexed)")
@@ -97,7 +96,6 @@ class AgentToolConclusionsCreatedEvent(BaseEvent):
     agent_type: str = Field(
         ..., description="Agent type: 'deduction', 'induction', or 'dialectic'"
     )
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Peer context
@@ -135,7 +133,6 @@ class AgentToolConclusionsDeletedEvent(BaseEvent):
     agent_type: str = Field(
         ..., description="Agent type (typically 'deduction' for deletions)"
     )
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Peer context
@@ -167,7 +164,6 @@ class AgentToolPeerCardUpdatedEvent(BaseEvent):
     # Context
     parent_category: str = Field(..., description="Parent category (typically 'dream')")
     agent_type: str = Field(..., description="Agent type: 'deduction' or 'induction'")
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Peer context
@@ -200,11 +196,9 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     # Context
     parent_category: str = Field(..., description="Parent category")
     agent_type: str = Field(..., description="Agent type")
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Session context
-    session_id: str = Field(..., description="Session ID")
     session_name: str = Field(..., description="Session name")
 
     # Message context - what was summarized

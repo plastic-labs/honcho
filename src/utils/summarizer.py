@@ -489,9 +489,7 @@ async def _create_and_save_summary(
                 iteration=0,  # Placeholder - not from an agentic loop
                 parent_category="deriver",
                 agent_type="summarizer",
-                workspace_id=workspace_name,
                 workspace_name=workspace_name,
-                session_id=session_name,
                 session_name=session_name,
                 message_id=message_public_id,
                 message_count=len(messages),

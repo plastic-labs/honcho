@@ -25,7 +25,6 @@ class DeletionCompletedEvent(BaseEvent):
     _category: ClassVar[str] = "deletion"
 
     # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Deletion details
@@ -37,18 +36,20 @@ class DeletionCompletedEvent(BaseEvent):
     # Outcome
     success: bool = Field(..., description="Whether deletion succeeded")
 
-    # Cascade counts (populated for workspace deletion)
+    # Cascade counts (populated for workspace and session deletions)
     peers_deleted: int = Field(
-        default=0, description="Number of peers deleted (workspace deletion)"
+        default=0, description="Number of peers deleted (workspace deletion only)"
     )
     sessions_deleted: int = Field(
-        default=0, description="Number of sessions deleted (workspace deletion)"
+        default=0, description="Number of sessions deleted (workspace deletion only)"
     )
     messages_deleted: int = Field(
-        default=0, description="Number of messages deleted (workspace deletion)"
+        default=0,
+        description="Number of messages deleted (workspace or session deletion)",
     )
     conclusions_deleted: int = Field(
-        default=0, description="Number of conclusions deleted (workspace deletion)"
+        default=0,
+        description="Number of conclusions/documents deleted (workspace or session deletion)",
     )
 
     # Optional error info
@@ -58,7 +59,7 @@ class DeletionCompletedEvent(BaseEvent):
 
     def get_resource_id(self) -> str:
         """Resource ID includes workspace, type, and resource for uniqueness."""
-        return f"{self.workspace_id}:{self.deletion_type}:{self.resource_id}"
+        return f"{self.workspace_name}:{self.deletion_type}:{self.resource_id}"
 
 
 __all__ = ["DeletionCompletedEvent"]

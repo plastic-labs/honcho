@@ -29,7 +29,6 @@ class DreamRunEvent(BaseEvent):
     run_id: str = Field(..., description="8-char UUID prefix for run correlation")
 
     # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Session context
@@ -95,7 +94,6 @@ class DreamSpecialistEvent(BaseEvent):
     )
 
     # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Peer context

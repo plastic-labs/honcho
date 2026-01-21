@@ -26,11 +26,9 @@ class RepresentationCompletedEvent(BaseEvent):
     _category: ClassVar[str] = "representation"
 
     # Workspace context
-    workspace_id: str = Field(..., description="Workspace ID")
     workspace_name: str = Field(..., description="Workspace name")
 
     # Session context
-    session_id: str = Field(..., description="Session ID")
     session_name: str = Field(..., description="Session name")
 
     # Peer context
@@ -64,7 +62,7 @@ class RepresentationCompletedEvent(BaseEvent):
 
     def get_resource_id(self) -> str:
         """Resource ID includes workspace, session, and latest message for uniqueness."""
-        return f"{self.workspace_id}:{self.session_id}:{self.latest_message_id}"
+        return f"{self.workspace_name}:{self.session_name}:{self.latest_message_id}"
 
 
 __all__ = ["RepresentationCompletedEvent"]

@@ -212,7 +212,6 @@ class BaseSpecialist(ABC):
             DreamSpecialistEvent(
                 run_id=run_id,
                 specialist_type=self.name,
-                workspace_id=workspace_name,
                 workspace_name=workspace_name,
                 observer=observer,
                 observed=observed,

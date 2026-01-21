@@ -38,6 +38,7 @@ from .representation import (
     get_working_representation,
 )
 from .session import (
+    SessionDeletionResult,
     clone_session,
     delete_session,
     get_or_create_session,
@@ -108,6 +109,7 @@ __all__ = [
     # Representation
     "get_working_representation",
     # Session
+    "SessionDeletionResult",
     "get_sessions",
     "get_or_create_session",
     "get_session",

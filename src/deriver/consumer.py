@@ -206,6 +206,8 @@ async def process_deletion(
     resource_id = payload.resource_id
     success = True
     error_message: str | None = None
+    messages_deleted = 0
+    conclusions_deleted = 0
 
     logger.info(
         "Processing deletion task: type=%s, resource_id=%s, workspace=%s",
@@ -217,13 +219,18 @@ async def process_deletion(
     async with tracked_db("process_deletion") as db:
         if deletion_type == "session":
             try:
-                await crud.delete_session(
+                result = await crud.delete_session(
                     db, workspace_name=workspace_name, session_name=resource_id
                 )
+                messages_deleted = result.messages_deleted
+                conclusions_deleted = result.conclusions_deleted
                 logger.info(
-                    "Successfully deleted session %s in workspace %s",
+                    "Successfully deleted session %s in workspace %s "
+                    + "(messages=%d, conclusions=%d)",
                     resource_id,
                     workspace_name,
+                    messages_deleted,
+                    conclusions_deleted,
                 )
             except ResourceNotFoundException as e:
                 # Session not found - may have already been deleted, treat as success
@@ -238,6 +245,7 @@ async def process_deletion(
                 await crud.delete_document_by_id(
                     db, workspace_name=workspace_name, document_id=resource_id
                 )
+                conclusions_deleted = 1  # Single observation deleted
                 logger.info(
                     "Successfully deleted observation %s in workspace %s",
                     resource_id,
@@ -259,11 +267,12 @@ async def process_deletion(
     # Emit telemetry event
     emit(
         DeletionCompletedEvent(
-            workspace_id=workspace_name,
             workspace_name=workspace_name,
             deletion_type=deletion_type,
             resource_id=resource_id,
             success=success,
+            messages_deleted=messages_deleted,
+            conclusions_deleted=conclusions_deleted,
             error_message=error_message,
         )
     )
@@ -304,16 +313,17 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                 metrics.documents_cleaned,
             )
 
-        # Emit telemetry event
-        emit(
-            SyncVectorsCompletedEvent(
-                documents_synced=metrics.documents_synced,
-                documents_failed=metrics.documents_failed,
-                message_embeddings_synced=metrics.message_embeddings_synced,
-                message_embeddings_failed=metrics.message_embeddings_failed,
-                total_duration_ms=duration_ms,
+            # Emit telemetry event
+            emit(
+                SyncVectorsCompletedEvent(
+                    documents_synced=metrics.documents_synced,
+                    documents_failed=metrics.documents_failed,
+                    documents_cleaned=metrics.documents_cleaned,
+                    message_embeddings_synced=metrics.message_embeddings_synced,
+                    message_embeddings_failed=metrics.message_embeddings_failed,
+                    total_duration_ms=duration_ms,
+                )
             )
-        )
 
     elif reconciler_type == ReconcilerType.CLEANUP_QUEUE:
         logger.debug("Processing cleanup_queue task")

@@ -120,7 +120,6 @@ async def delete_workspace(
     # Emit telemetry event with cascade counts
     emit(
         DeletionCompletedEvent(
-            workspace_id=workspace_id,
             workspace_name=workspace_id,
             deletion_type="workspace",
             resource_id=workspace_id,

@@ -221,9 +221,7 @@ async def process_representation_tasks_batch(
     # Emit telemetry event
     emit(
         RepresentationCompletedEvent(
-            workspace_id=latest_message.workspace_name,
             workspace_name=latest_message.workspace_name,
-            session_id=latest_message.session_name,
             session_name=latest_message.session_name,
             observed=observed,
             queue_items_processed=queue_items_count,

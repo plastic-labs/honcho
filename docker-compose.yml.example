@@ -82,8 +82,7 @@ services:
     volumes:
       - ./grafana-data:/var/lib/grafana
     depends_on:
-      mimir:
-        condition: service_healthy
+      - mimir
 
 volumes:
   pgdata:

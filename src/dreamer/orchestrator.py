@@ -264,7 +264,6 @@ async def run_dream(
     emit(
         DreamRunEvent(
             run_id=run_id,
-            workspace_id=workspace_name,
             workspace_name=workspace_name,
             session_name=session_name,
             observer=observer,
