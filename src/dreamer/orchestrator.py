@@ -349,26 +349,12 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         session_name=payload.session_name,
                     )
 
-                # Emit telemetry event if dream ran
+                # Log completion (telemetry event already emitted in run_dream)
                 if result is not None:
-                    emit(
-                        DreamRunEvent(
-                            run_id=result.run_id,
-                            workspace_id=workspace_name,
-                            workspace_name=workspace_name,
-                            session_name=payload.session_name,
-                            observer=payload.observer,
-                            observed=payload.observed,
-                            specialists_run=result.specialists_run,
-                            deduction_success=result.deduction_success,
-                            induction_success=result.induction_success,
-                            surprisal_enabled=result.surprisal_enabled,
-                            surprisal_conclusion_count=result.surprisal_conclusion_count,
-                            total_iterations=result.total_iterations,
-                            total_input_tokens=result.input_tokens,
-                            total_output_tokens=result.output_tokens,
-                            total_duration_ms=result.total_duration_ms,
-                        )
+                    logger.info(
+                        f"Dream completed: run_id={result.run_id}, "
+                        + f"iterations={result.total_iterations}, "
+                        + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
     except Exception as e:

@@ -30,7 +30,7 @@ def generate_event_id(
         resource_id: A unique identifier for the resource (can include workspace_id if relevant)
 
     Returns:
-        A deterministic event ID in the format "evt_{base62_hash}"
+        A deterministic event ID in the format "evt_{base64_hash}"
     """
     payload = f"{event_type}:{resource_id}:{timestamp.isoformat()}"
     hash_bytes = hashlib.sha256(payload.encode()).digest()[:16]

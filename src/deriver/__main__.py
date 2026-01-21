@@ -65,11 +65,10 @@ if __name__ == "__main__":
     # Setup logging before starting the main loop
     setup_logging()
 
-    # Initialize sync telemetry (OTel metrics)
-    initialize_telemetry()
-
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
+        # Initialize sync telemetry (OTel metrics)
+        initialize_telemetry()
         print("[DERIVER] Running main loop")
         asyncio.run(run_deriver())
     except KeyboardInterrupt:

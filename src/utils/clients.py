@@ -491,7 +491,7 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
     iterations: int = 0
-    """Number of iterations in the tool execution loop. 0 if no tools were used."""
+    """Number of LLM calls made in the tool execution loop (1 = single response, 2+ = tool use iterations plus final synthesis)."""
     thinking_content: str | None = None
     # Full thinking blocks with signatures for multi-turn conversation replay (Anthropic only)
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
@@ -874,15 +874,18 @@ async def _execute_tool_loop(
 
         # Call iteration callback if provided
         if iteration_callback is not None:
-            iteration_data = IterationData(
-                iteration=iteration + 1,  # 1-indexed
-                tool_calls=[tc["name"] for tc in response.tool_calls_made],
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
-                cache_read_tokens=response.cache_read_input_tokens or 0,
-                cache_creation_tokens=response.cache_creation_input_tokens or 0,
-            )
-            iteration_callback(iteration_data)
+            try:
+                iteration_data = IterationData(
+                    iteration=iteration + 1,  # 1-indexed
+                    tool_calls=[tc["name"] for tc in response.tool_calls_made],
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    cache_read_tokens=response.cache_read_input_tokens or 0,
+                    cache_creation_tokens=response.cache_creation_input_tokens or 0,
+                )
+                iteration_callback(iteration_data)
+            except Exception:
+                logger.warning("iteration_callback failed", exc_info=True)
 
         # After first iteration, switch from "required" to "auto" to allow model to stop
         if iteration == 0 and effective_tool_choice in ("required", "any"):
@@ -931,7 +934,7 @@ async def _execute_tool_loop(
             cache_creation_input_tokens=total_cache_creation_tokens,
             cache_read_input_tokens=total_cache_read_tokens,
             thinking_content=None,  # No thinking content at max iterations
-            iterations=iteration,
+            iterations=iteration + 1,  # +1 for the synthesis call
         )
 
     # Make one final call to get a text response
@@ -975,7 +978,7 @@ async def _execute_tool_loop(
 
     final_response = await final_call_func()
     final_response.tool_calls_made = all_tool_calls
-    final_response.iterations = iteration
+    final_response.iterations = iteration + 1  # +1 for the synthesis call
     # Include accumulated tokens from all iterations plus the final call
     final_response.input_tokens = total_input_tokens + final_response.input_tokens
     final_response.output_tokens = total_output_tokens + final_response.output_tokens

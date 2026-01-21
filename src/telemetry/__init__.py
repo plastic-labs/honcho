@@ -16,15 +16,13 @@ from src.telemetry.otel import get_meter, initialize_otel_metrics, shutdown_otel
 from src.telemetry.otel.metrics import otel_metrics
 
 __all__ = [
-    # OTel metrics
+    "emit",
     "get_meter",
     "initialize_otel_metrics",
-    "shutdown_otel_metrics",
-    "otel_metrics",
-    # CloudEvents
-    "emit",
-    # Lifecycle
     "initialize_telemetry",
+    "initialize_telemetry_async",
+    "otel_metrics",
+    "shutdown_otel_metrics",
     "shutdown_telemetry",
 ]
 

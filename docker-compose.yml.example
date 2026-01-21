@@ -70,11 +70,6 @@ services:
     configs:
       - source: mimir_config
         target: /etc/mimir/mimir.yaml
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9009/ready || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
   grafana:
     image: grafana/grafana:11.4.0
     ports:

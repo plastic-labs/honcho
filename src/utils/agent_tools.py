@@ -3,7 +3,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1054,10 +1054,16 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
 
     # Emit telemetry event if context is available
     if ctx.run_id and ctx.agent_type and ctx.parent_category:
-        # Count facts in peer card (each line is a fact)
-        facts_count = len(
-            [line for line in peer_card_content.split("\n") if line.strip()]
-        )
+        # Count facts in peer card (content is a list of strings per tool schema)
+        facts_count: int
+        if isinstance(peer_card_content, list):
+            content_list = cast(list[str], peer_card_content)
+            facts_count = len([line for line in content_list if line.strip()])
+        else:
+            # Fallback for string (defensive)
+            facts_count = len(
+                [line for line in str(peer_card_content).split("\n") if line.strip()]
+            )
         emit(
             AgentToolPeerCardUpdatedEvent(
                 run_id=ctx.run_id,

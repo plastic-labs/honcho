@@ -2,7 +2,7 @@
 OpenTelemetry metrics module for Honcho.
 
 This module provides push-based metrics using OpenTelemetry SDK
-with Prometheus Remote Write export to Mimir.
+with OTLP HTTP export to any compatible backend (Mimir, Grafana Cloud, etc.).
 """
 
 from src.telemetry.otel.metrics import (

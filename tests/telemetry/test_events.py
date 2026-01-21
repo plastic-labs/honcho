@@ -100,7 +100,7 @@ class TestGenerateEventId:
 class TestBaseEvent:
     """Tests for BaseEvent base class behavior."""
 
-    def test_timestamp_defaults_to_utc_now(self, sample_representation_event):
+    def test_timestamp_defaults_to_utc_now(self):
         """Events without explicit timestamp get current UTC time."""
         # Create event without timestamp
         event = RepresentationCompletedEvent(
