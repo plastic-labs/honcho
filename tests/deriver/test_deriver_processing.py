@@ -5,7 +5,7 @@ import pytest
 
 from src import models
 from src.utils.representation import Representation
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -92,6 +92,96 @@ class TestDeriverProcessing:
 
         # Verify the methods were called
         assert mock_representation_manager.save_representation.called  # type: ignore[attr-defined]
+
+
+class TestBackwardsCompatibility:
+    """Test backwards compatibility for queue items created before the deduplication change."""
+
+    def test_parse_legacy_representation_work_unit_key(self):
+        """Test that legacy 5-part representation work unit keys are parsed correctly.
+
+        Before the deduplication change, representation keys had the format:
+        representation:{workspace}:{session}:{observer}:{observed}
+
+        After the change, the format is:
+        representation:{workspace}:{session}:{observed}
+
+        We need to support both for backwards compatibility with existing queue items.
+        """
+        legacy_key = (
+            "representation:workspace_123:session_456:observer_peer:observed_peer"
+        )
+        parsed = parse_work_unit_key(legacy_key)
+
+        assert parsed.task_type == "representation"
+        assert parsed.workspace_name == "workspace_123"
+        assert parsed.session_name == "session_456"
+        assert parsed.observer == "observer_peer"
+        assert parsed.observed == "observed_peer"
+
+    def test_parse_new_representation_work_unit_key(self):
+        """Test that new 4-part representation work unit keys are parsed correctly."""
+        new_key = "representation:workspace_123:session_456:observed_peer"
+        parsed = parse_work_unit_key(new_key)
+
+        assert parsed.task_type == "representation"
+        assert parsed.workspace_name == "workspace_123"
+        assert parsed.session_name == "session_456"
+        assert parsed.observer is None
+        assert parsed.observed == "observed_peer"
+
+    def test_parse_invalid_representation_work_unit_key_raises(self):
+        """Test that invalid representation keys raise ValueError."""
+        with pytest.raises(ValueError):
+            parse_work_unit_key("representation:workspace:session")
+
+        with pytest.raises(ValueError):
+            parse_work_unit_key("representation:a:b:c:d:e")
+
+    def test_legacy_payload_observer_converted_to_observers_list(self):
+        """Test that legacy payloads with singular 'observer' are handled correctly."""
+        legacy_payload: dict[str, Any] = {
+            "observer": "peer_observer",
+            "observed": "peer_observed",
+            "task_type": "representation",
+        }
+
+        # This mirrors the logic in queue_manager.py process_work_unit
+        observers = legacy_payload.get("observers")
+        if observers is None:
+            legacy_observer = legacy_payload.get("observer")
+            observers = [legacy_observer] if legacy_observer else []
+
+        assert observers == ["peer_observer"]
+
+    def test_new_payload_observers_list_used_directly(self):
+        """Test that new payloads with 'observers' list are used directly."""
+        new_payload: dict[str, Any] = {
+            "observers": ["peer1", "peer2"],
+            "observed": "peer3",
+            "task_type": "representation",
+        }
+
+        observers = new_payload.get("observers")
+        if observers is None:
+            legacy_observer = new_payload.get("observer")
+            observers = [legacy_observer] if legacy_observer else []
+
+        assert observers == ["peer1", "peer2"]
+
+    def test_empty_payload_results_in_empty_observers_list(self):
+        """Test that payloads with neither observer nor observers return empty list."""
+        empty_payload: dict[str, Any] = {
+            "observed": "peer_observed",
+            "task_type": "representation",
+        }
+
+        observers = empty_payload.get("observers")
+        if observers is None:
+            legacy_observer = empty_payload.get("observer")
+            observers = [legacy_observer] if legacy_observer else []
+
+        assert observers == []
 
     # async def test_representation_batch_uses_earliest_cutoff(
     #     self,

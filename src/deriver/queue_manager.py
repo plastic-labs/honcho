@@ -438,9 +438,16 @@ class QueueManager:
                                 break
 
                             try:
-                                # Extract observers from the payload
+                                # Extract observers from the payload (handle both old and new format)
                                 payload = items_to_process[0].payload
-                                observers = payload.get("observers", [])
+                                observers = payload.get("observers")
+                                if observers is None:
+                                    # Legacy format: single observer string
+                                    legacy_observer = payload.get("observer")
+                                    if legacy_observer:
+                                        observers = [legacy_observer]
+                                    else:
+                                        observers = []
 
                                 await process_representation_batch(
                                     messages_context,
