@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from src.schemas import DreamType, ResolvedConfiguration
+from src.schemas import DreamType, ReconcilerType, ResolvedConfiguration
 
 
 class BasePayload(BaseModel):
@@ -18,7 +18,7 @@ class RepresentationPayload(BasePayload):
     task_type: Literal["representation"] = "representation"
     session_name: str
     content: str
-    observer: str
+    observers: list[str]
     observed: str
     created_at: datetime
     configuration: ResolvedConfiguration
@@ -67,6 +67,13 @@ class DeletionPayload(BasePayload):
     resource_id: str
 
 
+class ReconcilerPayload(BasePayload):
+    """Payload for reconciler tasks (vector sync, queue cleanup, self-healing)."""
+
+    task_type: Literal["reconciler"] = "reconciler"
+    reconciler_type: ReconcilerType
+
+
 def create_webhook_payload(
     event_type: str,
     data: dict[str, Any],
@@ -110,7 +117,7 @@ def create_payload(
     task_type: Literal["representation", "summary"],
     message_seq_in_session: int | None = None,
     *,
-    observer: str | None = None,
+    observers: list[str] | None = None,
     observed: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -124,7 +131,7 @@ def create_payload(
         message: The original message dictionary
         task_type: Type of task ('representation' or 'summary')
         message_seq_in_session: Required for summary tasks, must be None for representation
-        observer: Name of the observer peer (required for representation tasks)
+        observers: List of observer peer names (required for representation tasks)
         observed: Name of the observed peer (*always* the peer who sent the message) (required for representation tasks)
 
 
@@ -159,8 +166,8 @@ def create_payload(
             if not isinstance(created_at, datetime):
                 raise TypeError("created_at must be a datetime object")
 
-            if observer is None:
-                raise ValueError("observer is required for representation tasks")
+            if observers is None or len(observers) == 0:
+                raise ValueError("observers is required for representation tasks")
 
             if observed is None:
                 raise ValueError("observed is required for representation tasks")
@@ -169,7 +176,7 @@ def create_payload(
                 content=content,
                 session_name=session_name,
                 created_at=created_at,
-                observer=observer,
+                observers=observers,
                 observed=observed,
                 configuration=configuration,
             )

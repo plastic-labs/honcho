@@ -49,7 +49,7 @@ The Honcho client is the main entry point for interacting with Honcho's API. It 
 from honcho import Honcho
 
 # Initialize client
-honcho = Honcho(workspace="first-honcho-test", api_key=HONCHO_API_KEY)
+honcho = Honcho(workspace_id="first-honcho-test", api_key=HONCHO_API_KEY)
 
 ```
 
@@ -57,7 +57,7 @@ honcho = Honcho(workspace="first-honcho-test", api_key=HONCHO_API_KEY)
 import { Honcho } from '@honcho-ai/sdk';
 
 // Initialize client
-const honcho = new Honcho({ workspace = "first-honcho-test", apiKey = HONCHO_API_KEY });
+const honcho = new Honcho({ workspaceId: "first-honcho-test", apiKey: HONCHO_API_KEY });
 ```
 </CodeGroup>
 
@@ -301,19 +301,6 @@ for session_data in conversation_data["sessions"]:
 
     session.add_messages(messages)
 
-# Wait for Honcho to process the conversation history
-def wait_for_processing():
-    status = honcho.get_deriver_status()
-    while status.pending_work_units > 0 or status.in_progress_work_units > 0:
-        time.sleep(1)
-        status = honcho.poll_deriver_status()
-
-print("Processing conversation history...")
-start_time = time.time()
-wait_for_processing()
-elapsed = int(time.time() - start_time)
-print(f"Done in {elapsed}s! Querying user insights...\n")
-
 # Query insights about the user based on conversation history
 response = user.chat("What should I know about this user? 3 sentences max")
 print(response)
@@ -362,20 +349,6 @@ for (const sessionData of conversationData.sessions) {
   await session.addMessages(messages);
 }
 
-// Wait for Honcho to process the conversation history
-async function waitForProcessing() {
-  let status = await honcho.getDeriverStatus();
-  while (status.pendingWorkUnits > 0 || status.inProgressWorkUnits > 0) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    status = await honcho.pollDeriverStatus();
-  }
-}
-
-console.log("Processing conversation history...");
-const startTime = Date.now();
-await waitForProcessing();
-const elapsed = Math.floor((Date.now() - startTime) / 1000);
-console.log(`Done in ${elapsed}s! Querying user insights...\n`);
 
 // Query insights about the user based on conversation history
 const response = await user.chat("What should I know about this user? 3 sentences max");

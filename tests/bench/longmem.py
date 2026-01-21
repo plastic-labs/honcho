@@ -68,11 +68,9 @@ import httpx
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
+from honcho import Honcho
+from honcho.api_types import MessageCreateParams
+from honcho.session import SessionPeerConfig
 from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
@@ -245,9 +243,7 @@ class LongMemEvalRunner:
 
         return None
 
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
+    def create_honcho_client(self, workspace_id: str, honcho_url: str) -> Honcho:
         """
         Create a Honcho client for a specific workspace.
 
@@ -256,21 +252,21 @@ class LongMemEvalRunner:
             honcho_url: URL of the Honcho instance
 
         Returns:
-            AsyncHoncho client instance
+            Honcho client instance
         """
-        return AsyncHoncho(
+        return Honcho(
             environment="local",
             workspace_id=workspace_id,
             base_url=honcho_url,
         )
 
     async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
+        self, honcho_client: Honcho, session_id: str | None = None
     ) -> bool:
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_queue_status(session=session_id)
+                status = await honcho_client.aio.queue_status(session=session_id)
             except Exception as _e:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -288,7 +284,7 @@ class LongMemEvalRunner:
 
     async def trigger_dream_and_wait(
         self,
-        honcho_client: AsyncHoncho,
+        honcho_client: Honcho,
         workspace_id: str,
         observer: str,
         observed: str | None = None,
@@ -383,7 +379,7 @@ class LongMemEvalRunner:
 
         # Create workspace for this question
         workspace_id = f"{question_id}_{question_type}"
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
+        honcho_client = self.create_honcho_client(workspace_id, honcho_url)
 
         results: TestResult = {
             "question_id": question_id,
@@ -400,8 +396,8 @@ class LongMemEvalRunner:
         }
 
         try:
-            user_peer = await honcho_client.peer(id="user")
-            assistant_peer = await honcho_client.peer(id="assistant")
+            user_peer = await honcho_client.aio.peer(id="user")
+            assistant_peer = await honcho_client.aio.peer(id="assistant")
 
             # Process haystack sessions
             haystack_dates = question_data.get("haystack_dates", [])
@@ -444,11 +440,11 @@ class LongMemEvalRunner:
             if self.merge_sessions:
                 # Create a single merged session for all messages
                 merged_session_id = f"{workspace_id}_merged"
-                session = await honcho_client.session(id=merged_session_id)
+                session = await honcho_client.aio.session(id=merged_session_id)
 
                 # Configure peer observation based on question type
                 if is_assistant_type:
-                    await session.add_peers(
+                    await session.aio.add_peers(
                         [
                             (
                                 user_peer,
@@ -465,7 +461,7 @@ class LongMemEvalRunner:
                         ]
                     )
                 else:
-                    await session.add_peers(
+                    await session.aio.add_peers(
                         [
                             (
                                 user_peer,
@@ -483,7 +479,7 @@ class LongMemEvalRunner:
                     )
 
                 # Collect all messages from all sessions in chronological order
-                all_messages: list[MessageCreateParam] = []
+                all_messages: list[MessageCreateParams] = []
                 for session_date, session_messages in zip(
                     parsed_dates, haystack_sessions, strict=True
                 ):
@@ -526,7 +522,7 @@ class LongMemEvalRunner:
                 if all_messages:
                     for i in range(0, len(all_messages), 100):
                         batch = all_messages[i : i + 100]
-                        await session.add_messages(batch)
+                        await session.aio.add_messages(batch)
 
                 results["sessions_created"].append(
                     SessionResult(
@@ -539,12 +535,12 @@ class LongMemEvalRunner:
                 for session_date, session_id, session_messages in zip(
                     parsed_dates, haystack_session_ids, haystack_sessions, strict=True
                 ):
-                    session = await honcho_client.session(id=session_id)
+                    session = await honcho_client.aio.session(id=session_id)
 
                     # Configure peer observation based on question type
                     if is_assistant_type:
                         # For assistant questions, observe the assistant peer
-                        await session.add_peers(
+                        await session.aio.add_peers(
                             [
                                 (
                                     user_peer,
@@ -562,7 +558,7 @@ class LongMemEvalRunner:
                         )
                     else:
                         # For user questions, observe the user peer (default behavior)
-                        await session.add_peers(
+                        await session.aio.add_peers(
                             [
                                 (
                                     user_peer,
@@ -579,7 +575,7 @@ class LongMemEvalRunner:
                             ]
                         )
 
-                    honcho_messages: list[MessageCreateParam] = []
+                    honcho_messages: list[MessageCreateParams] = []
                     for msg in session_messages:
                         role = msg["role"]
                         content = msg["content"]
@@ -620,7 +616,7 @@ class LongMemEvalRunner:
                     if honcho_messages:
                         for i in range(0, len(honcho_messages), 100):
                             batch = honcho_messages[i : i + 100]
-                            await session.add_messages(batch)
+                            await session.aio.add_messages(batch)
 
                     results["sessions_created"].append(
                         SessionResult(
@@ -682,11 +678,11 @@ class LongMemEvalRunner:
                         raise ValueError(
                             "Merged session ID is required when using get_context. Set --merge-sessions to True."
                         )
-                    session = await honcho_client.session(id=merged_session_id)
+                    session = await honcho_client.aio.session(id=merged_session_id)
 
                     # Get context for the appropriate peer
                     peer_id = "assistant" if is_assistant_type else "user"
-                    context = await session.get_context(
+                    context = await session.aio.context(
                         summary=True,
                         peer_target=peer_id,
                         last_user_message=question,
@@ -716,15 +712,17 @@ class LongMemEvalRunner:
                     # Use the appropriate peer based on question type
                     if is_assistant_type:
                         # For assistant questions, use the assistant peer
-                        actual_response = await assistant_peer.chat(question_with_date)
+                        actual_response = await assistant_peer.aio.chat(
+                            question_with_date
+                        )
                     else:
                         # For user questions, use the user peer (default behavior)
-                        actual_response = await user_peer.chat(question_with_date)
+                        actual_response = await user_peer.aio.chat(question_with_date)
 
                 # Clean up workspace if requested
                 if self.cleanup_workspace:
                     try:
-                        await honcho_client.delete_workspace(workspace_id)
+                        await honcho_client.aio.delete_workspace(workspace_id)
                         print(f"[{workspace_id}] cleaned up workspace")
                     except Exception as e:
                         print(f"Failed to delete workspace: {e}")

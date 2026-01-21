@@ -51,7 +51,7 @@ PROFILES_SAMPLE_RATE = 0.1
 [llm]
 DEFAULT_MAX_TOKENS = 2500
 EMBEDDING_PROVIDER = "openai"
-MAX_TOOL_OUTPUT_CHARS = 30000  # Max chars for tool output (~7500 tokens)
+MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
 # API Keys for LLM providers
@@ -93,38 +93,44 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
 HISTORY_TOKEN_LIMIT = 8192
-SESSION_HISTORY_MAX_TOKENS = 16384
+SESSION_HISTORY_MAX_TOKENS = 4096
 
 # Per-level settings for reasoning levels
+# MAX_OUTPUT_TOKENS is optional per level; if not set, uses global MAX_OUTPUT_TOKENS
 [dialectic.levels.minimal]
 PROVIDER = "google"
 MODEL = "gemini-2.5-flash-lite"
 THINKING_BUDGET_TOKENS = 0
-MAX_TOOL_ITERATIONS = 2
+MAX_TOOL_ITERATIONS = 1
+MAX_OUTPUT_TOKENS = 250  # Reduced output for cost savings
 
 [dialectic.levels.low]
 PROVIDER = "google"
-MODEL = "gemini-3-flash"
+MODEL = "gemini-2.5-flash-lite"
 THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
 
 [dialectic.levels.medium]
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 512
-MAX_TOOL_ITERATIONS = 4
+THINKING_BUDGET_TOKENS = 1024
+MAX_TOOL_ITERATIONS = 2
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
 
 [dialectic.levels.high]
 PROVIDER = "anthropic"
-MODEL = "claude-opus-4-5"
-THINKING_BUDGET_TOKENS = 0
+MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
 
 [dialectic.levels.max]
 PROVIDER = "anthropic"
-MODEL = "claude-opus-4-5"
-THINKING_BUDGET_TOKENS = 512
+MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
 # Backup provider example (optional, must set both or neither):
 # BACKUP_PROVIDER = "google"
 # BACKUP_MODEL = "gemini-2.5-pro"
@@ -172,3 +178,16 @@ URL = "redis://localhost:6379/0?suppress=false"
 # NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5
+
+# Vector store settings
+[vector_store]
+# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+TYPE = "pgvector"
+# Migration flag: set to true when migration from pgvector is complete
+MIGRATED = false
+NAMESPACE = "honcho"
+DIMENSIONS = 1536
+# TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
+# TURBOPUFFER_REGION = "us-east-1"
+LANCEDB_PATH = "./lancedb_data"
+RECONCILIATION_INTERVAL_SECONDS = 300

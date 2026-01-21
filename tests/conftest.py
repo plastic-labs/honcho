@@ -104,7 +104,7 @@ async def setup_test_database(db_url: URL):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url), echo=True)
+    engine = create_async_engine(str(db_url), echo=False)
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -400,8 +400,115 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
+def mock_vector_store():
+    """Mock vector store operations for testing"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.vector_store import (
+        VectorQueryResult,
+        VectorRecord,
+        VectorUpsertResult,
+        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    # Create a mock vector store that stores vectors in memory
+    vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
+
+    async def mock_upsert_many(
+        namespace: str, vectors: list[VectorRecord]
+    ) -> VectorUpsertResult:
+        if namespace not in vector_storage:
+            vector_storage[namespace] = {}
+        for vector in vectors:
+            vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
+        return VectorUpsertResult(ok=True)
+
+    async def mock_query(
+        namespace: str, embedding: list[float], **kwargs: Any
+    ) -> list[VectorQueryResult]:
+        _ = embedding  # unused in mock
+        if namespace not in vector_storage:
+            return []
+
+        # Simple mock: return all vectors in the namespace as results
+        results: list[VectorQueryResult] = []
+        for vec_id, (_vec_embedding, metadata) in vector_storage[namespace].items():
+            results.append(
+                VectorQueryResult(
+                    id=vec_id,
+                    score=0.1,  # Mock score
+                    metadata=metadata,
+                )
+            )
+        top_k: int = kwargs.get("top_k", 10)
+        return results[:top_k]
+
+    async def mock_delete_many(namespace: str, ids: list[str]) -> None:
+        if namespace in vector_storage:
+            for vec_id in ids:
+                vector_storage[namespace].pop(vec_id, None)
+
+    async def mock_delete_namespace(namespace: str) -> None:
+        vector_storage.pop(namespace, None)
+
+    # Clear the cache on get_external_vector_store before patching
+    from src.vector_store import get_external_vector_store
+
+    get_external_vector_store.cache_clear()  # type: ignore
+
+    # Create the mock vector store
+    mock_vs = MagicMock()
+    mock_vs.upsert_many = AsyncMock(side_effect=mock_upsert_many)
+    mock_vs.query = AsyncMock(side_effect=mock_query)
+    mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
+    mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
+
+    def mock_get_vector_namespace(
+        namespace_type: str,
+        workspace_name: str,
+        observer: str | None = None,
+        observed: str | None = None,
+    ) -> str:
+        # Uses real hash function for consistency with production
+        if namespace_type == "document":
+            if observer is None or observed is None:
+                raise ValueError(
+                    "observer and observed are required for document namespaces"
+                )
+            return f"honcho2345.doc.{_hash_namespace_components(workspace_name, observer, observed)}"
+        if namespace_type == "message":
+            return f"honcho2345.msg.{_hash_namespace_components(workspace_name)}"
+        raise ValueError(f"Unknown namespace type: {namespace_type}")
+
+    mock_vs.get_vector_namespace = mock_get_vector_namespace
+
+    with (
+        patch("src.crud.document.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.workspace.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.session.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.message.get_external_vector_store", return_value=mock_vs),
+        patch(
+            "src.reconciler.sync_vectors.get_external_vector_store",
+            return_value=mock_vs,
+        ),
+        patch("src.utils.search.get_external_vector_store", return_value=mock_vs),
+    ):
+        yield mock_vs
+
+        # Clear cache after test as well for cleanliness
+        get_external_vector_store.cache_clear()  # type: ignore
+
+
+@pytest.fixture(autouse=True)
 def mock_llm_call_functions():
     """Mock LLM functions to avoid needing API keys during tests"""
+
+    # Create an async generator for streaming responses
+    async def mock_stream(*args, **kwargs):  # pyright: ignore[reportUnusedParameter, reportMissingParameterType, reportUnknownParameterType]
+        """Mock streaming response that yields chunks"""
+        chunks = ["Test ", "streaming ", "response"]
+        for chunk in chunks:
+            yield chunk
 
     # Create mock responses for different function types
     # Note: critical_analysis_call was removed as the deriver now uses agentic approach
@@ -416,6 +523,9 @@ def mock_llm_call_functions():
         patch(
             "src.routers.peers.agentic_chat", new_callable=AsyncMock
         ) as mock_agentic_chat,
+        patch(
+            "src.routers.peers.agentic_chat_stream", side_effect=mock_stream
+        ) as mock_agentic_chat_stream,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
@@ -428,6 +538,7 @@ def mock_llm_call_functions():
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "agentic_chat": mock_agentic_chat,
+            "agentic_chat_stream": mock_agentic_chat_stream,
         }
 
 

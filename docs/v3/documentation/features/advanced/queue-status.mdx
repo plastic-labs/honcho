@@ -17,8 +17,7 @@ several utilities to check the status of the queue.
 from honcho import Honcho
 honcho = Honcho()
 
-status = honcho.get_queue_status()
-honcho.poll_queue_status()
+status = honcho.queue_status()
 ```
 
 ```typescript typescript
@@ -26,8 +25,7 @@ import { Honcho } from '@honcho-ai/sdk';
 
 const honcho = new Honcho({});
 
-const status = await honcho.getQueueStatus();
-await honcho.pollQueueStatus();
+const status = await honcho.queueStatus();
 ```
 </CodeGroup>
 
@@ -76,12 +74,12 @@ work_units will be processed in parallel
 - If local representations are turned in a Session then a message will
   generate an additional work unit for every peer that has `observe_others=True`
 
-The `get_queue_status` and `poll_queue_status` methods can take additional
+The `queue_status` method can take additional
 parameters to scope the status to a specific work unit:
 
 <CodeGroup>
 ```python Python
-def get_queue_status(
+def queue_status(
         self,
         observer_id: str | None = None,
         sender_id: str | None = None,
@@ -103,15 +101,18 @@ export const QueueStatusOptionsSchema = z.object({
 ```
 </CodeGroup>
 
-Additionally, there are queue status and polling queue status methods
-available on the session objects in each of the SDKs.
+Additionally, there are queue status methods available on the session objects in each of the SDKs.
+
+<Warning>
+**Do not wait for the queue to be empty.** The queue is a continuous processing system—new messages may arrive at any time, and "completion" is not a meaningful state. Design your application to work without assuming the queue will ever be fully drained. Use `queueStatus()` for observability and debugging, not for synchronization.
+</Warning>
 
 Below are the function signatures for the session level queue status method:
 
 <CodeGroup>
 ```python python
 @validate_call
-    def get_queue_status(
+    def queue_status(
         self,
         observer_id: str | None = None,
         sender_id: str | None = None,
@@ -119,7 +120,7 @@ Below are the function signatures for the session level queue status method:
 ```
 
 ```typescript TypeScript
-async getQueueStatus(
+async queueStatus(
     options?: Omit<QueueStatusOptions, 'sessionId'>
   ): Promise<{
     totalWorkUnits: number

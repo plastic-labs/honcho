@@ -73,11 +73,9 @@ from pathlib import Path
 from typing import Any, cast
 
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
+from honcho import Honcho
+from honcho.api_types import MessageCreateParams
+from honcho.session import SessionPeerConfig
 from openai import AsyncOpenAI
 
 from src.config import settings
@@ -186,9 +184,7 @@ class BEAMRunner:
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
 
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
+    def create_honcho_client(self, workspace_id: str, honcho_url: str) -> Honcho:
         """
         Create a Honcho client for a specific workspace.
 
@@ -197,22 +193,22 @@ class BEAMRunner:
             honcho_url: URL of the Honcho instance
 
         Returns:
-            AsyncHoncho client instance
+            Honcho client instance
         """
-        return AsyncHoncho(
+        return Honcho(
             environment="local",
             workspace_id=workspace_id,
             base_url=honcho_url,
         )
 
     async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
+        self, honcho_client: Honcho, session_id: str | None = None
     ) -> bool:
         """Wait for the deriver queue to be empty."""
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_queue_status(session=session_id)
+                status = await honcho_client.aio.queue_status(session=session_id)
             except Exception:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -230,7 +226,7 @@ class BEAMRunner:
 
     async def trigger_dream_and_wait(
         self,
-        honcho_client: AsyncHoncho,
+        honcho_client: Honcho,
         workspace_id: str,
         observer: str,
         observed: str | None = None,
@@ -317,7 +313,7 @@ class BEAMRunner:
             # For instruction_following, always use get_context + OpenRouter API
             # so the LLM can follow user-specified instructions from Honcho context
             if self.use_get_context or ability == "instruction_following":
-                context = await session.get_context(
+                context = await session.aio.context(
                     summary=True,
                     peer_target="user",
                     last_user_message=question,
@@ -357,7 +353,7 @@ Review the context carefully for any such instructions before responding."""
                 else:
                     actual_response = response.choices[0].message.content or ""
             else:
-                actual_response = await user_peer.chat(question)
+                actual_response = await user_peer.aio.chat(question)
                 actual_response = (
                     actual_response if isinstance(actual_response, str) else ""
                 )
@@ -435,7 +431,7 @@ Review the context carefully for any such instructions before responding."""
 
         # Create workspace for this conversation
         workspace_id = f"beam_{context_length}_{conversation_id}"
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
+        honcho_client = self.create_honcho_client(workspace_id, honcho_url)
 
         result: ConversationResult = {
             "conversation_id": conversation_id,
@@ -461,15 +457,15 @@ Review the context carefully for any such instructions before responding."""
             questions_data = conv_data["questions"]
 
             # Create peers
-            user_peer = await honcho_client.peer(id="user")
-            assistant_peer = await honcho_client.peer(id="assistant")
+            user_peer = await honcho_client.aio.peer(id="user")
+            assistant_peer = await honcho_client.aio.peer(id="assistant")
 
             # Create session for this conversation
             session_id = f"{workspace_id}_session"
-            session = await honcho_client.session(id=session_id)
+            session = await honcho_client.aio.session(id=session_id)
 
             # Configure peer observation - observe the user peer
-            await session.add_peers(
+            await session.aio.add_peers(
                 [
                     (
                         user_peer,
@@ -484,7 +480,7 @@ Review the context carefully for any such instructions before responding."""
 
             # Ingest conversation turns
             print(f"[{workspace_id}] Ingesting conversation turns...")
-            messages: list[MessageCreateParam] = []
+            messages: list[MessageCreateParams] = []
 
             # Handle different data structures for 10M vs other sizes
             for batch in chat_data:
@@ -553,7 +549,7 @@ Review the context carefully for any such instructions before responding."""
             # Add messages in batches of 100
             for i in range(0, len(messages), 100):
                 batch = messages[i : i + 100]
-                await session.add_messages(batch)
+                await session.aio.add_messages(batch)
 
             print(
                 f"[{workspace_id}] Ingested {result['total_messages']} messages. Waiting for deriver queue..."
@@ -625,7 +621,7 @@ Review the context carefully for any such instructions before responding."""
             # Cleanup workspace if requested
             if self.cleanup_workspace:
                 try:
-                    await honcho_client.delete_workspace(workspace_id)
+                    await honcho_client.aio.delete_workspace(workspace_id)
                     print(f"[{workspace_id}] Cleaned up workspace")
                 except Exception as e:
                     print(f"Failed to delete workspace: {e}")

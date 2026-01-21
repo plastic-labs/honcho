@@ -1,7 +1,6 @@
 {
   "description": "Test that when both peers have observe_me=false, no local representations are created even with observe_others=true",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -41,7 +40,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",

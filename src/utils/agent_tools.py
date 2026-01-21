@@ -495,6 +495,13 @@ DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["get_reasoning_chain"],  # Traverse reasoning trees
 ]
 
+# Minimal tools for dialectic agent at "minimal" reasoning level
+# Reduces cost by limiting tool definitions in context
+DIALECTIC_TOOLS_MINIMAL: list[dict[str, Any]] = [
+    TOOLS["search_memory"],
+    TOOLS["search_messages"],
+]
+
 # Tools for the dreamer agent (consolidation + peer card + deduplication)
 DREAMER_TOOLS: list[dict[str, Any]] = [
     # Preference extraction (should be called first)

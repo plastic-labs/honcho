@@ -125,6 +125,14 @@ class SpecialistExecutionError(HonchoException):
     detail = "Specialist execution failed"
 
 
+@final
+class VectorStoreError(HonchoException):
+    """Exception raised when a vector store operation fails."""
+
+    status_code = 500
+    detail = "Vector store operation failed"
+
+
 class LLMError(Exception):
     """Exception raised when an LLM call fails.
 

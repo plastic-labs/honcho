@@ -1,25 +1,33 @@
-import HonchoCore from '@honcho-ai/core'
-import type { DefaultQuery } from '@honcho-ai/core/core'
-import type {
-  QueueStatusParams,
-  QueueStatusResponse,
-} from '@honcho-ai/core/resources/workspaces/queue'
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
+import { API_VERSION } from './api-version'
+import { HonchoHTTPClient } from './http/client'
+import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
+import type {
+  MessageResponse,
+  PageResponse,
+  PeerResponse,
+  QueueStatus,
+  QueueStatusParams,
+  QueueStatusResponse,
+  SessionResponse,
+  WorkspaceResponse,
+} from './types/api'
+import { resolveId, transformQueueStatus } from './utils'
 import {
   FilterSchema,
   type Filters,
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
-  MessageMetadataSchema,
   type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
   type PeerMetadata,
   PeerMetadataSchema,
+  peerConfigFromApi,
+  peerConfigToApi,
   type QueueStatusOptions,
   SearchQuerySchema,
   type SessionConfig,
@@ -27,11 +35,17 @@ import {
   SessionIdSchema,
   type SessionMetadata,
   SessionMetadataSchema,
+  sessionConfigFromApi,
+  sessionConfigToApi,
   type WorkspaceConfig,
   WorkspaceConfigSchema,
   type WorkspaceMetadata,
   WorkspaceMetadataSchema,
+  workspaceConfigFromApi,
+  workspaceConfigToApi,
 } from './validation'
+
+const DEFAULT_BASE_URL = 'https://api.honcho.dev'
 
 /**
  * Main client for the Honcho TypeScript SDK.
@@ -39,9 +53,6 @@ import {
  * Provides access to peers, sessions, and workspace operations with configuration
  * from environment variables or explicit parameters. This is the primary entry
  * point for interacting with the Honcho conversational memory platform.
- *
- * For advanced usage, the underlying @honcho-ai/core client can be accessed via the
- * `core` property to use functionality not exposed through this SDK.
  *
  * @example
  * ```typescript
@@ -60,9 +71,9 @@ export class Honcho {
    */
   readonly workspaceId: string
   /**
-   * Reference to the core Honcho client instance.
+   * Reference to the HTTP client instance.
    */
-  private _client: HonchoCore
+  private _http: HonchoHTTPClient
   /**
    * Private cached metadata for this workspace.
    */
@@ -70,7 +81,11 @@ export class Honcho {
   /**
    * Private cached configuration for this workspace.
    */
-  private _configuration?: Record<string, unknown>
+  private _configuration?: WorkspaceConfig
+  /**
+   * Memoized workspace get-or-create call.
+   */
+  private _workspaceReady?: Promise<void>
 
   /**
    * Cached metadata for this workspace. May be stale if the workspace
@@ -87,30 +102,27 @@ export class Honcho {
    * Cached configuration for this workspace. May be stale if the workspace
    * was not recently fetched from the API.
    *
-   * Call getConfig() to get the latest configuration from the server,
+   * Call getConfiguration() to get the latest configuration from the server,
    * which will also update this cached value.
    */
-  get configuration(): Record<string, unknown> | undefined {
+  get configuration(): WorkspaceConfig | undefined {
     return this._configuration
   }
 
   /**
-   * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
-   * allowing users to access functionality that is not exposed through this SDK.
+   * Access the underlying HTTP client for advanced usage.
    *
-   * @returns The underlying HonchoCore client instance
-   *
-   * @example
-   * ```typescript
-   * import { Honcho } from '@honcho-ai/sdk';
-   *
-   * const client = new Honcho();
-   *
-   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace-id" });
-   * ```
+   * @returns The HTTP client instance
    */
-  get core(): InstanceType<typeof HonchoCore> {
-    return this._client
+  get http(): HonchoHTTPClient {
+    return this._http
+  }
+
+  /**
+   * Get the base URL for the API.
+   */
+  get baseURL(): string {
+    return this._http.baseURL
   }
 
   /**
@@ -129,34 +141,215 @@ export class Honcho {
    * @param options.timeout - Optional custom timeout for the HTTP client
    * @param options.maxRetries - Optional custom maximum number of retries for the HTTP client
    * @param options.defaultHeaders - Optional custom default headers for the HTTP client
-   * @param options.defaultQuery - Optional custom default query parameters for the HTTP client
    */
-  constructor(options: HonchoConfig) {
+  constructor(options: HonchoConfig = {}) {
     const validatedOptions = HonchoConfigSchema.parse(options)
     this.workspaceId =
       validatedOptions.workspaceId ||
       process.env.HONCHO_WORKSPACE_ID ||
       'default'
-    this._client = new HonchoCore({
+
+    // Resolve base URL
+    let baseURL = validatedOptions.baseURL || process.env.HONCHO_URL
+    if (validatedOptions.environment === 'local') {
+      baseURL = 'http://localhost:8000'
+    } else if (!baseURL) {
+      baseURL = DEFAULT_BASE_URL
+    }
+
+    this._http = new HonchoHTTPClient({
+      baseURL,
       apiKey: validatedOptions.apiKey || process.env.HONCHO_API_KEY,
-      environment: validatedOptions.environment,
-      baseURL: validatedOptions.baseURL || process.env.HONCHO_URL,
       timeout: validatedOptions.timeout,
       maxRetries: validatedOptions.maxRetries,
       defaultHeaders: validatedOptions.defaultHeaders,
-      defaultQuery: validatedOptions.defaultQuery as DefaultQuery,
+      defaultQuery: validatedOptions.defaultQuery,
     })
-    // Note: Constructor cannot be async, so we can't await here
-    // The workspace will be created on first use if it doesn't exist
-    // due to the upsert behavior of the API
-    this._client.workspaces.getOrCreate({ id: this.workspaceId })
   }
+
+  // ===========================================================================
+  // Private API Methods
+  // ===========================================================================
+
+  private async _getOrCreateWorkspace(
+    id: string,
+    params?: {
+      metadata?: Record<string, unknown>
+      configuration?: WorkspaceConfig
+    }
+  ): Promise<WorkspaceResponse> {
+    return this._http.post<WorkspaceResponse>(`/${API_VERSION}/workspaces`, {
+      body: {
+        id,
+        metadata: params?.metadata,
+        configuration: workspaceConfigToApi(params?.configuration),
+      },
+    })
+  }
+
+  private async _ensureWorkspace(): Promise<void> {
+    /**
+     * Ensure the workspace exists on the server.
+     *
+     * The Honcho API uses get-or-create semantics for workspaces via `POST /v3/workspaces`.
+     * This SDK performs that call once per client instance (memoized) to guarantee that
+     * all workspace-scoped operations run against an existing workspace.
+     */
+    if (!this._workspaceReady) {
+      this._workspaceReady = this._getOrCreateWorkspace(this.workspaceId).then(
+        () => undefined
+      )
+    }
+    await this._workspaceReady
+  }
+
+  private async _updateWorkspace(
+    workspaceId: string,
+    params: {
+      metadata?: Record<string, unknown>
+      configuration?: WorkspaceConfig
+    }
+  ): Promise<WorkspaceResponse> {
+    return this._http.put<WorkspaceResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}`,
+      {
+        body: {
+          metadata: params.metadata,
+          configuration: workspaceConfigToApi(params.configuration),
+        },
+      }
+    )
+  }
+
+  private async _deleteWorkspace(workspaceId: string): Promise<void> {
+    await this._http.delete(`/${API_VERSION}/workspaces/${workspaceId}`)
+  }
+
+  private async _listWorkspaces(params?: {
+    filters?: Record<string, unknown>
+    page?: number
+    size?: number
+  }): Promise<PageResponse<WorkspaceResponse>> {
+    return this._http.post<PageResponse<WorkspaceResponse>>(
+      `/${API_VERSION}/workspaces/list`,
+      {
+        body: {
+          filters: params?.filters,
+        },
+        query: {
+          page: params?.page,
+          size: params?.size,
+        },
+      }
+    )
+  }
+
+  private async _searchWorkspace(
+    workspaceId: string,
+    params: {
+      query: string
+      filters?: Record<string, unknown>
+      limit?: number
+    }
+  ): Promise<MessageResponse[]> {
+    return this._http.post<MessageResponse[]>(
+      `/${API_VERSION}/workspaces/${workspaceId}/search`,
+      { body: params }
+    )
+  }
+
+  private async _getQueueStatus(
+    workspaceId: string,
+    params?: QueueStatusParams
+  ): Promise<QueueStatusResponse> {
+    const query: Record<string, string | number | boolean | undefined> = {}
+    if (params?.observer_id) query.observer_id = params.observer_id
+    if (params?.sender_id) query.sender_id = params.sender_id
+    if (params?.session_id) query.session_id = params.session_id
+
+    return this._http.get<QueueStatusResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/queue/status`,
+      { query }
+    )
+  }
+
+  private async _listPeers(
+    workspaceId: string,
+    params?: {
+      filters?: Record<string, unknown>
+      page?: number
+      size?: number
+    }
+  ): Promise<PageResponse<PeerResponse>> {
+    return this._http.post<PageResponse<PeerResponse>>(
+      `/${API_VERSION}/workspaces/${workspaceId}/peers/list`,
+      {
+        body: { filters: params?.filters },
+        query: { page: params?.page, size: params?.size },
+      }
+    )
+  }
+
+  private async _getOrCreatePeer(
+    workspaceId: string,
+    params: {
+      id: string
+      metadata?: Record<string, unknown>
+      configuration?: Record<string, unknown>
+    }
+  ): Promise<PeerResponse> {
+    return this._http.post<PeerResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/peers`,
+      { body: params }
+    )
+  }
+
+  private async _listSessions(
+    workspaceId: string,
+    params?: {
+      filters?: Record<string, unknown>
+      page?: number
+      size?: number
+    }
+  ): Promise<PageResponse<SessionResponse>> {
+    return this._http.post<PageResponse<SessionResponse>>(
+      `/${API_VERSION}/workspaces/${workspaceId}/sessions/list`,
+      {
+        body: { filters: params?.filters },
+        query: { page: params?.page, size: params?.size },
+      }
+    )
+  }
+
+  private async _getOrCreateSession(
+    workspaceId: string,
+    params: {
+      id: string
+      metadata?: Record<string, unknown>
+      configuration?: SessionConfig
+    }
+  ): Promise<SessionResponse> {
+    return this._http.post<SessionResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/sessions`,
+      {
+        body: {
+          id: params.id,
+          metadata: params.metadata,
+          configuration: sessionConfigToApi(params.configuration),
+        },
+      }
+    )
+  }
+
+  // ===========================================================================
+  // Public Methods
+  // ===========================================================================
 
   /**
    * Get or create a peer with the given ID.
    *
    * Creates a Peer object that can be used to interact with the specified peer.
-   * If metadata or config is provided, makes an API call to get/create the peer
+   * If metadata or configuration is provided, makes an API call to get/create the peer
    * immediately with those values.
    *
    * Provided metadata and configuration will overwrite existing data for this peer
@@ -166,8 +359,8 @@ export class Honcho {
    *             stable identifier that can be used consistently across sessions.
    * @param metadata - Optional metadata dictionary to associate with this peer.
    *                   If set, will get/create peer immediately with metadata.
-   * @param config - Optional configuration to set for this peer.
-   *                 If set, will get/create peer immediately with flags.
+   * @param configuration - Optional configuration to set for this peer.
+   *                        If set, will get/create peer immediately with flags.
    * @returns Promise resolving to a Peer object that can be used to send messages,
    *          join sessions, and query the peer's knowledge representations
    * @throws Error if the peer ID is empty or invalid
@@ -176,36 +369,42 @@ export class Honcho {
     id: string,
     options?: {
       metadata?: PeerMetadata
-      config?: PeerConfig
+      configuration?: PeerConfig
     }
   ): Promise<Peer> {
+    await this._ensureWorkspace()
     const validatedId = PeerIdSchema.parse(id)
     const validatedMetadata = options?.metadata
       ? PeerMetadataSchema.parse(options.metadata)
       : undefined
-    const validatedConfig = options?.config
-      ? PeerConfigSchema.parse(options.config)
+    const validatedConfiguration = options?.configuration
+      ? PeerConfigSchema.parse(options.configuration)
       : undefined
 
-    if (validatedConfig || validatedMetadata) {
-      const peerData = await this._client.workspaces.peers.getOrCreate(
-        this.workspaceId,
-        {
-          id: validatedId,
-          configuration: validatedConfig,
-          metadata: validatedMetadata,
-        }
-      )
+    if (validatedConfiguration || validatedMetadata) {
+      const peerData = await this._getOrCreatePeer(this.workspaceId, {
+        id: validatedId,
+        configuration: peerConfigToApi(validatedConfiguration),
+        metadata: validatedMetadata,
+      })
       return new Peer(
         validatedId,
         this.workspaceId,
-        this._client,
+        this._http,
         peerData.metadata ?? undefined,
-        peerData.configuration ?? undefined
+        peerConfigFromApi(peerData.configuration) ?? undefined,
+        () => this._ensureWorkspace()
       )
     }
 
-    return new Peer(validatedId, this.workspaceId, this._client)
+    return new Peer(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      undefined,
+      undefined,
+      () => this._ensureWorkspace()
+    )
   }
 
   /**
@@ -214,25 +413,39 @@ export class Honcho {
    * Makes an API call to retrieve all peers that have been created or used
    * within the current workspace. Returns a paginated result.
    *
-   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async getPeers(filters?: Filters): Promise<Page<Peer>> {
+  async peers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
+    await this._ensureWorkspace()
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const peersPage = await this._client.workspaces.peers.list(
-      this.workspaceId,
-      { filters: validatedFilter }
-    )
+    const peersPage = await this._listPeers(this.workspaceId, {
+      filters: validatedFilter,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<PeerResponse>> => {
+      return this._listPeers(this.workspaceId, {
+        filters: validatedFilter,
+        page,
+        size,
+      })
+    }
+
     return new Page(
       peersPage,
       (peer) =>
         new Peer(
           peer.id,
           this.workspaceId,
-          this._client,
+          this._http,
           peer.metadata ?? undefined,
-          peer.configuration ?? undefined
-        )
+          peerConfigFromApi(peer.configuration) ?? undefined,
+          () => this._ensureWorkspace()
+        ),
+      fetchNextPage
     )
   }
 
@@ -240,7 +453,7 @@ export class Honcho {
    * Get or create a session with the given ID.
    *
    * Creates a Session object that can be used to manage conversations between
-   * multiple peers. If metadata or config is provided, makes an API call to
+   * multiple peers. If metadata or configuration is provided, makes an API call to
    * get/create the session immediately with those values.
    *
    * Provided metadata and configuration will overwrite existing data for this session
@@ -251,8 +464,8 @@ export class Honcho {
    *             same conversation
    * @param metadata - Optional metadata dictionary to associate with this session.
    *                   If set, will get/create session immediately with metadata.
-   * @param config - Optional configuration to set for this session.
-   *                 If set, will get/create session immediately with flags.
+   * @param configuration - Optional configuration to set for this session.
+   *                        If set, will get/create session immediately with flags.
    * @returns Promise resolving to a Session object that can be used to add peers,
    *          send messages, and manage conversation context
    * @throws Error if the session ID is empty or invalid
@@ -261,36 +474,42 @@ export class Honcho {
     id: string,
     options?: {
       metadata?: SessionMetadata
-      config?: SessionConfig
+      configuration?: SessionConfig
     }
   ): Promise<Session> {
+    await this._ensureWorkspace()
     const validatedId = SessionIdSchema.parse(id)
     const validatedMetadata = options?.metadata
       ? SessionMetadataSchema.parse(options.metadata)
       : undefined
-    const validatedConfig = options?.config
-      ? SessionConfigSchema.parse(options.config)
+    const validatedConfiguration = options?.configuration
+      ? SessionConfigSchema.parse(options.configuration)
       : undefined
 
-    if (validatedConfig || validatedMetadata) {
-      const sessionData = await this._client.workspaces.sessions.getOrCreate(
-        this.workspaceId,
-        {
-          id: validatedId,
-          configuration: validatedConfig,
-          metadata: validatedMetadata,
-        }
-      )
+    if (validatedConfiguration || validatedMetadata) {
+      const sessionData = await this._getOrCreateSession(this.workspaceId, {
+        id: validatedId,
+        configuration: validatedConfiguration,
+        metadata: validatedMetadata,
+      })
       return new Session(
         validatedId,
         this.workspaceId,
-        this._client,
+        this._http,
         sessionData.metadata ?? undefined,
-        sessionData.configuration ?? undefined
+        sessionConfigFromApi(sessionData.configuration) ?? undefined,
+        () => this._ensureWorkspace()
       )
     }
 
-    return new Session(validatedId, this.workspaceId, this._client)
+    return new Session(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      undefined,
+      undefined,
+      () => this._ensureWorkspace()
+    )
   }
 
   /**
@@ -299,26 +518,40 @@ export class Honcho {
    * Makes an API call to retrieve all sessions that have been created within
    * the current workspace.
    *
-   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async getSessions(filters?: Filters): Promise<Page<Session>> {
+  async sessions(filters?: Filters): Promise<Page<Session, SessionResponse>> {
+    await this._ensureWorkspace()
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const sessionsPage = await this._client.workspaces.sessions.list(
-      this.workspaceId,
-      { filters: validatedFilter }
-    )
+    const sessionsPage = await this._listSessions(this.workspaceId, {
+      filters: validatedFilter,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<SessionResponse>> => {
+      return this._listSessions(this.workspaceId, {
+        filters: validatedFilter,
+        page,
+        size,
+      })
+    }
+
     return new Page(
       sessionsPage,
       (session) =>
         new Session(
           session.id,
           this.workspaceId,
-          this._client,
+          this._http,
           session.metadata ?? undefined,
-          session.configuration ?? undefined
-        )
+          sessionConfigFromApi(session.configuration) ?? undefined,
+          () => this._ensureWorkspace()
+        ),
+      fetchNextPage
     )
   }
 
@@ -334,9 +567,8 @@ export class Honcho {
    *          Returns an empty dictionary if no metadata is set
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    await this._ensureWorkspace()
+    const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
     return this._metadata
   }
@@ -352,8 +584,9 @@ export class Honcho {
    *                   Keys must be strings, values can be any JSON-serializable type
    */
   async setMetadata(metadata: WorkspaceMetadata): Promise<void> {
+    await this._ensureWorkspace()
     const validatedMetadata = WorkspaceMetadataSchema.parse(metadata)
-    await this._client.workspaces.update(this.workspaceId, {
+    await this._updateWorkspace(this.workspaceId, {
       metadata: validatedMetadata,
     })
     this._metadata = validatedMetadata
@@ -366,14 +599,13 @@ export class Honcho {
    * Configuration includes settings that control workspace behavior.
    * This method also updates the cached configuration property.
    *
-   * @returns Promise resolving to a dictionary containing the workspace's configuration.
-   *          Returns an empty dictionary if no configuration is set
+   * @returns Promise resolving to the workspace's configuration.
+   *          Returns an empty object if no configuration is set
    */
-  async getConfig(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
-    this._configuration = workspace.configuration || {}
+  async getConfiguration(): Promise<WorkspaceConfig> {
+    await this._ensureWorkspace()
+    const workspace = await this._getOrCreateWorkspace(this.workspaceId)
+    this._configuration = workspaceConfigFromApi(workspace.configuration) || {}
     return this._configuration
   }
 
@@ -384,12 +616,13 @@ export class Honcho {
    * This will overwrite any existing configuration with the provided values.
    * This method also updates the cached configuration property.
    *
-   * @param configuration - A dictionary of configuration to associate with the workspace.
-   *                        Keys must be strings, values can be any JSON-serializable type
+   * @param configuration - Configuration to associate with the workspace.
+   *                        Includes reasoning, peerCard, summary, and dream settings.
    */
-  async setConfig(configuration: WorkspaceConfig): Promise<void> {
+  async setConfiguration(configuration: WorkspaceConfig): Promise<void> {
+    await this._ensureWorkspace()
     const validatedConfig = WorkspaceConfigSchema.parse(configuration)
-    await this._client.workspaces.update(this.workspaceId, {
+    await this._updateWorkspace(this.workspaceId, {
       configuration: validatedConfig,
     })
     this._configuration = validatedConfig
@@ -402,11 +635,10 @@ export class Honcho {
    * associated with the current workspace and updates the cached properties.
    */
   async refresh(): Promise<void> {
-    const workspace = await this._client.workspaces.getOrCreate({
-      id: this.workspaceId,
-    })
+    await this._ensureWorkspace()
+    const workspace = await this._getOrCreateWorkspace(this.workspaceId)
     this._metadata = workspace.metadata || {}
-    this._configuration = workspace.configuration || {}
+    this._configuration = workspaceConfigFromApi(workspace.configuration) || {}
   }
 
   /**
@@ -415,20 +647,30 @@ export class Honcho {
    * Makes an API call to retrieve all workspace IDs that the authenticated
    * user has access to.
    *
-   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
-   * @returns Promise resolving to a list of workspace ID strings. Returns an empty
-   *          list if no workspaces are accessible or none exist
+   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @returns Promise resolving to a Page of workspace ID strings. Returns an empty
+   *          page if no workspaces are accessible or none exist
    */
-  async getWorkspaces(filters?: Filters): Promise<string[]> {
+  async workspaces(
+    filters?: Filters
+  ): Promise<Page<string, WorkspaceResponse>> {
     const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const workspacesPage = await this._client.workspaces.list({
+    const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
     })
-    const ids: string[] = []
-    for await (const workspace of workspacesPage) {
-      ids.push(workspace.id)
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<WorkspaceResponse>> => {
+      return this._listWorkspaces({
+        filters: validatedFilter,
+        page,
+        size,
+      })
     }
-    return ids
+
+    return new Page(workspacesPage, (workspace) => workspace.id, fetchNextPage)
   }
 
   /**
@@ -437,12 +679,10 @@ export class Honcho {
    * Makes an API call to delete the specified workspace.
    *
    * @param workspaceId - The ID of the workspace to delete
-   * @returns Promise resolving to the deleted Workspace object
+   * @returns Promise that resolves when the workspace is deleted
    */
-  async deleteWorkspace(
-    workspaceId: string
-  ): Promise<Awaited<ReturnType<typeof this._client.workspaces.delete>>> {
-    return await this._client.workspaces.delete(workspaceId)
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    await this._deleteWorkspace(workspaceId)
   }
 
   /**
@@ -451,7 +691,7 @@ export class Honcho {
    * Makes an API call to search for messages in the current workspace.
    *
    * @param query - The search query to use
-   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @param limit - Number of results to return (1-100, default: 10).
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
@@ -464,6 +704,7 @@ export class Honcho {
       limit?: number
     }
   ): Promise<Message[]> {
+    await this._ensureWorkspace()
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedFilters = options?.filters
       ? FilterSchema.parse(options.filters)
@@ -471,11 +712,12 @@ export class Honcho {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.search(this.workspaceId, {
+    const response = await this._searchWorkspace(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,
       limit: validatedLimit,
     })
+    return response.map(Message.fromApiResponse)
   }
 
   /**
@@ -490,7 +732,7 @@ export class Honcho {
    * @param options.session - Optional session (ID string or Session object) to scope the status to
    * @returns Promise resolving to the queue status information including work unit counts
    */
-  async getQueueStatus(
+  async queueStatus(
     options?: Omit<
       QueueStatusOptions,
       'observerId' | 'senderId' | 'sessionId'
@@ -499,150 +741,59 @@ export class Honcho {
       sender?: string | Peer
       session?: string | Session
     }
-  ): Promise<{
-    totalWorkUnits: number
-    completedWorkUnits: number
-    inProgressWorkUnits: number
-    pendingWorkUnits: number
-    sessions?: Record<string, QueueStatusResponse.Sessions>
-  }> {
-    const resolvedObserverId = options?.observer
-      ? typeof options.observer === 'string'
-        ? options.observer
-        : options.observer.id
+  ): Promise<QueueStatus> {
+    await this._ensureWorkspace()
+    const observerId = options?.observer
+      ? resolveId(options.observer)
       : undefined
-    const resolvedSenderId = options?.sender
-      ? typeof options.sender === 'string'
-        ? options.sender
-        : options.sender.id
-      : undefined
-    const resolvedSessionId = options?.session
-      ? typeof options.session === 'string'
-        ? options.session
-        : options.session.id
-      : undefined
+    const senderId = options?.sender ? resolveId(options.sender) : undefined
+    const sessionId = options?.session ? resolveId(options.session) : undefined
 
     const queryParams: QueueStatusParams = {}
-    if (resolvedObserverId) queryParams.observer_id = resolvedObserverId
-    if (resolvedSenderId) queryParams.sender_id = resolvedSenderId
-    if (resolvedSessionId) queryParams.session_id = resolvedSessionId
+    if (observerId) queryParams.observer_id = observerId
+    if (senderId) queryParams.sender_id = senderId
+    if (sessionId) queryParams.session_id = sessionId
 
-    const status = await this._client.workspaces.queue.status(
-      this.workspaceId,
-      queryParams
-    )
-
-    return {
-      totalWorkUnits: status.total_work_units,
-      completedWorkUnits: status.completed_work_units,
-      inProgressWorkUnits: status.in_progress_work_units,
-      pendingWorkUnits: status.pending_work_units,
-      sessions: status.sessions || undefined,
-    }
+    const status = await this._getQueueStatus(this.workspaceId, queryParams)
+    return transformQueueStatus(status)
   }
 
   /**
-   * Poll getQueueStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
-   * This allows you to guarantee that all messages have been processed by the queue for
-   * use with the dialectic endpoint.
+   * Schedule a dream task for memory consolidation.
    *
-   * The polling estimates sleep time by assuming each work unit takes 1 second.
+   * Dreams are background processes that consolidate observations into higher-level
+   * insights and update peer cards. This method schedules a dream task for immediate
+   * processing.
    *
-   * @param options - Configuration options for the status request
-   * @param options.observer - Optional observer (ID string or Peer object) to scope the status to
-   * @param options.sender - Optional sender (ID string or Peer object) to scope the status to
-   * @param options.session - Optional session (ID string or Session object) to scope the status to
-   * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
-   * @returns Promise resolving to the final queue status when processing is complete
-   * @throws Error if timeout is exceeded before processing completes
+   * @param options - Configuration options for the dream
+   * @param options.observer - The observer peer (ID string or Peer object) whose perspective
+   *                          to use for the dream
+   * @param options.session - The session (ID string or Session object) to scope the dream to
+   * @param options.observed - Optional observed peer (ID string or Peer object). If not provided,
+   *                          defaults to the observer (self-reflection)
+   * @returns Promise that resolves when the dream is scheduled
    */
-  async pollQueueStatus(
-    options?: Omit<
-      QueueStatusOptions,
-      'observerId' | 'senderId' | 'sessionId'
-    > & {
-      observer?: string | Peer
-      sender?: string | Peer
-      session?: string | Session
-    }
-  ): Promise<{
-    totalWorkUnits: number
-    completedWorkUnits: number
-    inProgressWorkUnits: number
-    pendingWorkUnits: number
-    sessions?: Record<string, QueueStatusResponse.Sessions>
-  }> {
-    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
-    const startTime = Date.now()
+  async scheduleDream(options: {
+    observer: string | Peer
+    session: string | Session
+    observed?: string | Peer
+  }): Promise<void> {
+    await this._ensureWorkspace()
+    const observerId = resolveId(options.observer)
+    const sessionId = resolveId(options.session)
+    const observedId = options.observed
+      ? resolveId(options.observed)
+      : observerId
 
-    while (true) {
-      const status = await this.getQueueStatus(options)
-      if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
-        return status
-      }
-
-      // Check if timeout has been exceeded
-      const elapsedTime = Date.now() - startTime
-      if (elapsedTime >= timeoutMs) {
-        throw new Error(
-          `Polling timeout exceeded after ${timeoutMs}ms. ` +
-            `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
-        )
-      }
-
-      // Sleep for the expected time to complete all current work units
-      // Assuming each pending and in-progress work unit takes 1 second
-      const totalWorkUnits =
-        status.pendingWorkUnits + status.inProgressWorkUnits
-      const sleepMs = Math.max(1000, totalWorkUnits * 1000) // Sleep at least 1 second
-
-      // Ensure we don't sleep past the timeout
-      const remainingTime = timeoutMs - elapsedTime
-      const actualSleepMs = Math.min(sleepMs, remainingTime)
-
-      if (actualSleepMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, actualSleepMs))
-      }
-    }
-  }
-
-  /**
-   * Update the metadata of a message.
-   *
-   * Makes an API call to update the metadata of a specific message within a session.
-   *
-   * @param message - Either a Message object or a message ID string
-   * @param metadata - The metadata to update for the message
-   * @param session - The session (ID string or Session object) - required if message is a string ID, ignored if message is a Message object
-   * @returns Promise resolving to the updated Message object
-   * @throws Error if message is a string ID but session is not provided
-   */
-  async updateMessage(
-    message: Message | string,
-    metadata: Record<string, unknown>,
-    session?: string | Session
-  ): Promise<Message> {
-    const validatedMetadata = MessageMetadataSchema.parse(metadata)
-    let messageId: string
-    let resolvedSessionId: string
-
-    if (typeof message === 'string') {
-      messageId = message
-      if (!session) {
-        throw new Error('session is required when message is a string ID')
-      }
-      resolvedSessionId = typeof session === 'string' ? session : session.id
-    } else {
-      messageId = message.id
-      resolvedSessionId = message.session_id
-    }
-
-    return await this._client.workspaces.sessions.messages.update(
-      this.workspaceId,
-      resolvedSessionId,
-      messageId,
+    await this._http.post(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/schedule_dream`,
       {
-        metadata: validatedMetadata,
+        body: {
+          observer: observerId,
+          observed: observedId,
+          session_id: sessionId,
+          dream_type: 'omni',
+        },
       }
     )
   }
@@ -653,6 +804,6 @@ export class Honcho {
    * @returns A string representation suitable for debugging
    */
   toString(): string {
-    return `Honcho(workspaceId='${this.workspaceId}', baseURL='${this._client.baseURL}')`
+    return `Honcho(workspaceId='${this.workspaceId}', baseURL='${this._http.baseURL}')`
   }
 }

@@ -1,25 +1,61 @@
 // Main entry point for the Honcho TypeScript SDK
 // Exports all main classes and types
 
-export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
+// Domain classes
 export { Honcho } from './client'
-export { Conclusion, ConclusionScope } from './conclusions'
+export {
+  Conclusion,
+  type ConclusionCreateParams,
+  ConclusionScope,
+} from './conclusions'
+// HTTP infrastructure
+export {
+  AuthenticationError,
+  BadRequestError,
+  ConflictError,
+  ConnectionError,
+  HonchoError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+  ServerError,
+  TimeoutError,
+  UnprocessableEntityError,
+} from './http/errors'
+// Streaming types
+export {
+  type DialecticStreamChunk,
+  DialecticStreamResponse,
+} from './http/streaming'
+export { Message, type MessageInput } from './message'
 export { Page } from './pagination'
-export { Peer, type PeerContextResponse } from './peer'
-export { Session, SessionPeerConfig } from './session'
+export { Peer, PeerContext } from './peer'
+export { Session } from './session'
 export {
   SessionContext,
   SessionSummaries,
   Summary,
   type SummaryData,
 } from './session_context'
-export {
-  type Conclusion as ConclusionData,
-  type ConclusionQueryParams,
-  type DialecticStreamChunk,
-  type DialecticStreamDelta,
-  DialecticStreamResponse,
-} from './types'
+
+// API types (snake_case, for advanced usage)
+export type {
+  ConclusionQueryParams,
+  ConclusionResponse,
+  MessageResponse,
+  PageResponse,
+  PeerContextResponse,
+  PeerResponse,
+  QueueStatus,
+  QueueStatusResponse,
+  RepresentationOptions,
+  SessionContextResponse,
+  SessionQueueStatus,
+  SessionResponse,
+  SessionSummariesResponse,
+  SummaryResponse,
+  WorkspaceResponse,
+} from './types/api'
 
 // Export validation types for advanced usage
 export type {
@@ -30,7 +66,6 @@ export type {
   GetRepresentationParams,
   HonchoConfig,
   MessageAddition,
-  MessageCreate,
   PeerAddition,
   PeerConfig,
   PeerGetRepresentationParams,
@@ -39,6 +74,7 @@ export type {
   QueueStatusOptions,
   SessionConfig,
   SessionMetadata,
+  SessionPeerConfig,
   WorkspaceConfig,
   WorkspaceMetadata,
 } from './validation'

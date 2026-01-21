@@ -1,12 +1,13 @@
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
+import { Message } from './message'
 import type { Peer } from './peer'
+import type { SessionContextResponse, SummaryResponse } from './types/api'
 
 export interface SummaryData {
   content: string
-  message_id: string
-  summary_type: string
-  created_at: string
-  token_count: number
+  messageId: string
+  summaryType: string
+  createdAt: string
+  tokenCount: number
 }
 
 /**
@@ -40,10 +41,20 @@ export class Summary {
 
   constructor(data: SummaryData) {
     this.content = data.content
-    this.messageId = data.message_id
-    this.summaryType = data.summary_type
-    this.createdAt = data.created_at
-    this.tokenCount = data.token_count
+    this.messageId = data.messageId
+    this.summaryType = data.summaryType
+    this.createdAt = data.createdAt
+    this.tokenCount = data.tokenCount
+  }
+
+  static fromApiResponse(data: SummaryResponse): Summary {
+    return new Summary({
+      content: data.content,
+      messageId: data.message_id,
+      summaryType: data.summary_type,
+      createdAt: data.created_at,
+      tokenCount: data.token_count,
+    })
   }
 }
 
@@ -57,6 +68,13 @@ export class SessionSummaries {
   readonly id: string
 
   /**
+   * Alias for id - the session ID.
+   */
+  get sessionId(): string {
+    return this.id
+  }
+
+  /**
    * The short summary if available.
    */
   readonly shortSummary: Summary | null
@@ -66,16 +84,26 @@ export class SessionSummaries {
    */
   readonly longSummary: Summary | null
 
-  constructor(data: {
+  constructor(
+    id: string,
+    shortSummary: Summary | null,
+    longSummary: Summary | null
+  ) {
+    this.id = id
+    this.shortSummary = shortSummary
+    this.longSummary = longSummary
+  }
+
+  static fromApiResponse(data: {
     id: string
-    short_summary?: SummaryData | null
-    long_summary?: SummaryData | null
-  }) {
-    this.id = data.id
-    this.shortSummary = data.short_summary
-      ? new Summary(data.short_summary)
-      : null
-    this.longSummary = data.long_summary ? new Summary(data.long_summary) : null
+    short_summary?: SummaryResponse | null
+    long_summary?: SummaryResponse | null
+  }): SessionSummaries {
+    return new SessionSummaries(
+      data.id,
+      data.short_summary ? Summary.fromApiResponse(data.short_summary) : null,
+      data.long_summary ? Summary.fromApiResponse(data.long_summary) : null
+    )
   }
 }
 
@@ -153,8 +181,8 @@ export class SessionContext {
   ): Array<{ role: string; content: string; name?: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     const messages = this.messages.map((message) => ({
-      role: message.peer_id === assistantId ? 'assistant' : 'user',
-      name: message.peer_id,
+      role: message.peerId === assistantId ? 'assistant' : 'user',
+      name: message.peerId,
       content: message.content,
     }))
 
@@ -205,14 +233,14 @@ export class SessionContext {
   ): Array<{ role: string; content: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     const messages = this.messages.map((message) =>
-      message.peer_id === assistantId
+      message.peerId === assistantId
         ? {
             role: 'assistant',
             content: message.content,
           }
         : {
             role: 'user',
-            content: `${message.peer_id}: ${message.content}`,
+            content: `${message.peerId}: ${message.content}`,
           }
     )
 
@@ -247,6 +275,22 @@ export class SessionContext {
    */
   get length(): number {
     return this.messages.length + (this.summary ? 1 : 0)
+  }
+
+  /**
+   * Create a SessionContext from an API response.
+   */
+  static fromApiResponse(
+    sessionId: string,
+    data: SessionContextResponse
+  ): SessionContext {
+    return new SessionContext(
+      sessionId,
+      data.messages.map(Message.fromApiResponse),
+      data.summary ? Summary.fromApiResponse(data.summary) : null,
+      data.peer_representation ?? null,
+      data.peer_card ?? null
+    )
   }
 
   /**

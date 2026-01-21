@@ -25,16 +25,16 @@ async def process_representation_tasks_batch(
     messages: list[Message],
     message_level_configuration: ResolvedConfiguration | None,
     *,
-    observer: str,
+    observers: list[str],
     observed: str,
 ) -> None:
     """
-    Process messages with minimal overhead - single LLM call, no peer card.
+    Process messages with minimal overhead - single LLM call, save to multiple collections.
 
     Args:
         messages: List of messages to process (includes interleaving context).
         message_level_configuration: Optional configuration override.
-        observer: The observer peer ID.
+        observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
     """
     if not messages:
@@ -66,13 +66,13 @@ async def process_representation_tasks_batch(
         return
 
     accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
+        f"minimal_deriver_{latest_message.id}_{observed}",
         "starting_message_id",
         earliest_message.id,
         "id",
     )
     accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
+        f"minimal_deriver_{latest_message.id}_{observed}",
         "ending_message_id",
         latest_message.id,
         "id",
@@ -100,7 +100,7 @@ async def process_representation_tasks_batch(
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
+        f"minimal_deriver_{latest_message.id}_{observed}",
         "context_preparation",
         context_prep_duration,
         "ms",
@@ -130,7 +130,7 @@ async def process_representation_tasks_batch(
     llm_duration = (time.perf_counter() - llm_start) * 1000
 
     accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
+        f"minimal_deriver_{latest_message.id}_{observed}",
         "llm_call_duration",
         llm_duration,
         "ms",
@@ -161,24 +161,31 @@ async def process_representation_tasks_batch(
             latest_message.session_name,
         )
     else:
-        representation_manager = RepresentationManager(
-            workspace_name=latest_message.workspace_name,
-            observer=observer,
-            observed=observed,
-        )
+        # Save to all observer collections
+        for observer in observers:
+            representation_manager = RepresentationManager(
+                workspace_name=latest_message.workspace_name,
+                observer=observer,
+                observed=observed,
+            )
 
-        await representation_manager.save_representation(
-            observations,
-            message_ids,
-            latest_message.session_name,
-            latest_message.created_at,
-            message_level_configuration,
-        )
+            try:
+                await representation_manager.save_representation(
+                    observations,
+                    message_ids,
+                    latest_message.session_name,
+                    latest_message.created_at,
+                    message_level_configuration,
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to save representation for observer %s: %s", observer, e
+                )
 
     # Log metrics
     overall_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
+        f"minimal_deriver_{latest_message.id}_{observed}",
         "total_processing_time",
         overall_duration,
         "ms",
@@ -186,7 +193,7 @@ async def process_representation_tasks_batch(
 
     total_observations = len(observations.explicit) + len(observations.deductive)
     accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observer}",
+        f"minimal_deriver_{latest_message.id}_{observed}",
         "observation_count",
         total_observations,
         "count",
@@ -195,17 +202,17 @@ async def process_representation_tasks_batch(
     if settings.DERIVER.LOG_OBSERVATIONS:
         # Log messages fed into deriver
         accumulate_metric(
-            f"minimal_deriver_{latest_message.id}_{observer}",
+            f"minimal_deriver_{latest_message.id}_{observed}",
             "messages",
             formatted_messages,
             "blob",
         )
         # Log actual observations created as blob metrics
         accumulate_metric(
-            f"minimal_deriver_{latest_message.id}_{observer}",
+            f"minimal_deriver_{latest_message.id}_{observed}",
             "explicit_observations",
             "\n".join(f"  • {obs}" for obs in observations.explicit),
             "blob",
         )
 
-    log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observer}")
+    log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observed}")

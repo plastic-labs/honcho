@@ -70,11 +70,9 @@ import httpx
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
+from honcho import Honcho
+from honcho.api_types import MessageCreateParams
+from honcho.session import SessionPeerConfig
 from openai import AsyncOpenAI
 
 from src.config import settings
@@ -239,24 +237,22 @@ class LoCoMoRunner:
         port = self.base_api_port + instance_id
         return f"http://localhost:{port}"
 
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
+    def create_honcho_client(self, workspace_id: str, honcho_url: str) -> Honcho:
         """Create a Honcho client for a specific workspace."""
-        return AsyncHoncho(
+        return Honcho(
             environment="local",
             workspace_id=workspace_id,
             base_url=honcho_url,
         )
 
     async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
+        self, honcho_client: Honcho, session_id: str | None = None
     ) -> bool:
         """Wait for the deriver queue to be empty."""
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_queue_status(session=session_id)
+                status = await honcho_client.aio.queue_status(session=session_id)
             except Exception:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -274,7 +270,7 @@ class LoCoMoRunner:
 
     async def trigger_dream_and_wait(
         self,
-        honcho_client: AsyncHoncho,
+        honcho_client: Honcho,
         workspace_id: str,
         observer: str,
         observed: str | None = None,
@@ -370,7 +366,7 @@ class LoCoMoRunner:
 
         # Create workspace for this conversation
         workspace_id = f"locomo_{sample_id}"
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
+        honcho_client = self.create_honcho_client(workspace_id, honcho_url)
 
         result: ConversationResult = {
             "sample_id": sample_id,
@@ -390,15 +386,15 @@ class LoCoMoRunner:
 
         try:
             # Create peers using their actual names as IDs
-            peer_a = await honcho_client.peer(id=speaker_a)
-            peer_b = await honcho_client.peer(id=speaker_b)
+            peer_a = await honcho_client.aio.peer(id=speaker_a)
+            peer_b = await honcho_client.aio.peer(id=speaker_b)
 
             # Create session for this conversation
             session_id = f"{workspace_id}_session"
-            session = await honcho_client.session(id=session_id)
+            session = await honcho_client.aio.session(id=session_id)
 
             # Configure peer observation - observe BOTH peers since questions ask about both speakers
-            await session.add_peers(
+            await session.aio.add_peers(
                 [
                     (
                         peer_a,
@@ -417,7 +413,7 @@ class LoCoMoRunner:
 
             print(f"[{workspace_id}] Ingesting {len(sessions)} sessions...")
 
-            messages: list[MessageCreateParam] = []
+            messages: list[MessageCreateParams] = []
             total_tokens = 0
 
             for date_str, session_messages in sessions:
@@ -448,7 +444,7 @@ class LoCoMoRunner:
             # Add messages in batches of 100
             for i in range(0, len(messages), 100):
                 batch = messages[i : i + 100]
-                await session.add_messages(batch)
+                await session.aio.add_messages(batch)
 
             print(
                 f"[{workspace_id}] Ingested {len(messages)} messages (~{total_tokens:,} tokens). Waiting for deriver queue..."
@@ -531,7 +527,7 @@ class LoCoMoRunner:
                 try:
                     if self.use_get_context:
                         # Use get_context + LLM - target the appropriate peer
-                        context = await session.get_context(
+                        context = await session.aio.context(
                             summary=True,
                             peer_target=target_speaker,
                             last_user_message=question,
@@ -552,7 +548,7 @@ class LoCoMoRunner:
                         actual_response = getattr(content_block, "text", "")
                     else:
                         # Use dialectic .chat endpoint on the appropriate peer
-                        actual_response = await target_peer.chat(
+                        actual_response = await target_peer.aio.chat(
                             question, session=session_id
                         )
                         actual_response = (
@@ -623,7 +619,7 @@ class LoCoMoRunner:
             # Cleanup workspace if requested
             if self.cleanup_workspace:
                 try:
-                    await honcho_client.delete_workspace(workspace_id)
+                    await honcho_client.aio.delete_workspace(workspace_id)
                     print(f"[{workspace_id}] Cleaned up workspace")
                 except Exception as e:
                     print(f"Failed to delete workspace: {e}")

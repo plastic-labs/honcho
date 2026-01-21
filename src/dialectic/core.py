@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, prometheus
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
-from src.utils.agent_tools import DIALECTIC_TOOLS, create_tool_executor, search_memory
+from src.utils.agent_tools import (
+    DIALECTIC_TOOLS,
+    DIALECTIC_TOOLS_MINIMAL,
+    create_tool_executor,
+    search_memory,
+)
 from src.utils.clients import (
     HonchoLLMCallResponse,
     StreamingResponseWithMetadata,
@@ -139,8 +144,12 @@ class DialecticAgent:
         tool calls, improving response quality and speed.
 
         Performs two separate searches to prevent retrieval dilution:
-        - 25 explicit observations (produced by deriver)
-        - 25 higher-level observations (produced in dreaming/background/chat)
+        - Explicit observations (produced by deriver)
+        - Higher-level observations (produced in dreaming/background/chat)
+
+        The number of observations fetched depends on reasoning level:
+        - minimal: 10 of each type (reduced context for cost savings)
+        - all others: 25 of each type
 
         Args:
             query: The user's query
@@ -148,6 +157,9 @@ class DialecticAgent:
         Returns:
             Formatted observations string or None if no observations found
         """
+        # Use reduced prefetch for minimal reasoning to save tokens
+        prefetch_limit = 10 if self.reasoning_level == "minimal" else 25
+
         try:
             # Search explicit observations separately
             explicit_repr = await search_memory(
@@ -156,7 +168,7 @@ class DialecticAgent:
                 observer=self.observer,
                 observed=self.observed,
                 query=query,
-                limit=25,
+                limit=prefetch_limit,
                 levels=["explicit"],
             )
 
@@ -167,7 +179,7 @@ class DialecticAgent:
                 observer=self.observer,
                 observed=self.observed,
                 query=query,
-                limit=25,
+                limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
             )
 
@@ -342,11 +354,24 @@ class DialecticAgent:
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
+        # Use minimal tools for minimal reasoning to reduce cost
+        tools = (
+            DIALECTIC_TOOLS_MINIMAL
+            if self.reasoning_level == "minimal"
+            else DIALECTIC_TOOLS
+        )
+        # Use level-specific max_output_tokens if set, otherwise global default
+        max_tokens = (
+            level_settings.MAX_OUTPUT_TOKENS
+            if level_settings.MAX_OUTPUT_TOKENS is not None
+            else settings.DIALECTIC.MAX_OUTPUT_TOKENS
+        )
+
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
             llm_settings=level_settings,
             prompt="",  # Ignored since we pass messages
-            max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-            tools=DIALECTIC_TOOLS,
+            max_tokens=max_tokens,
+            tools=tools,
             tool_choice=level_settings.TOOL_CHOICE,
             tool_executor=tool_executor,
             max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
@@ -392,15 +417,28 @@ class DialecticAgent:
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
+        # Use minimal tools for minimal reasoning to reduce cost
+        tools = (
+            DIALECTIC_TOOLS_MINIMAL
+            if self.reasoning_level == "minimal"
+            else DIALECTIC_TOOLS
+        )
+        # Use level-specific max_output_tokens if set, otherwise global default
+        max_tokens = (
+            level_settings.MAX_OUTPUT_TOKENS
+            if level_settings.MAX_OUTPUT_TOKENS is not None
+            else settings.DIALECTIC.MAX_OUTPUT_TOKENS
+        )
+
         response = cast(
             StreamingResponseWithMetadata,
             await honcho_llm_call(
                 llm_settings=level_settings,
                 prompt="",  # Ignored since we pass messages
-                max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+                max_tokens=max_tokens,
                 stream=True,
                 stream_final_only=True,
-                tools=DIALECTIC_TOOLS,
+                tools=tools,
                 tool_choice=level_settings.TOOL_CHOICE,
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,

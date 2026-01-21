@@ -179,25 +179,25 @@ context = session.get_context(
 
 ### Session-Scoped Representations
 
-Use `limit_to_session` to only include observations from the current session:
+Use `limit_to_session` to only include conclusions from the current session:
 
 <CodeGroup>
 ```python Python
-# Get context limited to this session's observations only
+# Get context limited to this session's conclusions only
 context = session.get_context(
     tokens=2000,
     peer_target="user-123",
-    limit_to_session=True  # Only observations from this session
+    limit_to_session=True  # Only conclusions from this session
 )
 ```
 
 ```typescript TypeScript
 (async () => {
-    // Get context limited to this session's observations only
+    // Get context limited to this session's conclusions only
     const context = await session.getContext({
       tokens: 2000,
       peerTarget: "user-123",
-      limitToSession: true  // Only observations from this session
+      limitToSession: true  // Only conclusions from this session
     });
 })();
 ```
@@ -370,7 +370,7 @@ import { Honcho } from "@honcho-ai/sdk";
     ]);
 
     // Get context for LLM
-    const messages = await session.getContext({ tokens: 2000 }).toOpenAI(assistant);
+    const messages = (await session.getContext({ tokens: 2000 })).toOpenAI(assistant);
 
     // Add new user message and get AI response
     const response = await openai.chat.completions.create({

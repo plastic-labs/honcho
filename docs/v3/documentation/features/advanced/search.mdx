@@ -144,9 +144,9 @@ results = my_peer.search("budget planning", filters={"session_id": my_session.id
 
 ```typescript TypeScript
 (async () => {
-    const my_peer = await honcho.peer("my-peer");
-    const my_session = await honcho.session("team-meeting-jan");
-    const results = await my_peer.search("budget planning", { filters: { session_id: my_session.id } });
+    const myPeer = await honcho.peer("my-peer");
+    const mySession = await honcho.session("team-meeting-jan");
+    const results = await myPeer.search("budget planning", { filters: { session_id: mySession.id } });
 })();
 ```
 </CodeGroup>

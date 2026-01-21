@@ -1,7 +1,7 @@
 import random
 import uuid
 
-from honcho import Honcho
+from honcho import Honcho, MessageCreateParams
 
 # Create a Honcho client with the default workspace
 honcho = Honcho(environment="local")
@@ -22,7 +22,7 @@ keyword = f"~special-{str(uuid.uuid4())}~"
 session.add_messages(alice.message(f"I am a {keyword} message"))
 
 # Generate some random messages from alice, bob, and charlie and add them to the session
-messages = []
+messages: list[MessageCreateParams] = []
 for i in range(10):
     random_peer = random.choice(peers)
     messages.append(

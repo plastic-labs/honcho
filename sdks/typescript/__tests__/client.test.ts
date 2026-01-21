@@ -1,594 +1,356 @@
-import { Honcho } from '../src/client';
-import { Peer } from '../src/peer';
-import { Session } from '../src/session';
-import { Page } from '../src/pagination';
-import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages';
+/**
+ * Client Tests
+ *
+ * Tests for workspace-level operations via the Honcho client.
+ *
+ * Endpoints covered:
+ * - POST /v3/workspaces (get-or-create workspace)
+ * - POST /v3/workspaces/list (list workspaces)
+ * - PUT /v3/workspaces/:workspaceId (update workspace)
+ * - DELETE /v3/workspaces/:workspaceId (delete workspace)
+ * - POST /v3/workspaces/:workspaceId/search (search messages)
+ * - GET /v3/workspaces/:workspaceId/queue/status (queue status)
+ */
 
-// Mock the @honcho-ai/core module
-jest.mock('@honcho-ai/core', () => {
-  return jest.fn().mockImplementation(() => ({
-    workspaces: {
-      peers: {
-        list: jest.fn(),
-        getOrCreate: jest.fn(),
-      },
-      sessions: {
-        list: jest.fn(),
-        getOrCreate: jest.fn(),
-      },
-      queue: {
-        status: jest.fn(),
-      },
-      getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
-      update: jest.fn(),
-      list: jest.fn(),
-      search: jest.fn(),
-    },
-  }));
-});
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import { Honcho } from '../src'
+import {
+  createTestClient,
+  generateId,
+  generateWorkspaceId,
+  requireServer,
+  TEST_CONFIG,
+} from './setup'
+import { testMetadata } from './helpers'
 
 describe('Honcho Client', () => {
-  let honcho: Honcho;
-  let mockClient: any;
+  let client: Honcho
+  let cleanup: () => Promise<void>
 
-  beforeEach(() => {
-    // Clear all mocks before each test
-    jest.clearAllMocks();
+  beforeAll(async () => {
+    await requireServer()
+    const setup = await createTestClient('client')
+    client = setup.client
+    cleanup = setup.cleanup
+  })
 
-    honcho = new Honcho({
-      workspaceId: 'test-workspace',
-      apiKey: 'test-key',
-      environment: 'local',
-    });
+  afterAll(async () => {
+    await cleanup()
+  })
 
-    mockClient = (honcho as any)._client;
-  });
+  // ===========================================================================
+  // Workspace Creation and Configuration
+  // ===========================================================================
 
-  describe('constructor', () => {
-    it('should initialize with provided options', () => {
-      const client = new Honcho({
-        workspaceId: 'custom-workspace',
-        apiKey: 'custom-key',
-        environment: 'production',
-        baseURL: 'https://custom-url.com',
-        timeout: 5000,
-        maxRetries: 3,
-      });
+  describe('POST /workspaces (create/get)', () => {
+    test('client constructor creates workspace on first access', async () => {
+      // Workspace was created in beforeAll via getMetadata()
+      expect(client.workspaceId).toBeDefined()
+      expect(client.workspaceId).toContain('test-client-')
+    })
 
-      expect(client.workspaceId).toBe('custom-workspace');
-    });
+    test('getMetadata returns empty object for new workspace', async () => {
+      const metadata = await client.getMetadata()
+      expect(metadata).toEqual({})
+    })
 
-    it('should use environment variables as fallbacks', () => {
-      process.env.HONCHO_WORKSPACE_ID = 'env-workspace';
-      process.env.HONCHO_API_KEY = 'env-key';
-      process.env.HONCHO_URL = 'https://env-url.com';
+    test('getConfiguration returns empty object for new workspace', async () => {
+      const config = await client.getConfiguration()
+      expect(config).toEqual({})
+    })
+  })
 
-      const client = new Honcho({});
+  describe('PUT /workspaces/:id (update)', () => {
+    test('setMetadata updates workspace metadata', async () => {
+      const metadata = testMetadata({ custom: 'value' })
+      await client.setMetadata(metadata)
 
-      expect(client.workspaceId).toBe('env-workspace');
+      const fetched = await client.getMetadata()
+      expect(fetched).toEqual(metadata)
+    })
 
-      // Clean up environment variables
-      delete process.env.HONCHO_WORKSPACE_ID;
-      delete process.env.HONCHO_API_KEY;
-      delete process.env.HONCHO_URL;
-    });
+    test('setConfiguration updates workspace configuration', async () => {
+      const config = {
+        reasoning: { enabled: true },
+      }
+      await client.setConfiguration(config)
 
-    it('should use default workspace ID when none provided', () => {
-      const client = new Honcho({});
-      expect(client.workspaceId).toBe('default');
-    });
+      const fetched = await client.getConfiguration()
+      expect(fetched).toEqual(config)
+    })
 
-    it('should handle all constructor options', () => {
-      const client = new Honcho({
-        workspaceId: 'test',
-        apiKey: 'key',
+    test('cached metadata is updated after setMetadata', async () => {
+      const metadata = testMetadata({ cached: true })
+      await client.setMetadata(metadata)
+
+      // Check cached value without API call
+      expect(client.metadata).toEqual(metadata)
+    })
+
+    test('refresh updates both metadata and configuration', async () => {
+      // Set values
+      await client.setMetadata({ a: 1 })
+      await client.setConfiguration({ reasoning: { enabled: true } })
+
+      // Create new client with same workspace (simulates stale cache)
+      const freshClient = new Honcho({
+        baseURL: TEST_CONFIG.baseURL,
+        apiKey: TEST_CONFIG.apiKey,
+        workspaceId: client.workspaceId,
+      })
+
+      // Before refresh, cache is empty
+      expect(freshClient.metadata).toBeUndefined()
+      expect(freshClient.configuration).toBeUndefined()
+
+      // After refresh, cache is populated
+      await freshClient.refresh()
+      expect(freshClient.metadata).toEqual({ a: 1 })
+      expect(freshClient.configuration).toMatchObject({ reasoning: { enabled: true } })
+    })
+  })
+
+  // ===========================================================================
+  // Workspace Listing
+  // ===========================================================================
+
+  describe('POST /workspaces/list', () => {
+    test('workspaces returns Page with workspace IDs', async () => {
+      const page = await client.workspaces()
+
+      expect(Array.isArray(page.items)).toBe(true)
+    })
+
+    test('workspaces with filter narrows results', async () => {
+      // Create a workspace with specific metadata
+      const uniqueValue = `filter-test-${Date.now()}`
+      const testClient = new Honcho({
+        baseURL: TEST_CONFIG.baseURL,
+        apiKey: TEST_CONFIG.apiKey,
+        workspaceId: generateWorkspaceId('filter'),
+      })
+
+      try {
+        await testClient.setMetadata({ filterKey: uniqueValue })
+
+        // Filter should find this workspace
+        const page = await client.workspaces({
+          metadata: { filterKey: uniqueValue },
+        })
+
+        expect(page.items).toContain(testClient.workspaceId)
+      } finally {
+        await testClient.deleteWorkspace(testClient.workspaceId)
+      }
+    })
+  })
+
+  // ===========================================================================
+  // Workspace Deletion
+  // ===========================================================================
+
+  describe('DELETE /workspaces/:id', () => {
+    test('deleteWorkspace removes workspace', async () => {
+      // Create a workspace to delete
+      const tempWorkspaceId = generateWorkspaceId('delete')
+      const tempClient = new Honcho({
+        baseURL: TEST_CONFIG.baseURL,
+        apiKey: TEST_CONFIG.apiKey,
+        workspaceId: tempWorkspaceId,
+      })
+
+      // Ensure it exists
+      await tempClient.getMetadata()
+
+      // Delete it (returns void)
+      await client.deleteWorkspace(tempWorkspaceId)
+
+      // Verify it's gone from list
+      const page = await client.workspaces()
+      expect(page.items).not.toContain(tempWorkspaceId)
+    })
+  })
+
+  // ===========================================================================
+  // Peer and Session Access
+  // ===========================================================================
+
+  describe('Peer access', () => {
+    test('peer() returns Peer instance without API call', async () => {
+      const peer = await client.peer('lazy-peer')
+
+      expect(peer.id).toBe('lazy-peer')
+      expect(peer.workspaceId).toBe(client.workspaceId)
+    })
+
+    test('peer() with metadata makes API call', async () => {
+      const peer = await client.peer('eager-peer', {
+        metadata: { created: true },
+      })
+
+      expect(peer.id).toBe('eager-peer')
+      expect(peer.metadata).toEqual({ created: true })
+    })
+
+    test('peers returns paginated list', async () => {
+      // Create some peers
+      await client.peer('list-peer-1', { metadata: {} })
+      await client.peer('list-peer-2', { metadata: {} })
+
+      const page = await client.peers()
+
+      expect(page.items.length).toBeGreaterThanOrEqual(2)
+      expect(page.total).toBeGreaterThanOrEqual(2)
+
+      const ids = page.items.map((p) => p.id)
+      expect(ids).toContain('list-peer-1')
+      expect(ids).toContain('list-peer-2')
+    })
+  })
+
+  describe('Session access', () => {
+    test('session() returns Session instance without API call', async () => {
+      const session = await client.session('lazy-session', { metadata: {} })
+
+      expect(session.id).toBe('lazy-session')
+      expect(session.workspaceId).toBe(client.workspaceId)
+    })
+
+    test('session() with metadata makes API call', async () => {
+      const session = await client.session('eager-session', {
+        metadata: { created: true },
+      })
+
+      expect(session.id).toBe('eager-session')
+      expect(session.metadata).toEqual({ created: true })
+    })
+
+    test('sessions returns paginated list', async () => {
+      // Create some sessions
+      await client.session('list-session-1', { metadata: {} })
+      await client.session('list-session-2', { metadata: {} })
+
+      const page = await client.sessions()
+
+      expect(page.items.length).toBeGreaterThanOrEqual(2)
+
+      const ids = page.items.map((s) => s.id)
+      expect(ids).toContain('list-session-1')
+      expect(ids).toContain('list-session-2')
+    })
+  })
+
+  // ===========================================================================
+  // Search
+  // ===========================================================================
+
+  describe('POST /workspaces/:id/search', () => {
+    test('search returns matching messages', async () => {
+      // Setup: create session with messages
+      const session = await client.session('search-session', { metadata: {} })
+      const peer = await client.peer('search-peer')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('The quick brown fox jumps over the lazy dog'),
+        peer.message('Hello world, this is a test message'),
+      ])
+
+      // Search for content
+      const results = await client.search('quick brown fox')
+
+      // Note: Vector search may return results based on semantic similarity
+      expect(Array.isArray(results)).toBe(true)
+    })
+
+    test('search with filters scopes results', async () => {
+      const session = await client.session('search-filtered-session', { metadata: {} })
+      const peer = await client.peer('search-filtered-peer')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([
+        peer.message('Unique searchable content xyz123'),
+      ])
+
+      const results = await client.search('unique searchable', {
+        filters: { session_id: session.id },
+      })
+
+      // All results should be from the specified session
+      for (const msg of results) {
+        expect(msg.sessionId).toBe(session.id)
+      }
+    })
+
+    test('search with limit constrains results', async () => {
+      const results = await client.search('test', { limit: 5 })
+
+      expect(results.length).toBeLessThanOrEqual(5)
+    })
+  })
+
+  // ===========================================================================
+  // Queue Status
+  // ===========================================================================
+
+  describe('GET /workspaces/:id/queue/status', () => {
+    test('queueStatus returns status object', async () => {
+      const status = await client.queueStatus()
+
+      expect(typeof status.totalWorkUnits).toBe('number')
+      expect(typeof status.completedWorkUnits).toBe('number')
+      expect(typeof status.inProgressWorkUnits).toBe('number')
+      expect(typeof status.pendingWorkUnits).toBe('number')
+    })
+
+    test('queueStatus with observer filter', async () => {
+      const peer = await client.peer('queue-observer')
+
+      const status = await client.queueStatus({
+        observer: peer,
+      })
+
+      expect(typeof status.totalWorkUnits).toBe('number')
+    })
+
+    test('queueStatus with session filter', async () => {
+      const session = await client.session('queue-session', { metadata: {} })
+
+      const status = await client.queueStatus({
+        session: session,
+      })
+
+      expect(typeof status.totalWorkUnits).toBe('number')
+    })
+  })
+
+  // ===========================================================================
+  // Client Configuration
+  // ===========================================================================
+
+  describe('Client configuration', () => {
+    test('baseURL is accessible', () => {
+      expect(client.baseURL).toBe(TEST_CONFIG.baseURL)
+    })
+
+    test('http client is accessible', () => {
+      expect(client.http).toBeDefined()
+      expect(client.http.baseURL).toBe(TEST_CONFIG.baseURL)
+    })
+
+    test('toString returns readable representation', () => {
+      const str = client.toString()
+      expect(str).toContain('Honcho')
+      expect(str).toContain(client.workspaceId)
+    })
+
+    test('environment option sets local URL', () => {
+      const localClient = new Honcho({
         environment: 'local',
-        baseURL: 'https://example.com',
-        timeout: 10000,
-        maxRetries: 5,
-        defaultHeaders: { 'X-Custom': 'header' },
-        defaultQuery: { param: 'value' },
-      });
-
-      expect(client.workspaceId).toBe('test');
-    });
-  });
-
-  describe('peer', () => {
-    it('should create a new Peer instance', async () => {
-      const peer = await honcho.peer('test-peer');
-
-      expect(peer).toBeInstanceOf(Peer);
-      expect(peer.id).toBe('test-peer');
-    });
-
-    it('should create peer with metadata and config', async () => {
-      const metadata = { name: 'Test Peer' };
-      const config = { observe_me: false };
-
-      mockClient.workspaces.peers.getOrCreate.mockResolvedValue({
-        id: 'test-peer',
-        metadata: metadata,
-        configuration: config,
-      });
-
-      await honcho.peer('test-peer', { metadata, config });
-
-      expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
-        'test-workspace',
-        { id: 'test-peer', metadata: metadata, configuration: config }
-      );
-    });
-
-    it('should throw error for empty peer ID', async () => {
-      await expect(honcho.peer('')).rejects.toThrow();
-    });
-
-    it('should throw error for non-string peer ID', async () => {
-      await expect(honcho.peer(null as any)).rejects.toThrow();
-      await expect(honcho.peer(undefined as any)).rejects.toThrow();
-      await expect(honcho.peer(123 as any)).rejects.toThrow();
-    });
-  });
-
-  describe('getPeers', () => {
-    it('should return a Page of Peer instances', async () => {
-      const mockPeersData = {
-        items: [
-          { id: 'peer1', metadata: {} },
-          { id: 'peer2', metadata: {} },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: () => false,
-      };
-      mockClient.workspaces.peers.list.mockResolvedValue(mockPeersData);
-
-      const peersPage = await honcho.getPeers();
-
-      expect(peersPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filters: undefined });
-    });
-
-    it('should handle empty peers list', async () => {
-      const mockPeersData = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: () => false,
-      };
-      mockClient.workspaces.peers.list.mockResolvedValue(mockPeersData);
-
-      const peersPage = await honcho.getPeers();
-
-      expect(peersPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filters: undefined });
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.peers.list.mockRejectedValue(new Error('API Error'));
-
-      await expect(honcho.getPeers()).rejects.toThrow();
-    });
-  });
-
-  describe('session', () => {
-    it('should create a new Session instance', async () => {
-      const session = await honcho.session('test-session');
-
-      expect(session).toBeInstanceOf(Session);
-      expect(session.id).toBe('test-session');
-    });
-
-    it('should create session with metadata and config', async () => {
-      const metadata = { name: 'Test Session' };
-      const config = { anonymous: true };
-
-      mockClient.workspaces.sessions.getOrCreate.mockResolvedValue({
-        id: 'test-session',
-        metadata: metadata,
-        configuration: config,
-      });
-
-      await honcho.session('test-session', { metadata, config });
-
-      expect(mockClient.workspaces.sessions.getOrCreate).toHaveBeenCalledWith(
-        'test-workspace',
-        { id: 'test-session', metadata: metadata, configuration: config }
-      );
-    });
-
-    it('should throw error for empty session ID', async () => {
-      await expect(honcho.session('')).rejects.toThrow();
-    });
-
-    it('should throw error for non-string session ID', async () => {
-      await expect(honcho.session(null as any)).rejects.toThrow();
-      await expect(honcho.session(undefined as any)).rejects.toThrow();
-      await expect(honcho.session(123 as any)).rejects.toThrow();
-    });
-  });
-
-  describe('getSessions', () => {
-    it('should return a Page of Session instances', async () => {
-      const mockSessionsData = {
-        items: [
-          { id: 'session1', metadata: {} },
-          { id: 'session2', metadata: {} },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: () => false,
-      };
-      mockClient.workspaces.sessions.list.mockResolvedValue(mockSessionsData);
-
-      const sessionsPage = await honcho.getSessions();
-
-      expect(sessionsPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.sessions.list).toHaveBeenCalledWith('test-workspace', { filters: undefined });
-    });
-
-    it('should handle empty sessions list', async () => {
-      const mockSessionsData = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: () => false,
-      };
-      mockClient.workspaces.sessions.list.mockResolvedValue(mockSessionsData);
-
-      const sessionsPage = await honcho.getSessions();
-
-      expect(sessionsPage).toBeInstanceOf(Page);
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.sessions.list.mockRejectedValue(new Error('API Error'));
-
-      await expect(honcho.getSessions()).rejects.toThrow();
-    });
-  });
-
-  describe('getMetadata', () => {
-    it('should return workspace metadata', async () => {
-      const mockWorkspace = {
-        id: 'test-workspace',
-        metadata: { key: 'value', setting: 'config' },
-      };
-      mockClient.workspaces.getOrCreate.mockResolvedValue(mockWorkspace);
-
-      const metadata = await honcho.getMetadata();
-
-      expect(metadata).toEqual({ key: 'value', setting: 'config' });
-      expect(mockClient.workspaces.getOrCreate).toHaveBeenCalledWith({ id: 'test-workspace' });
-    });
-
-    it('should return empty object when no metadata exists', async () => {
-      const mockWorkspace = {
-        id: 'test-workspace',
-        metadata: null,
-      };
-      mockClient.workspaces.getOrCreate.mockResolvedValue(mockWorkspace);
-
-      const metadata = await honcho.getMetadata();
-
-      expect(metadata).toEqual({});
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.getOrCreate.mockRejectedValue(new Error('Workspace not found'));
-
-      await expect(honcho.getMetadata()).rejects.toThrow();
-    });
-  });
-
-  describe('setMetadata', () => {
-    it('should update workspace metadata', async () => {
-      const metadata = { newKey: 'newValue', updated: true };
-      mockClient.workspaces.update.mockResolvedValue({});
-
-      await honcho.setMetadata(metadata);
-
-      expect(mockClient.workspaces.update).toHaveBeenCalledWith('test-workspace', { metadata });
-    });
-
-    it('should handle empty metadata object', async () => {
-      mockClient.workspaces.update.mockResolvedValue({});
-
-      await honcho.setMetadata({});
-
-      expect(mockClient.workspaces.update).toHaveBeenCalledWith('test-workspace', { metadata: {} });
-    });
-
-    it('should handle complex metadata objects', async () => {
-      const complexMetadata = {
-        nested: { object: { with: 'values' } },
-        array: [1, 2, 3],
-        boolean: true,
-        number: 42,
-        string: 'test',
-      };
-      mockClient.workspaces.update.mockResolvedValue({});
-
-      await honcho.setMetadata(complexMetadata);
-
-      expect(mockClient.workspaces.update).toHaveBeenCalledWith('test-workspace', { metadata: complexMetadata });
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.update.mockRejectedValue(new Error('Update failed'));
-
-      await expect(honcho.setMetadata({ key: 'value' })).rejects.toThrow();
-    });
-  });
-
-  describe('getWorkspaces', () => {
-    it('should return array of workspace IDs', async () => {
-      const mockWorkspacesPage = {
-        [Symbol.asyncIterator]: async function* () {
-          yield { id: 'workspace1' };
-          yield { id: 'workspace2' };
-          yield { id: 'workspace3' };
-        },
-      };
-      mockClient.workspaces.list.mockResolvedValue(mockWorkspacesPage);
-
-      const workspaces = await honcho.getWorkspaces();
-
-      expect(workspaces).toEqual(['workspace1', 'workspace2', 'workspace3']);
-      expect(mockClient.workspaces.list).toHaveBeenCalled();
-    });
-
-    it('should handle empty workspaces list', async () => {
-      const mockWorkspacesPage = {
-        [Symbol.asyncIterator]: async function* () {
-          // Empty iterator
-        },
-      };
-      mockClient.workspaces.list.mockResolvedValue(mockWorkspacesPage);
-
-      const workspaces = await honcho.getWorkspaces();
-
-      expect(workspaces).toEqual([]);
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.list.mockRejectedValue(new Error('Failed to list workspaces'));
-
-      await expect(honcho.getWorkspaces()).rejects.toThrow();
-    });
-  });
-
-  describe('search', () => {
-    it('should search for messages and return Page', async () => {
-      const mockSearchResults = [
-        { id: 'msg1', content: 'Hello world', peer_id: 'peer1' },
-        { id: 'msg2', content: 'Hello there', peer_id: 'peer2' },
-      ];
-      mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
-
-      const results = await honcho.search('hello');
-
-      expect(Array.isArray(results)).toBe(true);
-      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { query: 'hello', limit: undefined });
-    });
-
-    it('should handle empty search results', async () => {
-      const mockSearchResults: any[] = [];
-      mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
-
-      const results = await honcho.search('nonexistent');
-
-      expect(Array.isArray(results)).toBe(true);
-    });
-
-    it('should throw error for empty query', async () => {
-      await expect(honcho.search('')).rejects.toThrow();
-      await expect(honcho.search('   ')).rejects.toThrow();
-    });
-
-    it('should throw error for non-string query', async () => {
-      await expect(honcho.search(null as any)).rejects.toThrow();
-      await expect(honcho.search(undefined as any)).rejects.toThrow();
-      await expect(honcho.search(123 as any)).rejects.toThrow();
-    });
-
-    it('should handle complex search queries', async () => {
-      const mockSearchResults: any[] = [];
-      mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
-
-      const complexQuery = 'complex query with "quotes" and special characters!@#$%';
-      await honcho.search(complexQuery);
-
-      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { query: complexQuery, limit: undefined });
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.workspaces.search.mockRejectedValue(new Error('Search failed'));
-
-      await expect(honcho.search('test')).rejects.toThrow();
-    });
-  });
-
-  describe('getQueueStatus', () => {
-    it('should return queue status without options', async () => {
-      const mockStatus = {
-        total_work_units: 10,
-        completed_work_units: 5,
-        in_progress_work_units: 3,
-        pending_work_units: 2,
-        sessions: { 'session1': { status: 'active' } },
-      };
-      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus);
-
-      const status = await honcho.getQueueStatus();
-
-      expect(status).toEqual({
-        totalWorkUnits: 10,
-        completedWorkUnits: 5,
-        inProgressWorkUnits: 3,
-        pendingWorkUnits: 2,
-        sessions: { 'session1': { status: 'active' } },
-      });
-      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
-        'test-workspace',
-        {}
-      );
-    });
-
-    it('should return queue status with options', async () => {
-      const mockStatus = {
-        total_work_units: 5,
-        completed_work_units: 3,
-        in_progress_work_units: 1,
-        pending_work_units: 1,
-      };
-      mockClient.workspaces.queue.status.mockResolvedValue(mockStatus);
-
-      const status = await honcho.getQueueStatus({
-        observer: 'observer1',
-        sender: 'sender1',
-        session: 'session1',
-      });
-
-      expect(status).toEqual({
-        totalWorkUnits: 5,
-        completedWorkUnits: 3,
-        inProgressWorkUnits: 1,
-        pendingWorkUnits: 1,
-        sessions: undefined,
-      });
-      expect(mockClient.workspaces.queue.status).toHaveBeenCalledWith(
-        'test-workspace',
-        {
-          observer_id: 'observer1',
-          sender_id: 'sender1',
-          session_id: 'session1',
-        }
-      );
-    });
-  });
-
-  describe('pollQueueStatus', () => {
-    it('should poll until processing is complete', async () => {
-      const mockStatusComplete = {
-        total_work_units: 5,
-        completed_work_units: 5,
-        in_progress_work_units: 0,
-        pending_work_units: 0,
-      };
-      mockClient.workspaces.queue.status.mockResolvedValue(mockStatusComplete);
-
-      const status = await honcho.pollQueueStatus();
-
-      expect(status).toEqual({
-        totalWorkUnits: 5,
-        completedWorkUnits: 5,
-        inProgressWorkUnits: 0,
-        pendingWorkUnits: 0,
-        sessions: undefined,
-      });
-    });
-
-    it('should timeout if processing takes too long', async () => {
-      const mockStatusPending = {
-        total_work_units: 5,
-        completed_work_units: 2,
-        in_progress_work_units: 2,
-        pending_work_units: 1,
-      };
-      mockClient.workspaces.queue.status.mockResolvedValue(mockStatusPending);
-
-      await expect(honcho.pollQueueStatus({ timeoutMs: 0 })).rejects.toThrow();
-    });
-  });
-
-  describe('updateMessage', () => {
-    beforeEach(() => {
-      mockClient.workspaces.sessions = {
-        messages: {
-          update: jest.fn(),
-        },
-      };
-    });
-
-    it('should update message metadata using Message object', async () => {
-      const mockMessage: Message = {
-        id: 'msg-123',
-        session_id: 'session-456',
-        content: 'Test message',
-        peer_id: 'peer-789',
-        created_at: '2024-01-01T00:00:00Z',
-        token_count: 10,
-        workspace_id: 'test-workspace',
-      };
-      const metadata = { updated: true, importance: 'high' };
-      const mockUpdatedMessage = { ...mockMessage, metadata };
-
-      mockClient.workspaces.sessions.messages.update.mockResolvedValue(mockUpdatedMessage);
-
-      const result = await honcho.updateMessage(mockMessage, metadata);
-
-      expect(result).toEqual(mockUpdatedMessage);
-      expect(mockClient.workspaces.sessions.messages.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'session-456',
-        'msg-123',
-        { metadata }
-      );
-    });
-
-    it('should update message metadata using message ID and session ID', async () => {
-      const messageId = 'msg-123';
-      const sessionId = 'session-456';
-      const metadata = { updated: true, importance: 'high' };
-      const mockUpdatedMessage = {
-        id: messageId,
-        session_id: sessionId,
-        content: 'Test message',
-        peer_id: 'peer-789',
-        metadata,
-      };
-
-      mockClient.workspaces.sessions.messages.update.mockResolvedValue(mockUpdatedMessage);
-
-      const result = await honcho.updateMessage(messageId, metadata, sessionId);
-
-      expect(result).toEqual(mockUpdatedMessage);
-      expect(mockClient.workspaces.sessions.messages.update).toHaveBeenCalledWith(
-        'test-workspace',
-        sessionId,
-        messageId,
-        { metadata }
-      );
-    });
-
-    it('should throw error when message is string ID but session ID is not provided', async () => {
-      const messageId = 'msg-123';
-      const metadata = { updated: true };
-
-      await expect(honcho.updateMessage(messageId, metadata)).rejects.toThrow(
-        'session is required when message is a string ID'
-      );
-    });
-
-    it('should handle API errors', async () => {
-      const mockMessage: Message = {
-        id: 'msg-123',
-        session_id: 'session-456',
-        content: 'Test message',
-        peer_id: 'peer-789',
-        created_at: '2024-01-01T00:00:00Z',
-        token_count: 10,
-        workspace_id: 'test-workspace',
-      };
-      const metadata = { updated: true };
-
-      mockClient.workspaces.sessions.messages.update.mockRejectedValue(
-        new Error('Update failed')
-      );
-
-      await expect(honcho.updateMessage(mockMessage, metadata)).rejects.toThrow('Update failed');
-    });
-  });
-});
+        workspaceId: 'test',
+      })
+
+      expect(localClient.baseURL).toBe('http://localhost:8000')
+    })
+  })
+})

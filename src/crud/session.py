@@ -19,6 +19,7 @@ from src.exceptions import (
 )
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
+from src.vector_store import get_external_vector_store
 
 from .peer import get_or_create_peers, get_peer
 from .workspace import get_or_create_workspace
@@ -425,6 +426,46 @@ async def delete_session(
             )
         )
 
+        # Delete message vectors from vector store before deleting DB records
+        # Fetch all MessageEmbedding records to build vector IDs with {message_id}_{chunk_index}
+        embedding_result = await db.execute(
+            select(models.MessageEmbedding).where(
+                models.MessageEmbedding.session_name == session_name,
+                models.MessageEmbedding.workspace_name == workspace_name,
+            )
+        )
+        embeddings = list(embedding_result.scalars().all())
+        external_vector_store = get_external_vector_store()
+
+        # Only delete from external vector store if one exists
+        if external_vector_store is not None and embeddings:
+            # Compute chunk_index for each embedding based on message_id ordering
+            message_chunks: dict[str, list[models.MessageEmbedding]] = {}
+            for emb in embeddings:
+                message_chunks.setdefault(emb.message_id, []).append(emb)
+
+            # Sort each message's chunks by id and build vector IDs
+            vector_ids: list[str] = []
+            for chunks in message_chunks.values():
+                chunks.sort(key=lambda e: e.id)
+                for chunk_idx, chunk in enumerate(chunks):
+                    vector_ids.append(f"{chunk.message_id}_{chunk_idx}")
+
+            # Try to delete from external vector store (best effort)
+            try:
+                namespace = external_vector_store.get_vector_namespace(
+                    "message", workspace_name
+                )
+                await external_vector_store.delete_many(namespace, vector_ids)
+                logger.debug(
+                    f"Deleted {len(vector_ids)} message vectors for session {session_name}"
+                )
+            except Exception as e:
+                # Log warning but continue - workspace deletion will clean up eventually
+                logger.warning(
+                    f"Failed to delete message vectors for session {session_name}: {e}"
+                )
+
         # Delete MessageEmbedding entries in batches
         await _batch_delete_matching(
             db,
@@ -435,6 +476,46 @@ async def delete_session(
             ],
             batch_size=5000,
         )
+
+        # Delete document vectors from vector store before deleting DB records
+        # Fetch all Document records to get IDs and namespaces
+        doc_result = await db.execute(
+            select(
+                models.Document.id,
+                models.Document.observer,
+                models.Document.observed,
+            ).where(
+                models.Document.session_name == session_name,
+                models.Document.workspace_name == workspace_name,
+            )
+        )
+        documents = doc_result.all()
+
+        # Only delete from external vector store if one exists
+        if external_vector_store is not None and documents:
+            # Group document IDs by namespace (observer/observed)
+            docs_by_namespace: dict[str, list[str]] = {}
+            for doc in documents:
+                namespace = external_vector_store.get_vector_namespace(
+                    "document",
+                    workspace_name,
+                    doc.observer,
+                    doc.observed,
+                )
+                docs_by_namespace.setdefault(namespace, []).append(doc.id)
+
+            # Try to delete from external vector store (best effort, per namespace)
+            for namespace, doc_ids in docs_by_namespace.items():
+                try:
+                    await external_vector_store.delete_many(namespace, doc_ids)
+                    logger.debug(
+                        f"Deleted {len(doc_ids)} document vectors from {namespace}"
+                    )
+                except Exception as e:
+                    # Log warning but continue - workspace deletion will clean up eventually
+                    logger.warning(
+                        f"Failed to delete document vectors from {namespace}: {e}"
+                    )
 
         # Delete Document entries associated with this session in batches
         await _batch_delete_matching(

@@ -9,7 +9,7 @@ class ParsedWorkUnit(BaseModel):
     """Parsed work unit components."""
 
     task_type: str
-    workspace_name: str
+    workspace_name: str | None
     session_name: str | None
     observer: str | None
     observed: str | None
@@ -50,6 +50,10 @@ def construct_work_unit_key(
             if not dream_type:
                 raise ValueError("dream_type is required for dream tasks")
             return f"{task_type}:{dream_type}:{workspace_name}:{observer}:{observed}"
+        if task_type == "representation":
+            # Representation tasks don't include observer in the key since
+            # we process once and save to multiple collections
+            return f"{task_type}:{workspace_name}:{session_name}:{observed}"
         return f"{task_type}:{workspace_name}:{session_name}:{observer}:{observed}"
 
     if task_type == "webhook":
@@ -63,6 +67,12 @@ def construct_work_unit_key(
                 "deletion_type and resource_id are required for deletion tasks"
             )
         return f"deletion:{workspace_name}:{deletion_type}:{resource_id}"
+
+    if task_type == "reconciler":
+        reconciler_type = payload.get("reconciler_type")
+        if not reconciler_type:
+            raise ValueError("reconciler_type is required for reconciler tasks")
+        return f"reconciler:{reconciler_type}"
 
     raise ValueError(f"Invalid task type: {task_type}")
 
@@ -83,7 +93,31 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     parts = work_unit_key.split(":")
     task_type = parts[0]
 
-    if task_type in ["representation", "summary"]:
+    if task_type == "representation":
+        if len(parts) == 4:
+            # New format: representation:{workspace}:{session}:{observed}
+            return ParsedWorkUnit(
+                task_type=task_type,
+                workspace_name=parts[1],
+                session_name=parts[2],
+                observer=None,
+                observed=parts[3],
+            )
+        elif len(parts) == 5:
+            # Legacy format: representation:{workspace}:{session}:{observer}:{observed}
+            return ParsedWorkUnit(
+                task_type=task_type,
+                workspace_name=parts[1],
+                session_name=parts[2],
+                observer=parts[3],
+                observed=parts[4],
+            )
+        else:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+
+    if task_type == "summary":
         if len(parts) != 5:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
@@ -131,6 +165,19 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
         return ParsedWorkUnit(
             task_type=task_type,
             workspace_name=parts[1],
+            session_name=None,
+            observer=None,
+            observed=None,
+        )
+
+    if task_type == "reconciler":
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=None,
             session_name=None,
             observer=None,
             observed=None,
