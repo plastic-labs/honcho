@@ -27,13 +27,9 @@ honcho = Honcho(workspace_id="my-app")
 
 # Create Honcho tools for the agent
 honcho_tools = HonchoTools(
-    peer_id="assistant",
-    session_id="session-123",
+    agent_id="assistant",
     honcho_client=honcho,
 )
-
-# Create user peer for orchestration
-user_peer = honcho.peer("user")
 
 # Create an agent with memory tools
 agent = Agent(
@@ -43,15 +39,36 @@ agent = Agent(
     description="An assistant with persistent memory powered by Honcho.",
 )
 
-# Add user message via orchestration
-honcho_tools.session.add_messages([user_peer.message("I prefer Python over JavaScript")])
+# Create peers and session for orchestration
+user_peer = honcho.peer("user-123")
+assistant_peer = honcho.peer("assistant")
+session = honcho.session("session-123")
 
-# Run the agent
-response = agent.run("What programming language does the user prefer?")
+# Add user message via orchestration
+session.add_messages([user_peer.message("I prefer Python over JavaScript")])
+
+# Run the agent - user_id and session_id flow through RunContext
+response = agent.run(
+    "What programming language does the user prefer?",
+    user_id="user-123",
+    session_id="session-123",
+)
 
 # Save assistant response via orchestration
-honcho_tools.session.add_messages([honcho_tools.peer.message(str(response.content))])
+session.add_messages([assistant_peer.message(str(response.content))])
 ```
+
+## How It Works
+
+HonchoTools maps to Agno's user/assistant architecture:
+
+| Agno Concept | Honcho Concept | Description |
+|--------------|----------------|-------------|
+| `user_id` (from RunContext) | Peer | The human user being queried about |
+| `agent_id` (from init) | Peer | The AI assistant's identity |
+| `session_id` (from RunContext) | Session | The conversation context |
+
+**Key insight**: Tools query Honcho about the **USER**, not the agent. When the agent asks "What does this user prefer?", Honcho returns insights about the human user identified by `context.user_id`.
 
 ## Features
 
@@ -61,7 +78,7 @@ The `HonchoTools` toolkit provides three memory tools:
 |------|-------------|
 | `honcho_get_context` | Retrieve conversation context within token limits |
 | `honcho_search_messages` | Semantic search through past messages |
-| `honcho_chat` | Query Honcho for synthesized insights about the conversation |
+| `honcho_chat` | Query Honcho for synthesized insights about the user |
 
 ## Configuration
 
@@ -76,9 +93,8 @@ honcho = Honcho(workspace_id="my-app")
 
 # Create toolkit for an agent
 tools = HonchoTools(
-    peer_id="assistant",          # Identity for this agent
-    session_id="session-456",     # Optional: specific session ID
-    honcho_client=honcho,         # Shared Honcho client
+    agent_id="assistant",    # Agent's identity in Honcho
+    honcho_client=honcho,    # Shared Honcho client
 )
 ```
 
@@ -89,9 +105,8 @@ from honcho_agno import HonchoTools
 
 # Creates its own Honcho client internally
 tools = HonchoTools(
-    workspace_id="my-app",        # Workspace ID (used to create internal client)
-    peer_id="assistant",          # Identity for this agent
-    session_id="session-456",     # Optional: auto-generated if not provided
+    workspace_id="my-app",   # Workspace ID (used to create internal client)
+    agent_id="assistant",    # Agent's identity
 )
 ```
 
@@ -116,77 +131,81 @@ Configure via `.env` file in the root honcho directory:
 
 ### honcho_get_context
 
-Retrieve recent conversation context.
+Retrieve recent conversation context. Uses `session_id` from RunContext.
 
 ```python
-context = honcho_tools.honcho_get_context(
-    tokens=2000,           # Max tokens to include (optional)
-    include_summary=True,  # Include session summary (default: True)
-)
+# Called by the agent automatically with RunContext
+# Or call directly with a mock context for testing
 ```
 
 ### honcho_search_messages
 
-Search through past messages semantically.
+Search through past messages semantically. Uses `session_id` from RunContext.
 
 ```python
-results = honcho_tools.honcho_search_messages(
-    query="programming preferences",
-    limit=10,  # Max results (default: 10)
-)
+# Called by the agent automatically with RunContext
+# Query example: "programming preferences"
 ```
 
 ### honcho_chat
 
-Ask questions about the conversation using Honcho's reasoning.
+Ask questions about the user using Honcho's reasoning. Uses both `user_id` and `session_id` from RunContext.
 
 ```python
-insights = honcho_tools.honcho_chat(
-    query="What programming languages does the user prefer?"
-)
+# Called by the agent automatically with RunContext
+# Query example: "What programming languages does the user prefer?"
 ```
 
-## Multi-Peer Conversations
+## Multi-Agent Systems (Teams)
 
-For multi-agent systems, create separate `HonchoTools` instances for each agent, sharing the same session:
+Agno Teams share context within a run, but what about across runs? What if Agent A needs to remember what Agent B learned last week? That's where Honcho comes in.
 
 ```python
+from agno.agent import Agent
+from agno.team import Team
 from honcho import Honcho
 from honcho_agno import HonchoTools
 
-# Shared Honcho client and session
+# Shared Honcho client
 honcho = Honcho(workspace_id="advisory-app")
-session_id = "shared-session-123"
 
-# Tech advisor agent
-tech_tools = HonchoTools(
-    peer_id="tech-advisor",
-    session_id=session_id,
-    honcho_client=honcho,
+# Tech advisor with Honcho memory
+tech_tools = HonchoTools(agent_id="tech-advisor", honcho_client=honcho)
+tech_agent = Agent(
+    name="Tech Advisor",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[tech_tools],
 )
 
-# Business advisor agent
-biz_tools = HonchoTools(
-    peer_id="biz-advisor",
-    session_id=session_id,
-    honcho_client=honcho,
+# Business advisor with Honcho memory
+biz_tools = HonchoTools(agent_id="biz-advisor", honcho_client=honcho)
+biz_agent = Agent(
+    name="Business Advisor",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[biz_tools],
 )
 
-# User peer for orchestration
-user = honcho.peer("user")
+# Create team
+team = Team(
+    name="Advisory Team",
+    agents=[tech_agent, biz_agent],
+)
 
-# Add messages via orchestration (not toolkit methods)
-tech_tools.session.add_messages([user.message("How should I scale my startup?")])
-tech_tools.session.add_messages([tech_tools.peer.message("Consider microservices...")])
-biz_tools.session.add_messages([biz_tools.peer.message("Focus on unit economics...")])
+# Run with shared user_id and session_id
+# Both agents query Honcho about the same user
+response = team.run(
+    "How should I scale my startup?",
+    user_id="founder-123",
+    session_id="strategy-session",
+)
 ```
 
 ## Architecture Notes
 
 - **Read-only toolkit**: `HonchoTools` provides read access to Honcho (context, search, chat)
-- **Orchestration pattern**: Message saving is handled by your orchestration code, not the toolkit
-- **One peer per toolkit**: Each `HonchoTools` instance represents one agent identity
-- **Shared sessions**: Multiple toolkits can share a session for multi-agent conversations
+- **Orchestration pattern**: Message saving is handled by your orchestration code using `honcho.session().add_messages()`
+- **RunContext integration**: `user_id` and `session_id` flow through Agno's RunContext automatically
+- **Cross-run memory**: Unlike Agno Teams (context within a run), Honcho persists memory across runs
 
 ## Examples
 
@@ -194,7 +213,6 @@ See the [examples](./examples) directory for complete working examples:
 
 - `simple_example.py`: Basic usage with HonchoTools
 - `multi_tool_example.py`: Using all tools together
-- `multi_peer_example.py`: Multi-agent conversation with different perspectives
 
 ## Development
 

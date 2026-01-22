@@ -1,6 +1,11 @@
 """
 Simple Honcho + Agno Example
 
+Demonstrates the RunContext integration:
+- user_id and session_id are passed to agent.run()
+- Tools automatically receive RunContext with these values
+- Orchestration uses the honcho client directly
+
 Environment Variables:
     LLM_OPENAI_API_KEY: OpenAI API key (matches honcho .env)
     HONCHO_API_KEY: Required for Honcho API access
@@ -25,20 +30,24 @@ if llm_key := os.getenv("LLM_OPENAI_API_KEY"):
 
 
 def main():
+    # Unique IDs for this run
+    user_id = "user-python-learner"
     session_id = f"simple-{uuid.uuid4().hex[:8]}"
 
     # Initialize Honcho client
     honcho = Honcho(workspace_id="agno-demo")
 
-    # Initialize HonchoTools - creates peer and session internally
+    # Initialize HonchoTools with agent identity
+    # user_id and session_id come from RunContext at runtime
     honcho_tools = HonchoTools(
-        peer_id="assistant",
-        session_id=session_id,
+        agent_id="assistant",
         honcho_client=honcho,
     )
 
-    # Create user peer (toolkit's peer is "assistant")
-    user_peer = honcho.peer("user")
+    # Create peers and session for orchestration
+    user_peer = honcho.peer(user_id)
+    assistant_peer = honcho.peer("assistant")
+    session = honcho.session(session_id)
 
     # Create an agent with memory tools
     agent = Agent(
@@ -52,35 +61,39 @@ def main():
         ],
     )
 
-    # Add user messages
+    # Add user messages via orchestration (not toolkit)
     print("Adding user messages to conversation...")
-    honcho_tools.session.add_messages([
+    session.add_messages([
         user_peer.message("I'm learning Python programming"),
         user_peer.message("I'm also interested in web development with FastAPI"),
     ])
 
     # The agent can now query memories and provide personalized responses
+    # user_id and session_id flow through RunContext to the tools
     print("\nAsking the agent for recommendations...")
     response = agent.run(
         "Based on what you know about the user, what should they learn next? "
-        "Use the honcho_chat tool to understand their interests first."
+        "Use the honcho_chat tool to understand their interests first.",
+        user_id=user_id,
+        session_id=session_id,
     )
 
-    # Save the assistant's response to Honcho
+    # Save the assistant's response via orchestration
     assistant_response = str(response.content) if response.content else ""
     if assistant_response:
-        honcho_tools.session.add_messages([honcho_tools.peer.message(assistant_response)])
+        session.add_messages([assistant_peer.message(assistant_response)])
 
     print("\n" + "=" * 60)
     print("RESPONSE")
     print("=" * 60)
     print(response.content)
 
-    # Show the full context
+    # Show the full context using the honcho client directly
     print("\n" + "=" * 60)
     print("SESSION CONTEXT")
     print("=" * 60)
-    print(honcho_tools.honcho_get_context())
+    context = session.get_context()
+    print(context)
 
 
 if __name__ == "__main__":

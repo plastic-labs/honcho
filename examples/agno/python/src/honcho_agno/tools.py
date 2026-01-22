@@ -4,21 +4,21 @@ Honcho Tools for Agno
 This module provides a Toolkit that allows Agno agents to interact with Honcho's
 memory system, including session context, semantic search, and chat.
 
-Each HonchoTools instance represents ONE agent identity (peer). The toolkit
-provides read access to Honcho for querying conversation context.
-Orchestration code will handle saving messages to avoid duplicates.
+Designed for Agno's user/assistant architecture:
+- user_id from RunContext → Honcho peer (the human user)
+- agent_id from init → Honcho peer (the AI assistant)
+- session_id from RunContext → Honcho session (shared conversation)
+
+Cross-run memory: Unlike Agno Teams which only share context within a run,
+Honcho persists memory across runs. Agent A can remember what Agent B
+learned last week.
 """
 
 import logging
-import uuid
-from typing import TYPE_CHECKING
 
+from agno.run import RunContext
 from agno.tools import Toolkit
 from honcho import Honcho
-
-if TYPE_CHECKING:
-    from honcho.peer import Peer
-    from honcho.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +27,14 @@ class HonchoTools(Toolkit):
     """
     Honcho toolkit for Agno agents.
 
-    Each toolkit instance is for ONE agent identity.
+    Maps to Agno's user/assistant model:
+    - user_id from RunContext → Honcho peer (the human being queried about)
+    - agent_id from init → Honcho peer (the AI assistant's identity)
+    - session_id from RunContext → Honcho session (the conversation)
 
-    For multi-peer conversations:
-    - Create one HonchoTools per agent, each with a different peer_id
-    - Share the same session_id across toolkits
-    - Messages are saved to Honcho by the orchestration code, not the toolkit
+    Tools query Honcho about the USER, not the agent. When the agent asks
+    "What does this user prefer?", Honcho returns insights about the human
+    user identified by run_context.user_id.
 
     Example:
         ```python
@@ -40,24 +42,26 @@ class HonchoTools(Toolkit):
         from agno.models.openai import OpenAIChat
         from honcho_agno import HonchoTools
 
+        # Initialize toolkit with agent identity
         honcho_tools = HonchoTools(
             workspace_id="my-app",
-            peer_id="assistant",
-            session_id="shared-session",
+            agent_id="travel-assistant",
         )
 
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             tools=[honcho_tools],
         )
+
+        # At runtime, pass user_id and session_id
+        agent.run("Plan my trip", user_id="user-123", session_id="conv-456")
         ```
     """
 
     def __init__(
         self,
         workspace_id: str = "default",
-        peer_id: str = "assistant",
-        session_id: str | None = None,
+        agent_id: str = "assistant",
         honcho_client: Honcho | None = None,
     ) -> None:
         """
@@ -66,11 +70,8 @@ class HonchoTools(Toolkit):
         Args:
             workspace_id: Workspace ID for creating an internal Honcho client.
                 Ignored if honcho_client is provided.
-            peer_id: The identity this toolkit represents. This is who
-                the agent "is" when querying peer knowledge.
-            session_id: Optional session ID. If not provided, a new UUID
-                will be generated. Share this across toolkits for multi-peer
-                conversations.
+            agent_id: The agent's identity in Honcho. Used for message attribution
+                when the orchestration code saves messages.
             honcho_client: Optional pre-configured Honcho client instance.
                 When provided, uses this client directly (workspace_id is ignored).
         """
@@ -82,14 +83,7 @@ class HonchoTools(Toolkit):
         else:
             self.honcho = Honcho(workspace_id=workspace_id)
 
-        self.peer_id: str = peer_id
-        self.session_id: str = session_id or str(uuid.uuid4())
-
-        # Create the peer this toolkit represents
-        self.peer: Peer = self.honcho.peer(peer_id)
-
-        # Create or get session
-        self.session: Session = self.honcho.session(self.session_id)
+        self.agent_id: str = agent_id
 
         # Register tools with honcho_ prefix to avoid conflicts with other toolkits
         self.register(self.honcho_get_context)
@@ -98,13 +92,18 @@ class HonchoTools(Toolkit):
 
     def honcho_get_context(
         self,
+        run_context: RunContext,
         tokens: int | None = None,
         include_summary: bool = True,
     ) -> str:
         """
         Retrieve recent conversation context within token limits.
 
+        Uses run_context.session_id to identify which conversation to retrieve
+        context from.
+
         Args:
+            run_context: Agno RunContext providing session_id (auto-injected).
             tokens: Maximum number of tokens to include. If not specified,
                 returns all available context.
             include_summary: Whether to include session summary in the context.
@@ -113,17 +112,19 @@ class HonchoTools(Toolkit):
             Formatted string containing conversation context.
         """
         try:
-            context = self.session.get_context(
+            session = self.honcho.session(run_context.session_id)
+            result = session.get_context(
                 summary=include_summary,
                 tokens=tokens,
             )
-            return str(context)
+            return str(result)
         except Exception as e:
             logger.exception("Error retrieving context")
             return f"Error retrieving context: {e!s}"
 
     def honcho_search_messages(
         self,
+        run_context: RunContext,
         query: str,
         limit: int = 10,
     ) -> str:
@@ -134,6 +135,7 @@ class HonchoTools(Toolkit):
         history based on semantic meaning rather than exact keyword matching.
 
         Args:
+            run_context: Agno RunContext providing session_id (auto-injected).
             query: Search query for semantic matching.
             limit: Number of results to return (1-100).
 
@@ -141,48 +143,57 @@ class HonchoTools(Toolkit):
             Formatted string with search results.
         """
         try:
-            messages = self.session.search(query=query, limit=limit)
+            session = self.honcho.session(run_context.session_id)
+            messages = session.search(query=query, limit=limit)
 
             if not messages:
                 return f"No messages found matching '{query}'"
 
-            result = [f"=== Search Results for '{query}' ({len(messages)} found) ==="]
+            results = [f"=== Search Results for '{query}' ({len(messages)} found) ==="]
             for i, msg in enumerate(messages, 1):
-                result.append(f"\n{i}. [{msg.peer_id}] {msg.content}")
+                results.append(f"\n{i}. [{msg.peer_id}] {msg.content}")
                 if hasattr(msg, "created_at") and msg.created_at:
-                    result.append(f"   Created: {msg.created_at}")
+                    results.append(f"   Created: {msg.created_at}")
 
-            return "\n".join(result)
+            return "\n".join(results)
 
         except Exception as e:
             logger.exception("Error searching messages")
             return f"Error searching messages: {e!s}"
 
-    def honcho_chat(self, query: str) -> str:
+    def honcho_chat(self, run_context: RunContext, query: str) -> str:
         """
-        Ask a question about what was discussed in this conversation.
+        Ask Honcho what it knows about the current user.
 
-        Use this tool to query session-specific context and facts.
-        The system uses Honcho reasoning to provide synthesized
-        insights based on the conversation history.
+        Queries the USER's peer (run_context.user_id) to get synthesized insights
+        about the human user based on their conversation history. This is how
+        the agent learns about user preferences, past discussions, and context.
 
         Args:
-            query: Natural language question about the conversation.
-                Examples: "What did we discuss?", "What preferences should I be aware of?",
-                "What topics came up?"
+            run_context: Agno RunContext providing user_id and session_id (auto-injected).
+            query: Natural language question about the user.
+                Examples: "What are the user's preferences?",
+                "What topics has the user discussed?",
+                "What should I know about this user?"
 
         Returns:
-            Synthesized response based on the session context.
+            Synthesized response about the user based on Honcho's memory.
         """
         try:
-            response = self.peer.chat(
+            user_id = run_context.user_id
+            if not user_id:
+                return "Error: No user_id provided in RunContext"
+
+            # Query the USER's peer - this is who we want to learn about
+            user_peer = self.honcho.peer(user_id)
+            response = user_peer.chat(
                 query=query,
                 stream=False,
-                session=self.session_id,
+                session=run_context.session_id,
             )
 
             return str(response) if response else "No relevant information found."
 
         except Exception as e:
-            logger.exception("Error querying conversation")
-            return f"Error querying conversation: {e!s}"
+            logger.exception("Error querying user information")
+            return f"Error querying user information: {e!s}"
