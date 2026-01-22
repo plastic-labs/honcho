@@ -122,7 +122,7 @@ session.context()
 session.summaries()
 session.messages()
 session.peers()
-session.peer_config()
+session.get_peer_configuration()
 client.peers()
 client.sessions()
 client.workspaces()
@@ -219,7 +219,8 @@ if card:
 | `.get_summaries()` | `.summaries()` |
 | `.get_deriver_status()` | `.queue_status()` |
 | `.poll_deriver_status()` | *(removed)* |
-| `.get_peer_config()` | `.peer_config()` |
+| `.get_peer_config()` | `.get_peer_configuration()` |
+| `.set_peer_config()` | `.set_peer_configuration()` |
 | `client.update_message()` | `session.update_message()` |
 | `chat(stream=True)` | `chat_stream()` |
 | `include_most_derived=` | `include_most_frequent=` |

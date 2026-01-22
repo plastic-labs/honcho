@@ -343,7 +343,7 @@ export const FileUploadSchema = z.object({
   peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
   metadata: MessageMetadataSchema,
   configuration: z.record(z.string(), z.unknown()).optional(),
-  created_at: z.string().nullable().optional(),
+  createdAt: z.string().nullable().optional(),
 })
 
 /**

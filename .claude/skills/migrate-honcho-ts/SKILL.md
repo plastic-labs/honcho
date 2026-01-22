@@ -170,6 +170,8 @@ await session.updateMessage(message, metadata)
 | `session.getSummaries()` | `session.summaries()` |
 | `session.getContext()` | `session.context()` |
 | `session.workingRep()` | `session.representation()` |
+| `session.peerConfig()` | `session.getPeerConfiguration()` |
+| `session.setPeerConfig()` | `session.setPeerConfiguration()` |
 | `{ timeoutMs: 60000 }` | `{ timeout: 60 }` |
 | `{ maxObservations: 50 }` | `{ maxConclusions: 50 }` |
 | `{ includeMostDerived }` | `{ includeMostFrequent }` |

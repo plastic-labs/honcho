@@ -204,7 +204,7 @@ const ctx = await session.context({
 })
 ```
 
-### `SessionPeerConfig` Uses camelCase
+### `SessionPeerConfig` Uses camelCase and Methods Renamed
 
 ```typescript
 // Before
@@ -212,12 +212,14 @@ await session.setPeerConfig(peer, {
   observe_me: true,
   observe_others: false
 })
+const config = await session.peerConfig(peer)
 
 // After
-await session.setPeerConfig(peer, {
+await session.setPeerConfiguration(peer, {
   observeMe: true,
   observeOthers: false
 })
+const config = await session.getPeerConfiguration(peer)
 ```
 
 ---

@@ -25,7 +25,8 @@ Use this checklist to track migration progress. Copy into your working notes and
 - [ ] Rename `getSessions()` → `sessions()`
 - [ ] Rename `getConfig()` → `getConfiguration()`
 - [ ] Rename `setConfig()` → `setConfiguration()`
-- [ ] Remove `getPeerConfig()` / `setPeerConfig()` (use `getConfiguration()` / `setConfiguration()`)
+- [ ] Rename `peerConfig()` → `getPeerConfiguration()`
+- [ ] Rename `setPeerConfig()` → `setPeerConfiguration()`
 - [ ] Rename `workingRep()` → `representation()` (returns string now)
 - [ ] Rename `getContext()` → `context()`
 - [ ] Replace `observations` → `conclusions`

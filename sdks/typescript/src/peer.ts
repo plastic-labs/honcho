@@ -488,7 +488,7 @@ export class Peer {
    * @param content - The text content for the message
    * @param options.metadata - Optional metadata to associate with the message
    * @param options.configuration - Optional message-level configuration (e.g., reasoning settings)
-   * @param options.created_at - Optional ISO 8601 timestamp for the message
+   * @param options.createdAt - Optional ISO 8601 timestamp for the message
    * @returns A message object ready to be passed to `session.addMessages()`
    *
    * @example

@@ -346,30 +346,27 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create test conclusions via API (ensures proper vector store integration)
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "User loves pizza and pasta",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "User dislikes vegetables",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
         )
-
-        # Create test conclusions
-        doc1 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User loves pizza and pasta",
-            embedding=[0.9] * 1536,
-            session_name=test_session.name,
-        )
-        doc2 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User dislikes vegetables",
-            embedding=[0.5] * 1536,
-            session_name=test_session.name,
-        )
-        db_session.add_all([doc1, doc2])
-        await db_session.commit()
+        assert create_response.status_code == 201
 
         # Query conclusions
         response = client.post(
@@ -420,23 +417,21 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create multiple conclusions via API (ensures proper vector store integration)
+        conclusions = [
+            {
+                "content": f"Conclusion about topic {i}",
+                "observer_id": test_peer.name,
+                "observed_id": test_peer2.name,
+                "session_id": test_session.name,
+            }
+            for i in range(5)
+        ]
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={"conclusions": conclusions},
         )
-
-        # Create multiple conclusions
-        for i in range(5):
-            doc = models.Document(
-                workspace_name=test_workspace.name,
-                observer=test_peer.name,
-                observed=test_peer2.name,
-                content=f"Conclusion about topic {i}",
-                embedding=[0.1 * i] * 1536,
-                session_name=test_session.name,
-            )
-            db_session.add(doc)
-        await db_session.commit()
+        assert create_response.status_code == 201
 
         # Query with top_k=2
         response = client.post(
@@ -481,22 +476,21 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create test conclusion via API (ensures proper vector store integration)
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Test conclusion",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
         )
-
-        # Create test conclusion
-        doc = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="Test conclusion",
-            embedding=[0.5] * 1536,
-            session_name=test_session.name,
-        )
-        db_session.add(doc)
-        await db_session.commit()
+        assert create_response.status_code == 201
 
         # Query with distance threshold
         response = client.post(

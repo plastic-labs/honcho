@@ -114,14 +114,14 @@ async def test_session_peer_config(client_fixture: tuple[Honcho, str]):
         assert isinstance(peer, Peer)
         await session.aio.add_peers([(peer, config)])
 
-        retrieved_config = await session.aio.peer_config(peer)
+        retrieved_config = await session.aio.get_peer_configuration(peer)
         assert retrieved_config.observe_me is False
         assert retrieved_config.observe_others is False
 
-        await session.aio.set_peer_config(
+        await session.aio.set_peer_configuration(
             peer, SessionPeerConfig(observe_others=True, observe_me=True)
         )
-        retrieved_config = await session.aio.peer_config(peer)
+        retrieved_config = await session.aio.get_peer_configuration(peer)
         assert retrieved_config.observe_me is True
         assert retrieved_config.observe_others is True
     else:
@@ -132,14 +132,14 @@ async def test_session_peer_config(client_fixture: tuple[Honcho, str]):
         assert isinstance(peer, Peer)
         session.add_peers([(peer, config)])
 
-        retrieved_config = session.peer_config(peer)
+        retrieved_config = session.get_peer_configuration(peer)
         assert retrieved_config.observe_me is False
         assert retrieved_config.observe_others is False
 
-        session.set_peer_config(
+        session.set_peer_configuration(
             peer, SessionPeerConfig(observe_others=True, observe_me=True)
         )
-        retrieved_config = session.peer_config(peer)
+        retrieved_config = session.get_peer_configuration(peer)
         assert retrieved_config.observe_me
         assert retrieved_config.observe_others
 

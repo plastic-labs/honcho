@@ -813,7 +813,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             for peer in peers_data
         ]
 
-    async def peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
+    async def get_peer_configuration(self, peer: str | PeerBase) -> SessionPeerConfig:
         """Get the configuration for a peer in this session asynchronously."""
         await self._session._honcho._ensure_workspace_async()
         peer_id = peer if isinstance(peer, str) else peer.id
@@ -827,17 +827,17 @@ class SessionAio(AsyncMetadataConfigMixin):
             observe_me=data.get("observe_me"),
         )
 
-    async def set_peer_config(
-        self, peer: str | PeerBase, config: SessionPeerConfig
+    async def set_peer_configuration(
+        self, peer: str | PeerBase, configuration: SessionPeerConfig
     ) -> None:
         """Set the configuration for a peer in this session asynchronously."""
         await self._session._honcho._ensure_workspace_async()
         peer_id = peer if isinstance(peer, str) else peer.id
         body: dict[str, Any] = {}
-        if config.observe_others is not None:
-            body["observe_others"] = config.observe_others
-        if config.observe_me is not None:
-            body["observe_me"] = config.observe_me
+        if configuration.observe_others is not None:
+            body["observe_others"] = configuration.observe_others
+        if configuration.observe_me is not None:
+            body["observe_me"] = configuration.observe_me
 
         await self._session._honcho._async_http_client.put(
             routes.session_peer_config(

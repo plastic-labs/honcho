@@ -329,7 +329,7 @@ class Session(SessionBase, MetadataConfigMixin):
             for peer in peers_data
         ]
 
-    def peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
+    def get_peer_configuration(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
@@ -343,17 +343,19 @@ class Session(SessionBase, MetadataConfigMixin):
             observe_me=data.get("observe_me"),
         )
 
-    def set_peer_config(self, peer: str | PeerBase, config: SessionPeerConfig) -> None:
+    def set_peer_configuration(
+        self, peer: str | PeerBase, configuration: SessionPeerConfig
+    ) -> None:
         """
         Set the configuration for a peer in this session.
         """
         self._honcho._ensure_workspace()
         peer_id = peer if isinstance(peer, str) else peer.id
         body: dict[str, Any] = {}
-        if config.observe_others is not None:
-            body["observe_others"] = config.observe_others
-        if config.observe_me is not None:
-            body["observe_me"] = config.observe_me
+        if configuration.observe_others is not None:
+            body["observe_others"] = configuration.observe_others
+        if configuration.observe_me is not None:
+            body["observe_me"] = configuration.observe_me
 
         self._honcho._http.put(
             routes.session_peer_config(self.workspace_id, self.id, peer_id),

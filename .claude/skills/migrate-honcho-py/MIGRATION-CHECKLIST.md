@@ -44,7 +44,8 @@ Use this checklist to track migration progress. Copy into your working notes and
 - [ ] Replace all `config=` parameters with `configuration=`
 - [ ] Replace `.get_config()` with `.get_configuration()`
 - [ ] Replace `.set_config()` with `.set_configuration()`
-- [ ] Remove deprecated `.get_peer_config()` and `.set_peer_config()` calls
+- [ ] Rename `.get_peer_config()` → `.get_peer_configuration()`
+- [ ] Rename `.set_peer_config()` → `.set_peer_configuration()`
 - [ ] Import typed config classes from `honcho.api_types` if needed:
   - [ ] `PeerConfig`
   - [ ] `SessionConfiguration`
@@ -65,7 +66,8 @@ Use this checklist to track migration progress. Copy into your working notes and
 - [ ] `session.get_summaries()` → `session.summaries()`
 - [ ] `session.get_messages()` → `session.messages()`
 - [ ] `session.get_peers()` → `session.peers()`
-- [ ] `session.get_peer_config()` → `session.peer_config()`
+- [ ] `session.get_peer_config()` → `session.get_peer_configuration()`
+- [ ] `session.set_peer_config()` → `session.set_peer_configuration()`
 - [ ] `session.working_rep()` → `session.representation()`
 - [ ] `session.get_deriver_status()` → `session.queue_status()`
 - [ ] Remove `session.poll_deriver_status()` calls
