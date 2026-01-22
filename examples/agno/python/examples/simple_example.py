@@ -20,6 +20,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 from honcho import Honcho
+from honcho.session import SessionPeerConfig
 from honcho_agno import HonchoTools
 
 load_dotenv()
@@ -48,6 +49,14 @@ def main():
     user_peer = honcho.peer(user_id)
     assistant_peer = honcho.peer("assistant")
     session = honcho.session(session_id)
+
+    # Configure observation settings:
+    # - User is observed (assistant builds theory-of-mind of user)
+    # - Assistant is NOT observed (no need for user to model the assistant)
+    session.add_peers([
+        (user_peer, SessionPeerConfig(observe_me=True, observe_others=False)),
+        (assistant_peer, SessionPeerConfig(observe_me=False, observe_others=True)),
+    ])
 
     # Create an agent with memory tools
     agent = Agent(
