@@ -99,22 +99,24 @@ class HonchoTools(Toolkit):
         Retrieve recent conversation context within token limits.
 
         Uses run_context.session_id to identify which conversation to retrieve
-        context from.
+        context from, and run_context.user_id to get the user's representation.
 
         Args:
-            run_context: Agno RunContext providing session_id (auto-injected).
+            run_context: Agno RunContext providing user_id and session_id (auto-injected).
             tokens: Maximum number of tokens to include. If not specified,
                 returns all available context.
             include_summary: Whether to include session summary in the context.
 
         Returns:
-            Formatted string containing conversation context.
+            Formatted string containing conversation context, including the
+            user's peer representation and peer card.
         """
         try:
             session = self.honcho.session(run_context.session_id)
             result = session.get_context(
                 summary=include_summary,
                 tokens=tokens,
+                peer_target=run_context.user_id,
             )
             return str(result)
         except Exception as e:
@@ -188,6 +190,7 @@ class HonchoTools(Toolkit):
             response = user_peer.chat(
                 query=query,
                 stream=False,
+                target=user_id,
                 session=run_context.session_id,
             )
 
