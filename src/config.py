@@ -472,11 +472,36 @@ class DialecticSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
-        """Ensure the output token limit exceeds all thinking budgets."""
+        """Ensure effective output token limits exceed all thinking budgets."""
         for level, level_settings in self.LEVELS.items():
-            if self.MAX_OUTPUT_TOKENS <= level_settings.THINKING_BUDGET_TOKENS:
+            effective_level_max_output_tokens = (
+                level_settings.MAX_OUTPUT_TOKENS
+                if level_settings.MAX_OUTPUT_TOKENS is not None
+                else self.MAX_OUTPUT_TOKENS
+            )
+            if (
+                effective_level_max_output_tokens
+                <= level_settings.THINKING_BUDGET_TOKENS
+            ):
                 raise ValueError(
-                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                    f"Effective MAX_OUTPUT_TOKENS ({effective_level_max_output_tokens}) must be greater than THINKING_BUDGET_TOKENS ({level_settings.THINKING_BUDGET_TOKENS}) for level '{level}'"
+                )
+
+            synthesis_settings = level_settings.SYNTHESIS
+            if synthesis_settings is None:
+                continue
+
+            effective_synthesis_max_output_tokens = (
+                synthesis_settings.MAX_OUTPUT_TOKENS
+                if synthesis_settings.MAX_OUTPUT_TOKENS is not None
+                else self.MAX_OUTPUT_TOKENS
+            )
+            if (
+                effective_synthesis_max_output_tokens
+                <= synthesis_settings.THINKING_BUDGET_TOKENS
+            ):
+                raise ValueError(
+                    f"Effective SYNTHESIS.MAX_OUTPUT_TOKENS ({effective_synthesis_max_output_tokens}) must be greater than SYNTHESIS.THINKING_BUDGET_TOKENS ({synthesis_settings.THINKING_BUDGET_TOKENS}) for level '{level}'"
                 )
         return self
 

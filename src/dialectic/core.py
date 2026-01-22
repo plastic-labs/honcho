@@ -372,6 +372,54 @@ class DialecticAgent:
             )
         )
 
+    def _stringify_tool_result_content(self, content: Any) -> str:
+        """
+        Convert a tool result payload into a stable, human-readable string.
+
+        Tool results can vary by provider and may include nested content blocks
+        (e.g., Anthropic-style lists with text/image/attachment blocks). The
+        synthesis prompt needs a consistent text representation that preserves
+        all information without assuming a single schema.
+
+        Args:
+            content: Tool result payload (string, dict, list, or arbitrary object).
+
+        Returns:
+            A best-effort string representation suitable for inclusion in the
+            synthesis context.
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+
+        try:
+            if isinstance(content, list):
+                rendered_parts: list[str] = []
+                for raw_item in cast(list[Any], content):
+                    item: Any = raw_item
+                    if isinstance(item, dict):
+                        item_dict = cast(dict[str, Any], item)
+                        if item_dict.get("type") == "text":
+                            text = item_dict.get("text", "")
+                            if isinstance(text, str) and text:
+                                rendered_parts.append(text)
+                                continue
+
+                    rendered_parts.append(
+                        json.dumps(item, ensure_ascii=False, default=str)
+                    )
+                return "\n".join(part for part in rendered_parts if part)
+
+            if isinstance(content, dict):
+                return json.dumps(
+                    cast(dict[str, Any], content), ensure_ascii=False, default=str
+                )
+
+            return str(cast(object, content))
+        except Exception:
+            return str(cast(object, content))
+
     def _build_synthesis_messages(
         self,
         search_messages: list[dict[str, Any]],
@@ -412,20 +460,30 @@ class DialecticAgent:
                 if isinstance(content, str) and content:
                     search_context_parts.append(f"[USER]: {content}")
                 elif isinstance(content, list):
-                    # Could be Anthropic tool results
+                    # Anthropic-style content blocks (text + tool results)
                     for block in content:  # pyright: ignore[reportUnknownVariableType]
-                        if (
-                            isinstance(block, dict)
-                            and block.get("type") == "tool_result"  # pyright: ignore[reportUnknownMemberType]
-                        ):
+                        if not isinstance(block, dict):
+                            continue
+                        block_dict = cast(dict[str, Any], block)
+
+                        if block_dict.get("type") == "text":
+                            text_any = block_dict.get("text")
+                            if isinstance(text_any, str) and text_any:
+                                search_context_parts.append(f"[USER]: {text_any}")
+                            continue
+
+                        if block_dict.get("type") == "tool_result":
                             tool_id: str = cast(
                                 str,
-                                block.get("tool_use_id", "unknown"),  # pyright: ignore[reportUnknownMemberType]
+                                block_dict.get("tool_use_id", "unknown"),
                             )
-                            result: str = cast(str, block.get("content", ""))  # pyright: ignore[reportUnknownMemberType]
-                            search_context_parts.append(
-                                f"[TOOL RESULT ({tool_id})]: {result}"
+                            result = self._stringify_tool_result_content(
+                                block_dict.get("content")
                             )
+                            if result:
+                                search_context_parts.append(
+                                    f"[TOOL RESULT ({tool_id})]: {result}"
+                                )
 
             elif role == "assistant":
                 content = msg.get("content", "")
