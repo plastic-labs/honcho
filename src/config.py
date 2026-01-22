@@ -422,13 +422,13 @@ class DialecticSettings(HonchoSettings):
                 TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
-                PROVIDER="custom",
+                PROVIDER="openrouter",
                 MODEL="z-ai/glm-4.7-flash",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=4,
             ),
             "medium": DialecticLevelSettings(
-                PROVIDER="custom",
+                PROVIDER="openrouter",
                 MODEL="z-ai/glm-4.7-flash",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=4,

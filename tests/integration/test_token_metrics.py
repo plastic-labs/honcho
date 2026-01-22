@@ -30,7 +30,7 @@ from src.schemas import (
     ResolvedSummaryConfiguration,
 )
 from src.telemetry.otel.metrics import otel_metrics
-from src.utils.clients import HonchoLLMCallResponse
+from src.utils.llm import HonchoLLMCallResponse
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.summarizer import (
     SummaryType,

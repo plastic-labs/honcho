@@ -12,9 +12,9 @@ from src.telemetry.events import RepresentationCompletedEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
 from src.telemetry.sentry import with_sentry_transaction
-from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.llm import honcho_llm_call
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 

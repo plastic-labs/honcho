@@ -602,13 +602,12 @@ def mock_honcho_llm_call():
             # For string responses, return a simple string
             return "Test response content"
 
-    # Patch the honcho_llm_call decorator to prevent actual LLM calls at module level
     original_decorator = None
     try:
-        import src.utils.clients
+        import src.utils.llm.core as llm_core
 
-        original_decorator = src.utils.clients.honcho_llm_call
-        src.utils.clients.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
+        original_decorator = llm_core.honcho_llm_call
+        llm_core.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
     except ImportError:
         pass
 
@@ -642,15 +641,18 @@ def mock_honcho_llm_call():
 
         return mock_llm_decorator
 
-    with patch("src.utils.clients.honcho_llm_call", side_effect=decorator_factory):
+    with (
+        patch("src.utils.llm.core.honcho_llm_call", side_effect=decorator_factory),
+        patch("src.utils.llm.honcho_llm_call", side_effect=decorator_factory),
+    ):
         yield decorator_factory
 
     # Restore the original decorator
     if original_decorator:
         try:
-            import src.utils.clients
+            import src.utils.llm.core as llm_core
 
-            src.utils.clients.honcho_llm_call = original_decorator
+            llm_core.honcho_llm_call = original_decorator
         except ImportError:
             pass
 
