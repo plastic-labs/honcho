@@ -3833,7 +3833,8 @@
     {
       "step_type": "wait",
       "target": "queue_empty",
-      "timeout": 600
+      "timeout": 600,
+      "flush": true
     },
     {
       "step_type": "query",

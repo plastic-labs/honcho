@@ -156,7 +156,7 @@ async def process_representation_batch(
     messages: list[Message],
     message_level_configuration: ResolvedConfiguration | None,
     *,
-    observer: str | None,
+    observers: list[str] | None,
     observed: str | None,
     queue_items_count: int,
 ) -> None:
@@ -166,20 +166,20 @@ async def process_representation_batch(
     Args:
         messages: List of messages to process
         message_level_configuration: Resolved configuration for this batch
-        observer: The observer of the messages
+        observers: List of observers for the messages
         observed: The observed of the messages
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")
         return
 
-    if observed is None or observer is None:
-        raise ValueError("observed and observer are required for representation tasks")
+    if observed is None or observers is None or len(observers) == 0:
+        raise ValueError("observed and observers are required for representation tasks")
 
     await process_representation_tasks_batch(
         messages,
         message_level_configuration,
-        observer=observer,
+        observers=observers,
         observed=observed,
         queue_items_count=queue_items_count,
     )

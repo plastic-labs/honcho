@@ -65,7 +65,6 @@ Optional arguments:
 
 import argparse
 import asyncio
-import logging
 import os
 import time
 from datetime import datetime
@@ -73,15 +72,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
+from honcho.api_types import MessageCreateParams
+from honcho.session import SessionPeerConfig
 from openai import AsyncOpenAI
 
 from src.config import settings
-from src.telemetry.metrics_collector import MetricsCollector
 
 from .beam_common import (
     ConversationResult,
@@ -95,13 +90,21 @@ from .beam_common import (
     load_conversation,
     print_summary,
 )
+from .runner_common import (
+    ReasoningLevel,
+    RunnerMixin,
+    add_common_arguments,
+    create_openai_client,
+    export_metrics,
+    validate_common_arguments,
+)
 
 # Load .env from bench directory
 bench_dir = Path(__file__).parent
 load_dotenv(bench_dir / ".env")
 
 
-class BEAMRunner:
+class BEAMRunner(RunnerMixin):
     """
     Executes BEAM benchmark tests against a Honcho instance.
     """
@@ -114,6 +117,8 @@ class BEAMRunner:
         timeout_seconds: int | None = None,
         cleanup_workspace: bool = True,
         use_get_context: bool = False,
+        redis_url: str = "redis://localhost:6379/0",
+        reasoning_level: ReasoningLevel | None = None,
     ):
         """
         Initialize the BEAM test runner.
@@ -125,6 +130,8 @@ class BEAMRunner:
             timeout_seconds: Timeout for deriver queue in seconds
             cleanup_workspace: If True, delete workspace after executing conversation
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
+            redis_url: Redis URL for flush mode signaling (default: redis://localhost:6379/0)
+            reasoning_level: Reasoning level for dialectic chat (default: None)
         """
         self.data_dir: Path = data_dir
         self.base_api_port: int = base_api_port
@@ -134,163 +141,25 @@ class BEAMRunner:
         )
         self.cleanup_workspace: bool = cleanup_workspace
         self.use_get_context: bool = use_get_context
+        self.redis_url: str = redis_url
+        self.reasoning_level: ReasoningLevel | None = reasoning_level
 
-        # Initialize metrics collector
-        self.metrics_collector: MetricsCollector = MetricsCollector()
-        self.metrics_collector.start_collection(
-            f"beam_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-
-        # Configure logging
-        logging.basicConfig(
-            level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-        self.logger: logging.Logger = logging.getLogger(__name__)
-
-        # Suppress HTTP request logs from the Honcho SDK
-        logging.getLogger("httpx").setLevel(logging.ERROR)
-        logging.getLogger("httpcore").setLevel(logging.ERROR)
+        # Initialize common components (metrics, logging)
+        self._init_common("beam")
 
         # Initialize OpenRouter client for judging
-        openrouter_api_key = os.getenv("LLM_OPENAI_COMPATIBLE_API_KEY")
         openrouter_base_url = os.getenv(
             "LLM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1"
         )
-
-        if not openrouter_api_key:
-            raise ValueError(
-                "LLM_OPENAI_COMPATIBLE_API_KEY is not set in tests/bench/.env"
-            )
-
-        self.openrouter_client: AsyncOpenAI = AsyncOpenAI(
-            api_key=openrouter_api_key,
+        self.openrouter_client: AsyncOpenAI = create_openai_client(
             base_url=openrouter_base_url,
+            env_key_name="LLM_OPENAI_COMPATIBLE_API_KEY",
         )
 
         # Model to use for judging (OpenRouter format)
         self.judge_model: str = os.getenv(
             "BEAM_JUDGE_MODEL", "anthropic/claude-sonnet-4.5"
         )
-
-    def get_honcho_url_for_index(self, conversation_index: int) -> str:
-        """
-        Get the Honcho URL for a given conversation index using round-robin distribution.
-
-        Args:
-            conversation_index: Index of the conversation
-
-        Returns:
-            URL of the Honcho instance to use for this conversation
-        """
-        instance_id = conversation_index % self.pool_size
-        port = self.base_api_port + instance_id
-        return f"http://localhost:{port}"
-
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
-        """
-        Create a Honcho client for a specific workspace.
-
-        Args:
-            workspace_id: Workspace ID
-            honcho_url: URL of the Honcho instance
-
-        Returns:
-            AsyncHoncho client instance
-        """
-        return AsyncHoncho(
-            environment="local",
-            workspace_id=workspace_id,
-            base_url=honcho_url,
-        )
-
-    async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
-    ) -> bool:
-        """Wait for the deriver queue to be empty."""
-        start_time = time.time()
-        while True:
-            try:
-                status = await honcho_client.get_queue_status(session=session_id)
-            except Exception:
-                await asyncio.sleep(1)
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= self.timeout_seconds:
-                    return False
-                continue
-
-            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
-                return True
-
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= self.timeout_seconds:
-                return False
-            await asyncio.sleep(1)
-
-    async def trigger_dream_and_wait(
-        self,
-        honcho_client: AsyncHoncho,
-        workspace_id: str,
-        observer: str,
-        observed: str | None = None,
-        session_id: str | None = None,
-    ) -> bool:
-        """
-        Trigger a dream task and wait for it to complete.
-
-        Args:
-            honcho_client: Honcho client instance
-            workspace_id: Workspace identifier
-            observer: Observer peer name
-            observed: Observed peer name (defaults to observer)
-            session_id: Session ID to scope the dream to
-
-        Returns:
-            True if dream completed successfully, False on timeout
-        """
-        import httpx
-
-        observed = observed or observer
-        honcho_url = self.get_honcho_url_for_index(0)
-
-        url = f"{honcho_url}/v2/workspaces/{workspace_id}/schedule_dream"
-        payload: dict[str, Any] = {
-            "observer": observer,
-            "observed": observed,
-            "dream_type": "omni",
-            "session_id": session_id or f"{workspace_id}_session",
-        }
-
-        # Trigger the dream via API
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    timeout=30.0,
-                )
-                if response.status_code != 204:
-                    print(
-                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
-                    )
-                    print(f"[{workspace_id}] Response body: {response.text}")
-                    return False
-        except Exception as e:
-            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
-            return False
-
-        print(f"[{workspace_id}] Dream triggered for {observer}/{observed}")
-
-        # Wait for dream queue to empty
-        print(f"[{workspace_id}] Waiting for dream to complete...")
-        await asyncio.sleep(2)  # Give time for dream to be enqueued
-        success = await self.wait_for_deriver_queue_empty(honcho_client)
-        if success:
-            print(f"[{workspace_id}] Dream queue empty")
-        else:
-            print(f"[{workspace_id}] Dream queue timeout")
-        return success
 
     async def _process_single_question(
         self,
@@ -317,7 +186,7 @@ class BEAMRunner:
             # For instruction_following, always use get_context + OpenRouter API
             # so the LLM can follow user-specified instructions from Honcho context
             if self.use_get_context or ability == "instruction_following":
-                context = await session.get_context(
+                context = await session.aio.context(
                     summary=True,
                     peer_target="user",
                     last_user_message=question,
@@ -357,7 +226,10 @@ Review the context carefully for any such instructions before responding."""
                 else:
                     actual_response = response.choices[0].message.content or ""
             else:
-                actual_response = await user_peer.chat(question)
+                actual_response = await user_peer.aio.chat(
+                    question,
+                    reasoning_level=self.reasoning_level,
+                )
                 actual_response = (
                     actual_response if isinstance(actual_response, str) else ""
                 )
@@ -435,7 +307,7 @@ Review the context carefully for any such instructions before responding."""
 
         # Create workspace for this conversation
         workspace_id = f"beam_{context_length}_{conversation_id}"
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
+        honcho_client = self.create_honcho_client(workspace_id, honcho_url)
 
         result: ConversationResult = {
             "conversation_id": conversation_id,
@@ -461,15 +333,15 @@ Review the context carefully for any such instructions before responding."""
             questions_data = conv_data["questions"]
 
             # Create peers
-            user_peer = await honcho_client.peer(id="user")
-            assistant_peer = await honcho_client.peer(id="assistant")
+            user_peer = await honcho_client.aio.peer(id="user")
+            assistant_peer = await honcho_client.aio.peer(id="assistant")
 
             # Create session for this conversation
             session_id = f"{workspace_id}_session"
-            session = await honcho_client.session(id=session_id)
+            session = await honcho_client.aio.session(id=session_id)
 
             # Configure peer observation - observe the user peer
-            await session.add_peers(
+            await session.aio.add_peers(
                 [
                     (
                         user_peer,
@@ -484,7 +356,7 @@ Review the context carefully for any such instructions before responding."""
 
             # Ingest conversation turns
             print(f"[{workspace_id}] Ingesting conversation turns...")
-            messages: list[MessageCreateParam] = []
+            messages: list[MessageCreateParams] = []
 
             # Handle different data structures for 10M vs other sizes
             for batch in chat_data:
@@ -553,7 +425,7 @@ Review the context carefully for any such instructions before responding."""
             # Add messages in batches of 100
             for i in range(0, len(messages), 100):
                 batch = messages[i : i + 100]
-                await session.add_messages(batch)
+                await session.aio.add_messages(batch)
 
             print(
                 f"[{workspace_id}] Ingested {result['total_messages']} messages. Waiting for deriver queue..."
@@ -561,6 +433,7 @@ Review the context carefully for any such instructions before responding."""
 
             # Wait for deriver queue to empty
             await asyncio.sleep(1)
+            await self.flush_deriver_queue()
             queue_empty = await self.wait_for_deriver_queue_empty(honcho_client)
             if not queue_empty:
                 result["error"] = "Deriver queue timeout"
@@ -625,7 +498,7 @@ Review the context carefully for any such instructions before responding."""
             # Cleanup workspace if requested
             if self.cleanup_workspace:
                 try:
-                    await honcho_client.delete_workspace(workspace_id)
+                    await honcho_client.aio.delete_workspace(workspace_id)
                     print(f"[{workspace_id}] Cleaned up workspace")
                 except Exception as e:
                     print(f"Failed to delete workspace: {e}")
@@ -711,6 +584,13 @@ async def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run BEAM benchmark tests against a Honcho instance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --context-length 100K
+  %(prog)s --context-length 500K --pool-size 4
+  %(prog)s --context-length 100K --conversation-ids conv1,conv2
+  %(prog)s --context-length 100K --reasoning-level high
+        """,
     )
 
     parser.add_argument(
@@ -727,53 +607,16 @@ async def main() -> int:
         help="Comma-separated list of conversation IDs to test (default: all)",
     )
 
-    parser.add_argument(
-        "--base-api-port",
-        type=int,
-        default=8000,
-        help="Base port for Honcho API instances (default: 8000)",
-    )
-
-    parser.add_argument(
-        "--pool-size",
-        type=int,
-        default=1,
-        help="Number of Honcho instances in the pool (default: 1)",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=None,
-        help="Timeout for deriver queue to empty in seconds (default: 10 minutes (600s))",
-    )
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=10,
-        help="Number of conversations to run concurrently in each batch (default: 1)",
-    )
-
-    parser.add_argument(
-        "--json-output",
-        type=Path,
-        help="Path to write JSON summary results for analytics (optional)",
-    )
-
-    parser.add_argument(
-        "--cleanup-workspace",
-        action="store_true",
-        help="Delete workspace after executing each conversation (default: True)",
-    )
-
-    parser.add_argument(
-        "--use-get-context",
-        action="store_true",
-        help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
-    )
+    # Add common arguments shared across all runners
+    add_common_arguments(parser)
 
     args = parser.parse_args()
+
+    # Validate common arguments
+    error = validate_common_arguments(args)
+    if error:
+        print(error)
+        return 1
 
     # Setup data directory
     data_dir = Path(__file__).parent / "beam_data"
@@ -789,6 +632,8 @@ async def main() -> int:
         timeout_seconds=args.timeout,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
+        redis_url=args.redis_url,
+        reasoning_level=args.reasoning_level,
     )
 
     try:
@@ -822,6 +667,7 @@ async def main() -> int:
                 "base_api_port": runner.base_api_port,
                 "pool_size": runner.pool_size,
                 "timeout_seconds": runner.timeout_seconds,
+                "reasoning_level": runner.reasoning_level,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
                 "dream_settings": settings.DREAM.model_dump(),
@@ -829,11 +675,7 @@ async def main() -> int:
         )
 
         # Export metrics
-        metrics_output = Path(
-            f"tests/bench/perf_metrics/beam_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        )
-        runner.metrics_collector.export_to_json(metrics_output)
-        runner.metrics_collector.cleanup_collection()
+        export_metrics(runner.metrics_collector, "beam")
 
         return 0
 

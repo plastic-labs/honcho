@@ -665,7 +665,7 @@ class DialecticOptions(BaseModel):
 
 
 class DialecticResponse(BaseModel):
-    content: str
+    content: str | None
 
 
 class DialecticStreamDelta(BaseModel):

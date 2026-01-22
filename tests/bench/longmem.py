@@ -57,27 +57,20 @@ Optional arguments:
 import argparse
 import asyncio
 import json
-import logging
-import os
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-import httpx
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
+from honcho.api_types import MessageCreateParams
+from honcho.session import SessionPeerConfig
 from openai import AsyncOpenAI
 from typing_extensions import TypedDict
 
 from src.config import settings
-from src.telemetry.metrics_collector import MetricsCollector
 
 from .longmem_common import (
     calculate_timing_statistics,
@@ -89,6 +82,15 @@ from .longmem_common import (
     load_test_file,
     parse_longmemeval_date,
     write_json_summary,
+)
+from .runner_common import (
+    ReasoningLevel,
+    RunnerMixin,
+    add_common_arguments,
+    create_anthropic_client,
+    create_openai_client,
+    export_metrics,
+    validate_common_arguments,
 )
 
 load_dotenv()
@@ -127,7 +129,7 @@ class TestResult(TypedDict):
     output_lines: list[str]
 
 
-class LongMemEvalRunner:
+class LongMemEvalRunner(RunnerMixin):
     """
     Executes longmemeval JSON tests against a Honcho instance.
     """
@@ -141,6 +143,8 @@ class LongMemEvalRunner:
         merge_sessions: bool = False,
         cleanup_workspace: bool = False,
         use_get_context: bool = False,
+        redis_url: str = "redis://localhost:6379/0",
+        reasoning_level: ReasoningLevel | None = None,
     ):
         """
         Initialize the test runner.
@@ -153,62 +157,28 @@ class LongMemEvalRunner:
             merge_sessions: If True, merge all sessions within a question into one session
             cleanup_workspace: If True, delete workspace after executing question (default: False)
             use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
+            redis_url: Redis URL for flush mode signaling (default: redis://localhost:6379/0)
+            reasoning_level: Reasoning level for dialectic chat (default: None)
         """
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
-        self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 10000
         )
         self.merge_sessions: bool = merge_sessions
         self.cleanup_workspace: bool = cleanup_workspace
         self.use_get_context: bool = use_get_context
+        self.redis_url: str = redis_url
+        self.reasoning_level: ReasoningLevel | None = reasoning_level
 
-        # Initialize metrics collector
-        self.metrics_collector: MetricsCollector = MetricsCollector()
-        self.metrics_collector.start_collection(
-            f"longmem_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Initialize common components (metrics, logging)
+        self._init_common("longmem")
+
+        # Initialize LLM clients
+        self.anthropic_client: AsyncAnthropic = create_anthropic_client(
+            anthropic_api_key
         )
-
-        # Configure logging
-        logging.basicConfig(
-            level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-        self.logger: logging.Logger = logging.getLogger(__name__)
-
-        # Suppress HTTP request logs from the Honcho SDK
-        logging.getLogger("httpx").setLevel(logging.ERROR)
-        logging.getLogger("httpcore").setLevel(logging.ERROR)
-
-        if self.anthropic_api_key:
-            self.anthropic_client: AsyncAnthropic = AsyncAnthropic(
-                api_key=self.anthropic_api_key
-            )
-        else:
-            api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
-            self.anthropic_client = AsyncAnthropic(api_key=api_key)
-
-        # OpenAI client for GPT-4o judge (per LongMemEval paper)
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY is not set (required for GPT-4o judge)")
-        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=openai_api_key)
-
-    def get_honcho_url_for_index(self, question_index: int) -> str:
-        """
-        Get the Honcho URL for a given question index using round-robin distribution.
-
-        Args:
-            question_index: Index of the question in the test file
-
-        Returns:
-            URL of the Honcho instance to use for this question
-        """
-        instance_id = question_index % self.pool_size
-        port = self.base_api_port + instance_id
-        return f"http://localhost:{port}"
+        self.openai_client: AsyncOpenAI = create_openai_client()
 
     def _get_latest_input_tokens_used(self) -> int | None:
         """Get the uncached input tokens from the most recent dialectic_chat metric.
@@ -245,111 +215,6 @@ class LongMemEvalRunner:
 
         return None
 
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
-        """
-        Create a Honcho client for a specific workspace.
-
-        Args:
-            workspace_id: Workspace ID for the test
-            honcho_url: URL of the Honcho instance
-
-        Returns:
-            AsyncHoncho client instance
-        """
-        return AsyncHoncho(
-            environment="local",
-            workspace_id=workspace_id,
-            base_url=honcho_url,
-        )
-
-    async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
-    ) -> bool:
-        start_time = time.time()
-        while True:
-            try:
-                status = await honcho_client.get_queue_status(session=session_id)
-            except Exception as _e:
-                await asyncio.sleep(1)
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= self.timeout_seconds:
-                    return False
-                continue
-
-            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
-                return True
-
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= self.timeout_seconds:
-                return False
-            await asyncio.sleep(1)
-
-    async def trigger_dream_and_wait(
-        self,
-        honcho_client: AsyncHoncho,
-        workspace_id: str,
-        observer: str,
-        observed: str | None = None,
-        session_id: str | None = None,
-    ) -> bool:
-        """
-        Trigger a dream task and wait for it to complete.
-
-        Args:
-            honcho_client: Honcho client instance
-            workspace_id: Workspace identifier
-            observer: Observer peer name
-            observed: Observed peer name (defaults to observer)
-            session_id: Session ID to scope the dream to
-
-        Returns:
-            True if dream completed successfully, False on timeout
-        """
-        observed = observed or observer
-        honcho_url = self.get_honcho_url_for_index(0)
-
-        url = f"{honcho_url}/v2/workspaces/{workspace_id}/schedule_dream"
-        payload: dict[str, Any] = {
-            "observer": observer,
-            "observed": observed,
-            "dream_type": "omni",
-            "session_id": session_id or f"{workspace_id}_session",
-        }
-
-        # Trigger the dream via API
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    timeout=30.0,
-                )
-                if response.status_code != 204:
-                    print(
-                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
-                    )
-                    print(f"[{workspace_id}] Response body: {response.text}")
-                    return False
-        except Exception as e:
-            print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
-            return False
-
-        print(
-            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
-        )
-
-        # Wait for dream queue to empty
-        print(f"[{workspace_id}] Waiting for dream to complete...")
-        await asyncio.sleep(2)  # Give time for dream to be enqueued
-        success = await self.wait_for_deriver_queue_empty(honcho_client)
-        if success:
-            print(f"[{workspace_id}] Dream queue empty")
-        else:
-            print(f"[{workspace_id}] Dream queue timeout")
-        return success
-
     async def execute_question(
         self, question_data: dict[str, Any], honcho_url: str
     ) -> TestResult:
@@ -383,7 +248,7 @@ class LongMemEvalRunner:
 
         # Create workspace for this question
         workspace_id = f"{question_id}_{question_type}"
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
+        honcho_client = self.create_honcho_client(workspace_id, honcho_url)
 
         results: TestResult = {
             "question_id": question_id,
@@ -400,8 +265,8 @@ class LongMemEvalRunner:
         }
 
         try:
-            user_peer = await honcho_client.peer(id="user")
-            assistant_peer = await honcho_client.peer(id="assistant")
+            user_peer = await honcho_client.aio.peer(id="user")
+            assistant_peer = await honcho_client.aio.peer(id="assistant")
 
             # Process haystack sessions
             haystack_dates = question_data.get("haystack_dates", [])
@@ -444,11 +309,11 @@ class LongMemEvalRunner:
             if self.merge_sessions:
                 # Create a single merged session for all messages
                 merged_session_id = f"{workspace_id}_merged"
-                session = await honcho_client.session(id=merged_session_id)
+                session = await honcho_client.aio.session(id=merged_session_id)
 
                 # Configure peer observation based on question type
                 if is_assistant_type:
-                    await session.add_peers(
+                    await session.aio.add_peers(
                         [
                             (
                                 user_peer,
@@ -465,7 +330,7 @@ class LongMemEvalRunner:
                         ]
                     )
                 else:
-                    await session.add_peers(
+                    await session.aio.add_peers(
                         [
                             (
                                 user_peer,
@@ -483,7 +348,7 @@ class LongMemEvalRunner:
                     )
 
                 # Collect all messages from all sessions in chronological order
-                all_messages: list[MessageCreateParam] = []
+                all_messages: list[MessageCreateParams] = []
                 for session_date, session_messages in zip(
                     parsed_dates, haystack_sessions, strict=True
                 ):
@@ -526,7 +391,7 @@ class LongMemEvalRunner:
                 if all_messages:
                     for i in range(0, len(all_messages), 100):
                         batch = all_messages[i : i + 100]
-                        await session.add_messages(batch)
+                        await session.aio.add_messages(batch)
 
                 results["sessions_created"].append(
                     SessionResult(
@@ -539,12 +404,12 @@ class LongMemEvalRunner:
                 for session_date, session_id, session_messages in zip(
                     parsed_dates, haystack_session_ids, haystack_sessions, strict=True
                 ):
-                    session = await honcho_client.session(id=session_id)
+                    session = await honcho_client.aio.session(id=session_id)
 
                     # Configure peer observation based on question type
                     if is_assistant_type:
                         # For assistant questions, observe the assistant peer
-                        await session.add_peers(
+                        await session.aio.add_peers(
                             [
                                 (
                                     user_peer,
@@ -562,7 +427,7 @@ class LongMemEvalRunner:
                         )
                     else:
                         # For user questions, observe the user peer (default behavior)
-                        await session.add_peers(
+                        await session.aio.add_peers(
                             [
                                 (
                                     user_peer,
@@ -579,7 +444,7 @@ class LongMemEvalRunner:
                             ]
                         )
 
-                    honcho_messages: list[MessageCreateParam] = []
+                    honcho_messages: list[MessageCreateParams] = []
                     for msg in session_messages:
                         role = msg["role"]
                         content = msg["content"]
@@ -620,7 +485,7 @@ class LongMemEvalRunner:
                     if honcho_messages:
                         for i in range(0, len(honcho_messages), 100):
                             batch = honcho_messages[i : i + 100]
-                            await session.add_messages(batch)
+                            await session.aio.add_messages(batch)
 
                     results["sessions_created"].append(
                         SessionResult(
@@ -634,6 +499,9 @@ class LongMemEvalRunner:
             await asyncio.sleep(
                 1
             )  # Give time for at least some tasks to be queued, so deriver queue size check doesn't immediately return 0
+
+            # Enable flush mode to bypass batch token threshold
+            await self.flush_deriver_queue()
 
             queue_empty = await self.wait_for_deriver_queue_empty(honcho_client)
             if not queue_empty:
@@ -682,11 +550,11 @@ class LongMemEvalRunner:
                         raise ValueError(
                             "Merged session ID is required when using get_context. Set --merge-sessions to True."
                         )
-                    session = await honcho_client.session(id=merged_session_id)
+                    session = await honcho_client.aio.session(id=merged_session_id)
 
                     # Get context for the appropriate peer
                     peer_id = "assistant" if is_assistant_type else "user"
-                    context = await session.get_context(
+                    context = await session.aio.context(
                         summary=True,
                         peer_target=peer_id,
                         last_user_message=question,
@@ -716,15 +584,21 @@ class LongMemEvalRunner:
                     # Use the appropriate peer based on question type
                     if is_assistant_type:
                         # For assistant questions, use the assistant peer
-                        actual_response = await assistant_peer.chat(question_with_date)
+                        actual_response = await assistant_peer.aio.chat(
+                            question_with_date,
+                            reasoning_level=self.reasoning_level,
+                        )
                     else:
                         # For user questions, use the user peer (default behavior)
-                        actual_response = await user_peer.chat(question_with_date)
+                        actual_response = await user_peer.aio.chat(
+                            question_with_date,
+                            reasoning_level=self.reasoning_level,
+                        )
 
                 # Clean up workspace if requested
                 if self.cleanup_workspace:
                     try:
-                        await honcho_client.delete_workspace(workspace_id)
+                        await honcho_client.aio.delete_workspace(workspace_id)
                         print(f"[{workspace_id}] cleaned up workspace")
                     except Exception as e:
                         print(f"Failed to delete workspace: {e}")
@@ -1014,6 +888,7 @@ class LongMemEvalRunner:
                 "base_api_port": self.base_api_port,
                 "pool_size": self.pool_size,
                 "timeout_seconds": self.timeout_seconds,
+                "reasoning_level": self.reasoning_level,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
                 "dream_settings": settings.DREAM.model_dump(),
@@ -1064,6 +939,7 @@ Examples:
   %(prog)s --test-file test.json --base-api-port 8000 --pool-size 4       # Custom base port with pool
   %(prog)s --test-file test.json --test-count 50                          # Run only first 50 tests
   %(prog)s --test-file test.json --question-id "q123"                    # Run only question with ID "q123"
+  %(prog)s --test-file test.json --reasoning-level high                   # Use high reasoning level
         """,
     )
 
@@ -1074,20 +950,10 @@ Examples:
         help="Path to longmemeval JSON file (required)",
     )
 
-    parser.add_argument(
-        "--base-api-port",
-        type=int,
-        default=8000,
-        help="Base port for Honcho API instances (default: 8000)",
-    )
+    # Add common arguments shared across all runners
+    add_common_arguments(parser)
 
-    parser.add_argument(
-        "--pool-size",
-        type=int,
-        default=1,
-        help="Number of Honcho instances in the pool (default: 1)",
-    )
-
+    # LongMemEval-specific arguments
     parser.add_argument(
         "--anthropic-api-key",
         type=str,
@@ -1095,41 +961,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=None,
-        help="Timeout for deriver queue to empty in seconds (default: 10 minutes)",
-    )
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=10,
-        help="Number of questions to run concurrently in each batch (default: 10)",
-    )
-
-    parser.add_argument(
-        "--json-output",
-        type=Path,
-        help="Path to write JSON summary results for analytics (optional)",
-    )
-
-    parser.add_argument(
         "--merge-sessions",
         action="store_true",
         help="Merge all sessions within a question into a single session (default: False)",
-    )
-
-    parser.add_argument(
-        "--cleanup-workspace",
-        action="store_true",
-        help="Delete workspace after executing each question (default: False)",
-    )
-
-    parser.add_argument(
-        "--use-get-context",
-        action="store_true",
-        help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
     )
 
     parser.add_argument(
@@ -1146,17 +980,15 @@ Examples:
 
     args = parser.parse_args()
 
-    # Validate arguments
+    # Validate common arguments
+    error = validate_common_arguments(args)
+    if error:
+        print(error)
+        return 1
+
+    # Validate longmem-specific arguments
     if not args.test_file.exists():
         print(f"Error: Test file {args.test_file} does not exist")
-        return 1
-
-    if args.batch_size <= 0:
-        print(f"Error: Batch size must be positive, got {args.batch_size}")
-        return 1
-
-    if args.pool_size <= 0:
-        print(f"Error: Pool size must be positive, got {args.pool_size}")
         return 1
 
     if args.test_count is not None and args.test_count <= 0:
@@ -1172,6 +1004,8 @@ Examples:
         merge_sessions=args.merge_sessions,
         cleanup_workspace=args.cleanup_workspace,
         use_get_context=args.use_get_context,
+        redis_url=args.redis_url,
+        reasoning_level=args.reasoning_level,
     )
 
     try:
@@ -1199,11 +1033,7 @@ Examples:
             )
 
         # Export metrics to JSON file
-        metrics_output = Path(
-            f"tests/bench/perf_metrics/{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        )
-        runner.metrics_collector.export_to_json(metrics_output)
-        runner.metrics_collector.cleanup_collection()
+        export_metrics(runner.metrics_collector, "longmem")
 
         # Return exit code based on results
         all_passed = all(r.get("passed", False) for r in results)

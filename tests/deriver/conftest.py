@@ -158,7 +158,7 @@ def create_queue_payload() -> Callable[..., Any]:
             configuration=configuration,
             task_type=task_type,
             message_seq_in_session=message_seq_in_session,
-            observer=observer,
+            observers=[observer] if observer else None,
             observed=observed,
         )
 

@@ -125,7 +125,7 @@ class HonchoStorage(Storage):
                 including logical operators (AND, OR, NOT), comparison operators
                 (gt, gte, lt, lte, eq, ne), and metadata filtering.
                 Example: {"peer_id": "user123"} or {"metadata": {"type": "important"}}
-                See: https://docs.honcho.dev/v2/documentation/core-concepts/features/using-filters
+                See: https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters
 
         Returns:
             List of message dictionaries in CrewAI expected format.
@@ -146,7 +146,9 @@ class HonchoStorage(Storage):
                 # Build base metadata with peer_id and created_at
                 metadata = {
                     "peer_id": msg.peer_id,
-                    "created_at": str(msg.created_at) if hasattr(msg, "created_at") else None,
+                    "created_at": str(msg.created_at)
+                    if hasattr(msg, "created_at")
+                    else None,
                 }
 
                 # Merge custom metadata if present

@@ -4,7 +4,7 @@ from tests.conftest import AuthClient
 
 def test_create_key_no_params(auth_client: AuthClient):
     """Test creating a key with no parameters"""
-    response = auth_client.post("/v2/keys")
+    response = auth_client.post("/v3/keys")
 
     # Only admin JWT should be allowed
     if auth_client.auth_type == "admin":
@@ -25,14 +25,14 @@ def test_create_key_with_params(
 
     # Test with app_id
     response = auth_client.post(
-        "/v2/keys", params={"workspace_id": test_workspace.name}
+        "/v3/keys", params={"workspace_id": test_workspace.name}
     )
     assert response.status_code == 200
     assert "key" in response.json()
 
     # Test with app_id and user_id
     response = auth_client.post(
-        "/v2/keys",
+        "/v3/keys",
         params={"workspace_id": test_workspace.name, "peer_id": test_peer.name},
     )
     assert response.status_code == 200
@@ -40,7 +40,7 @@ def test_create_key_with_params(
 
     # Test with session_id and collection_id
     response = auth_client.post(
-        "/v2/keys",
+        "/v3/keys",
         params={
             "workspace_id": test_workspace.name,
             "peer_id": test_peer.name,
@@ -56,7 +56,7 @@ def test_create_key_with_expires_at(
     auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test creating a key with an expiration date"""
-    response = auth_client.post("/v2/keys", params={"expires_at": "2025-01-01"})
+    response = auth_client.post("/v3/keys", params={"expires_at": "2025-01-01"})
 
     # Only admin JWT should be allowed
     if auth_client.auth_type == "admin":
@@ -70,6 +70,6 @@ def test_create_key_with_expires_at(
 
     # assert that the key is expired
     response = auth_client.post(
-        "/v2/keys", params={"workspace_id": test_workspace.name}
+        "/v3/keys", params={"workspace_id": test_workspace.name}
     )
     assert response.status_code == 401

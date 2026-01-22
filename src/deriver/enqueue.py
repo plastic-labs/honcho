@@ -171,7 +171,7 @@ def create_representation_record(
     conf: ResolvedConfiguration,
     session_id: str | None = None,
     *,
-    observer: str,
+    observers: list[str],
     observed: str,
 ) -> dict[str, Any]:
     """
@@ -181,8 +181,8 @@ def create_representation_record(
         message: The message payload
         conf: Resolved configuration for this particular message
         session_id: Optional session ID
+        observers: List of observer peer names
         observed: Name of the sender
-        observer: Name of the target
 
     Returns:
         Queue record dictionary with workspace_name and message_id as separate fields
@@ -199,7 +199,7 @@ def create_representation_record(
         message=message,
         configuration=conf,
         task_type="representation",
-        observer=observer,
+        observers=observers,
         observed=observed,
     )
     return {
@@ -345,23 +345,19 @@ async def generate_queue_records(
     if not conf.reasoning.enabled:
         return records
 
-    if should_observe:
-        # global representation task
-        records.append(
-            create_representation_record(
-                message,
-                conf,
-                observed=observed,
-                observer=observed,
-                session_id=session_id,
-            )
-        )
+    # Collect all observers into a single list
+    observers: list[str] = []
 
+    if should_observe:
+        # Self-observation: the sender observes themselves
+        observers.append(observed)
+
+        # Other peers who want to observe
         for peer_name, peer_conf in peers_with_configuration.items():
             if peer_name == observed:
                 continue
 
-            # If the observer peer has left the session, we don't need to enqueue a representation task for them.
+            # If the observer peer has left the session, skip them
             if not peer_conf[2]:
                 continue
 
@@ -372,22 +368,26 @@ async def generate_queue_records(
             if session_peer_config is None or not session_peer_config.observe_others:
                 continue
 
-            records.append(
-                # peer representation task
-                create_representation_record(
-                    message,
-                    conf,
-                    observed=observed,
-                    observer=peer_name,
-                    session_id=session_id,
-                )
+            observers.append(peer_name)
+
+    # Create a single record with all observers (if any)
+    if observers:
+        records.append(
+            create_representation_record(
+                message,
+                conf,
+                observed=observed,
+                observers=observers,
+                session_id=session_id,
             )
+        )
 
     logger.debug(
-        "message %s from %s created %s queue items",
+        "message %s from %s created %s queue items with %s observers",
         message_id,
         observed,
         len(records),
+        len(observers),
     )
 
     return records

@@ -219,10 +219,10 @@ class LLMSettings(HonchoSettings):
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
     # Maximum characters for tool output to prevent token explosion.
-    # Set to 30,000 chars (~7,500 tokens at 4 chars/token) to stay well under
+    # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under
     # typical context limits while providing substantial tool output.
-    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=30000, gt=0, le=100_000)] = (
-        30000
+    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=10000, gt=0, le=100_000)] = (
+        10000
     )
 
     # Maximum characters for individual message content in tool results.
@@ -316,6 +316,9 @@ class DialecticLevelSettings(BaseModel):
     MAX_TOOL_ITERATIONS: Annotated[
         int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
     ]
+    MAX_OUTPUT_TOKENS: Annotated[
+        int | None, Field(ge=1, le=100_000, validation_alias="max_output_tokens")
+    ] = None  # None means use global DIALECTIC.MAX_OUTPUT_TOKENS
     TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
         None  # None/auto lets model decide, "any"/"required" forces tool use
     )
@@ -356,12 +359,13 @@ class DialecticSettings(HonchoSettings):
                 PROVIDER="google",
                 MODEL="gemini-2.5-flash-lite",
                 THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=5,
+                MAX_TOOL_ITERATIONS=1,
+                MAX_OUTPUT_TOKENS=250,
                 TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
                 PROVIDER="google",
-                MODEL="gemini-3-flash-preview",
+                MODEL="gemini-2.5-flash-lite",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=5,
                 TOOL_CHOICE="any",
@@ -370,17 +374,17 @@ class DialecticSettings(HonchoSettings):
                 PROVIDER="anthropic",
                 MODEL="claude-haiku-4-5",
                 THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=4,
+                MAX_TOOL_ITERATIONS=2,
             ),
             "high": DialecticLevelSettings(
                 PROVIDER="anthropic",
-                MODEL="claude-opus-4-5",
-                THINKING_BUDGET_TOKENS=0,
+                MODEL="claude-haiku-4-5",
+                THINKING_BUDGET_TOKENS=1024,
                 MAX_TOOL_ITERATIONS=4,
             ),
             "max": DialecticLevelSettings(
                 PROVIDER="anthropic",
-                MODEL="claude-opus-4-5",
+                MODEL="claude-haiku-4-5",
                 THINKING_BUDGET_TOKENS=2048,
                 MAX_TOOL_ITERATIONS=10,
             ),
@@ -396,8 +400,8 @@ class DialecticSettings(HonchoSettings):
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
     SESSION_HISTORY_MAX_TOKENS: Annotated[
-        int, Field(default=16_384, ge=0, le=100_000)
-    ] = 16_384
+        int, Field(default=4_096, ge=0, le=16_384)
+    ] = 4_096
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":

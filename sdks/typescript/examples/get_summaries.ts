@@ -21,7 +21,7 @@ async function main() {
 	const session = await client.session("my-conversation-session");
 
 	// Get summaries for the session
-	const summaries: SessionSummaries = await session.getSummaries();
+	const summaries: SessionSummaries = await session.summaries();
 
 	console.log(`Session ID: ${summaries.id}`);
 	console.log("-".repeat(50));

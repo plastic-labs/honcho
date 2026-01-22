@@ -1,7 +1,6 @@
 {
   "description": "Test unidirectional observation - Alice observes Bob, Bob does not observe Alice",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -41,7 +40,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",

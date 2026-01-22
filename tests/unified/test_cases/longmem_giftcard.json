@@ -1,7 +1,6 @@
 {
   "description": "LongMemEval test: single-session-user question",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -3664,7 +3663,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",

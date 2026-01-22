@@ -153,7 +153,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
-    version="2.6.0",
+    version="3.0.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -183,13 +183,13 @@ app.add_middleware(
 
 add_pagination(app)
 
-app.include_router(workspaces.router, prefix="/v2")
-app.include_router(peers.router, prefix="/v2")
-app.include_router(sessions.router, prefix="/v2")
-app.include_router(messages.router, prefix="/v2")
-app.include_router(conclusions.router, prefix="/v2")
-app.include_router(keys.router, prefix="/v2")
-app.include_router(webhooks.router, prefix="/v2")
+app.include_router(workspaces.router, prefix="/v3")
+app.include_router(peers.router, prefix="/v3")
+app.include_router(sessions.router, prefix="/v3")
+app.include_router(messages.router, prefix="/v3")
+app.include_router(conclusions.router, prefix="/v3")
+app.include_router(keys.router, prefix="/v3")
+app.include_router(webhooks.router, prefix="/v3")
 
 
 # Global exception handlers

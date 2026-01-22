@@ -32,7 +32,7 @@ Use Glob and Grep to find:
 
 After exploring the codebase, use the **AskUserQuestion** tool to clarify integration requirements. Ask these questions (adapt based on what you learned in Phase 1):
 
-**Question Set 1 - Entities & Peers**
+#### Question Set 1 - Entities & Peers
 
 Ask about which entities should be Honcho peers:
 
@@ -41,7 +41,7 @@ Ask about which entities should be Honcho peers:
 - options based on what you found (e.g., "End users only", "Users + AI assistant", "Users + multiple AI agents", "All participants including third-party services")
 - Include a follow-up if they have multiple AI agents: should any AI peers be observed?
 
-**Question Set 2 - Integration Pattern**
+#### Question Set 2 - Integration Pattern
 
 Ask how they want to use Honcho context:
 
@@ -53,7 +53,7 @@ Ask how they want to use Honcho context:
   - "get_context()" - "Include conversation history and representations in prompt"
   - "Multiple patterns" - "Combine approaches for different use cases"
 
-**Question Set 3 - Session Structure**
+#### Question Set 3 - Session Structure
 
 Ask about conversation structure:
 
@@ -61,7 +61,7 @@ Ask about conversation structure:
 - question: "How should conversations map to Honcho sessions?"
 - options based on their app (e.g., "One session per chat thread", "One session per user", "Multiple users per session (group chat)", "Custom session logic")
 
-**Question Set 4 - Specific Queries (if using pre-fetch pattern)**
+#### Question Set 4 - Specific Queries (if using pre-fetch pattern)
 
 If they chose pre-fetch, ask what context matters:
 
@@ -449,4 +449,4 @@ When integrating Honcho into an existing codebase:
 
 - Documentation: <https://docs.honcho.dev>
 - Latest SDK versions: <https://docs.honcho.dev/changelog/introduction>
-- API Reference: <https://docs.honcho.dev/v2/api-reference/introduction>
+- API Reference: <https://docs.honcho.dev/v3/api-reference/introduction>
