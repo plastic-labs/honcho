@@ -677,7 +677,7 @@ export class Session {
    * @param options.summary - Whether to include a summary of earlier messages
    * @param options.tokens - Target token count for the context window
    * @param options.peerTarget - The peer to get representation for
-   * @param options.lastUserMessage - Message ID or Message object to use as cutoff
+   * @param options.lastUserMessage - Message text (string) or Message object whose content will be used for semantic search
    * @param options.peerPerspective - The peer whose perspective to use for representation
    * @param options.limitToSession - Whether to limit representation to this session only
    * @param options.representationOptions - Options for representation retrieval
@@ -713,30 +713,30 @@ export class Session {
       typeof opts.peerPerspective === 'object'
         ? opts.peerPerspective.id
         : opts.peerPerspective
-    const lastUserMessageId =
+    const lastUserMessageText =
       typeof opts.lastUserMessage === 'string'
         ? opts.lastUserMessage
-        : opts.lastUserMessage?.id
+        : opts.lastUserMessage?.content
 
     const contextParams = ContextParamsSchema.parse({
       summary: opts.summary,
       tokens: opts.tokens,
       peerTarget: peerTargetId,
-      lastUserMessage: lastUserMessageId,
+      lastUserMessage: lastUserMessageText,
       peerPerspective: peerPerspectiveId,
       limitToSession: opts.limitToSession,
       representationOptions: opts.representationOptions,
     })
 
-    const lastMessageId =
+    const lastMessageText =
       typeof contextParams.lastUserMessage === 'string'
         ? contextParams.lastUserMessage
-        : contextParams.lastUserMessage?.id
+        : contextParams.lastUserMessage?.content
 
     const context = await this._getContext({
       tokens: contextParams.tokens,
       summary: contextParams.summary,
-      last_message: lastMessageId,
+      last_message: lastMessageText,
       peer_target: contextParams.peerTarget,
       peer_perspective: contextParams.peerPerspective,
       limit_to_session: contextParams.limitToSession,

@@ -936,7 +936,7 @@ class SessionAio(AsyncMetadataConfigMixin):
         ),
         last_user_message: str | Message | None = Field(
             None,
-            description="The most recent message (string or Message object), used to fetch semantically relevant conclusions.",
+            description="The most recent message text (string or Message object), used to fetch semantically relevant conclusions.",
         ),
         peer_perspective: str | None = Field(
             None,
@@ -981,8 +981,8 @@ class SessionAio(AsyncMetadataConfigMixin):
                 "You must provide a `peer_target` when `last_user_message` is provided"
             )
 
-        last_user_message_id = (
-            last_user_message.id
+        last_user_message_text = (
+            last_user_message.content
             if isinstance(last_user_message, Message)
             else last_user_message
         )
@@ -993,8 +993,8 @@ class SessionAio(AsyncMetadataConfigMixin):
         }
         if tokens is not None:
             query["tokens"] = tokens
-        if last_user_message_id is not None:
-            query["last_message"] = last_user_message_id
+        if last_user_message_text is not None:
+            query["last_message"] = last_user_message_text
         if peer_target is not None:
             query["peer_target"] = peer_target
         if peer_perspective is not None:
