@@ -4,9 +4,8 @@ Honcho Agno Integration
 This package provides seamless integration between Honcho and Agno,
 enabling AI agents to maintain persistent memory across conversations.
 
-Each HonchoTools instance represents ONE agent identity (peer). The toolkit
-provides read access to Honcho for querying conversation context.
-Orchestration code handles saving messages to avoid duplicates.
+The toolkit provides read access to Honcho for querying conversation context.
+Orchestration code handles saving messages using the Honcho client directly.
 
 Example:
     ```python
@@ -15,35 +14,36 @@ Example:
     from honcho import Honcho
     from honcho_agno import HonchoTools
 
-    # Shared Honcho client
+    # Initialize Honcho client
     honcho = Honcho(workspace_id="my-app")
 
-    # Create Honcho tools for the assistant
-    honcho_tools = HonchoTools(
-        peer_id="assistant",
-        session_id="session-123",
-        honcho_client=honcho,
-    )
+    # Create Honcho tools for the agent
+    honcho_tools = HonchoTools(honcho_client=honcho)
 
-    # Create user peer for orchestration
-    user_peer = honcho.peer("user")
+    # Create peers and session for orchestration
+    user_peer = honcho.peer("user-123")
+    assistant_peer = honcho.peer("assistant")
+    session = honcho.session("session-123")
 
-    # Create agent with memory
+    # Create agent with memory tools
     agent = Agent(
         name="Memory Agent",
         model=OpenAIChat(id="gpt-4o"),
         tools=[honcho_tools],
-        description="An assistant with persistent memory powered by Honcho.",
     )
 
-    # Save user message via orchestration
-    honcho_tools.session.add_messages([user_peer.message("I prefer Python over JavaScript")])
+    # Save user message via orchestration (using honcho client directly)
+    session.add_messages([user_peer.message("I prefer Python over JavaScript")])
 
-    # Run the agent
-    response = agent.run("What programming language does the user prefer?")
+    # Run agent - user_id and session_id flow through RunContext to tools
+    response = agent.run(
+        "What programming language does the user prefer?",
+        user_id="user-123",
+        session_id="session-123",
+    )
 
     # Save assistant response via orchestration
-    honcho_tools.session.add_messages([honcho_tools.peer.message(str(response.content))])
+    session.add_messages([assistant_peer.message(str(response.content))])
     ```
 """
 

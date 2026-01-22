@@ -26,35 +26,31 @@ from honcho_agno import HonchoTools
 honcho = Honcho(workspace_id="my-app")
 
 # Create Honcho tools for the agent
-honcho_tools = HonchoTools(
-    agent_id="assistant",
-    honcho_client=honcho,
-)
+honcho_tools = HonchoTools(honcho_client=honcho)
 
 # Create an agent with memory tools
 agent = Agent(
     name="Memory Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[honcho_tools],
-    description="An assistant with persistent memory powered by Honcho.",
 )
 
-# Create peers and session for orchestration
+# Create peers and session for message persistence
 user_peer = honcho.peer("user-123")
 assistant_peer = honcho.peer("assistant")
 session = honcho.session("session-123")
 
-# Add user message via orchestration
+# Save user message (orchestration handles persistence)
 session.add_messages([user_peer.message("I prefer Python over JavaScript")])
 
-# Run the agent - user_id and session_id flow through RunContext
+# Run the agent - user_id and session_id flow through RunContext to tools
 response = agent.run(
     "What programming language does the user prefer?",
     user_id="user-123",
     session_id="session-123",
 )
 
-# Save assistant response via orchestration
+# Save assistant response
 session.add_messages([assistant_peer.message(str(response.content))])
 ```
 
@@ -65,10 +61,23 @@ HonchoTools maps to Agno's user/assistant architecture:
 | Agno Concept | Honcho Concept | Description |
 |--------------|----------------|-------------|
 | `user_id` (from RunContext) | Peer | The human user being queried about |
-| `agent_id` (from init) | Peer | The AI assistant's identity |
 | `session_id` (from RunContext) | Session | The conversation context |
 
-**Key insight**: Tools query Honcho about the **USER**, not the agent. When the agent asks "What does this user prefer?", Honcho returns insights about the human user identified by `context.user_id`.
+**Key insight**: Tools query Honcho about the **USER**, not the agent. When the agent asks "What does this user prefer?", Honcho returns insights about the human user identified by `run_context.user_id`.
+
+### Message Persistence
+
+This toolkit is **read-only** - it provides tools for querying Honcho's memory but does not automatically save messages. Your orchestration code handles message persistence using the Honcho client directly:
+
+```python
+# Save messages using the Honcho client (not the toolkit)
+session.add_messages([
+    user_peer.message("User's message"),
+    assistant_peer.message("Assistant's response"),
+])
+```
+
+This separation gives you explicit control over what gets saved to memory.
 
 ## Features
 
@@ -91,11 +100,8 @@ from honcho_agno import HonchoTools
 # Create shared Honcho client
 honcho = Honcho(workspace_id="my-app")
 
-# Create toolkit for an agent
-tools = HonchoTools(
-    agent_id="assistant",    # Agent's identity in Honcho
-    honcho_client=honcho,    # Shared Honcho client
-)
+# Create toolkit
+tools = HonchoTools(honcho_client=honcho)
 ```
 
 ### Without Pre-configured Client
@@ -104,17 +110,12 @@ tools = HonchoTools(
 from honcho_agno import HonchoTools
 
 # Creates its own Honcho client internally
-tools = HonchoTools(
-    workspace_id="my-app",   # Workspace ID (used to create internal client)
-    agent_id="assistant",    # Agent's identity
-)
+tools = HonchoTools(workspace_id="my-app")
 ```
 
 Note: When `honcho_client` is provided, `workspace_id` is ignored since the client already has its workspace configured.
 
 ### Environment Variables
-
-Configure via `.env` file in the root honcho directory:
 
 **Honcho Settings:**
 
@@ -124,7 +125,7 @@ Configure via `.env` file in the root honcho directory:
 
 **OpenAI Settings (for examples):**
 
-- `OPENAI_API_KEY` or `LLM_OPENAI_API_KEY`: OpenAI API key
+- `OPENAI_API_KEY`: OpenAI API key
 - `OPENAI_MODEL`: Model to use (default: gpt-4o)
 
 ## Tool Details
@@ -163,26 +164,26 @@ Agno Teams share context within a run, but what about across runs? What if Agent
 ```python
 from agno.agent import Agent
 from agno.team import Team
+from agno.models.openai import OpenAIChat
 from honcho import Honcho
 from honcho_agno import HonchoTools
 
-# Shared Honcho client
+# Shared Honcho client - all agents share the same memory
 honcho = Honcho(workspace_id="advisory-app")
+honcho_tools = HonchoTools(honcho_client=honcho)
 
 # Tech advisor with Honcho memory
-tech_tools = HonchoTools(agent_id="tech-advisor", honcho_client=honcho)
 tech_agent = Agent(
     name="Tech Advisor",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[tech_tools],
+    tools=[honcho_tools],
 )
 
 # Business advisor with Honcho memory
-biz_tools = HonchoTools(agent_id="biz-advisor", honcho_client=honcho)
 biz_agent = Agent(
     name="Business Advisor",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[biz_tools],
+    tools=[honcho_tools],
 )
 
 # Create team
@@ -211,8 +212,7 @@ response = team.run(
 
 See the [examples](./examples) directory for complete working examples:
 
-- `simple_example.py`: Basic usage with HonchoTools
-- `multi_tool_example.py`: Using all tools together
+- `simple_example.py`: Basic usage with HonchoTools demonstrating memory persistence and context retrieval
 
 ## Development
 

@@ -6,12 +6,15 @@ memory system, including session context, semantic search, and chat.
 
 Designed for Agno's user/assistant architecture:
 - user_id from RunContext → Honcho peer (the human user)
-- agent_id from init → Honcho peer (the AI assistant)
 - session_id from RunContext → Honcho session (shared conversation)
 
 Cross-run memory: Unlike Agno Teams which only share context within a run,
 Honcho persists memory across runs. Agent A can remember what Agent B
 learned last week.
+
+Message Persistence: This toolkit is READ-ONLY. To save messages, use the
+Honcho client directly in your orchestration code:
+    session.add_messages([user_peer.message("..."), assistant_peer.message("...")])
 """
 
 import logging
@@ -29,24 +32,25 @@ class HonchoTools(Toolkit):
 
     Maps to Agno's user/assistant model:
     - user_id from RunContext → Honcho peer (the human being queried about)
-    - agent_id from init → Honcho peer (the AI assistant's identity)
     - session_id from RunContext → Honcho session (the conversation)
 
     Tools query Honcho about the USER, not the agent. When the agent asks
     "What does this user prefer?", Honcho returns insights about the human
     user identified by run_context.user_id.
 
+    This toolkit is READ-ONLY. To persist messages, use the Honcho client
+    directly in your orchestration code (see simple_example.py).
+
     Example:
         ```python
         from agno.agent import Agent
         from agno.models.openai import OpenAIChat
+        from honcho import Honcho
         from honcho_agno import HonchoTools
 
-        # Initialize toolkit with agent identity
-        honcho_tools = HonchoTools(
-            workspace_id="my-app",
-            agent_id="travel-assistant",
-        )
+        # Initialize Honcho client and toolkit
+        honcho = Honcho(workspace_id="my-app")
+        honcho_tools = HonchoTools(honcho_client=honcho)
 
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
@@ -61,17 +65,14 @@ class HonchoTools(Toolkit):
     def __init__(
         self,
         workspace_id: str = "default",
-        agent_id: str = "assistant",
         honcho_client: Honcho | None = None,
     ) -> None:
         """
-        Initialize the Honcho toolkit for a specific agent identity.
+        Initialize the Honcho toolkit.
 
         Args:
             workspace_id: Workspace ID for creating an internal Honcho client.
                 Ignored if honcho_client is provided.
-            agent_id: The agent's identity in Honcho. Used for message attribution
-                when the orchestration code saves messages.
             honcho_client: Optional pre-configured Honcho client instance.
                 When provided, uses this client directly (workspace_id is ignored).
         """
@@ -82,8 +83,6 @@ class HonchoTools(Toolkit):
             self.honcho = honcho_client
         else:
             self.honcho = Honcho(workspace_id=workspace_id)
-
-        self.agent_id: str = agent_id
 
         # Register tools with honcho_ prefix to avoid conflicts with other toolkits
         self.register(self.honcho_get_context)

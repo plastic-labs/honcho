@@ -4,11 +4,11 @@ Simple Honcho + Agno Example
 Demonstrates the RunContext integration:
 - user_id and session_id are passed to agent.run()
 - Tools automatically receive RunContext with these values
-- Orchestration uses the honcho client directly
+- Orchestration uses the honcho client directly for message persistence
 
 Environment Variables:
-    LLM_OPENAI_API_KEY: OpenAI API key (matches honcho .env)
-    HONCHO_API_KEY: Required for Honcho API access
+    OPENAI_API_KEY: OpenAI API key
+    HONCHO_API_KEY: Required for Honcho API access (production)
 """
 
 import os
@@ -25,10 +25,6 @@ from honcho_agno import HonchoTools
 
 load_dotenv()
 
-# Use LLM_OPENAI_API_KEY from honcho .env
-if llm_key := os.getenv("LLM_OPENAI_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = llm_key
-
 
 def main():
     # Unique IDs for this run
@@ -38,12 +34,9 @@ def main():
     # Initialize Honcho client
     honcho = Honcho(workspace_id="agno-demo")
 
-    # Initialize HonchoTools with agent identity
+    # Initialize HonchoTools
     # user_id and session_id come from RunContext at runtime
-    honcho_tools = HonchoTools(
-        agent_id="assistant",
-        honcho_client=honcho,
-    )
+    honcho_tools = HonchoTools(honcho_client=honcho)
 
     # Create peers and session for orchestration
     user_peer = honcho.peer(user_id)
