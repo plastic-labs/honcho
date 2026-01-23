@@ -309,7 +309,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "output",
             "component": "output_total",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture("deriver_tokens_processed_total", labels)
 
         # Mock the LLM call and save_representation (we're testing metrics, not DB writes)
         with (
@@ -332,7 +332,7 @@ class TestDeriverIngestionMetrics:
 
         # Verify output tokens metric
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            "deriver_tokens_processed_total",
             labels,
             before,
             expected_output_tokens,
@@ -367,7 +367,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "input",
             "component": "prompt",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture("deriver_tokens_processed_total", labels)
 
         with (
             patch(
@@ -388,7 +388,7 @@ class TestDeriverIngestionMetrics:
             )
 
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            "deriver_tokens_processed_total",
             labels,
             before,
             expected_prompt_tokens,
@@ -424,7 +424,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "input",
             "component": "messages",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture("deriver_tokens_processed_total", labels)
 
         with (
             patch(
@@ -445,7 +445,9 @@ class TestDeriverIngestionMetrics:
             )
 
         # Verify messages tokens were tracked (should be > 0)
-        delta = metric_checker.get_delta("deriver_tokens_processed", labels, before)
+        delta = metric_checker.get_delta(
+            "deriver_tokens_processed_total", labels, before
+        )
         assert delta > 0, f"Expected messages input tokens > 0, got {delta}"
 
 
@@ -491,7 +493,7 @@ class TestDeriverSummaryMetrics:
             "token_type": "output",
             "component": "output_total",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture("deriver_tokens_processed_total", labels)
 
         with (
             patch(
@@ -517,7 +519,7 @@ class TestDeriverSummaryMetrics:
 
         # Verify output tokens match the summary token_count
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            "deriver_tokens_processed_total",
             labels,
             before,
             expected_output_tokens,
@@ -555,7 +557,7 @@ class TestDeriverSummaryMetrics:
             "token_type": "input",
             "component": "prompt",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture("deriver_tokens_processed_total", labels)
 
         with (
             patch(
@@ -580,7 +582,7 @@ class TestDeriverSummaryMetrics:
             )
 
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            "deriver_tokens_processed_total",
             labels,
             before,
             expected_prompt_tokens,
@@ -627,7 +629,7 @@ class TestDeriverSummaryMetrics:
             "token_type": "input",
             "component": "messages",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture("deriver_tokens_processed_total", labels)
 
         with (
             patch(
@@ -652,7 +654,9 @@ class TestDeriverSummaryMetrics:
             )
 
         # Verify messages tokens match what summarizer actually computed
-        delta = metric_checker.get_delta("deriver_tokens_processed", labels, before)
+        delta = metric_checker.get_delta(
+            "deriver_tokens_processed_total", labels, before
+        )
         assert (
             delta == expected_messages_tokens
         ), f"Expected messages input tokens {expected_messages_tokens}, got {delta}"
@@ -695,10 +699,10 @@ class TestDeriverSummaryMetrics:
             "component": "prompt",
         }
         before_output = metric_checker.capture(
-            "deriver_tokens_processed", output_labels
+            "deriver_tokens_processed_total", output_labels
         )
         before_prompt = metric_checker.capture(
-            "deriver_tokens_processed", prompt_labels
+            "deriver_tokens_processed_total", prompt_labels
         )
 
         with patch(
@@ -719,10 +723,10 @@ class TestDeriverSummaryMetrics:
 
         # Verify NO change in metrics when fallback
         output_delta = metric_checker.get_delta(
-            "deriver_tokens_processed", output_labels, before_output
+            "deriver_tokens_processed_total", output_labels, before_output
         )
         prompt_delta = metric_checker.get_delta(
-            "deriver_tokens_processed", prompt_labels, before_prompt
+            "deriver_tokens_processed_total", prompt_labels, before_prompt
         )
 
         assert (
@@ -766,7 +770,7 @@ class TestDialecticTokenMetrics:
             "component": "total",
             "reasoning_level": "low",
         }
-        before = metric_checker.capture("dialectic_tokens_processed", labels)
+        before = metric_checker.capture("dialectic_tokens_processed_total", labels)
 
         agent = DialecticAgent(
             db=db_session,
@@ -783,7 +787,7 @@ class TestDialecticTokenMetrics:
             await agent.answer("What do you know about this user?")
 
         metric_checker.assert_delta(
-            "dialectic_tokens_processed",
+            "dialectic_tokens_processed_total",
             labels,
             before,
             expected_input_tokens,
@@ -814,7 +818,7 @@ class TestDialecticTokenMetrics:
             "component": "total",
             "reasoning_level": "low",
         }
-        before = metric_checker.capture("dialectic_tokens_processed", labels)
+        before = metric_checker.capture("dialectic_tokens_processed_total", labels)
 
         agent = DialecticAgent(
             db=db_session,
@@ -831,7 +835,7 @@ class TestDialecticTokenMetrics:
             await agent.answer("What do you know about this user?")
 
         metric_checker.assert_delta(
-            "dialectic_tokens_processed",
+            "dialectic_tokens_processed_total",
             labels,
             before,
             expected_output_tokens,
@@ -874,10 +878,10 @@ class TestDialecticTokenMetrics:
             "reasoning_level": "low",
         }
         before_input = metric_checker.capture(
-            "dialectic_tokens_processed", input_labels
+            "dialectic_tokens_processed_total", input_labels
         )
         before_output = metric_checker.capture(
-            "dialectic_tokens_processed", output_labels
+            "dialectic_tokens_processed_total", output_labels
         )
 
         agent = DialecticAgent(
@@ -896,10 +900,10 @@ class TestDialecticTokenMetrics:
 
         # Verify NO change in metrics
         input_delta = metric_checker.get_delta(
-            "dialectic_tokens_processed", input_labels, before_input
+            "dialectic_tokens_processed_total", input_labels, before_input
         )
         output_delta = metric_checker.get_delta(
-            "dialectic_tokens_processed", output_labels, before_output
+            "dialectic_tokens_processed_total", output_labels, before_output
         )
 
         assert (
