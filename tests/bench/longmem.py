@@ -206,7 +206,9 @@ class LongMemEvalRunner(BaseRunner[TestResult]):
 
         if self.merge_sessions:
             # Create a single merged session
-            ctx.session = await ctx.honcho_client.aio.session(id=ctx.session_id)
+            ctx.session = await ctx.honcho_client.aio.session(
+                id=ctx.session_id, configuration=self._get_session_configuration()
+            )
 
             if is_assistant_type:
                 await ctx.session.aio.add_peers(
@@ -301,7 +303,9 @@ class LongMemEvalRunner(BaseRunner[TestResult]):
             for session_date, session_id, session_messages in zip(
                 parsed_dates, haystack_session_ids, haystack_sessions, strict=True
             ):
-                session = await ctx.honcho_client.aio.session(id=session_id)
+                session = await ctx.honcho_client.aio.session(
+                    id=session_id, configuration=self._get_session_configuration()
+                )
 
                 if is_assistant_type:
                     await session.aio.add_peers(

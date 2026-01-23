@@ -171,7 +171,9 @@ class BEAMRunner(BaseRunner[ConversationResult]):
         user_peer = ctx.peers["user"]
         assistant_peer = ctx.peers["assistant"]
 
-        ctx.session = await ctx.honcho_client.aio.session(id=ctx.session_id)
+        ctx.session = await ctx.honcho_client.aio.session(
+            id=ctx.session_id, configuration=self._get_session_configuration()
+        )
 
         await ctx.session.aio.add_peers(
             [

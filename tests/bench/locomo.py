@@ -256,7 +256,9 @@ class LoCoMoRunner(BaseRunner[ConversationResult]):
         peer_a = ctx.peers["speaker_a"]
         peer_b = ctx.peers["speaker_b"]
 
-        ctx.session = await ctx.honcho_client.aio.session(id=ctx.session_id)
+        ctx.session = await ctx.honcho_client.aio.session(
+            id=ctx.session_id, configuration=self._get_session_configuration()
+        )
 
         # Observe both peers since questions ask about both speakers
         await ctx.session.aio.add_peers(

@@ -20,6 +20,7 @@ from typing import Any, Generic, Literal, TypeVar
 import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from honcho import Honcho
+from honcho.api_types import SessionConfiguration, SummaryConfiguration
 from openai import AsyncOpenAI
 from redis.asyncio.client import Redis
 
@@ -49,6 +50,7 @@ class RunnerConfig:
     api_key: str | None = None
     skip_dream: bool = False
     json_output: Path | None = None
+    max_concurrent: int | None = None  # None means no limit (use batch_size)
 
     @classmethod
     def from_args(
@@ -70,6 +72,7 @@ class RunnerConfig:
             api_key=args.api_key,
             skip_dream=args.skip_dream,
             json_output=args.json_output,
+            max_concurrent=args.max_concurrent,
         )
 
 
@@ -173,6 +176,13 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         help="Skip the dream consolidation step (default: False)",
     )
 
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=None,
+        help="Maximum concurrent items executing at once (default: unlimited, use for rate-limited remote instances)",
+    )
+
 
 def validate_common_arguments(args: argparse.Namespace) -> str | None:
     """
@@ -189,6 +199,9 @@ def validate_common_arguments(args: argparse.Namespace) -> str | None:
 
     if args.pool_size <= 0:
         return f"Error: Pool size must be positive, got {args.pool_size}"
+
+    if args.max_concurrent is not None and args.max_concurrent <= 0:
+        return f"Error: Max concurrent must be positive, got {args.max_concurrent}"
 
     return None
 
@@ -309,6 +322,10 @@ class BaseRunner(ABC, Generic[ResultT]):
             f"{self.get_metrics_prefix()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
         self.logger: Logger = configure_logging()
+        # Semaphore for rate limiting concurrent item execution
+        self._concurrency_semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(config.max_concurrent) if config.max_concurrent else None
+        )
 
     # -------------------------------------------------------------------------
     # Abstract methods - must be implemented by subclasses
@@ -410,6 +427,8 @@ class BaseRunner(ABC, Generic[ResultT]):
                 f"Distributing across {self.config.pool_size} Honcho instances "
                 + f"(ports {self.config.base_api_port}-{self.config.base_api_port + self.config.pool_size - 1})"
             )
+        if self.config.max_concurrent:
+            print(f"Limiting to {self.config.max_concurrent} concurrent item(s)")
 
         overall_start = time.time()
         all_results: list[ResultT] = []
@@ -425,10 +444,10 @@ class BaseRunner(ABC, Generic[ResultT]):
             print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} items)")
             print(f"{'=' * 60}")
 
-            # Run items in batch concurrently
+            # Run items in batch concurrently (with optional rate limiting)
             batch_results = await asyncio.gather(
                 *[
-                    self.execute_item(item, self._get_honcho_url(i + idx))
+                    self._execute_item_with_limit(item, self._get_honcho_url(i + idx))
                     for idx, item in enumerate(batch)
                 ]
             )
@@ -441,6 +460,13 @@ class BaseRunner(ABC, Generic[ResultT]):
         self.metrics_collector.finalize_collection()
 
         return all_results, overall_duration
+
+    async def _execute_item_with_limit(self, item: Any, honcho_url: str) -> ResultT:
+        """Wrapper that applies concurrency limiting if configured."""
+        if self._concurrency_semaphore:
+            async with self._concurrency_semaphore:
+                return await self.execute_item(item, honcho_url)
+        return await self.execute_item(item, honcho_url)
 
     async def execute_item(self, item: Any, honcho_url: str) -> ResultT:
         """
@@ -590,6 +616,10 @@ class BaseRunner(ABC, Generic[ResultT]):
             base_url=honcho_url,
             api_key=self.config.api_key,
         )
+
+    def _get_session_configuration(self) -> SessionConfiguration:
+        """Get default session configuration with summaries disabled."""
+        return SessionConfiguration(summary=SummaryConfiguration(enabled=False))
 
     async def _flush_deriver_queue(self) -> None:
         """Enable deriver flush mode to bypass batch token threshold."""
