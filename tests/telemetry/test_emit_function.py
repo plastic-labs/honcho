@@ -351,56 +351,6 @@ class TestShutdownTelemetryEvents:
 
 
 # =============================================================================
-# Tests for initialize_telemetry() function
-# =============================================================================
-
-
-class TestInitializeTelemetry:
-    """Tests for initialize_telemetry() in src.telemetry."""
-
-    def test_initialize_otel_when_enabled(self):
-        """initialize_telemetry() initializes OTel metrics when enabled."""
-        import src.telemetry as telemetry_module
-
-        with (
-            patch("src.config.settings") as mock_settings,
-            # Patch where it's used (in src.telemetry), not where it's defined
-            patch.object(telemetry_module, "initialize_otel_metrics") as mock_otel_init,
-        ):
-            mock_settings.OTEL.ENABLED = True
-            mock_settings.OTEL.ENDPOINT = "http://otel:9009/metrics"
-            mock_settings.OTEL.HEADERS = None
-            mock_settings.OTEL.EXPORT_INTERVAL_MILLIS = 60000
-            mock_settings.OTEL.SERVICE_NAME = "honcho"
-            mock_settings.OTEL.SERVICE_NAMESPACE = "test"
-
-            telemetry_module.initialize_telemetry()
-
-            mock_otel_init.assert_called_once_with(
-                endpoint="http://otel:9009/metrics",
-                headers=None,
-                export_interval_millis=60000,
-                service_name="honcho",
-                service_namespace="test",
-                enabled=True,
-            )
-
-    def test_skip_otel_when_disabled(self):
-        """initialize_telemetry() skips OTel when disabled."""
-        import src.telemetry as telemetry_module
-
-        with (
-            patch("src.config.settings") as mock_settings,
-            patch.object(telemetry_module, "initialize_otel_metrics") as mock_otel_init,
-        ):
-            mock_settings.OTEL.ENABLED = False
-
-            telemetry_module.initialize_telemetry()
-
-            mock_otel_init.assert_not_called()
-
-
-# =============================================================================
 # Tests for initialize_telemetry_async() function
 # =============================================================================
 
@@ -454,17 +404,13 @@ class TestShutdownTelemetry:
     """Tests for shutdown_telemetry() in src.telemetry."""
 
     @pytest.mark.asyncio
-    async def test_shutdown_calls_all_subsystems(self):
-        """shutdown_telemetry() shuts down all telemetry subsystems."""
+    async def test_shutdown_calls_cloudevents(self):
+        """shutdown_telemetry() shuts down CloudEvents emitter."""
         from src.telemetry import shutdown_telemetry
 
-        with (
-            patch(
-                "src.telemetry.events.shutdown_telemetry_events", new_callable=AsyncMock
-            ) as mock_ce_shutdown,
-            patch("src.telemetry.shutdown_otel_metrics") as mock_otel_shutdown,
-        ):
+        with patch(
+            "src.telemetry.events.shutdown_telemetry_events", new_callable=AsyncMock
+        ) as mock_ce_shutdown:
             await shutdown_telemetry()
 
             mock_ce_shutdown.assert_called_once()
-            mock_otel_shutdown.assert_called_once()

@@ -68,7 +68,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "WEBHOOK": "webhook",
         "DREAM": "dream",
         "VECTOR_STORE": "vector_store",
-        "OTEL": "otel",
+        "PROMETHEUS": "prometheus",
         "TELEMETRY": "telemetry",
         "": "app",  # For AppSettings with no prefix
     }
@@ -445,33 +445,20 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
-class OpenTelemetrySettings(HonchoSettings):
-    """OpenTelemetry settings for push-based metrics via OTLP.
+class PrometheusSettings(HonchoSettings):
+    """Prometheus settings for pull-based metrics.
 
-    These settings configure the OTel SDK to push metrics via OTLP HTTP
-    to any compatible backend (Mimir, Grafana Cloud, etc.).
+    These settings configure Prometheus metrics that are scraped by Fly.io
+    or any Prometheus-compatible scraper.
     """
 
-    model_config = SettingsConfigDict(env_prefix="OTEL_", extra="ignore")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="PROMETHEUS_", extra="ignore")  # pyright: ignore
 
-    # Master toggle for OTel metrics
+    # Master toggle for Prometheus metrics
     ENABLED: bool = False
 
-    # OTLP HTTP endpoint for metrics (e.g., "https://mimir.example.com/otlp/v1/metrics")
-    # For Mimir, the endpoint is typically: <mimir-url>/otlp/v1/metrics
-    # For Grafana Cloud: https://otlp-gateway-<region>.grafana.net/otlp/v1/metrics
-    ENDPOINT: str | None = None
-
-    HEADERS: dict[str, str] | None = None
-
-    # Export interval in milliseconds (default: 60 seconds)
-    EXPORT_INTERVAL_MILLIS: int = 60000
-
-    # Service name for resource attributes (identifies what this service is)
-    SERVICE_NAME: str = "honcho"
-
-    # Service namespace for resource attributes (defaults to top-level NAMESPACE if not set)
-    SERVICE_NAMESPACE: str | None = None
+    # Namespace for metrics (used as a label on all metrics)
+    NAMESPACE: str | None = None
 
 
 class TelemetrySettings(HonchoSettings):
@@ -676,7 +663,7 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
-    OTEL: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
+    PROMETHEUS: PrometheusSettings = Field(default_factory=PrometheusSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
@@ -694,7 +681,7 @@ class AppSettings(HonchoSettings):
         """Propagate top-level NAMESPACE to nested settings if not explicitly set.
 
         After this validator runs, CACHE.NAMESPACE,
-        VECTOR_STORE.NAMESPACE, TELEMETRY.NAMESPACE, and OTEL.SERVICE_NAMESPACE
+        VECTOR_STORE.NAMESPACE, TELEMETRY.NAMESPACE, and PROMETHEUS.NAMESPACE
         are guaranteed to exist. Explicitly provided nested namespaces are preserved.
         """
         if "NAMESPACE" not in self.CACHE.model_fields_set:
@@ -703,8 +690,8 @@ class AppSettings(HonchoSettings):
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
-        if "SERVICE_NAMESPACE" not in self.OTEL.model_fields_set:
-            self.OTEL.SERVICE_NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.PROMETHEUS.model_fields_set:
+            self.PROMETHEUS.NAMESPACE = self.NAMESPACE
 
         return self
 
