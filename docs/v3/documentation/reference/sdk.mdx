@@ -752,7 +752,7 @@ The SessionContext object has the following structure:
 | `tokens` | `int` | Maximum tokens to include |
 | `peer_target` | `str` | Peer ID to get representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
-| `search_query` | `str` | Query string for semantic search |
+| `search_query` | `str` or `Message` | Query string or Message object for semantic search |
 | `limit_to_session` | `bool` | Limit representation to session only |
 | `search_top_k` | `int` | Number of semantic search results (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
