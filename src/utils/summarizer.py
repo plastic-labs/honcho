@@ -20,8 +20,8 @@ from src.telemetry import otel_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.logging import accumulate_metric, conditional_observe
 from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
+from src.utils.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .. import crud, models

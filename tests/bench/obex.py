@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.config import settings
 from src.deriver.prompts import minimal_deriver_prompt
 from src.embedding_client import EmbeddingClient
-from src.utils.clients import honcho_llm_call
+from src.utils.llm import honcho_llm_call
 from src.utils.representation import PromptRepresentation
 
 CANDIDATES_DIR = Path(__file__).parent / "obexeval_data" / "candidates"

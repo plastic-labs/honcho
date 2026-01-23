@@ -31,12 +31,12 @@ from src.utils.agent_tools import (
     create_tool_executor,
     search_memory,
 )
-from src.utils.clients import (
+from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.llm import (
     HonchoLLMCallResponse,
     StreamingResponseWithMetadata,
     honcho_llm_call,
 )
-from src.utils.formatting import format_new_turn_with_timestamp
 
 logger = logging.getLogger(__name__)
 

@@ -26,7 +26,7 @@ from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
 from src.config import settings
-from src.utils.clients import (
+from src.utils.llm import (
     CLIENTS,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -209,7 +209,7 @@ class TestAnthropicClient:
 
         # Instead of mocking the CLIENTS dict, we mock the entire AsyncAnthropic class
         # to return our configured mock when instantiated
-        with patch("src.utils.clients.AsyncAnthropic") as mock_anthropic_class:
+        with patch("src.utils.llm.registry.AsyncAnthropic") as mock_anthropic_class:
             mock_client_instance = Mock()
             mock_client_instance.messages = mock_messages
             mock_anthropic_class.return_value = mock_client_instance

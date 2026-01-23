@@ -31,7 +31,7 @@ from src.utils.agent_tools import (
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
+from src.utils.llm import HonchoLLMCallResponse, honcho_llm_call
 
 logger = logging.getLogger(__name__)
 

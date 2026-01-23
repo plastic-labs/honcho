@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - API route renaming for consistency
 - Dreamer and dialectic now respect peer card configuration settings
 - Observations renamed to Conclusions across API and SDKs
+- LLM client layer refactored from monolithic `clients.py` to adapter-based `src/utils/llm/` package
+- Provider identifier `"custom"` renamed to `"openrouter"` for clarity
 
 ### Fixed
 

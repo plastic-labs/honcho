@@ -25,7 +25,14 @@ class GetOrCreateResult(NamedTuple, Generic[T]):
     created: bool
 
 
-SupportedProviders = Literal["anthropic", "openai", "google", "groq", "custom", "vllm"]
+SupportedProviders = Literal[
+    "anthropic",
+    "openai",
+    "openrouter",
+    "google",
+    "groq",
+    "vllm",
+]
 TaskType = Literal[
     "webhook", "summary", "representation", "dream", "deletion", "reconciler"
 ]
