@@ -24,7 +24,7 @@ kill_timeout = '5s'
     soft_limit = 20
 
 [[vm]]
-  memory = '512mb'
+  memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
   processes = ['api', 'deriver']
