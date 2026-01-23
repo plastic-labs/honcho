@@ -1,9 +1,8 @@
 """
 Shared utilities for Honcho benchmark test runners.
 
-Contains common functionality for queue management, dream triggering,
-Honcho client creation, and CLI argument parsing used across longmem,
-beam, and locomo runners.
+Contains the BaseRunner abstract class and RunnerConfig dataclass that provide
+a common framework for all benchmark runners (longmem, beam, locomo).
 """
 
 import argparse
@@ -11,11 +10,13 @@ import asyncio
 import logging
 import os
 import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
+from logging import Logger
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
-import httpx
 import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from honcho import Honcho
@@ -28,6 +29,61 @@ from src.telemetry.metrics_collector import MetricsCollector
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 REASONING_LEVELS: list[str] = ["minimal", "low", "medium", "high", "max"]
 
+# Type variable for result types
+ResultT = TypeVar("ResultT")
+
+
+@dataclass
+class RunnerConfig:
+    """Configuration shared across all benchmark runners."""
+
+    base_api_port: int = 8000
+    pool_size: int = 1
+    timeout_seconds: int = 600
+    batch_size: int = 10
+    cleanup_workspace: bool = False
+    use_get_context: bool = False
+    redis_url: str = "redis://localhost:6379/0"
+    reasoning_level: ReasoningLevel | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    skip_dream: bool = False
+    json_output: Path | None = None
+
+    @classmethod
+    def from_args(
+        cls, args: argparse.Namespace, default_timeout: int = 600
+    ) -> "RunnerConfig":
+        """Create config from parsed CLI arguments."""
+        return cls(
+            base_api_port=args.base_api_port,
+            pool_size=args.pool_size,
+            timeout_seconds=args.timeout
+            if args.timeout is not None
+            else default_timeout,
+            batch_size=args.batch_size,
+            cleanup_workspace=args.cleanup_workspace,
+            use_get_context=args.use_get_context,
+            redis_url=args.redis_url,
+            reasoning_level=args.reasoning_level,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            skip_dream=args.skip_dream,
+            json_output=args.json_output,
+        )
+
+
+@dataclass
+class ItemContext:
+    """Context for executing a single benchmark item."""
+
+    workspace_id: str
+    honcho_client: Honcho
+    honcho_url: str
+    session_id: str
+    peers: dict[str, Any] = field(default_factory=dict)
+    session: Any = None
+
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     """
@@ -36,6 +92,20 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     Args:
         parser: ArgumentParser to add arguments to
     """
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="Base URL for remote Honcho instance (e.g., https://groudon.fly.dev). Overrides --base-api-port.",
+    )
+
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key for remote Honcho instance authentication",
+    )
+
     parser.add_argument(
         "--base-api-port",
         type=int,
@@ -95,6 +165,12 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         choices=REASONING_LEVELS,
         default=None,
         help="Reasoning level for dialectic chat: minimal, low, medium, high, max (default: None)",
+    )
+
+    parser.add_argument(
+        "--skip-dream",
+        action="store_true",
+        help="Skip the dream consolidation step (default: False)",
     )
 
 
@@ -185,104 +261,349 @@ def create_openai_client(
     return AsyncOpenAI(api_key=key)
 
 
-def create_metrics_collector(prefix: str) -> MetricsCollector:
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes}m {secs:.1f}s"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours}h {minutes}m"
+
+
+class BaseRunner(ABC, Generic[ResultT]):
     """
-    Create and start a MetricsCollector.
+    Abstract base class for benchmark runners.
 
-    Args:
-        prefix: Prefix for the collection name (e.g., "longmem", "beam", "locomo")
+    Provides a template method pattern for executing benchmarks with common
+    infrastructure for Honcho client management, queue waiting, and dream triggering.
 
-    Returns:
-        Started MetricsCollector instance
-    """
-    collector = MetricsCollector()
-    collector.start_collection(f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    return collector
-
-
-def export_metrics(
-    collector: MetricsCollector,
-    prefix: str,
-    output_dir: str = "tests/bench/perf_metrics",
-) -> Path:
-    """
-    Export metrics to a JSON file and cleanup the collector.
-
-    Args:
-        collector: MetricsCollector instance
-        prefix: Prefix for the output filename
-        output_dir: Directory for output files
-
-    Returns:
-        Path to the exported metrics file
-    """
-    metrics_output = Path(
-        f"{output_dir}/{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    )
-    collector.export_to_json(metrics_output)
-    collector.cleanup_collection()
-    return metrics_output
-
-
-class RunnerMixin:
-    """
-    Mixin class providing common functionality for benchmark runners.
-
-    Requires the following attributes on the class:
-    - redis_url: str
-    - timeout_seconds: int
-    - base_api_port: int
-    - pool_size: int
-    - reasoning_level: ReasoningLevel | None (optional)
+    Subclasses must implement:
+    - get_metrics_prefix(): Return the metrics prefix (e.g., "longmem")
+    - load_items(): Load and return the items to process
+    - get_workspace_id(item): Return workspace ID for an item
+    - get_session_id(item): Return session ID for an item
+    - setup_peers(ctx, item): Create and configure peers
+    - setup_session(ctx, item): Create and configure session with peers
+    - ingest_messages(ctx, item): Ingest messages into the session
+    - get_dream_observers(item): Return list of peer IDs to trigger dreams for
+    - execute_questions(ctx, item): Execute questions and return result
+    - print_summary(results, duration): Print summary of results
+    - generate_output(results, duration): Generate JSON output
     """
 
-    # These are expected to be set by the inheriting class's __init__
-    redis_url: str = ""
-    timeout_seconds: int = 0
-    base_api_port: int = 0
-    pool_size: int = 0
-    reasoning_level: ReasoningLevel | None = None
-    # These are initialized by _init_common() - use Any to satisfy type checker
-    # since the actual type is set at runtime
-    metrics_collector: Any = None
-    logger: Any = None
-
-    def _init_common(self, metrics_prefix: str) -> None:
+    def __init__(self, config: RunnerConfig):
         """
-        Initialize common runner components.
-
-        Call this at the end of your __init__ after setting instance attributes.
+        Initialize the runner with configuration.
 
         Args:
-            metrics_prefix: Prefix for metrics collection (e.g., "longmem", "beam")
+            config: Runner configuration
         """
-        self.metrics_collector = create_metrics_collector(metrics_prefix)
-        self.logger = configure_logging()
+        self.config: RunnerConfig = config
+        self.metrics_collector: MetricsCollector = MetricsCollector()
+        self.metrics_collector.start_collection(
+            f"{self.get_metrics_prefix()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+        self.logger: Logger = configure_logging()
 
-    def get_honcho_url_for_index(self, index: int) -> str:
-        """Get the Honcho URL for a given index using round-robin distribution."""
-        instance_id = index % self.pool_size
-        port = self.base_api_port + instance_id
-        return f"http://localhost:{port}"
+    # -------------------------------------------------------------------------
+    # Abstract methods - must be implemented by subclasses
+    # -------------------------------------------------------------------------
 
-    def create_honcho_client(self, workspace_id: str, honcho_url: str) -> Honcho:
-        """Create a Honcho client for a specific workspace."""
-        return Honcho(
-            environment="local",
+    @abstractmethod
+    def get_metrics_prefix(self) -> str:
+        """Return the metrics prefix for this runner (e.g., 'longmem', 'beam')."""
+        ...
+
+    @abstractmethod
+    def load_items(self) -> list[Any]:
+        """Load and return the list of items to process."""
+        ...
+
+    @abstractmethod
+    def get_workspace_id(self, item: Any) -> str:
+        """Return the workspace ID for a given item."""
+        ...
+
+    @abstractmethod
+    def get_session_id(self, item: Any, workspace_id: str) -> str:
+        """Return the session ID for a given item."""
+        ...
+
+    @abstractmethod
+    async def setup_peers(self, ctx: ItemContext, item: Any) -> None:
+        """
+        Create and configure peers for the item.
+
+        Should populate ctx.peers with peer objects.
+        """
+        ...
+
+    @abstractmethod
+    async def setup_session(self, ctx: ItemContext, item: Any) -> None:
+        """
+        Create and configure the session with peers.
+
+        Should set ctx.session and add peers to the session.
+        """
+        ...
+
+    @abstractmethod
+    async def ingest_messages(self, ctx: ItemContext, item: Any) -> int:
+        """
+        Ingest messages into the session.
+
+        Returns:
+            Number of messages ingested
+        """
+        ...
+
+    @abstractmethod
+    def get_dream_observers(self, item: Any) -> list[str]:
+        """Return list of peer IDs to trigger dreams for."""
+        ...
+
+    @abstractmethod
+    async def execute_questions(self, ctx: ItemContext, item: Any) -> ResultT:
+        """
+        Execute questions/queries for the item.
+
+        Returns:
+            Result object for this item
+        """
+        ...
+
+    @abstractmethod
+    def print_summary(self, results: list[ResultT], total_duration: float) -> None:
+        """Print a summary of all results."""
+        ...
+
+    @abstractmethod
+    def generate_output(self, results: list[ResultT], total_duration: float) -> None:
+        """Generate JSON output file."""
+        ...
+
+    # -------------------------------------------------------------------------
+    # Template method - the main execution flow
+    # -------------------------------------------------------------------------
+
+    async def run(self) -> tuple[list[ResultT], float]:
+        """
+        Run the benchmark.
+
+        This is the main template method that orchestrates the execution flow.
+
+        Returns:
+            Tuple of (list of results, total duration in seconds)
+        """
+        items = self.load_items()
+        if not items:
+            return [], 0.0
+
+        print(f"Found {len(items)} items to process")
+        if self.config.pool_size > 1:
+            print(
+                f"Distributing across {self.config.pool_size} Honcho instances "
+                + f"(ports {self.config.base_api_port}-{self.config.base_api_port + self.config.pool_size - 1})"
+            )
+
+        overall_start = time.time()
+        all_results: list[ResultT] = []
+
+        # Process in batches
+        batch_size = self.config.batch_size
+        for i in range(0, len(items), batch_size):
+            batch = items[i : i + batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (len(items) + batch_size - 1) // batch_size
+
+            print(f"\n{'=' * 60}")
+            print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} items)")
+            print(f"{'=' * 60}")
+
+            # Run items in batch concurrently
+            batch_results = await asyncio.gather(
+                *[
+                    self.execute_item(item, self._get_honcho_url(i + idx))
+                    for idx, item in enumerate(batch)
+                ]
+            )
+
+            all_results.extend(batch_results)
+
+        overall_duration = time.time() - overall_start
+
+        # Finalize metrics
+        self.metrics_collector.finalize_collection()
+
+        return all_results, overall_duration
+
+    async def execute_item(self, item: Any, honcho_url: str) -> ResultT:
+        """
+        Execute a single benchmark item.
+
+        This method orchestrates the standard flow:
+        1. Create workspace and client
+        2. Setup peers and session
+        3. Ingest messages
+        4. Wait for queue to empty
+        5. Trigger dreams
+        6. Execute questions
+        7. Cleanup (if configured)
+
+        Args:
+            item: The item to process
+            honcho_url: URL of the Honcho instance to use
+
+        Returns:
+            Result for this item
+        """
+        workspace_id = self.get_workspace_id(item)
+        session_id = self.get_session_id(item, workspace_id)
+
+        print(f"\n{'=' * 80}")
+        print(f"Executing {workspace_id}")
+        print(f"Using Honcho instance: {honcho_url}")
+        print(f"{'=' * 80}")
+
+        # Create context
+        ctx = ItemContext(
             workspace_id=workspace_id,
-            base_url=honcho_url,
+            honcho_client=self._create_honcho_client(workspace_id, honcho_url),
+            honcho_url=honcho_url,
+            session_id=session_id,
         )
 
-    async def flush_deriver_queue(self) -> None:
+        start_time = time.time()
+
+        try:
+            # Setup peers
+            await self.setup_peers(ctx, item)
+
+            # Setup session
+            await self.setup_session(ctx, item)
+
+            # Ingest messages
+            print(f"[{workspace_id}] Ingesting messages...")
+            message_count = await self.ingest_messages(ctx, item)
+            print(f"[{workspace_id}] Ingested {message_count} messages")
+
+            # Wait for deriver queue
+            print(f"[{workspace_id}] Waiting for deriver queue to empty...")
+            await asyncio.sleep(1)  # Give time for tasks to be queued
+            await self._flush_deriver_queue()
+
+            queue_empty = await self._wait_for_queue_empty(ctx.honcho_client)
+            if not queue_empty:
+                raise TimeoutError(
+                    f"Deriver queue timeout after {self.config.timeout_seconds}s"
+                )
+
+            # Trigger dreams
+            print(f"[{workspace_id}] Deriver queue empty. Triggering dreams...")
+            for observer in self.get_dream_observers(item):
+                success = await self._trigger_dream(
+                    ctx.honcho_client, workspace_id, observer, session_id
+                )
+                if not success:
+                    print(
+                        f"[{workspace_id}] Warning: Dream for {observer} did not complete"
+                    )
+
+            # Execute questions
+            print(f"[{workspace_id}] Executing questions...")
+            result = await self.execute_questions(ctx, item)
+
+            # Cleanup
+            if self.config.cleanup_workspace:
+                try:
+                    await ctx.honcho_client.aio.delete_workspace(workspace_id)
+                    print(f"[{workspace_id}] Cleaned up workspace")
+                except Exception as e:
+                    print(f"[{workspace_id}] Failed to delete workspace: {e}")
+
+            duration = time.time() - start_time
+            print(f"[{workspace_id}] Completed in {format_duration(duration)}")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error executing {workspace_id}: {e}")
+            # Let subclass handle error result creation
+            raise
+
+    def run_and_summarize(self) -> int:
+        """
+        Run the benchmark, print summary, and generate output.
+
+        This is a convenience method that runs the full benchmark flow.
+
+        Returns:
+            Exit code (0 for success, 1 for failure)
+        """
+        try:
+            results, total_duration = asyncio.run(self.run())
+
+            self.print_summary(results, total_duration)
+            self.metrics_collector.print_summary()
+            self.generate_output(results, total_duration)
+
+            # Export metrics
+            metrics_output = Path(
+                f"tests/bench/perf_metrics/{self.get_metrics_prefix()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            self.metrics_collector.export_to_json(metrics_output)
+            self.metrics_collector.cleanup_collection()
+
+            return 0
+
+        except KeyboardInterrupt:
+            print("\nTest execution interrupted by user")
+            return 1
+        except Exception as e:
+            print(f"Error running tests: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return 1
+
+    # -------------------------------------------------------------------------
+    # Infrastructure methods
+    # -------------------------------------------------------------------------
+
+    def _get_honcho_url(self, index: int) -> str:
+        """Get the Honcho URL for a given index using round-robin distribution."""
+        if self.config.base_url:
+            return self.config.base_url
+        instance_id = index % self.config.pool_size
+        port = self.config.base_api_port + instance_id
+        return f"http://localhost:{port}"
+
+    def _create_honcho_client(self, workspace_id: str, honcho_url: str) -> Honcho:
+        """Create a Honcho client for a specific workspace."""
+        return Honcho(
+            workspace_id=workspace_id,
+            base_url=honcho_url,
+            api_key=self.config.api_key,
+        )
+
+    async def _flush_deriver_queue(self) -> None:
         """Enable deriver flush mode to bypass batch token threshold."""
-        redis_client: Redis = aioredis.from_url(self.redis_url)  # pyright: ignore[reportUnknownMemberType]
+        if self.config.base_url:
+            print("Skipping flush mode (remote instance)")
+            return
+        redis_client: Redis = aioredis.from_url(self.config.redis_url)  # pyright: ignore[reportUnknownMemberType]
         try:
             await redis_client.set("honcho:deriver:flush_mode", "1", ex=60)
             print("Enabled deriver flush mode")
         finally:
             await redis_client.aclose()
 
-    async def wait_for_deriver_queue_empty(
+    async def _wait_for_queue_empty(
         self, honcho_client: Honcho, session_id: str | None = None
     ) -> bool:
         """Wait for the deriver queue to be empty."""
@@ -292,79 +613,55 @@ class RunnerMixin:
                 status = await honcho_client.aio.queue_status(session=session_id)
             except Exception:
                 await asyncio.sleep(1)
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= self.timeout_seconds:
+                if time.time() - start_time >= self.config.timeout_seconds:
                     return False
                 continue
 
             if status.pending_work_units == 0 and status.in_progress_work_units == 0:
                 return True
 
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= self.timeout_seconds:
+            if time.time() - start_time >= self.config.timeout_seconds:
                 return False
             await asyncio.sleep(1)
 
-    async def trigger_dream_and_wait(
+    async def _trigger_dream(
         self,
         honcho_client: Honcho,
         workspace_id: str,
         observer: str,
+        session_id: str,
         observed: str | None = None,
-        session_id: str | None = None,
     ) -> bool:
         """
         Trigger a dream task and wait for it to complete.
 
-        Args:
-            honcho_client: Honcho client instance
-            workspace_id: Workspace identifier
-            observer: Observer peer name
-            observed: Observed peer name (defaults to observer)
-            session_id: Session ID to scope the dream to
-
         Returns:
-            True if dream completed successfully, False on timeout
+            True if dream completed (or was skipped), False on timeout
         """
-        observed = observed or observer
-        honcho_url = self.get_honcho_url_for_index(0)
+        if self.config.skip_dream:
+            print(f"[{workspace_id}] Skipping dream for {observer} (--skip-dream)")
+            return True
 
-        url = f"{honcho_url}/v3/workspaces/{workspace_id}/schedule_dream"
-        payload: dict[str, Any] = {
-            "observer": observer,
-            "observed": observed,
-            "dream_type": "omni",
-            "session_id": session_id or f"{workspace_id}_session",
-        }
+        observed = observed or observer
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    timeout=30.0,
-                )
-                if response.status_code != 204:
-                    print(
-                        f"[{workspace_id}] ERROR: Dream trigger failed with status {response.status_code}"
-                    )
-                    print(f"[{workspace_id}] Response body: {response.text}")
-                    return False
+            await honcho_client.aio.schedule_dream(
+                observer=observer,
+                session=session_id,
+                observed=observed,
+            )
         except Exception as e:
             print(f"[{workspace_id}] ERROR: Dream trigger exception: {e}")
             return False
 
-        print(
-            f"[{workspace_id}] Dream triggered successfully for {observer}/{observed}"
-        )
+        print(f"[{workspace_id}] Dream triggered for {observer}/{observed}")
 
-        # Wait for dream queue to empty
-        print(f"[{workspace_id}] Waiting for dream to complete...")
-        await asyncio.sleep(2)  # Give time for dream to be enqueued
-        await self.flush_deriver_queue()
-        success = await self.wait_for_deriver_queue_empty(honcho_client)
+        # Wait for dream to complete
+        await asyncio.sleep(2)
+        await self._flush_deriver_queue()
+        success = await self._wait_for_queue_empty(honcho_client)
         if success:
-            print(f"[{workspace_id}] Dream queue empty")
+            print(f"[{workspace_id}] Dream for {observer} completed")
         else:
-            print(f"[{workspace_id}] Dream queue timeout")
+            print(f"[{workspace_id}] Dream for {observer} timed out")
         return success

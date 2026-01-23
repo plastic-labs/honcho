@@ -58,8 +58,6 @@ Optional arguments:
 """
 
 import argparse
-import asyncio
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -81,7 +79,6 @@ from .locomo_common import (
     calculate_tokens,
     extract_sessions,
     filter_questions,
-    format_duration,
     generate_json_summary,
     get_evidence_context,
     judge_response,
@@ -90,12 +87,12 @@ from .locomo_common import (
     print_summary,
 )
 from .runner_common import (
-    ReasoningLevel,
-    RunnerMixin,
+    BaseRunner,
+    ItemContext,
+    RunnerConfig,
     add_common_arguments,
     create_anthropic_client,
     create_openai_client,
-    export_metrics,
     validate_common_arguments,
 )
 
@@ -169,47 +166,38 @@ def determine_question_target(question: str, speaker_a: str, speaker_b: str) -> 
         return speaker_a
 
 
-class LoCoMoRunner(RunnerMixin):
+class LoCoMoRunner(BaseRunner[ConversationResult]):
     """
     Executes LoCoMo benchmark tests against a Honcho instance.
     """
 
     def __init__(
         self,
-        base_api_port: int = 8000,
-        pool_size: int = 1,
+        config: RunnerConfig,
+        data_file: Path,
         anthropic_api_key: str | None = None,
-        timeout_seconds: int | None = None,
-        cleanup_workspace: bool = False,
-        use_get_context: bool = False,
-        redis_url: str = "redis://localhost:6379/0",
-        reasoning_level: ReasoningLevel | None = None,
+        sample_id: str | None = None,
+        test_count: int | None = None,
+        question_count: int | None = None,
     ):
         """
         Initialize the LoCoMo test runner.
 
         Args:
-            base_api_port: Base port for Honcho API instances (default: 8000)
-            pool_size: Number of Honcho instances in the pool (default: 1)
+            config: Common runner configuration
+            data_file: Path to the LoCoMo JSON file
             anthropic_api_key: Anthropic API key for judging responses
-            timeout_seconds: Timeout for deriver queue in seconds
-            cleanup_workspace: If True, delete workspace after executing conversation
-            use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
-            redis_url: Redis URL for flush mode signaling (default: redis://localhost:6379/0)
-            reasoning_level: Reasoning level for dialectic chat (default: None)
+            sample_id: Optional sample_id to run only that conversation
+            test_count: Optional number of conversations to run
+            question_count: Optional limit on questions per conversation
         """
-        self.base_api_port: int = base_api_port
-        self.pool_size: int = pool_size
-        self.timeout_seconds: int = (
-            timeout_seconds if timeout_seconds is not None else 600
-        )
-        self.cleanup_workspace: bool = cleanup_workspace
-        self.use_get_context: bool = use_get_context
-        self.redis_url: str = redis_url
-        self.reasoning_level: ReasoningLevel | None = reasoning_level
+        self.data_file: Path = data_file
+        self.sample_id_filter: str | None = sample_id
+        self.test_count: int | None = test_count
+        self.question_count: int | None = question_count
 
-        # Initialize common components (metrics, logging)
-        self._init_common("locomo")
+        # Initialize base class
+        super().__init__(config)
 
         # Initialize LLM clients
         self.anthropic_client: AsyncAnthropic = create_anthropic_client(
@@ -217,398 +205,307 @@ class LoCoMoRunner(RunnerMixin):
         )
         self.openai_client: AsyncOpenAI = create_openai_client()
 
-    async def execute_conversation(
-        self,
-        conversation_data: dict[str, Any],
-        honcho_url: str,
-        question_count: int | None = None,
-    ) -> ConversationResult:
-        """
-        Execute LoCoMo benchmark for a single conversation.
+    def get_metrics_prefix(self) -> str:
+        return "locomo"
 
-        Args:
-            conversation_data: Dictionary containing conversation and QA data
-            honcho_url: URL of the Honcho instance to use
-            question_count: Optional limit on number of questions to run
+    def load_items(self) -> list[Any]:
+        """Load conversations from the data file."""
+        conversations = load_locomo_data(self.data_file)
 
-        Returns:
-            Conversation execution results
-        """
-        start_time = time.time()
+        # Filter by sample_id if specified
+        if self.sample_id_filter is not None:
+            conversations = [
+                c for c in conversations if c.get("sample_id") == self.sample_id_filter
+            ]
+            if not conversations:
+                print(
+                    f"Error: No conversation found with sample_id '{self.sample_id_filter}'"
+                )
+                return []
+            print(f"Filtering to sample_id '{self.sample_id_filter}'")
 
-        sample_id = conversation_data.get("sample_id", "unknown")
-        conversation = conversation_data.get("conversation", {})
-        qa_list = conversation_data.get("qa", [])
+        # Limit by test_count
+        if self.test_count is not None and self.test_count > 0:
+            conversations = conversations[: self.test_count]
+            print(f"Limiting to {len(conversations)} conversations")
 
+        return conversations
+
+    def get_workspace_id(self, item: Any) -> str:
+        """Return workspace ID for a conversation."""
+        sample_id = item.get("sample_id", "unknown")
+        return f"locomo_{sample_id}"
+
+    def get_session_id(self, item: Any, workspace_id: str) -> str:
+        """Return session ID for a conversation."""
+        return f"{workspace_id}_session"
+
+    async def setup_peers(self, ctx: ItemContext, item: Any) -> None:
+        """Create peers using speaker names as IDs."""
+        conversation = item.get("conversation", {})
         speaker_a = conversation.get("speaker_a", "User")
         speaker_b = conversation.get("speaker_b", "Assistant")
 
-        print(f"\n{'=' * 80}")
-        print(f"Executing LoCoMo conversation {sample_id}")
-        print(f"Speakers: {speaker_a} and {speaker_b}")
-        print(f"{'=' * 80}")
+        ctx.peers["speaker_a"] = await ctx.honcho_client.aio.peer(id=speaker_a)
+        ctx.peers["speaker_b"] = await ctx.honcho_client.aio.peer(id=speaker_b)
+        ctx.peers["_speaker_a_name"] = speaker_a
+        ctx.peers["_speaker_b_name"] = speaker_b
 
-        # Create workspace for this conversation
-        workspace_id = f"locomo_{sample_id}"
-        honcho_client = self.create_honcho_client(workspace_id, honcho_url)
+    async def setup_session(self, ctx: ItemContext, item: Any) -> None:
+        """Create and configure session - observe BOTH peers."""
+        peer_a = ctx.peers["speaker_a"]
+        peer_b = ctx.peers["speaker_b"]
+
+        ctx.session = await ctx.honcho_client.aio.session(id=ctx.session_id)
+
+        # Observe both peers since questions ask about both speakers
+        await ctx.session.aio.add_peers(
+            [
+                (peer_a, SessionPeerConfig(observe_me=True, observe_others=False)),
+                (peer_b, SessionPeerConfig(observe_me=True, observe_others=False)),
+            ]
+        )
+
+    async def ingest_messages(self, ctx: ItemContext, item: Any) -> int:
+        """Ingest conversation messages into the session."""
+        conversation = item.get("conversation", {})
+        speaker_a = ctx.peers["_speaker_a_name"]
+        speaker_b = ctx.peers["_speaker_b_name"]
+        peer_a = ctx.peers["speaker_a"]
+        peer_b = ctx.peers["speaker_b"]
+
+        # Extract and ingest all sessions
+        sessions = extract_sessions(conversation)
+
+        messages: list[MessageCreateParams] = []
+        total_tokens = 0
+
+        for date_str, session_messages in sessions:
+            session_date = parse_locomo_date(date_str) if date_str else None
+
+            for msg in session_messages:
+                speaker = msg.get("speaker", "")
+                content, metadata = format_message_with_image(msg)
+                total_tokens += calculate_tokens(content)
+
+                # Map speaker to peer by name
+                if speaker == speaker_a:
+                    messages.append(
+                        peer_a.message(
+                            content, metadata=metadata, created_at=session_date
+                        )
+                    )
+                elif speaker == speaker_b:
+                    messages.append(
+                        peer_b.message(
+                            content, metadata=metadata, created_at=session_date
+                        )
+                    )
+
+        # Store token count for results
+        ctx.peers["_total_tokens"] = total_tokens
+        ctx.peers["_total_sessions"] = len(sessions)
+
+        # Add messages in batches of 100
+        for i in range(0, len(messages), 100):
+            batch = messages[i : i + 100]
+            await ctx.session.aio.add_messages(batch)
+
+        return len(messages)
+
+    def get_dream_observers(self, item: Any) -> list[str]:
+        """Return both speaker names - LoCoMo triggers dreams for both."""
+        conversation = item.get("conversation", {})
+        speaker_a = conversation.get("speaker_a", "User")
+        speaker_b = conversation.get("speaker_b", "Assistant")
+        return [speaker_a, speaker_b]
+
+    async def execute_questions(
+        self, ctx: ItemContext, item: Any
+    ) -> ConversationResult:
+        """Execute all questions for the conversation."""
+        sample_id = item.get("sample_id", "unknown")
+        conversation = item.get("conversation", {})
+        qa_list = item.get("qa", [])
+        workspace_id = ctx.workspace_id
+
+        speaker_a = ctx.peers["_speaker_a_name"]
+        speaker_b = ctx.peers["_speaker_b_name"]
+        peer_a = ctx.peers["speaker_a"]
+        peer_b = ctx.peers["speaker_b"]
 
         result: ConversationResult = {
             "sample_id": sample_id,
             "speaker_a": speaker_a,
             "speaker_b": speaker_b,
-            "total_sessions": 0,
+            "total_sessions": ctx.peers.get("_total_sessions", 0),
             "total_turns": 0,
-            "total_tokens": 0,
+            "total_tokens": ctx.peers.get("_total_tokens", 0),
             "question_results": [],
             "category_scores": {},
             "overall_score": 0.0,
             "error": None,
-            "start_time": start_time,
+            "start_time": 0.0,
             "end_time": 0.0,
             "duration_seconds": 0.0,
         }
 
-        try:
-            # Create peers using their actual names as IDs
-            peer_a = await honcho_client.aio.peer(id=speaker_a)
-            peer_b = await honcho_client.aio.peer(id=speaker_b)
+        # Filter questions
+        filtered_qa = filter_questions(
+            qa_list,
+            exclude_adversarial=True,
+            test_count=self.question_count,
+        )
 
-            # Create session for this conversation
-            session_id = f"{workspace_id}_session"
-            session = await honcho_client.aio.session(id=session_id)
+        print(f"[{workspace_id}] Executing {len(filtered_qa)} questions...")
 
-            # Configure peer observation - observe BOTH peers since questions ask about both speakers
-            await session.aio.add_peers(
-                [
-                    (
-                        peer_a,
-                        SessionPeerConfig(observe_me=True, observe_others=False),
-                    ),
-                    (
-                        peer_b,
-                        SessionPeerConfig(observe_me=True, observe_others=False),
-                    ),
-                ]
-            )
+        # Execute questions
+        for q_idx, qa in enumerate(filtered_qa):
+            question = qa.get("question", "")
+            expected_answer = qa.get("answer", "")
+            category = qa.get("category", 0)
+            evidence = qa.get("evidence", [])
+            category_name = CATEGORY_NAMES.get(category, f"category_{category}")
 
-            # Extract and ingest all sessions
-            sessions = extract_sessions(conversation)
-            result["total_sessions"] = len(sessions)
-
-            print(f"[{workspace_id}] Ingesting {len(sessions)} sessions...")
-
-            messages: list[MessageCreateParams] = []
-            total_tokens = 0
-
-            for date_str, session_messages in sessions:
-                session_date = parse_locomo_date(date_str) if date_str else None
-
-                for msg in session_messages:
-                    speaker = msg.get("speaker", "")
-                    content, metadata = format_message_with_image(msg)
-                    result["total_turns"] += 1
-                    total_tokens += calculate_tokens(content)
-
-                    # Map speaker to peer by name
-                    if speaker == speaker_a:
-                        messages.append(
-                            peer_a.message(
-                                content, metadata=metadata, created_at=session_date
-                            )
-                        )
-                    elif speaker == speaker_b:
-                        messages.append(
-                            peer_b.message(
-                                content, metadata=metadata, created_at=session_date
-                            )
-                        )
-
-            result["total_tokens"] = total_tokens
-
-            # Add messages in batches of 100
-            for i in range(0, len(messages), 100):
-                batch = messages[i : i + 100]
-                await session.aio.add_messages(batch)
+            # Determine which peer the question is about
+            target_speaker = determine_question_target(question, speaker_a, speaker_b)
+            target_peer = peer_a if target_speaker == speaker_a else peer_b
 
             print(
-                f"[{workspace_id}] Ingested {len(messages)} messages (~{total_tokens:,} tokens). Waiting for deriver queue..."
+                f"  Q{q_idx + 1} [{category_name}] (asking {target_speaker}): {question}"
             )
 
-            # Wait for deriver queue to empty
-            await asyncio.sleep(1)
-            await self.flush_deriver_queue()
-            queue_empty = await self.wait_for_deriver_queue_empty(honcho_client)
-            if not queue_empty:
-                result["error"] = "Deriver queue timeout"
-                result["end_time"] = time.time()
-                result["duration_seconds"] = result["end_time"] - result["start_time"]
-                print(
-                    f"\n[{workspace_id}] ERROR: Deriver queue timeout after {self.timeout_seconds}s"
-                )
-                return result
+            try:
+                if self.config.use_get_context:
+                    # Use get_context + LLM
+                    context = await ctx.session.aio.context(
+                        summary=True,
+                        peer_target=target_speaker,
+                        search_query=question,
+                    )
+                    context_messages = context.to_anthropic(assistant="assistant")
+                    context_messages.append({"role": "user", "content": question})
 
-            print(
-                f"[{workspace_id}] Deriver queue empty. Triggering dream consolidation for both peers..."
-            )
+                    response = await self.anthropic_client.messages.create(
+                        model="claude-sonnet-4-5",
+                        max_tokens=1024,
+                        messages=cast(list[MessageParam], context_messages),
+                    )
 
-            # Trigger dream for memory consolidation for BOTH peers
-            # Dream for speaker_a
-            dream_success_a = await self.trigger_dream_and_wait(
-                honcho_client,
-                workspace_id,
-                observer=speaker_a,
-                session_id=session_id,
-            )
+                    if not response.content:
+                        raise ValueError("Anthropic returned empty response")
 
-            if not dream_success_a:
-                print(
-                    f"[{workspace_id}] Warning: Dream for {speaker_a} did not complete, proceeding anyway"
-                )
-            else:
-                print(f"[{workspace_id}] Dream for {speaker_a} completed.")
-
-            # Dream for speaker_b
-            dream_success_b = await self.trigger_dream_and_wait(
-                honcho_client,
-                workspace_id,
-                observer=speaker_b,
-                session_id=session_id,
-            )
-
-            if not dream_success_b:
-                print(
-                    f"[{workspace_id}] Warning: Dream for {speaker_b} did not complete, proceeding anyway"
-                )
-            else:
-                print(f"[{workspace_id}] Dream for {speaker_b} completed.")
-
-            # Filter questions
-            filtered_qa = filter_questions(
-                qa_list,
-                exclude_adversarial=True,
-                test_count=question_count,
-            )
-
-            print(f"[{workspace_id}] Executing {len(filtered_qa)} questions...")
-
-            # Execute questions
-            for q_idx, qa in enumerate(filtered_qa):
-                question = qa.get("question", "")
-                expected_answer = qa.get("answer", "")
-                category = qa.get("category", 0)
-                evidence = qa.get("evidence", [])
-                category_name = CATEGORY_NAMES.get(category, f"category_{category}")
-
-                # Determine which peer the question is about (returns speaker name)
-                target_speaker = determine_question_target(
-                    question, speaker_a, speaker_b
-                )
-                target_peer = peer_a if target_speaker == speaker_a else peer_b
-
-                print(
-                    f"  Q{q_idx + 1} [{category_name}] (asking {target_speaker}): {question}"
-                )
-
-                try:
-                    if self.use_get_context:
-                        # Use get_context + LLM - target the appropriate peer
-                        context = await session.aio.context(
-                            summary=True,
-                            peer_target=target_speaker,
-                            search_query=question,
-                        )
-                        context_messages = context.to_anthropic(assistant="assistant")
-                        context_messages.append({"role": "user", "content": question})
-
-                        response = await self.anthropic_client.messages.create(
-                            model="claude-sonnet-4-5",
-                            max_tokens=1024,
-                            messages=cast(list[MessageParam], context_messages),
-                        )
-
-                        if not response.content:
-                            raise ValueError("Anthropic returned empty response")
-
-                        content_block = response.content[0]
-                        actual_response = getattr(content_block, "text", "")
-                    else:
-                        # Use dialectic .chat endpoint on the appropriate peer
-                        actual_response = await target_peer.aio.chat(
-                            question,
-                            session=session_id,
-                            reasoning_level=self.reasoning_level,
-                        )
-                        actual_response = (
-                            actual_response if isinstance(actual_response, str) else ""
-                        )
-
-                    # Get evidence context for the judge
-                    evidence_context = get_evidence_context(conversation, evidence)
-
-                    # Judge the response
-                    judgment = await judge_response(
-                        self.openai_client,
+                    actual_response = getattr(response.content[0], "text", "")
+                else:
+                    # Use dialectic .chat endpoint
+                    actual_response = await target_peer.aio.chat(
                         question,
-                        str(expected_answer),
-                        actual_response,
-                        evidence_context=evidence_context,
+                        session=ctx.session_id,
+                        reasoning_level=self.config.reasoning_level,
+                    )
+                    actual_response = (
+                        actual_response if isinstance(actual_response, str) else ""
                     )
 
-                    passed = judgment.get("passed", False)
+                # Get evidence context for the judge
+                evidence_context = get_evidence_context(conversation, evidence)
 
-                    question_result: QuestionResult = {
-                        "question_id": q_idx,
-                        "question": question,
-                        "expected_answer": str(expected_answer),
-                        "actual_response": actual_response,
-                        "category": category,
-                        "category_name": category_name,
-                        "evidence": evidence,
-                        "judgment": judgment,
-                        "passed": passed,
-                    }
-
-                    result["question_results"].append(question_result)
-
-                    status = "PASS" if passed else "FAIL"
-                    print(f"    [{status}]")
-                    if not passed:
-                        print(f"      Expected: {expected_answer}")
-                        print(f"      Got: {actual_response[:200]}...")
-
-                except Exception as e:
-                    self.logger.error(f"Error executing question {q_idx}: {e}")
-                    question_result = QuestionResult(
-                        question_id=q_idx,
-                        question=question,
-                        expected_answer=str(expected_answer),
-                        actual_response=f"ERROR: {e}",
-                        category=category,
-                        category_name=category_name,
-                        evidence=evidence,
-                        judgment={"passed": False, "reasoning": str(e)},
-                        passed=False,
-                    )
-                    result["question_results"].append(question_result)
-
-            # Calculate category scores
-            result["category_scores"] = calculate_category_scores(
-                result["question_results"]
-            )
-
-            # Calculate overall score (pass rate)
-            if result["question_results"]:
-                passed_count = sum(
-                    1 for qr in result["question_results"] if qr["passed"]
+                # Judge the response
+                judgment = await judge_response(
+                    self.openai_client,
+                    question,
+                    str(expected_answer),
+                    actual_response,
+                    evidence_context=evidence_context,
                 )
-                result["overall_score"] = passed_count / len(result["question_results"])
 
-            # Cleanup workspace if requested
-            if self.cleanup_workspace:
-                try:
-                    await honcho_client.aio.delete_workspace(workspace_id)
-                    print(f"[{workspace_id}] Cleaned up workspace")
-                except Exception as e:
-                    print(f"Failed to delete workspace: {e}")
+                passed = judgment.get("passed", False)
 
-            result["end_time"] = time.time()
-            result["duration_seconds"] = result["end_time"] - result["start_time"]
+                question_result: QuestionResult = {
+                    "question_id": q_idx,
+                    "question": question,
+                    "expected_answer": str(expected_answer),
+                    "actual_response": actual_response,
+                    "category": category,
+                    "category_name": category_name,
+                    "evidence": evidence,
+                    "judgment": judgment,
+                    "passed": passed,
+                }
 
-            print(
-                f"\n[{workspace_id}] Completed in {format_duration(result['duration_seconds'])}"
-            )
-            print(f"Overall Score: {result['overall_score']:.3f}")
+                result["question_results"].append(question_result)
 
-        except Exception as e:
-            self.logger.error(f"Error executing conversation {sample_id}: {e}")
-            result["error"] = str(e)
-            result["end_time"] = time.time()
-            result["duration_seconds"] = result["end_time"] - result["start_time"]
+                status = "PASS" if passed else "FAIL"
+                print(f"    [{status}]")
+                if not passed:
+                    print(f"      Expected: {expected_answer}")
+                    print(f"      Got: {actual_response[:200]}...")
+
+            except Exception as e:
+                self.logger.error(f"Error executing question {q_idx}: {e}")
+                question_result = QuestionResult(
+                    question_id=q_idx,
+                    question=question,
+                    expected_answer=str(expected_answer),
+                    actual_response=f"ERROR: {e}",
+                    category=category,
+                    category_name=category_name,
+                    evidence=evidence,
+                    judgment={"passed": False, "reasoning": str(e)},
+                    passed=False,
+                )
+                result["question_results"].append(question_result)
+
+        # Calculate category scores
+        result["category_scores"] = calculate_category_scores(
+            result["question_results"]
+        )
+
+        # Calculate overall score (pass rate)
+        if result["question_results"]:
+            passed_count = sum(1 for qr in result["question_results"] if qr["passed"])
+            result["overall_score"] = passed_count / len(result["question_results"])
+
+        print(f"\nOverall Score: {result['overall_score']:.3f}")
 
         return result
 
-    async def run_conversations(
-        self,
-        data_file: Path,
-        batch_size: int = 1,
-        test_count: int | None = None,
-        sample_id: str | None = None,
-        question_count: int | None = None,
-    ) -> tuple[list[ConversationResult], float]:
-        """
-        Run multiple conversations from the LoCoMo benchmark.
+    def print_summary(
+        self, results: list[ConversationResult], total_duration: float
+    ) -> None:
+        """Print summary using the common function."""
+        print_summary(results, total_duration)
 
-        Args:
-            data_file: Path to the LoCoMo JSON file
-            batch_size: Number of conversations to run concurrently in each batch
-            test_count: Optional number of conversations to run
-            sample_id: Optional sample_id to run only that conversation
-            question_count: Optional limit on questions per conversation
-
-        Returns:
-            Tuple of (list of conversation results, total duration)
-        """
-        conversations = load_locomo_data(data_file)
-
-        # Filter by sample_id if specified
-        if sample_id is not None:
-            conversations = [
-                c for c in conversations if c.get("sample_id") == sample_id
-            ]
-            if not conversations:
-                print(f"Error: No conversation found with sample_id '{sample_id}'")
-                return [], 0.0
-            print(f"Filtering to sample_id '{sample_id}'")
-
-        # Limit by test_count
-        if test_count is not None and test_count > 0:
-            conversations = conversations[:test_count]
-            print(f"Limiting to {len(conversations)} conversations")
-
-        print(f"Running {len(conversations)} conversations from {data_file}")
-        if self.pool_size > 1:
-            print(
-                f"Distributing conversations across {self.pool_size} Honcho instances"
+    def generate_output(
+        self, results: list[ConversationResult], total_duration: float
+    ) -> None:
+        """Generate JSON output file."""
+        if self.config.json_output:
+            output_file = self.config.json_output
+        else:
+            output_file = Path(
+                f"tests/bench/eval_results/locomo_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
-        overall_start = time.time()
-        all_results: list[ConversationResult] = []
-
-        for i in range(0, len(conversations), batch_size):
-            batch = conversations[i : i + batch_size]
-            batch_num = (i // batch_size) + 1
-            total_batches = (len(conversations) + batch_size - 1) // batch_size
-
-            print(f"\n{'=' * 80}")
-            print(
-                f"Processing batch {batch_num}/{total_batches} ({len(batch)} conversations)"
-            )
-            print(f"{'=' * 80}")
-
-            # Run conversations in current batch concurrently
-            batch_results: list[ConversationResult] = await asyncio.gather(
-                *[
-                    self.execute_conversation(
-                        conv,
-                        self.get_honcho_url_for_index(i + idx),
-                        question_count=question_count,
-                    )
-                    for idx, conv in enumerate(batch)
-                ]
-            )
-
-            all_results.extend(batch_results)
-
-        overall_end = time.time()
-        overall_duration = overall_end - overall_start
-
-        # Finalize metrics collection
-        self.metrics_collector.finalize_collection()
-
-        return all_results, overall_duration
+        generate_json_summary(
+            results,
+            total_duration,
+            output_file,
+            metadata_extra={
+                "data_file": str(self.data_file),
+                "base_api_port": self.config.base_api_port,
+                "pool_size": self.config.pool_size,
+                "timeout_seconds": self.config.timeout_seconds,
+                "reasoning_level": self.config.reasoning_level,
+                "deriver_settings": settings.DERIVER.model_dump(),
+                "dialectic_settings": settings.DIALECTIC.model_dump(),
+                "dream_settings": settings.DREAM.model_dump(),
+                "summary_settings": settings.SUMMARY.model_dump(),
+            },
+        )
 
 
-async def main() -> int:
+def main() -> int:
     """Main entry point for the LoCoMo test runner."""
     parser = argparse.ArgumentParser(
         description="Run LoCoMo benchmark tests against a Honcho instance",
@@ -671,78 +568,20 @@ Examples:
         print(f"Error: Data file {args.data_file} does not exist")
         return 1
 
-    # Create test runner
+    # Create config and runner
+    config = RunnerConfig.from_args(args, default_timeout=600)
+
     runner = LoCoMoRunner(
-        base_api_port=args.base_api_port,
-        pool_size=args.pool_size,
+        config=config,
+        data_file=args.data_file,
         anthropic_api_key=args.anthropic_api_key,
-        timeout_seconds=args.timeout,
-        cleanup_workspace=args.cleanup_workspace,
-        use_get_context=args.use_get_context,
-        redis_url=args.redis_url,
-        reasoning_level=args.reasoning_level,
+        sample_id=args.sample_id,
+        test_count=args.test_count,
+        question_count=args.question_count,
     )
 
-    try:
-        # Run conversations
-        results, total_elapsed = await runner.run_conversations(
-            args.data_file,
-            args.batch_size,
-            args.test_count,
-            args.sample_id,
-            args.question_count,
-        )
-
-        print_summary(results, total_elapsed)
-
-        # Print metrics summary
-        runner.metrics_collector.print_summary()
-
-        # Generate JSON output
-        if args.json_output:
-            output_file = args.json_output
-        else:
-            output_file = Path(
-                f"tests/bench/eval_results/locomo_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            )
-
-        generate_json_summary(
-            results,
-            total_elapsed,
-            output_file,
-            metadata_extra={
-                "data_file": str(args.data_file),
-                "base_api_port": runner.base_api_port,
-                "pool_size": runner.pool_size,
-                "timeout_seconds": runner.timeout_seconds,
-                "reasoning_level": runner.reasoning_level,
-                "deriver_settings": settings.DERIVER.model_dump(),
-                "dialectic_settings": settings.DIALECTIC.model_dump(),
-                "dream_settings": settings.DREAM.model_dump(),
-                "summary_settings": settings.SUMMARY.model_dump(),
-            },
-        )
-
-        # Export metrics to JSON file
-        export_metrics(runner.metrics_collector, "locomo")
-
-        # Return exit code based on results
-        avg_score = (
-            sum(r["overall_score"] for r in results) / len(results) if results else 0
-        )
-        return 0 if avg_score >= 0.5 else 1
-
-    except KeyboardInterrupt:
-        print("\nTest execution interrupted by user")
-        return 1
-    except Exception as e:
-        print(f"Error running tests: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
+    return runner.run_and_summarize()
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    exit(exit_code)
+    exit(main())
