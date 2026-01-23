@@ -186,6 +186,7 @@ const ctx = await session.getContext({
   summary: true,
   peerTarget: user,
   peerPerspective: assistant,
+  lastUserMessage: "What are my preferences?",
   representationOptions: {
     maxObservations: 50,
     includeMostDerived: true
@@ -197,6 +198,7 @@ const ctx = await session.context({
   summary: true,
   peerTarget: user,
   peerPerspective: assistant,
+  searchQuery: "What are my preferences?",
   representationOptions: {
     maxConclusions: 50,
     includeMostFrequent: true

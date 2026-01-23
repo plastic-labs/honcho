@@ -44,26 +44,23 @@ poetry add honcho-ai
 ```python
 from honcho import Honcho
 
-####### Storing Data in Honcho
-
 # 1. Initialize your Honcho client
 honcho = Honcho(workspace_id="my-app-testing")
 
-# 2.. Initialize Peers
+# 2. Initialize peers
 alice = honcho.peer("alice")
 tutor = honcho.peer("tutor")
 
-# 3. Make a Session and send messages
+# 3. Create a session and add messages
 
 session = honcho.session("session-1")
-
-session.add_messages([
-  alice.message("Hey there can you help me with my math homework"),
-  tutor.message("Absolutely send me your first problem!"),
-  .
-  .
-  .
-])
+# Adding messages from a peer will automatically add them to the session
+session.add_messages(
+    [
+        alice.message("Hey there — can you help me with my math homework?"),
+        tutor.message("Absolutely. Send me your first problem!"),
+    ]
+)
 ```
 
 3. Leverage reasoning from Honcho to inform your agent's behavior
@@ -73,14 +70,14 @@ session.add_messages([
 ### 1. Use the chat endpoint to ask questions about your users in natural language
 response = alice.chat("What learning styles does the user respond to best?")
 
-### 2. Use Get context to get most recent messages and summaries to continue a conversation
-context = session.get_context(summary=True, tokens=10000)
+### 2. Use session context to continue a conversation with an LLM
+context = session.context(summary=True, tokens=10_000)
 
 # Convert to a format to send to OpenAI and get the next message
-openai_messages = context.to_openai_messages(assistant=tutor)
+openai_messages = context.to_openai(assistant=tutor)
 
 from openai import OpenAI
-client = Openai()
+client = OpenAI()
 response = client.chat.completions.create(
   model="gpt-4",
   messages=openai_messages
@@ -89,8 +86,8 @@ response = client.chat.completions.create(
 ### 3. Search for similar messages
 results = alice.search("Math Homework")
 
-### 4. Get a cached representation of a Peer for the Session
-alice_representation = session.working_rep("alice")
+### 4. Get a session-scoped representation of a peer
+alice_representation = session.representation(alice)
 
 ```
 
