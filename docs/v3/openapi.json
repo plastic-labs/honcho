@@ -71,7 +71,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ]
       }
     },
@@ -83,6 +84,41 @@
         "summary": "Get All Workspaces",
         "description": "Get all Workspaces, paginated with optional filters.",
         "operationId": "get_all_workspaces_v3_workspaces_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -95,8 +131,8 @@
                     "type": "null"
                   }
                 ],
-                "title": "Options",
-                "description": "Filtering and pagination options for the workspaces list"
+                "description": "Filtering and pagination options for the workspaces list",
+                "title": "Options"
               }
             }
           }
@@ -122,12 +158,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/v3/workspaces/{workspace_id}": {
@@ -141,7 +172,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -198,7 +230,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -239,7 +272,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -302,7 +336,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -404,7 +439,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -456,7 +492,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -467,6 +504,33 @@
               "type": "string",
               "title": "Workspace Id"
             }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -522,7 +586,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -581,7 +646,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -649,7 +715,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -669,6 +736,33 @@
               "type": "string",
               "title": "Peer Id"
             }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -724,7 +818,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -809,7 +904,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -877,7 +973,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -952,7 +1049,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1040,7 +1138,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1207,7 +1306,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1279,7 +1379,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1290,6 +1391,33 @@
               "type": "string",
               "title": "Workspace Id"
             }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -1345,7 +1473,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1404,7 +1533,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1470,7 +1600,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1525,7 +1656,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1600,7 +1732,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1670,7 +1803,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1740,7 +1874,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1810,7 +1945,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1830,6 +1966,33 @@
               "type": "string",
               "title": "Session Id"
             }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "responses": {
@@ -1867,7 +2030,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -1931,7 +2095,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2001,7 +2166,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2227,7 +2393,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2284,7 +2451,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2356,7 +2524,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2427,7 +2596,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2498,7 +2668,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2537,6 +2708,33 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -2592,7 +2790,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2656,7 +2855,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2733,7 +2933,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2796,7 +2997,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2826,6 +3028,33 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -2881,7 +3110,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2944,7 +3174,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2994,7 +3225,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -3102,7 +3334,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -3161,7 +3394,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -3174,6 +3408,33 @@
               "title": "Workspace Id"
             },
             "description": "Workspace ID"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "responses": {
@@ -3211,7 +3472,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -3265,7 +3527,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -3839,51 +4102,23 @@
             "title": "Items"
           },
           "total": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Total"
           },
           "page": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Page"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Size"
           },
           "pages": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Pages"
           }
         },
@@ -3905,51 +4140,23 @@
             "title": "Items"
           },
           "total": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Total"
           },
           "page": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Page"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Size"
           },
           "pages": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Pages"
           }
         },
@@ -3971,51 +4178,23 @@
             "title": "Items"
           },
           "total": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Total"
           },
           "page": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Page"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Size"
           },
           "pages": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Pages"
           }
         },
@@ -4037,51 +4216,23 @@
             "title": "Items"
           },
           "total": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Total"
           },
           "page": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Page"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Size"
           },
           "pages": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Pages"
           }
         },
@@ -4103,51 +4254,23 @@
             "title": "Items"
           },
           "total": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Total"
           },
           "page": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Page"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Size"
           },
           "pages": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Pages"
           }
         },
@@ -4169,51 +4292,23 @@
             "title": "Items"
           },
           "total": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Total"
           },
           "page": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Page"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Size"
           },
           "pages": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 0.0,
             "title": "Pages"
           }
         },
