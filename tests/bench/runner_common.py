@@ -271,6 +271,7 @@ class RunnerMixin:
             environment="local",
             workspace_id=workspace_id,
             base_url=honcho_url,
+            timeout=300.0,
         )
 
     async def flush_deriver_queue(self) -> None:
