@@ -71,8 +71,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ]
       }
     },
@@ -84,41 +83,6 @@
         "summary": "Get All Workspaces",
         "description": "Get all Workspaces, paginated with optional filters.",
         "operationId": "get_all_workspaces_v3_workspaces_list_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {}
-        ],
-        "parameters": [
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -131,8 +95,8 @@
                     "type": "null"
                   }
                 ],
-                "description": "Filtering and pagination options for the workspaces list",
-                "title": "Options"
+                "title": "Options",
+                "description": "Filtering and pagination options for the workspaces list"
               }
             }
           }
@@ -158,7 +122,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/v3/workspaces/{workspace_id}": {
@@ -172,8 +141,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -230,8 +198,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -272,8 +239,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -336,8 +302,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -439,8 +404,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -492,8 +456,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -504,33 +467,6 @@
               "type": "string",
               "title": "Workspace Id"
             }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -586,8 +522,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -646,8 +581,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -715,8 +649,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -736,33 +669,6 @@
               "type": "string",
               "title": "Peer Id"
             }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -818,8 +724,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -904,8 +809,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -973,8 +877,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1049,8 +952,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1138,8 +1040,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1306,8 +1207,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1379,8 +1279,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1391,33 +1290,6 @@
               "type": "string",
               "title": "Workspace Id"
             }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -1473,8 +1345,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1533,8 +1404,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1600,8 +1470,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1656,8 +1525,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1732,8 +1600,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1803,8 +1670,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1874,8 +1740,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1945,8 +1810,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -1966,33 +1830,6 @@
               "type": "string",
               "title": "Session Id"
             }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "responses": {
@@ -2030,8 +1867,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2095,8 +1931,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2166,8 +2001,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2208,7 +2042,7 @@
             "description": "Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within 100000 tokens)"
           },
           {
-            "name": "last_message",
+            "name": "search_query",
             "in": "query",
             "required": false,
             "schema": {
@@ -2220,10 +2054,10 @@
                   "type": "null"
                 }
               ],
-              "description": "The most recent message, used to fetch semantically relevant conclusions",
-              "title": "Last Message"
+              "description": "A query string used to fetch semantically relevant conclusions",
+              "title": "Search Query"
             },
-            "description": "The most recent message, used to fetch semantically relevant conclusions"
+            "description": "A query string used to fetch semantically relevant conclusions"
           },
           {
             "name": "summary",
@@ -2279,11 +2113,11 @@
             "required": false,
             "schema": {
               "type": "boolean",
-              "description": "Only used if `last_message` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
+              "description": "Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
               "default": false,
               "title": "Limit To Session"
             },
-            "description": "Only used if `last_message` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)"
+            "description": "Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)"
           },
           {
             "name": "search_top_k",
@@ -2300,10 +2134,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Only used if `last_message` is provided. The number of semantic-search-retrieved conclusions to include in the representation",
+              "description": "Only used if `search_query` is provided. The number of semantic-search-retrieved conclusions to include in the representation",
               "title": "Search Top K"
             },
-            "description": "Only used if `last_message` is provided. The number of semantic-search-retrieved conclusions to include in the representation"
+            "description": "Only used if `search_query` is provided. The number of semantic-search-retrieved conclusions to include in the representation"
           },
           {
             "name": "search_max_distance",
@@ -2320,10 +2154,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Only used if `last_message` is provided. The maximum distance to search for semantically relevant conclusions",
+              "description": "Only used if `search_query` is provided. The maximum distance to search for semantically relevant conclusions",
               "title": "Search Max Distance"
             },
-            "description": "Only used if `last_message` is provided. The maximum distance to search for semantically relevant conclusions"
+            "description": "Only used if `search_query` is provided. The maximum distance to search for semantically relevant conclusions"
           },
           {
             "name": "include_most_frequent",
@@ -2331,11 +2165,11 @@
             "required": false,
             "schema": {
               "type": "boolean",
-              "description": "Only used if `last_message` is provided. Whether to include the most frequent conclusions in the representation",
+              "description": "Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation",
               "default": false,
               "title": "Include Most Frequent"
             },
-            "description": "Only used if `last_message` is provided. Whether to include the most frequent conclusions in the representation"
+            "description": "Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation"
           },
           {
             "name": "max_conclusions",
@@ -2352,10 +2186,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Only used if `last_message` is provided. The maximum number of conclusions to include in the representation",
+              "description": "Only used if `search_query` is provided. The maximum number of conclusions to include in the representation",
               "title": "Max Conclusions"
             },
-            "description": "Only used if `last_message` is provided. The maximum number of conclusions to include in the representation"
+            "description": "Only used if `search_query` is provided. The maximum number of conclusions to include in the representation"
           }
         ],
         "responses": {
@@ -2393,8 +2227,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2451,8 +2284,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2524,8 +2356,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2596,8 +2427,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2668,8 +2498,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2708,33 +2537,6 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -2790,8 +2592,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2855,8 +2656,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2933,8 +2733,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -2997,8 +2796,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3028,33 +2826,6 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "requestBody": {
@@ -3110,8 +2881,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3174,8 +2944,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3225,8 +2994,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3334,8 +3102,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3394,8 +3161,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3408,33 +3174,6 @@
               "title": "Workspace Id"
             },
             "description": "Workspace ID"
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
-            },
-            "description": "Page number"
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
-            },
-            "description": "Page size"
           }
         ],
         "responses": {
@@ -3472,8 +3211,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3527,8 +3265,7 @@
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
         "parameters": [
           {
@@ -3559,23 +3296,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/metrics": {
-      "get": {
-        "summary": "Metrics",
-        "description": "Prometheus metrics endpoint",
-        "operationId": "metrics_metrics_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
               }
             }
           }
@@ -4119,23 +3839,51 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Total"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "size": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Size"
           },
           "pages": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pages"
           }
         },
@@ -4157,23 +3905,51 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Total"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "size": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Size"
           },
           "pages": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pages"
           }
         },
@@ -4195,23 +3971,51 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Total"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "size": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Size"
           },
           "pages": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pages"
           }
         },
@@ -4233,23 +4037,51 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Total"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "size": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Size"
           },
           "pages": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pages"
           }
         },
@@ -4271,23 +4103,51 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Total"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "size": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Size"
           },
           "pages": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pages"
           }
         },
@@ -4309,23 +4169,51 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Total"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Page"
           },
           "size": {
-            "type": "integer",
-            "minimum": 1.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Size"
           },
           "pages": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pages"
           }
         },

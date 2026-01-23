@@ -415,7 +415,7 @@ class LoCoMoRunner(RunnerMixin):
                         context = await session.aio.context(
                             summary=True,
                             peer_target=target_speaker,
-                            last_user_message=question,
+                            search_query=question,
                         )
                         context_messages = context.to_anthropic(assistant="assistant")
                         context_messages.append({"role": "user", "content": question})

@@ -934,9 +934,9 @@ class SessionAio(AsyncMetadataConfigMixin):
             None,
             description="A peer ID to get context for.",
         ),
-        last_user_message: str | Message | None = Field(
+        search_query: str | Message | None = Field(
             None,
-            description="The most recent message text (string or Message object), used to fetch semantically relevant conclusions.",
+            description="A query string (or Message object) used to fetch semantically relevant conclusions.",
         ),
         peer_perspective: str | None = Field(
             None,
@@ -976,15 +976,13 @@ class SessionAio(AsyncMetadataConfigMixin):
                 "You must provide a `peer_target` when `peer_perspective` is provided"
             )
 
-        if peer_target is None and last_user_message is not None:
+        if peer_target is None and search_query is not None:
             raise ValueError(
-                "You must provide a `peer_target` when `last_user_message` is provided"
+                "You must provide a `peer_target` when `search_query` is provided"
             )
 
-        last_user_message_text = (
-            last_user_message.content
-            if isinstance(last_user_message, Message)
-            else last_user_message
+        search_query_text = (
+            search_query.content if isinstance(search_query, Message) else search_query
         )
 
         query: dict[str, Any] = {
@@ -993,8 +991,8 @@ class SessionAio(AsyncMetadataConfigMixin):
         }
         if tokens is not None:
             query["tokens"] = tokens
-        if last_user_message_text is not None:
-            query["last_message"] = last_user_message_text
+        if search_query_text is not None:
+            query["search_query"] = search_query_text
         if peer_target is not None:
             query["peer_target"] = peer_target
         if peer_perspective is not None:
