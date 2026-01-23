@@ -254,50 +254,50 @@ class OTelMetrics:
         self._dialectic_meter = get_meter("honcho.dialectic")
         self._dreamer_meter = get_meter("honcho.dreamer")
 
-        # Create counters that mirror Prometheus metrics
+        # Create counters that mirror Prometheus metrics (_total suffix follows OpenMetrics convention)
         # API requests
         self._api_requests = self._api_meter.create_counter(
-            name="api_requests",
+            name="api_requests_total",
             unit="requests",
             description="Total API requests",
         )
 
         # Messages created
         self._messages_created = self._api_meter.create_counter(
-            name="messages_created",
+            name="messages_created_total",
             unit="messages",
             description="Total messages created",
         )
 
         # Dialectic calls
         self._dialectic_calls = self._dialectic_meter.create_counter(
-            name="dialectic_calls",
+            name="dialectic_calls_total",
             unit="calls",
             description="Total dialectic calls",
         )
 
         # Deriver queue items processed
         self._deriver_queue_items = self._deriver_meter.create_counter(
-            name="deriver_queue_items_processed",
+            name="deriver_queue_items_processed_total",
             unit="items",
             description="Total deriver queue items processed",
         )
 
         # Token counters
         self._deriver_tokens = self._deriver_meter.create_counter(
-            name="deriver_tokens_processed",
+            name="deriver_tokens_processed_total",
             unit="tokens",
             description="Total tokens processed by the deriver",
         )
 
         self._dialectic_tokens = self._dialectic_meter.create_counter(
-            name="dialectic_tokens_processed",
+            name="dialectic_tokens_processed_total",
             unit="tokens",
             description="Total tokens processed by the dialectic",
         )
 
         self._dreamer_tokens = self._dreamer_meter.create_counter(
-            name="dreamer_tokens_processed",
+            name="dreamer_tokens_processed_total",
             unit="tokens",
             description="Total tokens processed by the dreamer",
         )
