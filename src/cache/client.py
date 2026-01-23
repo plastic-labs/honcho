@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import cast
+from urllib.parse import urlparse, urlunparse
 
+import redis.asyncio as aioredis
 import sentry_sdk
 from cashews import cache
 from cashews.picklers import PicklerType
@@ -126,9 +128,11 @@ async def is_deriver_flush_enabled() -> bool:
     if not is_cache_enabled():
         return False
     try:
-        import redis.asyncio as aioredis
+        # Strip query parameters - redis-py doesn't support custom params like ?suppress=true
+        parsed = urlparse(settings.CACHE.URL)
+        clean_url = urlunparse(parsed._replace(query=""))
 
-        redis_client = aioredis.from_url(settings.CACHE.URL)  # pyright: ignore[reportUnknownMemberType]
+        redis_client = aioredis.from_url(clean_url)  # pyright: ignore[reportUnknownMemberType]
         try:
             result = await redis_client.get(DERIVER_FLUSH_KEY)
             return result == b"1"

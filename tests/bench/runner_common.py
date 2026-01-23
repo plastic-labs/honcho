@@ -623,13 +623,14 @@ class BaseRunner(ABC, Generic[ResultT]):
 
     async def _flush_deriver_queue(self) -> None:
         """Enable deriver flush mode to bypass batch token threshold."""
-        if self.config.base_url:
-            print("Skipping flush mode (remote instance)")
+        default_redis_url = "redis://localhost:6379/0"
+        if self.config.base_url and self.config.redis_url == default_redis_url:
+            print("Skipping flush mode (remote instance, no --redis-url provided)")
             return
         redis_client: Redis = aioredis.from_url(self.config.redis_url)  # pyright: ignore[reportUnknownMemberType]
         try:
-            await redis_client.set("honcho:deriver:flush_mode", "1", ex=60)
-            print("Enabled deriver flush mode")
+            await redis_client.set("honcho:deriver:flush_mode", "1", ex=3600)
+            print(f"Enabled deriver flush mode via {self.config.redis_url}")
         finally:
             await redis_client.aclose()
 
