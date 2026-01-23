@@ -28,13 +28,3 @@ kill_timeout = '5s'
   cpu_kind = 'shared'
   cpus = 1
   processes = ['api', 'deriver']
-
-[[metrics]]
-port = 8000
-path = "/metrics"
-processes = ["api"]
-
-[[metrics]]
-port = 9090
-path = "/metrics"
-processes = ["deriver"]
