@@ -557,7 +557,7 @@ class LongMemEvalRunner(RunnerMixin):
                     context = await session.aio.context(
                         summary=True,
                         peer_target=peer_id,
-                        last_user_message=question,
+                        search_query=question,
                     )
 
                     # Format context using to_anthropic method

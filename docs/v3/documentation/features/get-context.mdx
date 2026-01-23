@@ -143,16 +143,16 @@ context = session.get_context(
 ```
 </CodeGroup>
 
-### Semantic Search with Last Message
+### Semantic Search
 
-Use `last_user_message` to fetch semantically relevant conclusions based on the most recent message (requires `peer_target`):
+Use `search_query` to fetch semantically relevant conclusions based on a query string (requires `peer_target`):
 
 <CodeGroup>
 ```python Python
 context = session.get_context(
     tokens=2000,
     peer_target="user-123",
-    last_user_message="What are my coding preferences?",
+    search_query="What are my coding preferences?",
     search_top_k=10,           # Number of relevant conclusions to fetch
     search_max_distance=0.8,   # Max semantic distance (0.0-1.0)
     include_most_frequent=True, # Include most frequent conclusions
@@ -165,7 +165,7 @@ context = session.get_context(
     const context = await session.getContext({
       tokens: 2000,
       peerTarget: "user-123",
-      lastUserMessage: "What are my coding preferences?",
+      searchQuery: "What are my coding preferences?",
       representationOptions: {
         searchTopK: 10,           // Number of relevant conclusions to fetch
         searchMaxDistance: 0.8,   // Max semantic distance (0.0-1.0)
@@ -211,7 +211,7 @@ context = session.get_context(
 | `tokens` | `int` | Maximum tokens to include |
 | `peer_target` | `str` | Peer ID to include representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
-| `last_user_message` | `str` | Message for semantic search (requires peer_target) |
+| `search_query` | `str` | Query for semantic search (requires peer_target) |
 | `limit_to_session` | `bool` | Limit to session conclusions only |
 | `search_top_k` | `int` | Semantic search results to include (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |

@@ -189,7 +189,7 @@ class BEAMRunner(RunnerMixin):
                 context = await session.aio.context(
                     summary=True,
                     peer_target="user",
-                    last_user_message=question,
+                    search_query=question,
                 )
                 context_messages = context.to_openai(assistant="assistant")
                 context_messages.append({"role": "user", "content": question})

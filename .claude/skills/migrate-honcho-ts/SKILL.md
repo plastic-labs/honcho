@@ -175,6 +175,7 @@ await session.updateMessage(message, metadata)
 | `{ timeoutMs: 60000 }` | `{ timeout: 60 }` |
 | `{ maxObservations: 50 }` | `{ maxConclusions: 50 }` |
 | `{ includeMostDerived }` | `{ includeMostFrequent }` |
+| `{ lastUserMessage }` | `{ searchQuery }` |
 | `{ config: ... }` | `{ configuration: ... }` |
 | `message.peer_id` | `message.peerId` |
 | `message.created_at` | `message.createdAt` |

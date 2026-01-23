@@ -155,7 +155,7 @@ export interface SessionPeerConfigParams {
 export interface SessionContextParams {
   tokens?: number
   summary?: boolean
-  last_message?: string
+  search_query?: string
   peer_target?: string
   peer_perspective?: string
   limit_to_session?: boolean

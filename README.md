@@ -44,26 +44,23 @@ poetry add honcho-ai
 ```python
 from honcho import Honcho
 
-####### Storing Data in Honcho
-
 # 1. Initialize your Honcho client
 honcho = Honcho(workspace_id="my-app-testing")
 
-# 2.. Initialize Peers
+# 2. Initialize peers
 alice = honcho.peer("alice")
 tutor = honcho.peer("tutor")
 
-# 3. Make a Session and send messages
+# 3. Create a session and add messages
 
 session = honcho.session("session-1")
-
-session.add_messages([
-  alice.message("Hey there can you help me with my math homework"),
-  tutor.message("Absolutely send me your first problem!"),
-  .
-  .
-  .
-])
+# Adding messages from a peer will automatically add them to the session
+session.add_messages(
+    [
+        alice.message("Hey there — can you help me with my math homework?"),
+        tutor.message("Absolutely. Send me your first problem!"),
+    ]
+)
 ```
 
 3. Leverage reasoning from Honcho to inform your agent's behavior
@@ -73,14 +70,14 @@ session.add_messages([
 ### 1. Use the chat endpoint to ask questions about your users in natural language
 response = alice.chat("What learning styles does the user respond to best?")
 
-### 2. Use Get context to get most recent messages and summaries to continue a conversation
-context = session.get_context(summary=True, tokens=10000)
+### 2. Use session context to continue a conversation with an LLM
+context = session.context(summary=True, tokens=10_000)
 
 # Convert to a format to send to OpenAI and get the next message
-openai_messages = context.to_openai_messages(assistant=tutor)
+openai_messages = context.to_openai(assistant=tutor)
 
 from openai import OpenAI
-client = Openai()
+client = OpenAI()
 response = client.chat.completions.create(
   model="gpt-4",
   messages=openai_messages
@@ -89,8 +86,8 @@ response = client.chat.completions.create(
 ### 3. Search for similar messages
 results = alice.search("Math Homework")
 
-### 4. Get a cached representation of a Peer for the Session
-alice_representation = session.working_rep("alice")
+### 4. Get a session-scoped representation of a peer
+alice_representation = session.representation(alice)
 
 ```
 
@@ -593,7 +590,7 @@ serve the needs of any given application.
 #### Get Context
 
 In long-running conversations with an LLM, the context window can fill up
-quickly. To address this, Honcho provides a `get_context`
+quickly. To address this, Honcho provides a `context`
 endpoint that returns a combination of messages, conclusions, summaries from a
 session up to a provided token limit.
 
@@ -607,10 +604,10 @@ There are several search endpoints that let developers query messages at the
 Requests can include advanced filters to further refine
 the results.
 
-#### Dialectic API
+#### Chat API
 
 The flagship interface for using these insights is through
-the [Dialectic Endpoint](https://blog.plasticlabs.ai/archive/ARCHIVED;-Introducing-Honcho's-Dialectic-API).
+the [`Chat` Endpoint](https://blog.plasticlabs.ai/archive/ARCHIVED;-Introducing-Honcho's-Dialectic-API).
 
 This is a regular API endpoint (`/peers/{peer_id}/chat`) that takes natural language requests to get data
 about the `Peer`. This robust design lets us use this single endpoint for all
@@ -625,10 +622,10 @@ API include:
 - Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
 - Getting personalized responses that incorporate long-term facts and context
 
-#### Working Representations
+#### Representations
 
 For low-latency use cases,
-Honcho provides access to a `get_representation` endpoint that
+Honcho provides access to a `representation` endpoint that
 returns a static document with insights about a `Peer` in the context of a
 particular session.
 

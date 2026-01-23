@@ -139,17 +139,17 @@ context = session.get_context(
 ```
 </CodeGroup>
 
-### Semantic Search with Last Message
+### Semantic Search
 
-Use `last_user_message` to fetch semantically relevant observations based on the most recent message:
+Use `search_query` to fetch semantically relevant observations based on a query string:
 
 <CodeGroup>
 ```python Python
-# Get context with semantic search based on last message
+# Get context with semantic search based on query
 context = session.get_context(
     tokens=2000,
     peer_target="user-123",
-    last_user_message="What are my account preferences?",
+    search_query="What are my account preferences?",
     search_top_k=10,           # Number of relevant observations
     search_max_distance=0.8,   # Max semantic distance (0.0-1.0)
     include_most_derived=True, # Include most recent observations
@@ -159,11 +159,11 @@ context = session.get_context(
 
 ```typescript TypeScript
 (async () => {
-    // Get context with semantic search based on last message
+    // Get context with semantic search based on query
     const context = await session.getContext({
       tokens: 2000,
       peerTarget: "user-123",
-      lastUserMessage: "What are my account preferences?",
+      searchQuery: "What are my account preferences?",
       searchTopK: 10,           // Number of relevant observations
       searchMaxDistance: 0.8,   // Max semantic distance (0.0-1.0)
       includeMostDerived: true, // Include most recent observations
@@ -207,7 +207,7 @@ context = session.get_context(
 | `tokens` | `int` | Maximum tokens to include |
 | `peer_target` | `str` | Peer ID to include representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
-| `last_user_message` | `str` | Message for semantic search (requires peer_target) |
+| `search_query` | `str` | Query for semantic search (requires peer_target) |
 | `limit_to_session` | `bool` | Limit to session observations only |
 | `search_top_k` | `int` | Semantic search results to include (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |

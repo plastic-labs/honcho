@@ -508,9 +508,9 @@ async def get_session_context(
         description=f"Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
     *,
-    last_message: str | None = Query(
+    search_query: str | None = Query(
         None,
-        description="The most recent message, used to fetch semantically relevant conclusions",
+        description="A query string used to fetch semantically relevant conclusions",
     ),
     include_summary: bool = Query(
         default=True,
@@ -527,29 +527,29 @@ async def get_session_context(
     ),
     limit_to_session: bool = Query(
         default=False,
-        description="Only used if `last_message` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
+        description="Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
     ),
     search_top_k: int | None = Query(
         None,
         ge=1,
         le=100,
-        description="Only used if `last_message` is provided. The number of semantic-search-retrieved conclusions to include in the representation",
+        description="Only used if `search_query` is provided. The number of semantic-search-retrieved conclusions to include in the representation",
     ),
     search_max_distance: float | None = Query(
         None,
         ge=0.0,
         le=1.0,
-        description="Only used if `last_message` is provided. The maximum distance to search for semantically relevant conclusions",
+        description="Only used if `search_query` is provided. The maximum distance to search for semantically relevant conclusions",
     ),
     include_most_frequent: bool = Query(
         default=False,
-        description="Only used if `last_message` is provided. Whether to include the most frequent conclusions in the representation",
+        description="Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation",
     ),
     max_conclusions: int | None = Query(
         None,
         ge=1,
         le=100,
-        description="Only used if `last_message` is provided. The maximum number of conclusions to include in the representation",
+        description="Only used if `search_query` is provided. The maximum number of conclusions to include in the representation",
     ),
 ):
     """
@@ -585,7 +585,7 @@ async def get_session_context(
     # with tracked_db creating separate database sessions
     representation = await _get_working_representation_task(
         workspace_id,
-        last_message,
+        search_query,
         observer=observer,
         observed=observed,
         session_name=session_id if limit_to_session else None,
