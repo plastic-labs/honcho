@@ -590,7 +590,7 @@ serve the needs of any given application.
 #### Get Context
 
 In long-running conversations with an LLM, the context window can fill up
-quickly. To address this, Honcho provides a `get_context`
+quickly. To address this, Honcho provides a `context`
 endpoint that returns a combination of messages, conclusions, summaries from a
 session up to a provided token limit.
 
@@ -604,10 +604,10 @@ There are several search endpoints that let developers query messages at the
 Requests can include advanced filters to further refine
 the results.
 
-#### Dialectic API
+#### Chat API
 
 The flagship interface for using these insights is through
-the [Dialectic Endpoint](https://blog.plasticlabs.ai/archive/ARCHIVED;-Introducing-Honcho's-Dialectic-API).
+the [`Chat` Endpoint](https://blog.plasticlabs.ai/archive/ARCHIVED;-Introducing-Honcho's-Dialectic-API).
 
 This is a regular API endpoint (`/peers/{peer_id}/chat`) that takes natural language requests to get data
 about the `Peer`. This robust design lets us use this single endpoint for all
@@ -622,10 +622,10 @@ API include:
 - Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
 - Getting personalized responses that incorporate long-term facts and context
 
-#### Working Representations
+#### Representations
 
 For low-latency use cases,
-Honcho provides access to a `get_representation` endpoint that
+Honcho provides access to a `representation` endpoint that
 returns a static document with insights about a `Peer` in the context of a
 particular session.
 
