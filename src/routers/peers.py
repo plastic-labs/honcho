@@ -185,7 +185,7 @@ async def chat(
             yield f"data: {json.dumps({'done': True})}\n\n"
 
         # Prometheus metrics
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             prometheus_metrics.record_dialectic_call(
                 workspace_name=workspace_id,
                 reasoning_level=options.reasoning_level,
@@ -217,7 +217,7 @@ async def chat(
     )
 
     # Prometheus metrics
-    if settings.PROMETHEUS.ENABLED:
+    if settings.METRICS.ENABLED:
         prometheus_metrics.record_dialectic_call(
             workspace_name=workspace_id,
             reasoning_level=options.reasoning_level,

@@ -71,7 +71,7 @@ if __name__ == "__main__":
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
         # Start Prometheus metrics server if enabled
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             start_metrics_server()
 
         print("[DERIVER] Running main loop")

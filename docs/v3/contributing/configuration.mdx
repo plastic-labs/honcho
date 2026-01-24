@@ -57,7 +57,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[summary]` - Session summarization settings (frequency thresholds, provider, model, token limits for short and long summaries)
 - `[dream]` - Dream processing configuration (enable/disable, thresholds, idle timeouts, dream types, LLM settings, surprisal sampling)
 - `[webhook]` - Webhook configuration (webhook secret, workspace limits)
-- `[otel]` - OpenTelemetry settings for push-based metrics via OTLP
+- `[metrics]` - Prometheus pull-based metrics settings
 - `[telemetry]` - CloudEvents telemetry settings for analytics
 - `[vector_store]` - Vector store configuration (pgvector, Turbopuffer, LanceDB)
 - `[sentry]` - Error tracking and monitoring settings (enable/disable, DSN, environment, sample rates)
@@ -540,29 +540,19 @@ VECTOR_STORE_LANCEDB_PATH=./lancedb_data
 
 ## Monitoring Configuration
 
-### OpenTelemetry (Push-based Metrics)
+### Prometheus Metrics (Pull-based)
 
-Honcho supports push-based metrics via OpenTelemetry Protocol (OTLP) to any compatible backend (Mimir, Grafana Cloud, etc.).
+Honcho exposes Prometheus metrics via `/metrics` endpoints for scraping:
+- **API process**: Port 8000 at `/metrics`
+- **Deriver process**: Port 9090 at `/metrics`
 
-**OpenTelemetry Settings:**
+**Metrics Settings:**
 ```bash
-# Enable/disable OTel metrics
-OTEL_ENABLED=false
+# Enable/disable Prometheus metrics
+METRICS_ENABLED=false
 
-# OTLP HTTP endpoint for metrics
-# For Mimir: <mimir-url>/otlp/v1/metrics
-# For Grafana Cloud: https://otlp-gateway-<region>.grafana.net/otlp/v1/metrics
-OTEL_ENDPOINT=https://mimir.example.com/otlp/v1/metrics
-
-# Optional auth headers (JSON format in env var)
-OTEL_HEADERS='{"X-Scope-OrgID": "honcho"}'
-
-# Export interval in milliseconds (default: 60 seconds)
-OTEL_EXPORT_INTERVAL_MILLIS=60000
-
-# Service identification
-OTEL_SERVICE_NAME=honcho
-OTEL_SERVICE_NAMESPACE=honcho  # Inherits from app.NAMESPACE if not set
+# Namespace label for all metrics (inherits from app.NAMESPACE if not set)
+METRICS_NAMESPACE=honcho
 ```
 
 ### CloudEvents Telemetry (Analytics)
@@ -691,7 +681,7 @@ MODEL = "claude-sonnet-4-20250514"
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
 
-[otel]
+[metrics]
 ENABLED = false
 
 [telemetry]
@@ -798,7 +788,7 @@ MODEL = "claude-sonnet-4-20250514"
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
 
-[otel]
+[metrics]
 ENABLED = true
 
 [telemetry]
@@ -838,7 +828,7 @@ LLM_GROQ_API_KEY=your-prod-groq-key
 WEBHOOK_SECRET=your-webhook-signing-secret
 
 # Monitoring
-OTEL_ENDPOINT=https://mimir.example.com/otlp/v1/metrics
+METRICS_ENABLED=true
 TELEMETRY_ENDPOINT=https://telemetry.honcho.dev/v1/events
 SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
 SENTRY_ENVIRONMENT=production

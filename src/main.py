@@ -235,7 +235,7 @@ async def track_request(
         response = await call_next(request)
 
         # Track metrics if enabled
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             template = get_route_template(request)
             prometheus_metrics.record_api_request(
                 method=request.method,

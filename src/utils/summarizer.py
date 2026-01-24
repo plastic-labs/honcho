@@ -453,7 +453,7 @@ async def _create_and_save_summary(
         )
 
         # Track output tokens
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             prometheus_metrics.record_deriver_tokens(
                 count=new_summary["token_count"],
                 task_type=DeriverTaskTypes.SUMMARY.value,

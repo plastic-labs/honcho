@@ -59,17 +59,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-  mimir:
-    image: grafana/mimir:2.14.0
-    command:
-      - -config.file=/etc/mimir/mimir.yaml
-    ports:
-      - 9009:9009
-    volumes:
-      - ./mimir-data:/data
-    configs:
-      - source: mimir_config
-        target: /etc/mimir/mimir.yaml
   grafana:
     image: grafana/grafana:11.4.0
     ports:
@@ -81,66 +70,6 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
       - ./grafana-data:/var/lib/grafana
-    depends_on:
-      - mimir
-
 volumes:
   pgdata:
   venv:
-
-configs:
-  mimir_config:
-    content: |
-      multitenancy_enabled: false
-
-      server:
-        http_listen_port: 9009
-        log_level: warn
-
-      common:
-        storage:
-          backend: filesystem
-          filesystem:
-            dir: /data
-
-      blocks_storage:
-        backend: filesystem
-        filesystem:
-          dir: /data/blocks
-        bucket_store:
-          sync_dir: /data/tsdb-sync
-        tsdb:
-          dir: /data/tsdb
-
-      compactor:
-        data_dir: /data/compactor
-        sharding_ring:
-          kvstore:
-            store: memberlist
-
-      distributor:
-        ring:
-          instance_addr: 127.0.0.1
-          kvstore:
-            store: memberlist
-
-      ingester:
-        ring:
-          instance_addr: 127.0.0.1
-          kvstore:
-            store: memberlist
-          replication_factor: 1
-
-      ruler_storage:
-        backend: filesystem
-        filesystem:
-          dir: /data/rules
-
-      alertmanager_storage:
-        backend: filesystem
-        filesystem:
-          dir: /data/alertmanager
-
-      store_gateway:
-        sharding_ring:
-          replication_factor: 1

@@ -36,7 +36,7 @@ def track_deriver_input_tokens(
     """
     for component, token_count in components.items():
         # Prometheus metrics
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             prometheus_metrics.record_deriver_tokens(
                 count=token_count,
                 task_type=task_type.value,

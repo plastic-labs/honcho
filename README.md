@@ -411,7 +411,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[summary]` - Session summarization settings
 - `[dream]` - Dream processing configuration (including specialist models and surprisal settings)
 - `[webhook]` - Webhook configuration
-- `[otel]` - OpenTelemetry push-based metrics via OTLP
+- `[metrics]` - Prometheus pull-based metrics
 - `[telemetry]` - CloudEvents telemetry for analytics
 - `[vector_store]` - Vector store configuration (pgvector, turbopuffer, or lancedb)
 - `[sentry]` - Error tracking and monitoring settings
@@ -431,7 +431,7 @@ Examples:
 - `DERIVER_PROVIDER` - Provider for background deriver
 - `SUMMARY_PROVIDER` - Summary generation provider
 - `LOG_LEVEL` - Application log level
-- `OTEL_ENABLED` - Enable OpenTelemetry metrics
+- `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry
 
 ### Configuration Priority

@@ -30,7 +30,6 @@ from src.schemas import (
 from src.telemetry.prometheus.metrics import (
     deriver_tokens_processed_counter,
     dialectic_tokens_processed_counter,
-    prometheus_metrics,
 )
 from src.utils.clients import HonchoLLMCallResponse
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
@@ -85,15 +84,6 @@ class PrometheusMetricChecker:
         ), f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
 
 
-def _reset_prometheus_metrics_singleton() -> None:
-    """Reset the prometheus_metrics singleton namespace.
-
-    This ensures tests use a consistent namespace value.
-    """
-    # Force namespace lookup to refresh on next call
-    prometheus_metrics._namespace = "test"
-
-
 @pytest.fixture
 def prometheus_test_setup(
     monkeypatch: pytest.MonkeyPatch,
@@ -103,19 +93,13 @@ def prometheus_test_setup(
     Yields:
         A PrometheusMetricChecker for verifying metrics
     """
-    # Enable PROMETHEUS in settings and set namespace for test assertions
-    monkeypatch.setattr("src.config.settings.PROMETHEUS.ENABLED", True)
-    monkeypatch.setattr("src.config.settings.PROMETHEUS.NAMESPACE", "test")
-
-    # Reset singleton namespace
-    _reset_prometheus_metrics_singleton()
+    # Enable METRICS in settings and set namespace for test assertions
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
+    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
 
     checker = PrometheusMetricChecker()
 
     yield checker
-
-    # Cleanup: reset singleton so other tests aren't affected
-    _reset_prometheus_metrics_singleton()
 
 
 @pytest.fixture
@@ -805,7 +789,7 @@ class TestDialecticTokenMetrics:
         metric_checker = prometheus_test_setup
 
         # Explicitly disable Prometheus metrics
-        monkeypatch.setattr("src.config.settings.PROMETHEUS.ENABLED", False)
+        monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)

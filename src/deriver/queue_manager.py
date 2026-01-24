@@ -791,7 +791,7 @@ class QueueManager:
             if (
                 work_unit.task_type in ["representation", "summary"]
                 and work_unit.workspace_name is not None
-                and settings.PROMETHEUS.ENABLED
+                and settings.METRICS.ENABLED
             ):
                 prometheus_metrics.record_deriver_queue_item(
                     count=len(items),

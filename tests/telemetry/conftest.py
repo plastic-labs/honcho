@@ -337,7 +337,7 @@ def mock_telemetry_settings():
         mock_settings.TELEMETRY.MAX_RETRIES = max_retries
         mock_settings.TELEMETRY.MAX_BUFFER_SIZE = max_buffer_size
         mock_settings.TELEMETRY.HEADERS = headers
-        mock_settings.OTEL.ENABLED = False
+        mock_settings.METRICS.ENABLED = False
         return patch("src.telemetry.emitter.settings", mock_settings)
 
     return _configure

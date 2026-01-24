@@ -101,7 +101,7 @@ async def create_messages_for_session(
         )
 
         # Prometheus metrics
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             prometheus_metrics.record_messages_created(
                 count=len(created_messages),
                 workspace_name=workspace_id,
@@ -200,7 +200,7 @@ async def create_messages_with_file(
     )
 
     # Prometheus metrics
-    if settings.PROMETHEUS.ENABLED:
+    if settings.METRICS.ENABLED:
         prometheus_metrics.record_messages_created(
             count=len(created_messages),
             workspace_name=workspace_id,

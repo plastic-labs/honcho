@@ -187,7 +187,7 @@ class BaseSpecialist(ABC):
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "count")
 
         # Prometheus metrics
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             prometheus_metrics.record_dreamer_tokens(
                 count=response.input_tokens,
                 specialist_name=self.name,

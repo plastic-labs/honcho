@@ -146,7 +146,7 @@ async def process_representation_tasks_batch(
     )
 
     # Prometheus metrics
-    if settings.PROMETHEUS.ENABLED:
+    if settings.METRICS.ENABLED:
         prometheus_metrics.record_deriver_tokens(
             count=response.output_tokens,
             task_type=DeriverTaskTypes.INGESTION.value,

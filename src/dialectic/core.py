@@ -338,7 +338,7 @@ class DialecticAgent:
             log_performance_metrics("dialectic_chat", run_id)
 
         # Prometheus metrics
-        if settings.PROMETHEUS.ENABLED:
+        if settings.METRICS.ENABLED:
             prometheus_metrics.record_dialectic_tokens(
                 count=input_tokens,
                 token_type=TokenTypes.INPUT.value,

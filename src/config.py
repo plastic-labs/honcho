@@ -68,7 +68,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "WEBHOOK": "webhook",
         "DREAM": "dream",
         "VECTOR_STORE": "vector_store",
-        "PROMETHEUS": "prometheus",
+        "METRICS": "metrics",
         "TELEMETRY": "telemetry",
         "": "app",  # For AppSettings with no prefix
     }
@@ -445,19 +445,9 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
-class PrometheusSettings(HonchoSettings):
-    """Prometheus settings for pull-based metrics.
-
-    These settings configure Prometheus metrics that are scraped by Fly.io
-    or any Prometheus-compatible scraper.
-    """
-
-    model_config = SettingsConfigDict(env_prefix="PROMETHEUS_", extra="ignore")  # pyright: ignore
-
-    # Master toggle for Prometheus metrics
+class MetricsSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
     ENABLED: bool = False
-
-    # Namespace for metrics (used as a label on all metrics)
     NAMESPACE: str | None = None
 
 
@@ -663,7 +653,7 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
-    PROMETHEUS: PrometheusSettings = Field(default_factory=PrometheusSettings)
+    METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
@@ -678,20 +668,15 @@ class AppSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":
-        """Propagate top-level NAMESPACE to nested settings if not explicitly set.
-
-        After this validator runs, CACHE.NAMESPACE,
-        VECTOR_STORE.NAMESPACE, TELEMETRY.NAMESPACE, and PROMETHEUS.NAMESPACE
-        are guaranteed to exist. Explicitly provided nested namespaces are preserved.
-        """
+        """Propagate top-level NAMESPACE to nested settings if not explicitly set."""
         if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
-        if "NAMESPACE" not in self.PROMETHEUS.model_fields_set:
-            self.PROMETHEUS.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.METRICS.model_fields_set:
+            self.METRICS.NAMESPACE = self.NAMESPACE
 
         return self
 
