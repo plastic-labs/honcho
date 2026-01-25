@@ -37,8 +37,7 @@ dependencies = [
     "redis>=7.0.0,<8.0.0",
     "cashews[redis]==7.4.4",
     "scikit-learn>=1.6.0",
-    "opentelemetry-sdk>=1.36.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.36.0",
+    "prometheus_client>=0.21.0",
     "cloudevents>=1.12.0",
 ]
 [dependency-groups]
@@ -116,7 +115,7 @@ reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
 reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow", "opentelemetry"]
+allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow"]
 reportImplicitOverride = false
 reportImportCycles = false
 

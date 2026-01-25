@@ -7,10 +7,14 @@ from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.telemetry.events import RepresentationCompletedEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
-from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
+from src.telemetry.prometheus.metrics import (
+    DeriverComponents,
+    DeriverTaskTypes,
+    TokenTypes,
+)
 from src.telemetry.sentry import with_sentry_transaction
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
@@ -141,9 +145,9 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    # OTel metrics (push-based)
-    if settings.OTEL.ENABLED:
-        otel_metrics.record_deriver_tokens(
+    # Prometheus metrics
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_deriver_tokens(
             count=response.output_tokens,
             task_type=DeriverTaskTypes.INGESTION.value,
             token_type=TokenTypes.OUTPUT.value,

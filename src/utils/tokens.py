@@ -1,8 +1,12 @@
 import tiktoken
 
 from src.config import settings
-from src.telemetry import otel_metrics
-from src.telemetry.otel.metrics import DeriverComponents, DeriverTaskTypes, TokenTypes
+from src.telemetry import prometheus_metrics
+from src.telemetry.prometheus.metrics import (
+    DeriverComponents,
+    DeriverTaskTypes,
+    TokenTypes,
+)
 
 tokenizer = tiktoken.get_encoding("o200k_base")
 
@@ -31,9 +35,9 @@ def track_deriver_input_tokens(
         components: Dict mapping component names to token counts
     """
     for component, token_count in components.items():
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_deriver_tokens(
+        # Prometheus metrics
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_deriver_tokens(
                 count=token_count,
                 task_type=task_type.value,
                 token_type=TokenTypes.INPUT.value,

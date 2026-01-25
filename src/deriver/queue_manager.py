@@ -35,7 +35,7 @@ from src.reconciler import (
     set_reconciler_scheduler,
 )
 from src.schemas import ResolvedConfiguration
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -791,9 +791,9 @@ class QueueManager:
             if (
                 work_unit.task_type in ["representation", "summary"]
                 and work_unit.workspace_name is not None
-                and settings.OTEL.ENABLED
+                and settings.METRICS.ENABLED
             ):
-                otel_metrics.record_deriver_queue_item(
+                prometheus_metrics.record_deriver_queue_item(
                     count=len(items),
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,

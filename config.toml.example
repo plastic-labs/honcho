@@ -187,14 +187,10 @@ INCLUDE_LEVELS = ["explicit", "deductive"]
 SECRET = ""
 MAX_WORKSPACE_LIMIT = 10
 
-# OpenTelemetry settings (push-based metrics via OTLP)
-[otel]
+# Prometheus metrics settings (pull-based metrics)
+[metrics]
 ENABLED = false
-# ENDPOINT = "https://mimir.example.com/otlp/v1/metrics"
-# HEADERS = '{"X-Scope-OrgID": "honcho"}'  # JSON string for auth headers
-EXPORT_INTERVAL_MILLIS = 60000
-SERVICE_NAME = "honcho"
-# SERVICE_NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 
 # CloudEvents telemetry settings (analytics events)
 [telemetry]
