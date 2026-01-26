@@ -20,7 +20,7 @@ from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
+from src.utils.tokens import track_deriver_input_tokens
 
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
 
@@ -34,7 +34,7 @@ async def process_representation_tasks_batch(
     *,
     observers: list[str],
     observed: str,
-    queue_items_count: int,
+    queue_item_message_ids: list[int],
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -44,7 +44,7 @@ async def process_representation_tasks_batch(
         message_level_configuration: Optional configuration override.
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
-        queue_items_count: Number of QueueItem records being processed in this batch.
+        queue_item_message_ids: Message IDs from queue items being processed
     """
     if not messages:
         return
@@ -93,9 +93,12 @@ async def process_representation_tasks_batch(
         for msg in messages
     )
 
-    # Track token usage
+    # Track token usage - count only tokens from messages being processed
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
-    messages_tokens = estimate_tokens(formatted_messages)
+    queue_item_message_ids_set = set(queue_item_message_ids)
+    messages_tokens = sum(
+        msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
+    )
     track_deriver_input_tokens(
         task_type=DeriverTaskTypes.INGESTION,
         components={
@@ -235,7 +238,7 @@ async def process_representation_tasks_batch(
             workspace_name=latest_message.workspace_name,
             session_name=latest_message.session_name,
             observed=observed,
-            queue_items_processed=queue_items_count,
+            queue_items_processed=len(queue_item_message_ids),
             earliest_message_id=earliest_message.public_id,
             latest_message_id=latest_message.public_id,
             message_count=len(messages),
