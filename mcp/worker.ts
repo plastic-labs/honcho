@@ -555,14 +555,14 @@ class HonchoWorker {
    * @param peerId - The ID of the observer peer
    * @param targetPeerId - The target peer the conclusions are about
    * @param conclusions - List of conclusion content strings
-   * @param sessionId - The session ID to associate with conclusions
+   * @param sessionId - Optional session ID to associate with conclusions
    * @returns Number of conclusions created
    */
   async createConclusions(
     peerId: string,
     targetPeerId: string,
     conclusions: string[],
-    sessionId: string,
+    sessionId?: string,
   ): Promise<number> {
     const peer = await this.honcho.peer(peerId);
     const targetPeer = await this.honcho.peer(targetPeerId);
@@ -606,16 +606,16 @@ class HonchoWorker {
    * Schedule a dream (memory consolidation) for a peer.
    * @param peerId - The ID of the observer peer
    * @param targetPeerId - Optional target peer to dream about (defaults to observer for self-reflection)
-   * @param sessionId - The session ID for context
+   * @param sessionId - Optional session ID to scope the dream to
    * @returns Confirmation message
    */
   async scheduleDream(
     peerId: string,
-    sessionId: string,
     targetPeerId?: string,
+    sessionId?: string,
   ): Promise<string> {
     const peer = await this.honcho.peer(peerId);
-    const session = await this.honcho.session(sessionId);
+    const session = sessionId ? await this.honcho.session(sessionId) : undefined;
     const targetPeer = targetPeerId ? await this.honcho.peer(targetPeerId) : undefined;
 
     await this.honcho.scheduleDream({
@@ -1302,10 +1302,11 @@ const tools: Tool[] = [
         },
         session_id: {
           type: "string",
-          description: "The session ID to associate with conclusions.",
+          description:
+            "Optional session ID to associate with conclusions. If not provided, conclusions will be global.",
         },
       },
-      required: ["peer_id", "target_peer_id", "conclusions", "session_id"],
+      required: ["peer_id", "target_peer_id", "conclusions"],
     },
   },
   {
@@ -1343,17 +1344,18 @@ const tools: Tool[] = [
           type: "string",
           description: "The ID of the observer peer.",
         },
-        session_id: {
-          type: "string",
-          description: "The session ID for context.",
-        },
         target_peer_id: {
           type: "string",
           description:
             "Optional target peer to dream about. If not provided, defaults to the observer peer (self-reflection).",
         },
+        session_id: {
+          type: "string",
+          description:
+            "Optional session ID to scope the dream to. If not provided, the dream will be global.",
+        },
       },
-      required: ["peer_id", "session_id"],
+      required: ["peer_id"],
     },
   },
   {
@@ -1843,7 +1845,7 @@ async function executeToolCall(
     case "create_conclusions": {
       const validation = validateArguments(
         toolArguments,
-        ["peer_id", "target_peer_id", "conclusions", "session_id"],
+        ["peer_id", "target_peer_id", "conclusions"],
         requestId,
       );
       if (validation) return validation;
@@ -1879,15 +1881,15 @@ async function executeToolCall(
     case "schedule_dream": {
       const validation = validateArguments(
         toolArguments,
-        ["peer_id", "session_id"],
+        ["peer_id"],
         requestId,
       );
       if (validation) return validation;
 
       result = await honcho.scheduleDream(
         toolArguments.peer_id,
-        toolArguments.session_id,
         toolArguments.target_peer_id,
+        toolArguments.session_id,
       );
       break;
     }
