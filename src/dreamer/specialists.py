@@ -96,7 +96,7 @@ class BaseSpecialist(ABC):
         workspace_name: str,
         observer: str,
         observed: str,
-        session_name: str,
+        session_name: str | None,
         probing_questions: list[str],
         configuration: ResolvedConfiguration | None = None,
         parent_run_id: str | None = None,

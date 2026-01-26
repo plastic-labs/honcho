@@ -86,7 +86,7 @@ async def run_dream(
     workspace_name: str,
     observer: str,
     observed: str,
-    session_name: str,
+    session_name: str | None = None,
 ) -> DreamResult | None:
     """
     Run a full dream cycle with optional surprisal-based sampling.
@@ -101,7 +101,7 @@ async def run_dream(
         workspace_name: Workspace identifier
         observer: Observer peer name
         observed: Observed peer name
-        session_name: Session identifier
+        session_name: Session identifier if specified
     """
     if not settings.DREAM.ENABLED:
         return None
@@ -114,9 +114,13 @@ async def run_dream(
         f"[{run_id}] Starting dream cycle for {workspace_name}/{observer}/{observed}"
     )
 
-    session = await crud.get_session(
-        db, workspace_name=workspace_name, session_name=session_name
-    )
+    if session_name is not None:
+        session = await crud.get_session(
+            db, workspace_name=workspace_name, session_name=session_name
+        )
+    else:
+        session = None
+
     workspace = await crud.get_workspace(db, workspace_name=workspace_name)
 
     configuration = get_configuration(None, session, workspace)

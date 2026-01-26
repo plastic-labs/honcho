@@ -399,7 +399,7 @@ def create_dream_record(
     observer: str,
     observed: str,
     dream_type: schemas.DreamType,
-    session_name: str,
+    session_name: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -409,7 +409,7 @@ def create_dream_record(
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        session_name: Name of the session to scope the dream to
+        session_name: Name of the session to scope the dream to if specified
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -437,7 +437,7 @@ async def enqueue_dream(
     observed: str,
     dream_type: schemas.DreamType,
     document_count: int,
-    session_name: str,
+    session_name: str | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -452,7 +452,7 @@ async def enqueue_dream(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         document_count: Current document count for metadata update
-        session_name: Name of the session to scope the dream to
+        session_name: Name of the session to scope the dream to if specified
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:

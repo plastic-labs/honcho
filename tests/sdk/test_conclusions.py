@@ -609,3 +609,163 @@ async def test_observation_scope_via_peer_string(
 
         assert len(created) == 1
         assert created[0].observed_id == target.id
+
+
+@pytest.mark.asyncio
+async def test_observation_create_without_session_id(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests creating observations without a session_id (sessionless/global conclusions).
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-no-session-observer")
+        target = await honcho_client.aio.peer(id="test-obs-no-session-target")
+
+        # Create a session just to ensure peers exist
+        session = await honcho_client.aio.session(id="test-obs-no-session-session")
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        # Get observation scope for observer -> target
+        obs_scope = observer.conclusions_of(target)
+
+        # Create observation WITHOUT session_id
+        created = await obs_scope.aio.create(
+            [
+                ConclusionCreateParams(
+                    content="Global observation without session",
+                    # No session_id - this is the key test
+                )
+            ]
+        )
+
+        assert len(created) == 1
+        assert isinstance(created[0], Conclusion)
+        assert created[0].content == "Global observation without session"
+        assert created[0].observer_id == observer.id
+        assert created[0].observed_id == target.id
+        assert created[0].session_id is None  # Should be None
+        assert created[0].id  # Has an ID
+    else:
+        observer = honcho_client.peer(id="test-obs-no-session-observer")
+        target = honcho_client.peer(id="test-obs-no-session-target")
+
+        # Create a session just to ensure peers exist
+        session = honcho_client.session(id="test-obs-no-session-session")
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        # Get observation scope for observer -> target
+        obs_scope = observer.conclusions_of(target)
+
+        # Create observation WITHOUT session_id
+        created = obs_scope.create(
+            [
+                ConclusionCreateParams(
+                    content="Global observation without session",
+                    # No session_id - this is the key test
+                )
+            ]
+        )
+
+        assert len(created) == 1
+        assert isinstance(created[0], Conclusion)
+        assert created[0].content == "Global observation without session"
+        assert created[0].observer_id == observer.id
+        assert created[0].observed_id == target.id
+        assert created[0].session_id is None  # Should be None
+        assert created[0].id  # Has an ID
+
+
+@pytest.mark.asyncio
+async def test_observation_create_mixed_session_and_sessionless(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests creating a batch with both session-scoped and sessionless observations.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-mixed-session-observer")
+        target = await honcho_client.aio.peer(id="test-obs-mixed-session-target")
+        session = await honcho_client.aio.session(id="test-obs-mixed-session-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        # Get observation scope
+        obs_scope = observer.conclusions_of(target)
+
+        # Create mixed batch: one with session, one without
+        created = await obs_scope.aio.create(
+            [
+                {"content": "Session-scoped observation", "session_id": session.id},
+                {"content": "Global observation without session"},  # No session_id
+            ]
+        )
+
+        assert len(created) == 2
+
+        # Find observations by content
+        session_obs = next(
+            c for c in created if c.content == "Session-scoped observation"
+        )
+        global_obs = next(
+            c for c in created if c.content == "Global observation without session"
+        )
+
+        assert session_obs.session_id == session.id
+        assert global_obs.session_id is None
+    else:
+        observer = honcho_client.peer(id="test-obs-mixed-session-observer")
+        target = honcho_client.peer(id="test-obs-mixed-session-target")
+        session = honcho_client.session(id="test-obs-mixed-session-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        # Get observation scope
+        obs_scope = observer.conclusions_of(target)
+
+        # Create mixed batch: one with session, one without
+        created = obs_scope.create(
+            [
+                {"content": "Session-scoped observation", "session_id": session.id},
+                {"content": "Global observation without session"},  # No session_id
+            ]
+        )
+
+        assert len(created) == 2
+
+        # Find observations by content
+        session_obs = next(
+            c for c in created if c.content == "Session-scoped observation"
+        )
+        global_obs = next(
+            c for c in created if c.content == "Global observation without session"
+        )
+
+        assert session_obs.session_id == session.id
+        assert global_obs.session_id is None

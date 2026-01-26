@@ -558,7 +558,7 @@ async def create_observations(
     observations: list[dict[str, Any]],
     observer: str,
     observed: str,
-    session_name: str,
+    session_name: str | None,
     workspace_name: str,
     message_ids: list[int],
     message_created_at: str,
@@ -941,12 +941,9 @@ async def _handle_create_observations(
 
         message_ids = [msg.id for msg in ctx.current_messages]
         message_created_at = str(ctx.current_messages[-1].created_at)
-        obs_session_name = ctx.session_name or ctx.current_messages[0].session_name
+        obs_session_name = ctx.session_name
     else:
         # Dreamer/Dialectic agent: allow deductive and inductive, no source messages
-        if not ctx.session_name:
-            return "ERROR: Cannot create observations without a session context"
-
         for i, obs in enumerate(observations):
             if "content" not in obs:
                 return f"ERROR: observation {i} missing 'content' field"
