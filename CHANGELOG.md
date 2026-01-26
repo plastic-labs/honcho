@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
 - Cloud Events for auditable telemetry
+- External Vector Store support for turbopuffer and lancedb with reconciliation flow
 
 ### Changed
 
