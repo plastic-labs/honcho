@@ -17,7 +17,7 @@ from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "e4eba9cfaa6f"
-down_revision: str | None = "7c0d9a4e3b1f"
+down_revision: str | None = "119a52b73c60"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
