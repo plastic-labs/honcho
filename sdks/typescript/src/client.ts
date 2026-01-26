@@ -775,12 +775,12 @@ export class Honcho {
    */
   async scheduleDream(options: {
     observer: string | Peer
-    session: string | Session
+    session?: string | Session
     observed?: string | Peer
   }): Promise<void> {
     await this._ensureWorkspace()
     const observerId = resolveId(options.observer)
-    const sessionId = resolveId(options.session)
+    const sessionId = options.session ? resolveId(options.session) : undefined
     const observedId = options.observed
       ? resolveId(options.observed)
       : observerId

@@ -399,7 +399,7 @@ class Document(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
-    session_name: Mapped[str] = mapped_column(TEXT, index=True)
+    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True, default=None
     )

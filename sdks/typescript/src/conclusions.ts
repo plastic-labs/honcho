@@ -16,7 +16,7 @@ export interface ConclusionCreateParams {
   /** The conclusion content/text */
   content: string
   /** The session this conclusion relates to (ID string or Session object) */
-  sessionId: string | Session
+  sessionId?: string | Session
 }
 
 /**
@@ -30,7 +30,7 @@ export class Conclusion {
   readonly content: string
   readonly observerId: string
   readonly observedId: string
-  readonly sessionId: string
+  readonly sessionId: string | null
   readonly createdAt: string
 
   constructor(
@@ -38,7 +38,7 @@ export class Conclusion {
     content: string,
     observerId: string,
     observedId: string,
-    sessionId: string,
+    sessionId: string | null,
     createdAt: string
   ) {
     this.id = id
@@ -128,7 +128,7 @@ export class ConclusionScope {
   private async _create(params: {
     conclusions: Array<{
       content: string
-      session_id: string
+      session_id: string | null
       observer_id: string
       observed_id: string
     }>
@@ -259,7 +259,11 @@ export class ConclusionScope {
     const requestConclusions = conclusionArray.map((obs) => ({
       content: obs.content,
       session_id:
-        typeof obs.sessionId === 'string' ? obs.sessionId : obs.sessionId.id,
+        obs.sessionId === undefined
+          ? null
+          : typeof obs.sessionId === 'string'
+            ? obs.sessionId
+            : obs.sessionId.id,
       observer_id: this.observer,
       observed_id: this.observed,
     }))

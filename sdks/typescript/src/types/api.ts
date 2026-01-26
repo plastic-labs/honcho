@@ -243,7 +243,7 @@ export interface ConclusionResponse {
   content: string
   observer_id: string
   observed_id: string
-  session_id: string
+  session_id: string | null
   created_at: string
 }
 
@@ -251,7 +251,7 @@ export interface ConclusionCreateParams {
   content: string
   observer_id: string
   observed_id: string
-  session_id: string
+  session_id: string | null
 }
 
 export interface ConclusionBatchCreateParams {
