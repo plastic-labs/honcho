@@ -118,7 +118,7 @@ class HonchoGetContextTool(BaseTool):
         """
         try:
             session = self._honcho.session(self._session_id)
-            context = session.get_context(
+            context = session.context(
                 summary=summary,
                 tokens=tokens,
                 peer_target=peer_target,
@@ -220,9 +220,8 @@ class HonchoDialecticTool(BaseTool):
             # Query the dialectic API (non-streaming)
             response = peer.chat(
                 query=query,
-                stream=False,
                 target=target,
-                session_id=scope_session_id,
+                session=scope_session_id,
             )
 
             # Return the response or a default message
