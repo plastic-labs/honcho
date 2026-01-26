@@ -261,7 +261,7 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
-                queue_items_count=len(messages),
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         # Verify output tokens metric
@@ -318,7 +318,7 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
-                queue_items_count=len(messages),
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         metric_checker.assert_delta(
@@ -375,7 +375,7 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
-                queue_items_count=len(messages),
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         # Verify messages tokens were tracked (should be > 0)

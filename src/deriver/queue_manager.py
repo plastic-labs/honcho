@@ -450,12 +450,17 @@ class QueueManager:
                                     else:
                                         observers = []
 
+                                queue_item_message_ids = [
+                                    item.message_id
+                                    for item in items_to_process
+                                    if item.message_id is not None
+                                ]
                                 await process_representation_batch(
                                     messages_context,
                                     message_level_configuration,
                                     observers=observers,
                                     observed=work_unit.observed,
-                                    queue_items_count=len(items_to_process),
+                                    queue_item_message_ids=queue_item_message_ids,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
