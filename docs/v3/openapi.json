@@ -3641,7 +3641,14 @@
             "description": "The peer the conclusion is about"
           },
           "session_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Session Id"
           },
           "created_at": {
@@ -3656,7 +3663,6 @@
           "content",
           "observer_id",
           "observed_id",
-          "session_id",
           "created_at"
         ],
         "title": "Conclusion",
@@ -3700,17 +3706,23 @@
             "description": "The peer the conclusion is about"
           },
           "session_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Session Id",
-            "description": "The session this conclusion relates to"
+            "description": "A session ID to store the conclusion in, if specified"
           }
         },
         "type": "object",
         "required": [
           "content",
           "observer_id",
-          "observed_id",
-          "session_id"
+          "observed_id"
         ],
         "title": "ConclusionCreate",
         "description": "Schema for creating a single conclusion."
@@ -4770,16 +4782,22 @@
             "description": "Type of dream to schedule"
           },
           "session_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Session Id",
-            "description": "Session ID to scope the dream to"
+            "description": "Session ID to scope the dream to if specified"
           }
         },
         "type": "object",
         "required": [
           "observer",
-          "dream_type",
-          "session_id"
+          "dream_type"
         ],
         "title": "ScheduleDreamRequest"
       },
