@@ -526,8 +526,9 @@ class DocumentMetadata(BaseModel):
 
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
-    session_name: str = Field(
-        description="The session from which the document was derived"
+    session_name: str | None = Field(
+        default=None,
+        description="The session from which the document was derived (NULL for global observations)",
     )
     level: DocumentLevel = Field(
         default="explicit",
@@ -566,7 +567,7 @@ class Conclusion(BaseModel):
         description="The peer the conclusion is about",
         serialization_alias="observed_id",
     )
-    session_name: str = Field(serialization_alias="session_id")
+    session_name: str | None = Field(default=None, serialization_alias="session_id")
     created_at: datetime.datetime
 
     model_config = ConfigDict(  # pyright: ignore
@@ -603,7 +604,10 @@ class ConclusionCreate(BaseModel):
     content: Annotated[str, Field(min_length=1, max_length=65535)]
     observer_id: str = Field(..., description="The peer making the conclusion")
     observed_id: str = Field(..., description="The peer the conclusion is about")
-    session_id: str = Field(..., description="The session this conclusion relates to")
+    session_id: str | None = Field(
+        default=None,
+        description="A session ID to store the conclusion in, if specified",
+    )
 
     _token_count: int = PrivateAttr(default=0)
 
@@ -767,7 +771,9 @@ class ScheduleDreamRequest(BaseModel):
         None, description="Observed peer name (defaults to observer if not specified)"
     )
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
-    session_id: str = Field(..., description="Session ID to scope the dream to")
+    session_id: str | None = Field(
+        None, description="Session ID to scope the dream to if specified"
+    )
 
 
 # Webhook endpoint schemas
