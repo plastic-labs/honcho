@@ -22,7 +22,7 @@
       {
         "version": "v3.0.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": ["v3/openapi.json"]
         },
         "tabs": [
           {
@@ -136,8 +136,8 @@
                   "v3/api-reference/endpoint/workspaces/update-workspace",
                   "v3/api-reference/endpoint/workspaces/delete-workspace",
                   "v3/api-reference/endpoint/workspaces/search-workspace",
-                  "v3/api-reference/endpoint/workspaces/get-deriver-status",
-                  "v3/api-reference/endpoint/workspaces/trigger-dream"
+                  "v3/api-reference/endpoint/workspaces/get-queue-status",
+                  "v3/api-reference/endpoint/workspaces/schedule-dream"
                 ]
               },
               {
@@ -148,7 +148,7 @@
                   "v3/api-reference/endpoint/peers/update-peer",
                   "v3/api-reference/endpoint/peers/get-sessions-for-peer",
                   "v3/api-reference/endpoint/peers/chat",
-                  "v3/api-reference/endpoint/peers/get-working-representation",
+                  "v3/api-reference/endpoint/peers/get-representation",
                   "v3/api-reference/endpoint/peers/get-peer-card",
                   "v3/api-reference/endpoint/peers/set-peer-card",
                   "v3/api-reference/endpoint/peers/get-peer-context",
@@ -185,12 +185,12 @@
                 ]
               },
               {
-                "group": "observations",
+                "group": "conclusions",
                 "pages": [
-                  "v3/api-reference/endpoint/observations/create-observations",
-                  "v3/api-reference/endpoint/observations/list-observations",
-                  "v3/api-reference/endpoint/observations/query-observations",
-                  "v3/api-reference/endpoint/observations/delete-observation"
+                  "v3/api-reference/endpoint/conclusions/create-conclusions",
+                  "v3/api-reference/endpoint/conclusions/list-conclusions",
+                  "v3/api-reference/endpoint/conclusions/query-conclusions",
+                  "v3/api-reference/endpoint/conclusions/delete-conclusion"
                 ]
               },
               {
@@ -205,8 +205,7 @@
               {
                 "group": "miscellaneous",
                 "pages": [
-                  "v3/api-reference/endpoint/keys/create-key",
-                  "v3/api-reference/endpoint/metrics"
+                  "v3/api-reference/endpoint/keys/create-key"
                 ]
               }
             ]
@@ -228,7 +227,7 @@
       {
         "version": "v2.5.1",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": ["v2/openapi.json"]
         },
         "tabs": [
           {
