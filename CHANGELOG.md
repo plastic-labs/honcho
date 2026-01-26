@@ -14,18 +14,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `max`)
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
+- Cloud Events for auditable telemetry
 
 ### Changed
 
 - API route renaming for consistency
 - Dreamer and dialectic now respect peer card configuration settings
 - Observations renamed to Conclusions across API and SDKs
+- Deriver to buffer representation tasks to normalize workloads
+- Local Representation tasks to create singular QueueItems
+- getContext endpoint to use `search_query` rather than force `last_user_message`
 
 ### Fixed
 
 - Dream scheduling bugs
 - Summary creation when start_message_id > end_message_id
 - Cashews upgrade to prevent NoScriptError
+- Memory leak in `accumulate_metric` call
 
 ### Removed
 
