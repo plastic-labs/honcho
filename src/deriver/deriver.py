@@ -243,7 +243,7 @@ async def process_representation_tasks_batch(
             context_preparation_ms=context_prep_duration,
             llm_call_ms=llm_duration,
             total_duration_ms=overall_duration,
-            input_tokens=response.input_tokens,
+            input_tokens=messages_tokens,
             output_tokens=response.output_tokens,
         )
     )
