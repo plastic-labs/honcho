@@ -2,16 +2,18 @@
 Wrapper for sklearn's KDTree and BallTree.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
-from sklearn.neighbors import (
-    BallTree,  # pyright: ignore[reportUnknownVariableType]
-    KDTree,  # pyright: ignore[reportUnknownVariableType]
-)
 
 from .base import SurprisalTree
+
+if TYPE_CHECKING:
+    from sklearn.neighbors import (
+        BallTree,  # pyright: ignore[reportUnknownVariableType]
+        KDTree,  # pyright: ignore[reportUnknownVariableType]
+    )
 
 
 class SklearnTreeWrapper(SurprisalTree):
@@ -23,7 +25,7 @@ class SklearnTreeWrapper(SurprisalTree):
     tree_type: str
     k: int
     points: list[NDArray[np.floating[Any]]]
-    tree: KDTree | BallTree | None
+    tree: "KDTree | BallTree | None"
     total_points: int
 
     def __init__(
@@ -49,6 +51,11 @@ class SklearnTreeWrapper(SurprisalTree):
     def _rebuild_tree(self) -> None:
         if len(self.points) == 0:
             return
+
+        from sklearn.neighbors import (
+            BallTree,  # pyright: ignore[reportUnknownVariableType]
+            KDTree,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         points_array: NDArray[np.floating[Any]] = np.array(self.points)
         if self.tree_type == "kd":
