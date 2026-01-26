@@ -223,17 +223,20 @@ class HonchoWorker {
    * Get personalization insights about the user, based on the query and the accumulated knowledge of the user across all conversations.
    * @param sessionId - The ID of the session for context
    * @param query - The question about the user's preferences, habits, etc.
+   * @param reasoningLevel - Optional reasoning level: "minimal", "low", "medium", "high", or "max"
    * @returns A string with the personalization insights
    */
   async getPersonalizationInsights(
     sessionId: string,
     query: string,
+    reasoningLevel?: string,
   ): Promise<string> {
     const userPeer = await this.honcho.peer(this.config.userName);
 
     // Get the personalization insights (non-streaming returns string | null)
     const personalizationInsights = await userPeer.chat(query, {
       session: sessionId,
+      reasoningLevel,
     });
 
     if (!personalizationInsights || typeof personalizationInsights !== 'string') {
@@ -345,6 +348,7 @@ class HonchoWorker {
    * @param query - The natural language question to ask
    * @param targetPeerId - Optional target peer ID for local representation queries
    * @param sessionId - Optional session ID to scope the query to a specific session
+   * @param reasoningLevel - Optional reasoning level: "minimal", "low", "medium", "high", or "max"
    * @returns Response string containing the answer to the query, or "None" if no relevant information
    */
   async chat(
@@ -352,6 +356,7 @@ class HonchoWorker {
     query: string,
     targetPeerId?: string,
     sessionId?: string,
+    reasoningLevel?: string,
   ): Promise<string> {
     const peer = await this.honcho.peer(peerId);
     let targetPeer;
@@ -362,6 +367,7 @@ class HonchoWorker {
     const result = await peer.chat(query, {
       target: targetPeer,
       session: sessionId,
+      reasoningLevel,
     });
 
     if (!result || typeof result !== 'string') {
@@ -385,6 +391,247 @@ class HonchoWorker {
     }
 
     return peers;
+  }
+
+  /**
+   * Get the peer card for a peer.
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - Optional target peer ID to get the card about
+   * @returns The peer card content or null if not found
+   */
+  async getPeerCard(
+    peerId: string,
+    targetPeerId?: string,
+  ): Promise<string | null> {
+    const peer = await this.honcho.peer(peerId);
+    let targetPeer;
+    if (targetPeerId) {
+      targetPeer = await this.honcho.peer(targetPeerId);
+    }
+    return await peer.card(targetPeer);
+  }
+
+  /**
+   * Get the peer context (combined representation and peer card).
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - Optional target peer ID
+   * @param sessionId - Optional session ID to scope the context
+   * @param searchQuery - Optional semantic search query
+   * @param maxConclusions - Optional maximum number of conclusions to include
+   * @returns Context object with representation and peer card
+   */
+  async getPeerContext(
+    peerId: string,
+    targetPeerId?: string,
+    sessionId?: string,
+    searchQuery?: string,
+    maxConclusions?: number,
+  ): Promise<Record<string, any>> {
+    const peer = await this.honcho.peer(peerId);
+    let targetPeer;
+    if (targetPeerId) {
+      targetPeer = await this.honcho.peer(targetPeerId);
+    }
+    const context = await peer.context({
+      target: targetPeer,
+      session: sessionId,
+      searchQuery,
+      maxConclusions,
+    });
+    return {
+      peer_id: context.peerId,
+      target_id: context.targetId,
+      representation: context.representation,
+      peer_card: context.peerCard,
+    };
+  }
+
+  /**
+   * Get the formatted representation for a peer.
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - Optional target peer ID
+   * @param sessionId - Optional session ID to scope the representation
+   * @param searchQuery - Optional semantic search query
+   * @param maxConclusions - Optional maximum number of conclusions
+   * @returns Formatted representation string
+   */
+  async getRepresentation(
+    peerId: string,
+    targetPeerId?: string,
+    sessionId?: string,
+    searchQuery?: string,
+    maxConclusions?: number,
+  ): Promise<string> {
+    const peer = await this.honcho.peer(peerId);
+    let targetPeer;
+    if (targetPeerId) {
+      targetPeer = await this.honcho.peer(targetPeerId);
+    }
+    return await peer.representation({
+      target: targetPeer,
+      session: sessionId,
+      searchQuery,
+      maxConclusions,
+    });
+  }
+
+  //////////////////////////////////////////////////////
+  ///                                                ///
+  ///              Conclusions operations            ///
+  ///                                                ///
+  //////////////////////////////////////////////////////
+
+  /**
+   * List conclusions for a peer.
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - Optional target peer to get conclusions about
+   * @returns List of conclusions
+   */
+  async listConclusions(
+    peerId: string,
+    targetPeerId?: string,
+  ): Promise<any[]> {
+    const peer = await this.honcho.peer(peerId);
+    let conclusionScope;
+    if (targetPeerId) {
+      const targetPeer = await this.honcho.peer(targetPeerId);
+      conclusionScope = peer.conclusionsOf(targetPeer);
+    } else {
+      conclusionScope = peer.conclusions;
+    }
+
+    const conclusionsPage = await conclusionScope.list();
+    const conclusions = [];
+    for await (const conclusion of conclusionsPage) {
+      conclusions.push({
+        id: conclusion.id,
+        content: conclusion.content,
+        observer_id: conclusion.observerId,
+        observed_id: conclusion.observedId,
+        session_id: conclusion.sessionId,
+        created_at: conclusion.createdAt,
+      });
+    }
+    return conclusions;
+  }
+
+  /**
+   * Query conclusions using semantic search.
+   * @param peerId - The ID of the observer peer
+   * @param query - The semantic search query
+   * @param targetPeerId - Optional target peer to search conclusions about
+   * @param topK - Maximum number of results to return
+   * @returns List of matching conclusions
+   */
+  async queryConclusions(
+    peerId: string,
+    query: string,
+    targetPeerId?: string,
+    topK?: number,
+  ): Promise<any[]> {
+    const peer = await this.honcho.peer(peerId);
+    let conclusionScope;
+    if (targetPeerId) {
+      const targetPeer = await this.honcho.peer(targetPeerId);
+      conclusionScope = peer.conclusionsOf(targetPeer);
+    } else {
+      conclusionScope = peer.conclusions;
+    }
+
+    // SDK query returns Conclusion[] directly, not a Page
+    const conclusions = await conclusionScope.query(query, topK);
+    return conclusions.map((conclusion) => ({
+      id: conclusion.id,
+      content: conclusion.content,
+      observer_id: conclusion.observerId,
+      observed_id: conclusion.observedId,
+      session_id: conclusion.sessionId,
+      created_at: conclusion.createdAt,
+    }));
+  }
+
+  /**
+   * Create conclusions manually.
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - The target peer the conclusions are about
+   * @param conclusions - List of conclusion content strings
+   * @param sessionId - The session ID to associate with conclusions
+   * @returns Number of conclusions created
+   */
+  async createConclusions(
+    peerId: string,
+    targetPeerId: string,
+    conclusions: string[],
+    sessionId: string,
+  ): Promise<number> {
+    const peer = await this.honcho.peer(peerId);
+    const targetPeer = await this.honcho.peer(targetPeerId);
+    const conclusionScope = peer.conclusionsOf(targetPeer);
+
+    // Convert string array to ConclusionCreateParams array
+    const conclusionParams = conclusions.map((content) => ({
+      content,
+      sessionId,
+    }));
+
+    await conclusionScope.create(conclusionParams);
+    return conclusions.length;
+  }
+
+  /**
+   * Delete a conclusion.
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - The target peer the conclusion is about
+   * @param conclusionId - The ID of the conclusion to delete
+   */
+  async deleteConclusion(
+    peerId: string,
+    targetPeerId: string,
+    conclusionId: string,
+  ): Promise<void> {
+    const peer = await this.honcho.peer(peerId);
+    const targetPeer = await this.honcho.peer(targetPeerId);
+    const conclusionScope = peer.conclusionsOf(targetPeer);
+
+    await conclusionScope.delete(conclusionId);
+  }
+
+  //////////////////////////////////////////////////////
+  ///                                                ///
+  ///              System operations                 ///
+  ///                                                ///
+  //////////////////////////////////////////////////////
+
+  /**
+   * Schedule a dream (memory consolidation) for a peer.
+   * @param peerId - The ID of the observer peer
+   * @param targetPeerId - Optional target peer to dream about (defaults to observer for self-reflection)
+   * @param sessionId - The session ID for context
+   * @returns Confirmation message
+   */
+  async scheduleDream(
+    peerId: string,
+    sessionId: string,
+    targetPeerId?: string,
+  ): Promise<string> {
+    const peer = await this.honcho.peer(peerId);
+    const session = await this.honcho.session(sessionId);
+    const targetPeer = targetPeerId ? await this.honcho.peer(targetPeerId) : undefined;
+
+    await this.honcho.scheduleDream({
+      observer: peer,
+      session: session,
+      observed: targetPeer,
+    });
+    return "Dream scheduled successfully";
+  }
+
+  /**
+   * Get the current queue status for the deriver.
+   * @returns Queue status information
+   */
+  async getQueueStatus(): Promise<Record<string, any>> {
+    return await this.honcho.queueStatus();
   }
 
   //////////////////////////////////////////////////////
@@ -739,6 +986,12 @@ const tools: Tool[] = [
           description:
             "The question about the user's preferences, habits, etc.",
         },
+        reasoning_level: {
+          type: "string",
+          enum: ["minimal", "low", "medium", "high", "max"],
+          description:
+            "The reasoning level for the response. Higher levels provide more detailed analysis.",
+        },
       },
       required: ["session_id", "query"],
     },
@@ -879,6 +1132,12 @@ const tools: Tool[] = [
           description:
             "Optional session ID to scope the query to a specific session.",
         },
+        reasoning_level: {
+          type: "string",
+          enum: ["minimal", "low", "medium", "high", "max"],
+          description:
+            "The reasoning level for the response. Higher levels provide more detailed analysis.",
+        },
       },
       required: ["peer_id", "query"],
     },
@@ -886,6 +1145,221 @@ const tools: Tool[] = [
   {
     name: "list_peers",
     description: "Get all peers in the current workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "get_peer_card",
+    description:
+      "Get the peer card for a peer. The peer card contains compact biographical facts about the peer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        target_peer_id: {
+          type: "string",
+          description:
+            "Optional target peer ID to get the card about. If not provided, returns the peer's own card.",
+        },
+      },
+      required: ["peer_id"],
+    },
+  },
+  {
+    name: "get_peer_context",
+    description:
+      "Get the peer context, which combines the representation and peer card for comprehensive peer information.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        target_peer_id: {
+          type: "string",
+          description: "Optional target peer ID to get context about.",
+        },
+        session_id: {
+          type: "string",
+          description: "Optional session ID to scope the context.",
+        },
+        search_query: {
+          type: "string",
+          description: "Optional semantic search query to filter conclusions.",
+        },
+        max_conclusions: {
+          type: "integer",
+          description: "Maximum number of conclusions to include.",
+        },
+      },
+      required: ["peer_id"],
+    },
+  },
+  {
+    name: "get_representation",
+    description:
+      "Get the formatted representation for a peer, containing their conclusions and observations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        target_peer_id: {
+          type: "string",
+          description: "Optional target peer ID to get representation about.",
+        },
+        session_id: {
+          type: "string",
+          description: "Optional session ID to scope the representation.",
+        },
+        search_query: {
+          type: "string",
+          description: "Optional semantic search query to filter conclusions.",
+        },
+        max_conclusions: {
+          type: "integer",
+          description: "Maximum number of conclusions to include.",
+        },
+      },
+      required: ["peer_id"],
+    },
+  },
+
+  // Conclusions operations
+  {
+    name: "list_conclusions",
+    description:
+      "List conclusions for a peer. Conclusions are facts and observations derived from conversations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        target_peer_id: {
+          type: "string",
+          description:
+            "Optional target peer ID to get conclusions about. If not provided, returns conclusions about self.",
+        },
+      },
+      required: ["peer_id"],
+    },
+  },
+  {
+    name: "query_conclusions",
+    description: "Query conclusions using semantic search.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        query: {
+          type: "string",
+          description: "The semantic search query.",
+        },
+        target_peer_id: {
+          type: "string",
+          description: "Optional target peer ID to search conclusions about.",
+        },
+        top_k: {
+          type: "integer",
+          description: "Maximum number of results to return.",
+        },
+      },
+      required: ["peer_id", "query"],
+    },
+  },
+  {
+    name: "create_conclusions",
+    description: "Create conclusions manually for a peer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        target_peer_id: {
+          type: "string",
+          description: "The target peer the conclusions are about.",
+        },
+        conclusions: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of conclusion content strings to create.",
+        },
+        session_id: {
+          type: "string",
+          description: "The session ID to associate with conclusions.",
+        },
+      },
+      required: ["peer_id", "target_peer_id", "conclusions", "session_id"],
+    },
+  },
+  {
+    name: "delete_conclusion",
+    description: "Delete a specific conclusion.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        target_peer_id: {
+          type: "string",
+          description: "The target peer the conclusion is about.",
+        },
+        conclusion_id: {
+          type: "string",
+          description: "The ID of the conclusion to delete.",
+        },
+      },
+      required: ["peer_id", "target_peer_id", "conclusion_id"],
+    },
+  },
+
+  // System operations
+  {
+    name: "schedule_dream",
+    description:
+      "Schedule a dream (memory consolidation) for a peer. Dreams help consolidate and improve memory quality.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peer_id: {
+          type: "string",
+          description: "The ID of the observer peer.",
+        },
+        session_id: {
+          type: "string",
+          description: "The session ID for context.",
+        },
+        target_peer_id: {
+          type: "string",
+          description:
+            "Optional target peer to dream about. If not provided, defaults to the observer peer (self-reflection).",
+        },
+      },
+      required: ["peer_id", "session_id"],
+    },
+  },
+  {
+    name: "get_queue_status",
+    description:
+      "Get the current queue status for the deriver (background processing system).",
     inputSchema: {
       type: "object",
       properties: {},
@@ -1170,6 +1644,7 @@ async function executeToolCall(
       result = await honcho.getPersonalizationInsights(
         toolArguments.session_id,
         toolArguments.query,
+        toolArguments.reasoning_level,
       );
       break;
     }
@@ -1272,12 +1747,153 @@ async function executeToolCall(
         toolArguments.query,
         toolArguments.target_peer_id,
         toolArguments.session_id,
+        toolArguments.reasoning_level,
       );
       break;
     }
 
     case "list_peers":
       result = await honcho.listPeers();
+      break;
+
+    case "get_peer_card": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      result = await honcho.getPeerCard(
+        toolArguments.peer_id,
+        toolArguments.target_peer_id,
+      );
+      break;
+    }
+
+    case "get_peer_context": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      result = await honcho.getPeerContext(
+        toolArguments.peer_id,
+        toolArguments.target_peer_id,
+        toolArguments.session_id,
+        toolArguments.search_query,
+        toolArguments.max_conclusions,
+      );
+      break;
+    }
+
+    case "get_representation": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      result = await honcho.getRepresentation(
+        toolArguments.peer_id,
+        toolArguments.target_peer_id,
+        toolArguments.session_id,
+        toolArguments.search_query,
+        toolArguments.max_conclusions,
+      );
+      break;
+    }
+
+    // Conclusions operations
+    case "list_conclusions": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      result = await honcho.listConclusions(
+        toolArguments.peer_id,
+        toolArguments.target_peer_id,
+      );
+      break;
+    }
+
+    case "query_conclusions": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id", "query"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      result = await honcho.queryConclusions(
+        toolArguments.peer_id,
+        toolArguments.query,
+        toolArguments.target_peer_id,
+        toolArguments.top_k,
+      );
+      break;
+    }
+
+    case "create_conclusions": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id", "target_peer_id", "conclusions", "session_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      const count = await honcho.createConclusions(
+        toolArguments.peer_id,
+        toolArguments.target_peer_id,
+        toolArguments.conclusions,
+        toolArguments.session_id,
+      );
+      result = `Created ${count} conclusions successfully`;
+      break;
+    }
+
+    case "delete_conclusion": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id", "target_peer_id", "conclusion_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      await honcho.deleteConclusion(
+        toolArguments.peer_id,
+        toolArguments.target_peer_id,
+        toolArguments.conclusion_id,
+      );
+      result = "Conclusion deleted successfully";
+      break;
+    }
+
+    // System operations
+    case "schedule_dream": {
+      const validation = validateArguments(
+        toolArguments,
+        ["peer_id", "session_id"],
+        requestId,
+      );
+      if (validation) return validation;
+
+      result = await honcho.scheduleDream(
+        toolArguments.peer_id,
+        toolArguments.session_id,
+        toolArguments.target_peer_id,
+      );
+      break;
+    }
+
+    case "get_queue_status":
+      result = await honcho.getQueueStatus();
       break;
 
     // Session operations
@@ -1553,7 +2169,7 @@ export default {
                 },
                 serverInfo: {
                   name: "Honcho MCP Server",
-                  version: "1.0.0",
+                  version: "3.0.0",
                 },
               }),
             ),
