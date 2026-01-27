@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 
 - Token counting in Explicit Agent Loop
-- Backwards compatability of queue items
+- Backwards compatibility of queue items
 
 ## [3.0.0] - 2026-01-19
 
