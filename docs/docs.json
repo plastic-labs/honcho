@@ -15,14 +15,21 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "navigation": {
     "versions": [
       {
-        "version": "v3.0.0",
+        "version": "v3.0.1",
         "api": {
-          "openapi": ["v3/openapi.json"]
+          "openapi": [
+            "v3/openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -95,11 +102,16 @@
               },
               {
                 "group": "Migrations",
-                "pages": ["v3/guides/migrations/mem0"]
+                "pages": [
+                  "v3/guides/migrations/mem0"
+                ]
               },
               {
                 "group": "Chatbots",
-                "pages": ["v3/guides/discord", "v3/guides/telegram"]
+                "pages": [
+                  "v3/guides/discord",
+                  "v3/guides/telegram"
+                ]
               }
             ]
           },
@@ -127,7 +139,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v3/api-reference/introduction"]
+                "pages": [
+                  "v3/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -228,7 +242,9 @@
       {
         "version": "v2.5.1",
         "api": {
-          "openapi": ["v2/openapi.json"]
+          "openapi": [
+            "v2/openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -275,11 +291,15 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v2/guides/overview"]
+                "pages": [
+                  "v2/guides/overview"
+                ]
               },
               {
                 "group": "Migrations",
-                "pages": ["v2/migrations/from-mem0"]
+                "pages": [
+                  "v2/migrations/from-mem0"
+                ]
               },
               {
                 "group": "Integrations",
@@ -292,7 +312,10 @@
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+                "pages": [
+                  "v2/guides/discord",
+                  "v2/guides/telegram"
+                ]
               }
             ]
           },
@@ -301,7 +324,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v2/api-reference/introduction"]
+                "pages": [
+                  "v2/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -417,7 +442,9 @@
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -447,15 +474,23 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
+                "pages": [
+                  "v1/guides/overview",
+                  "v1/guides/streaming-response"
+                ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
+                "pages": [
+                  "v1/guides/discord",
+                  "v1/guides/honcho-mcp"
+                ]
               },
               {
                 "group": "Personal Memory",
-                "pages": ["v1/guides/dialectic-endpoint"]
+                "pages": [
+                  "v1/guides/dialectic-endpoint"
+                ]
               }
             ]
           },
@@ -464,7 +499,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v1/api-reference/introduction"]
+                "pages": [
+                  "v1/api-reference/introduction"
+                ]
               },
               {
                 "group": "apps",
@@ -512,7 +549,9 @@
               },
               {
                 "group": "keys",
-                "pages": ["v1/api-reference/endpoint/keys/create-key"]
+                "pages": [
+                  "v1/api-reference/endpoint/keys/create-key"
+                ]
               },
               {
                 "group": "metamessages",

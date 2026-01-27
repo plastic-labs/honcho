@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.1] - 2026-01-27
+
+### Fixed
+
+- Token counting in Explicit Agent Loop
+- Backwards compatability of queue items
+
 ## [3.0.0] - 2026-01-19
 
 ### Added
