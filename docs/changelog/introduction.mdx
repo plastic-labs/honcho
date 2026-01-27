@@ -27,10 +27,43 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.0.0 (Current)">
+        <Update label="v3.0.1 (Current)">
+        ### Fixed
+
+        - Token counting in Explicit Agent Loop
+        - Backwards compatibility of queue items
+        </Update>
+
+        <Update label="v3.0.0">
+        ### Added
+
+        - Agentic Dreamer for intelligent memory consolidation using LLM agents
+        - Agentic Dialectic for query answering using LLM agents with tool use
+        - Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `max`)
+        - Prometheus token tracking for deriver and dialectic operations
+        - n8n integration
+        - Cloud Events for auditable telemetry
+        - External Vector Store support for turbopuffer and lancedb with reconciliation flow
+
         ### Changed
 
-        - Major version release
+        - API route renaming for consistency
+        - Dreamer and dialectic now respect peer card configuration settings
+        - Observations renamed to Conclusions across API and SDKs
+        - Deriver to buffer representation tasks to normalize workloads
+        - Local Representation tasks to create singular QueueItems
+        - getContext endpoint to use `search_query` rather than force `last_user_message`
+
+        ### Fixed
+
+        - Dream scheduling bugs
+        - Summary creation when start_message_id > end_message_id
+        - Cashews upgrade to prevent NoScriptError
+        - Memory leak in `accumulate_metric` call
+
+        ### Removed
+
+        - Peer card configuration from message configuration; peer cards no longer created/updated in deriver process
         </Update>
 
         <Update label="v2.5.1">
@@ -148,7 +181,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         <Update label="v2.3.2">
         ### Added
 
-        - Get peer cards endpoint (`GET /v3/peers/{peer_id}/peer-card`) for retrieving targeted peer context information
+        - Get peer cards endpoint (`GET /v2/peers/{peer_id}/card`) for retrieving targeted peer context information
 
         ### Changed
 

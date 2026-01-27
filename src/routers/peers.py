@@ -14,7 +14,7 @@ from src.dependencies import db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -184,9 +184,9 @@ async def chat(
                 yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
 
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_dialectic_call(
+        # Prometheus metrics
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_dialectic_call(
                 workspace_name=workspace_id,
                 reasoning_level=options.reasoning_level,
             )
@@ -216,9 +216,9 @@ async def chat(
         reasoning_level=options.reasoning_level,
     )
 
-    # OTel metrics (push-based)
-    if settings.OTEL.ENABLED:
-        otel_metrics.record_dialectic_call(
+    # Prometheus metrics
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
             workspace_name=workspace_id,
             reasoning_level=options.reasoning_level,
         )

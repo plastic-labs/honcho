@@ -22,10 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.schemas import ResolvedConfiguration
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
-from src.telemetry.otel.metrics import TokenTypes
+from src.telemetry.prometheus.metrics import TokenTypes
 from src.utils.agent_tools import (
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
@@ -96,7 +96,7 @@ class BaseSpecialist(ABC):
         workspace_name: str,
         observer: str,
         observed: str,
-        session_name: str,
+        session_name: str | None,
         probing_questions: list[str],
         configuration: ResolvedConfiguration | None = None,
         parent_run_id: str | None = None,
@@ -186,14 +186,14 @@ class BaseSpecialist(ABC):
         accumulate_metric(task_name, "input_tokens", response.input_tokens, "count")
         accumulate_metric(task_name, "output_tokens", response.output_tokens, "count")
 
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_dreamer_tokens(
+        # Prometheus metrics
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_dreamer_tokens(
                 count=response.input_tokens,
                 specialist_name=self.name,
                 token_type=TokenTypes.INPUT.value,
             )
-            otel_metrics.record_dreamer_tokens(
+            prometheus_metrics.record_dreamer_tokens(
                 count=response.output_tokens,
                 specialist_name=self.name,
                 token_type=TokenTypes.OUTPUT.value,

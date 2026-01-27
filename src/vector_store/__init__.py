@@ -192,17 +192,18 @@ class VectorStore(ABC):
         ...
 
 
-# Import implementations after base classes are defined to avoid circular imports
-from src.vector_store.lancedb import LanceDBVectorStore  # noqa: E402
-from src.vector_store.turbopuffer import TurbopufferVectorStore  # noqa: E402
 from src.vector_store.utils import upsert_with_retry  # noqa: E402
 
 
 def _create_store_by_type(store_type: str) -> VectorStore:
     """Create a vector store instance by type name."""
     if store_type == "turbopuffer":
+        from src.vector_store.turbopuffer import TurbopufferVectorStore
+
         return TurbopufferVectorStore()
     elif store_type == "lancedb":
+        from src.vector_store.lancedb import LanceDBVectorStore
+
         return LanceDBVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")

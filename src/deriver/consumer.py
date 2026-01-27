@@ -158,7 +158,7 @@ async def process_representation_batch(
     *,
     observers: list[str] | None,
     observed: str | None,
-    queue_items_count: int,
+    queue_item_message_ids: list[int],
 ) -> None:
     """
     Prepares and processes a batch of messages for representation tasks.
@@ -168,6 +168,7 @@ async def process_representation_batch(
         message_level_configuration: Resolved configuration for this batch
         observers: List of observers for the messages
         observed: The observed of the messages
+        queue_item_message_ids: Message IDs from queue items
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")
@@ -181,7 +182,7 @@ async def process_representation_batch(
         message_level_configuration,
         observers=observers,
         observed=observed,
-        queue_items_count=queue_items_count,
+        queue_item_message_ids=queue_item_message_ids,
     )
 
 

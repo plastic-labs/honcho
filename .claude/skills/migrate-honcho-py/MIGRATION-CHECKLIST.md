@@ -85,6 +85,7 @@ Use this checklist to track migration progress. Copy into your working notes and
 
 - [ ] `include_most_derived=` → `include_most_frequent=`
 - [ ] `max_observations=` → `max_conclusions=`
+- [ ] `last_user_message=` → `search_query=`
 
 ## Return Type Changes
 

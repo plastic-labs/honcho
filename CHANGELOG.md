@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.1] - 2026-01-27
+
+### Fixed
+
+- Token counting in Explicit Agent Loop
+- Backwards compatibility of queue items
+
 ## [3.0.0] - 2026-01-19
 
 ### Added
@@ -14,18 +21,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `max`)
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
+- Cloud Events for auditable telemetry
+- External Vector Store support for turbopuffer and lancedb with reconciliation flow
 
 ### Changed
 
 - API route renaming for consistency
 - Dreamer and dialectic now respect peer card configuration settings
 - Observations renamed to Conclusions across API and SDKs
+- Deriver to buffer representation tasks to normalize workloads
+- Local Representation tasks to create singular QueueItems
+- getContext endpoint to use `search_query` rather than force `last_user_message`
 
 ### Fixed
 
 - Dream scheduling bugs
 - Summary creation when start_message_id > end_message_id
 - Cashews upgrade to prevent NoScriptError
+- Memory leak in `accumulate_metric` call
 
 ### Removed
 

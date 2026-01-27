@@ -32,7 +32,7 @@ class DreamRunEvent(BaseEvent):
     workspace_name: str = Field(..., description="Workspace name")
 
     # Session context
-    session_name: str = Field(..., description="Most recent session name")
+    session_name: str | None = Field(None, description="Session name if specified")
 
     # Peer context
     observer: str = Field(..., description="Observer peer name")

@@ -3,15 +3,18 @@ import logging
 import os
 
 import uvloop
+from prometheus_client import start_http_server
 
 from src.config import settings
-from src.telemetry import (
-    initialize_telemetry,
-    initialize_telemetry_async,
-    shutdown_telemetry,
-)
+from src.telemetry import initialize_telemetry_async, shutdown_telemetry
 
 from .queue_manager import main
+
+
+def start_metrics_server() -> None:
+    """Start the Prometheus metrics HTTP server on port 9090."""
+    start_http_server(9090)
+    print("[DERIVER] Prometheus metrics server started on port 9090")
 
 
 def setup_logging():
@@ -55,7 +58,7 @@ async def run_deriver():
     try:
         await main()
     finally:
-        # Shutdown telemetry (flush CloudEvents buffer, shutdown OTel metrics)
+        # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
 
 
@@ -67,8 +70,10 @@ if __name__ == "__main__":
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
-        # Initialize sync telemetry (OTel metrics)
-        initialize_telemetry()
+        # Start Prometheus metrics server if enabled
+        if settings.METRICS.ENABLED:
+            start_metrics_server()
+
         print("[DERIVER] Running main loop")
         asyncio.run(run_deriver())
     except KeyboardInterrupt:

@@ -23,10 +23,14 @@ import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from honcho import Honcho
+from honcho.api_types import SessionConfiguration, SummaryConfiguration
 from honcho.session import SessionPeerConfig
 from typing_extensions import TypedDict
 
 load_dotenv()
+
+# Default session configuration with summaries disabled for tests
+_TEST_SESSION_CONFIG = SessionConfiguration(summary=SummaryConfiguration(enabled=False))
 
 
 class SessionResult(TypedDict):
@@ -319,8 +323,10 @@ Evaluate whether the actual response contains the core correct information from 
                 peers[peer_name] = await honcho_client.aio.peer(id=peer_name)
 
             for session_name, session_data in sessions.items():
-                # Create session
-                session = await honcho_client.aio.session(id=str(session_name))
+                # Create session with summaries disabled
+                session = await honcho_client.aio.session(
+                    id=str(session_name), configuration=_TEST_SESSION_CONFIG
+                )
 
                 output_lines.append(f"\n  session: {session_name}")
 
@@ -507,7 +513,9 @@ Evaluate whether the actual response contains the core correct information from 
                 session_name = str(get_context_call["session"])
                 summary = get_context_call["summary"]
                 max_tokens: int | None = get_context_call.get("max_tokens")
-                session = await honcho_client.aio.session(id=session_name)
+                session = await honcho_client.aio.session(
+                    id=session_name, configuration=_TEST_SESSION_CONFIG
+                )
 
                 # Wait for deriver queue to be empty for this session
                 # TODO implement this differently!

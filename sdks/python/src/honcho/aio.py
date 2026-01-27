@@ -372,7 +372,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
     async def schedule_dream(
         self,
         observer: str | PeerBase,
-        session: str | SessionBase,
+        session: str | SessionBase | None = None,
         observed: str | PeerBase | None = None,
     ) -> None:
         """
@@ -385,7 +385,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         Args:
             observer: The observer peer (ID string or Peer object) whose perspective
                 to use for the dream.
-            session: The session (ID string or Session object) to scope the dream to.
+            session: Optional session (ID string or Session object) to scope the dream to.
             observed: Optional observed peer (ID string or Peer object). If not provided,
                 defaults to the observer (self-reflection).
         """
@@ -934,9 +934,9 @@ class SessionAio(AsyncMetadataConfigMixin):
             None,
             description="A peer ID to get context for.",
         ),
-        last_user_message: str | Message | None = Field(
+        search_query: str | Message | None = Field(
             None,
-            description="The most recent message text (string or Message object), used to fetch semantically relevant conclusions.",
+            description="A query string (or Message object) used to fetch semantically relevant conclusions.",
         ),
         peer_perspective: str | None = Field(
             None,
@@ -976,15 +976,13 @@ class SessionAio(AsyncMetadataConfigMixin):
                 "You must provide a `peer_target` when `peer_perspective` is provided"
             )
 
-        if peer_target is None and last_user_message is not None:
+        if peer_target is None and search_query is not None:
             raise ValueError(
-                "You must provide a `peer_target` when `last_user_message` is provided"
+                "You must provide a `peer_target` when `search_query` is provided"
             )
 
-        last_user_message_text = (
-            last_user_message.content
-            if isinstance(last_user_message, Message)
-            else last_user_message
+        search_query_text = (
+            search_query.content if isinstance(search_query, Message) else search_query
         )
 
         query: dict[str, Any] = {
@@ -993,8 +991,8 @@ class SessionAio(AsyncMetadataConfigMixin):
         }
         if tokens is not None:
             query["tokens"] = tokens
-        if last_user_message_text is not None:
-            query["last_message"] = last_user_message_text
+        if search_query_text is not None:
+            query["search_query"] = search_query_text
         if peer_target is not None:
             query["peer_target"] = peer_target
         if peer_perspective is not None:
@@ -1319,19 +1317,28 @@ class ConclusionScopeAio:
     ) -> list[Conclusion]:
         """Create conclusions in this scope asynchronously."""
         await self._scope._honcho._ensure_workspace_async()
-        conclusion_params = [
-            {
-                "content": c.content
-                if isinstance(c, ConclusionCreateParams)
-                else c["content"],
-                "session_id": c.session_id
-                if isinstance(c, ConclusionCreateParams)
-                else c["session_id"],
+
+        def build_conclusion_payload(
+            item: ConclusionCreateParams | dict[str, Any],
+        ) -> dict[str, Any]:
+            """Build a single conclusion create payload."""
+            payload: dict[str, Any] = {
                 "observer_id": self._scope.observer,
                 "observed_id": self._scope.observed,
             }
-            for c in conclusions
-        ]
+            if isinstance(item, ConclusionCreateParams):
+                payload["content"] = item.content
+                if item.session_id is not None:
+                    payload["session_id"] = item.session_id
+                return payload
+
+            payload["content"] = item["content"]
+            session_id = item.get("session_id")
+            if session_id is not None:
+                payload["session_id"] = session_id
+            return payload
+
+        conclusion_params = [build_conclusion_payload(c) for c in conclusions]
 
         data = await self._scope._honcho._async_http_client.post(
             routes.conclusions(self._scope.workspace_id),

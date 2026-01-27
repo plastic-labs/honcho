@@ -58,7 +58,7 @@ session.add_messages([
     assistant.message("It's sunny and 75°F outside!")
 ])
 
-# Query peer representations in natural language
+# Chat with Honcho about a peer
 response = alice.chat("What did the assistant tell this user about the weather?")
 
 # Get conversation context for LLM completions
@@ -85,7 +85,7 @@ await session.addMessages([
   assistant.message("It's sunny and 75°F outside!")
 ]);
 
-// Query peer representations in natural language
+// Chat with Honcho about a peer
 const response = await alice.chat("What did the assistant tell this user about the weather?");
 
 // Get conversation context for LLM completions
@@ -533,7 +533,7 @@ context = session.get_context(
     tokens=2000,
     peer_target="user",
     peer_perspective="assistant",
-    last_user_message="What are my preferences?",
+    search_query="What are my preferences?",
     limit_to_session=True,
     search_top_k=10,
     search_max_distance=0.8,
@@ -612,7 +612,7 @@ const richContext = await session.getContext({
   tokens: 2000,
   peerTarget: "user",
   peerPerspective: "assistant",
-  lastUserMessage: "What are my preferences?",
+  searchQuery: "What are my preferences?",
   limitToSession: true,
   searchTopK: 10,
   searchMaxDistance: 0.8,
@@ -752,7 +752,7 @@ The SessionContext object has the following structure:
 | `tokens` | `int` | Maximum tokens to include |
 | `peer_target` | `str` | Peer ID to get representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
-| `last_user_message` | `str` | Most recent message for semantic search |
+| `search_query` | `str` or `Message` | Query string or Message object for semantic search |
 | `limit_to_session` | `bool` | Limit representation to session only |
 | `search_top_k` | `int` | Number of semantic search results (1-100) |
 | `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
@@ -879,7 +879,7 @@ If `created_at` is not provided, messages will use the server's current timestam
 
 ### Metadata and Filtering
 
-See [Using Filters](/v3/guides/using-filters) for more examples on how to use filters.
+See [Using Filters](/v3/documentation/features/advanced/using-filters) for more examples on how to use filters.
 
 <CodeGroup>
 ```python Python

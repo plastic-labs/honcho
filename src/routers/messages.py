@@ -22,7 +22,7 @@ from src.dependencies import db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.utils.files import process_file_uploads_for_messages
 
 logger = logging.getLogger(__name__)
@@ -100,9 +100,9 @@ async def create_messages_for_session(
             session_name=session_id,
         )
 
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_messages_created(
+        # Prometheus metrics
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_messages_created(
                 count=len(created_messages),
                 workspace_name=workspace_id,
             )
@@ -199,9 +199,9 @@ async def create_messages_with_file(
         len(created_messages),
     )
 
-    # OTel metrics (push-based)
-    if settings.OTEL.ENABLED:
-        otel_metrics.record_messages_created(
+    # Prometheus metrics
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_messages_created(
             count=len(created_messages),
             workspace_name=workspace_id,
         )

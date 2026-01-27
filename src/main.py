@@ -30,9 +30,9 @@ from src.routers import (
 )
 from src.security import create_admin_jwt
 from src.telemetry import (
-    initialize_telemetry,
     initialize_telemetry_async,
-    otel_metrics,
+    metrics_endpoint,
+    prometheus_metrics,
     shutdown_telemetry,
 )
 from src.telemetry.logging import get_route_template
@@ -120,8 +120,7 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Initialize telemetry (OTel metrics + CloudEvents emitter)
-    initialize_telemetry()
+    # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
 
     try:
@@ -140,7 +139,7 @@ async def lifespan(_: FastAPI):
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()
-        # Shutdown telemetry (flush CloudEvents buffer, shutdown OTel metrics)
+        # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
 
 
@@ -153,7 +152,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
-    version="3.0.0",
+    version="3.0.1",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -190,6 +189,9 @@ app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
+
+# Prometheus metrics endpoint
+app.add_route("/metrics", metrics_endpoint, methods=["GET"])
 
 
 # Global exception handlers
@@ -233,9 +235,9 @@ async def track_request(
         response = await call_next(request)
 
         # Track metrics if enabled
-        if settings.OTEL.ENABLED:
+        if settings.METRICS.ENABLED:
             template = get_route_template(request)
-            otel_metrics.record_api_request(
+            prometheus_metrics.record_api_request(
                 method=request.method,
                 endpoint=template,
                 status_code=str(response.status_code),

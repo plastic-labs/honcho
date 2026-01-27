@@ -1,23 +1,21 @@
-"""Integration tests for OpenTelemetry token metrics tracking.
+# pyright: reportPrivateUsage=false, reportUnknownVariableType=false
+"""Integration tests for Prometheus token metrics tracking.
 
 These tests verify that deriver and dialectic token metrics are correctly
 emitted with accurate token counts when processing messages and dialectic queries.
 
-The approach uses delta-based verification with OTel's InMemoryMetricReader:
+The approach uses delta-based verification by directly accessing Prometheus counters:
 1. Capture counter values before test execution
 2. Run the code under test (with mocked LLM)
 3. Verify deltas match expected values
 """
 
 from collections.abc import Iterator
-from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from opentelemetry.metrics import Meter
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from prometheus_client import Counter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -29,12 +27,15 @@ from src.schemas import (
     ResolvedReasoningConfiguration,
     ResolvedSummaryConfiguration,
 )
-from src.telemetry.otel.metrics import otel_metrics
+from src.telemetry.prometheus.metrics import (
+    deriver_tokens_processed_counter,
+    dialectic_tokens_processed_counter,
+)
 from src.utils.clients import HonchoLLMCallResponse
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.summarizer import (
     SummaryType,
-    _create_and_save_summary,  # pyright: ignore[reportPrivateUsage]
+    _create_and_save_summary,
     estimate_short_summary_prompt_tokens,
 )
 
@@ -43,137 +44,70 @@ from src.utils.summarizer import (
 # =============================================================================
 
 
-class OTelMetricChecker:
-    """Utility class to capture and verify OTel counter deltas."""
+class PrometheusMetricChecker:
+    """Utility class to capture and verify Prometheus counter deltas."""
 
-    _reader: InMemoryMetricReader
-
-    def __init__(self, reader: InMemoryMetricReader):
-        self._reader = reader
-
-    def _get_metric_value(self, metric_name: str, labels: dict[str, str]) -> float:
+    def _get_counter_value(self, counter: Counter, labels: dict[str, str]) -> float:
         """Get current value of a counter with specific labels.
 
-        Note: The OTel SDK's MetricsData types are not fully typed, so we cast
-        to Any to avoid type warnings when traversing the metrics data structure.
+        Note: For prometheus_client counters, we access the internal _value
+        of the labeled metric. This is implementation-specific but works for testing.
         """
-        raw_data = self._reader.get_metrics_data()  # pyright: ignore[reportUnknownVariableType]
-        if raw_data is None:
+        try:
+            labeled_counter = counter.labels(**labels)
+            return labeled_counter._value.get()
+        except Exception:
             return 0.0
-        data = cast(Any, raw_data)
 
-        for resource_metrics in data.resource_metrics:
-            for scope_metrics in resource_metrics.scope_metrics:
-                for metric in scope_metrics.metrics:
-                    if metric.name == metric_name and hasattr(
-                        metric.data, "data_points"
-                    ):
-                        for point in metric.data.data_points:
-                            # Check if labels match
-                            point_attrs: dict[str, str] = (
-                                dict(point.attributes) if point.attributes else {}
-                            )
-                            if all(point_attrs.get(k) == v for k, v in labels.items()):
-                                return float(point.value)
-        return 0.0
-
-    def capture(self, metric_name: str, labels: dict[str, str]) -> float:
+    def capture(self, counter: Counter, labels: dict[str, str]) -> float:
         """Capture current value of a counter with specific labels."""
-        return self._get_metric_value(metric_name, labels)
+        return self._get_counter_value(counter, labels)
 
     def get_delta(
-        self, metric_name: str, labels: dict[str, str], before: float
+        self, counter: Counter, labels: dict[str, str], before: float
     ) -> float:
         """Get the delta between a before value and current."""
-        return self.capture(metric_name, labels) - before
+        return self.capture(counter, labels) - before
 
     def assert_delta(
         self,
-        metric_name: str,
+        counter: Counter,
         labels: dict[str, str],
         before: float,
         expected: int | float,
         message: str = "",
     ) -> None:
         """Assert that the delta matches expected value."""
-        delta = self.get_delta(metric_name, labels, before)
+        delta = self.get_delta(counter, labels, before)
         assert (
             delta == expected
         ), f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
 
 
-def _reset_otel_metrics_singleton() -> None:
-    """Reset the otel_metrics singleton instance so it reinitializes with a new provider.
-
-    This clears all instance attributes so _ensure_initialized() will create
-    new meters tied to the current global MeterProvider.
-    """
-    # Reset initialization flag (instance attribute shadows class attribute)
-    otel_metrics._is_initialized = False  # pyright: ignore[reportPrivateUsage]
-
-    # Reset all meters
-    otel_metrics._api_meter = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._deriver_meter = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._dialectic_meter = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._dreamer_meter = None  # pyright: ignore[reportPrivateUsage]
-
-    # Reset all counters
-    otel_metrics._api_requests = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._messages_created = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._dialectic_calls = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._deriver_queue_items = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._deriver_tokens = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._dialectic_tokens = None  # pyright: ignore[reportPrivateUsage]
-    otel_metrics._dreamer_tokens = None  # pyright: ignore[reportPrivateUsage]
-
-
 @pytest.fixture
-def otel_test_setup(
+def prometheus_test_setup(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[tuple[InMemoryMetricReader, OTelMetricChecker]]:
-    """Set up OTel metrics with in-memory reader for testing.
-
-    The OTel SDK only allows set_meter_provider() to be called once per process.
-    To work around this for testing, we patch get_meter() to return meters
-    from our test provider directly.
+) -> Iterator[PrometheusMetricChecker]:
+    """Set up Prometheus metrics for testing.
 
     Yields:
-        Tuple of (reader, checker) for verifying metrics
+        A PrometheusMetricChecker for verifying metrics
     """
-    # Create in-memory reader
-    reader = InMemoryMetricReader()
+    # Enable METRICS in settings and set namespace for test assertions
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
+    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
 
-    # Create a test meter provider
-    provider = MeterProvider(metric_readers=[reader])
+    checker = PrometheusMetricChecker()
 
-    # Patch get_meter to return meters from our test provider
-    # This is necessary because set_meter_provider() can only be called once per process
-    def test_get_meter(name: str, version: str = "") -> Meter:
-        return provider.get_meter(name, version)
-
-    monkeypatch.setattr("src.telemetry.otel.metrics.get_meter", test_get_meter)
-
-    # Reset the otel_metrics singleton instance so it reinitializes with our test provider
-    _reset_otel_metrics_singleton()
-
-    # Enable OTEL in settings and set namespace for test assertions
-    monkeypatch.setattr("src.config.settings.OTEL.ENABLED", True)
-    monkeypatch.setattr("src.config.settings.OTEL.SERVICE_NAMESPACE", "test")
-
-    checker = OTelMetricChecker(reader)
-
-    yield reader, checker
-
-    # Cleanup: reset singleton so other tests aren't affected
-    _reset_otel_metrics_singleton()
+    yield checker
 
 
 @pytest.fixture
 def metric_checker(
-    otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
-) -> OTelMetricChecker:
+    prometheus_test_setup: PrometheusMetricChecker,
+) -> PrometheusMetricChecker:
     """Fixture providing a metric checker instance."""
-    return otel_test_setup[1]
+    return prometheus_test_setup
 
 
 # =============================================================================
@@ -285,12 +219,12 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify OUTPUT_TOTAL tokens match response.output_tokens from LLM."""
         from src.deriver.deriver import process_representation_tasks_batch
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -309,7 +243,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "output",
             "component": "output_total",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         # Mock the LLM call and save_representation (we're testing metrics, not DB writes)
         with (
@@ -327,12 +261,12 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
-                queue_items_count=len(messages),
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         # Verify output tokens metric
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_output_tokens,
@@ -343,13 +277,13 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify PROMPT component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
         from src.deriver.prompts import estimate_minimal_deriver_prompt_tokens
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -367,7 +301,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "input",
             "component": "prompt",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -384,11 +318,11 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
-                queue_items_count=len(messages),
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_prompt_tokens,
@@ -399,12 +333,12 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify MESSAGES component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -424,7 +358,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "input",
             "component": "messages",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -441,11 +375,13 @@ class TestDeriverIngestionMetrics:
                 message_level_configuration=create_test_configuration(),
                 observers=[peer.name],
                 observed=peer.name,
-                queue_items_count=len(messages),
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         # Verify messages tokens were tracked (should be > 0)
-        delta = metric_checker.get_delta("deriver_tokens_processed", labels, before)
+        delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, labels, before
+        )
         assert delta > 0, f"Expected messages input tokens > 0, got {delta}"
 
 
@@ -462,11 +398,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify OUTPUT_TOTAL tokens are tracked for summary."""
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -491,7 +427,7 @@ class TestDeriverSummaryMetrics:
             "token_type": "output",
             "component": "output_total",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -517,7 +453,7 @@ class TestDeriverSummaryMetrics:
 
         # Verify output tokens match the summary token_count
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_output_tokens,
@@ -528,11 +464,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify PROMPT component is tracked for summary input."""
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -555,7 +491,7 @@ class TestDeriverSummaryMetrics:
             "token_type": "input",
             "component": "prompt",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -580,7 +516,7 @@ class TestDeriverSummaryMetrics:
             )
 
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_prompt_tokens,
@@ -591,11 +527,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify MESSAGES component is tracked for summary input."""
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -627,7 +563,7 @@ class TestDeriverSummaryMetrics:
             "token_type": "input",
             "component": "messages",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -652,7 +588,9 @@ class TestDeriverSummaryMetrics:
             )
 
         # Verify messages tokens match what summarizer actually computed
-        delta = metric_checker.get_delta("deriver_tokens_processed", labels, before)
+        delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, labels, before
+        )
         assert (
             delta == expected_messages_tokens
         ), f"Expected messages input tokens {expected_messages_tokens}, got {delta}"
@@ -662,11 +600,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify metrics are NOT emitted when _create_summary returns is_fallback=True."""
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -695,10 +633,10 @@ class TestDeriverSummaryMetrics:
             "component": "prompt",
         }
         before_output = metric_checker.capture(
-            "deriver_tokens_processed", output_labels
+            deriver_tokens_processed_counter, output_labels
         )
         before_prompt = metric_checker.capture(
-            "deriver_tokens_processed", prompt_labels
+            deriver_tokens_processed_counter, prompt_labels
         )
 
         with patch(
@@ -719,10 +657,10 @@ class TestDeriverSummaryMetrics:
 
         # Verify NO change in metrics when fallback
         output_delta = metric_checker.get_delta(
-            "deriver_tokens_processed", output_labels, before_output
+            deriver_tokens_processed_counter, output_labels, before_output
         )
         prompt_delta = metric_checker.get_delta(
-            "deriver_tokens_processed", prompt_labels, before_prompt
+            deriver_tokens_processed_counter, prompt_labels, before_prompt
         )
 
         assert (
@@ -746,12 +684,12 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify INPUT tokens are tracked from LLM response."""
         from src.dialectic.core import DialecticAgent
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -766,7 +704,7 @@ class TestDialecticTokenMetrics:
             "component": "total",
             "reasoning_level": "low",
         }
-        before = metric_checker.capture("dialectic_tokens_processed", labels)
+        before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
             db=db_session,
@@ -783,7 +721,7 @@ class TestDialecticTokenMetrics:
             await agent.answer("What do you know about this user?")
 
         metric_checker.assert_delta(
-            "dialectic_tokens_processed",
+            dialectic_tokens_processed_counter,
             labels,
             before,
             expected_input_tokens,
@@ -794,12 +732,12 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify OUTPUT tokens are tracked from LLM response."""
         from src.dialectic.core import DialecticAgent
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -814,7 +752,7 @@ class TestDialecticTokenMetrics:
             "component": "total",
             "reasoning_level": "low",
         }
-        before = metric_checker.capture("dialectic_tokens_processed", labels)
+        before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
             db=db_session,
@@ -831,7 +769,7 @@ class TestDialecticTokenMetrics:
             await agent.answer("What do you know about this user?")
 
         metric_checker.assert_delta(
-            "dialectic_tokens_processed",
+            dialectic_tokens_processed_counter,
             labels,
             before,
             expected_output_tokens,
@@ -842,16 +780,16 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        otel_test_setup: tuple[InMemoryMetricReader, OTelMetricChecker],
+        prometheus_test_setup: PrometheusMetricChecker,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """Verify metrics are NOT emitted when OTEL.ENABLED=False."""
+        """Verify metrics are NOT emitted when PROMETHEUS.ENABLED=False."""
         from src.dialectic.core import DialecticAgent
 
-        _, metric_checker = otel_test_setup
+        metric_checker = prometheus_test_setup
 
-        # Explicitly disable OTEL metrics
-        monkeypatch.setattr("src.config.settings.OTEL.ENABLED", False)
+        # Explicitly disable Prometheus metrics
+        monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -874,10 +812,10 @@ class TestDialecticTokenMetrics:
             "reasoning_level": "low",
         }
         before_input = metric_checker.capture(
-            "dialectic_tokens_processed", input_labels
+            dialectic_tokens_processed_counter, input_labels
         )
         before_output = metric_checker.capture(
-            "dialectic_tokens_processed", output_labels
+            dialectic_tokens_processed_counter, output_labels
         )
 
         agent = DialecticAgent(
@@ -896,10 +834,10 @@ class TestDialecticTokenMetrics:
 
         # Verify NO change in metrics
         input_delta = metric_checker.get_delta(
-            "dialectic_tokens_processed", input_labels, before_input
+            dialectic_tokens_processed_counter, input_labels, before_input
         )
         output_delta = metric_checker.get_delta(
-            "dialectic_tokens_processed", output_labels, before_output
+            dialectic_tokens_processed_counter, output_labels, before_output
         )
 
         assert (

@@ -49,6 +49,7 @@ Use this checklist to track migration progress. Copy into your working notes and
 
 - [ ] Rename `maxObservations` → `maxConclusions`
 - [ ] Rename `includeMostDerived` → `includeMostFrequent`
+- [ ] Rename `lastUserMessage` → `searchQuery`
 - [ ] Rename `Observation` type → `Conclusion`
 - [ ] Rename `ObservationScope` type → `ConclusionScope`
 

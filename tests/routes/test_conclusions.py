@@ -1149,3 +1149,160 @@ class TestConclusionRoutes:
         data = list_response.json()
         ids = [obs["id"] for obs in data["items"]]
         assert created_id in ids
+
+    @pytest.mark.asyncio
+    async def test_create_conclusion_without_session_id(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating a conclusion without session_id (sessionless/global conclusion)"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.commit()
+
+        # Create conclusion without session_id
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "User prefers dark mode (global)",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        # No session_id - this is the key test
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data) == 1
+
+        conclusion = data[0]
+        assert conclusion["content"] == "User prefers dark mode (global)"
+        assert conclusion["observer_id"] == test_peer.name
+        assert conclusion["observed_id"] == test_peer2.name
+        assert conclusion["session_id"] is None  # Should be null
+        assert "id" in conclusion
+        assert "created_at" in conclusion
+
+    @pytest.mark.asyncio
+    async def test_create_conclusions_mixed_session_and_sessionless(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating a batch with both session-scoped and sessionless conclusions"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create mixed batch: one with session, one without
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Session-scoped conclusion",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "Global conclusion without session",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        # No session_id
+                    },
+                ]
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data) == 2
+
+        # Find conclusions by content
+        session_conclusion = next(
+            c for c in data if c["content"] == "Session-scoped conclusion"
+        )
+        global_conclusion = next(
+            c for c in data if c["content"] == "Global conclusion without session"
+        )
+
+        assert session_conclusion["session_id"] == test_session.name
+        assert global_conclusion["session_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_sessionless_conclusions(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that sessionless conclusions can be listed without session filter"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.commit()
+
+        # Create sessionless conclusion
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Sessionless conclusion for list test",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                    }
+                ]
+            },
+        )
+        assert create_response.status_code == 201
+        created_id = create_response.json()[0]["id"]
+
+        # List all conclusions (no session filter)
+        list_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {
+                    "observer_id": test_peer.name,
+                    "observed_id": test_peer2.name,
+                }
+            },
+        )
+
+        assert list_response.status_code == 200
+        data = list_response.json()
+        ids = [obs["id"] for obs in data["items"]]
+        assert created_id in ids
+
+        # Verify the conclusion has null session_id
+        conclusion = next(c for c in data["items"] if c["id"] == created_id)
+        assert conclusion["session_id"] is None

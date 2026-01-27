@@ -225,6 +225,7 @@ if card:
 | `chat(stream=True)` | `chat_stream()` |
 | `include_most_derived=` | `include_most_frequent=` |
 | `max_observations=` | `max_conclusions=` |
+| `last_user_message=` | `search_query=` |
 | `config=` | `configuration=` |
 | `PeerContext` | `PeerContextResponse` |
 | `DeriverStatus` | `QueueStatusResponse` |

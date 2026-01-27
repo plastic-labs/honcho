@@ -561,7 +561,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     def schedule_dream(
         self,
         observer: str | PeerBase,
-        session: str | SessionBase,
+        session: str | SessionBase | None = None,
         observed: str | PeerBase | None = None,
     ) -> None:
         """
@@ -574,7 +574,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         Args:
             observer: The observer peer (ID string or Peer object) whose perspective
                 to use for the dream.
-            session: The session (ID string or Session object) to scope the dream to.
+            session: Optional session (ID string or Session object) to scope the dream to.
             observed: Optional observed peer (ID string or Peer object). If not provided,
                 defaults to the observer (self-reflection).
         """

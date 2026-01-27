@@ -355,7 +355,7 @@ class ConclusionResponse(BaseModel):
     content: str
     observer_id: str
     observed_id: str
-    session_id: str
+    session_id: str | None = None
     created_at: datetime.datetime
 
 
@@ -365,7 +365,7 @@ class ConclusionCreateParams(BaseModel):
     content: str = Field(min_length=1, max_length=65535)
     observer_id: str
     observed_id: str
-    session_id: str
+    session_id: str | None = None
 
 
 class ConclusionBatchCreateParams(BaseModel):

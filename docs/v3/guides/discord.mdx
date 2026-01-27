@@ -198,7 +198,7 @@ Discord bots also offer slash command functionality. Here's an example using Hon
 ```python
 @bot.slash_command(
     name="chat",
-    description="Query the peer's representation in natural language.",
+    description="Chat with Honcho about a peer.",
 )
 async def chat(ctx, query: str):
     await ctx.defer()

@@ -56,7 +56,7 @@ class DreamPayload(BasePayload):
     dream_type: DreamType
     observer: str
     observed: str
-    session_name: str
+    session_name: str | None = None
 
 
 class DeletionPayload(BasePayload):
@@ -89,7 +89,7 @@ def create_dream_payload(
     *,
     observer: str,
     observed: str,
-    session_name: str,
+    session_name: str | None = None,
 ) -> dict[str, Any]:
     """Create a dream payload."""
     return DreamPayload(

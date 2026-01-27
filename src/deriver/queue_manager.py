@@ -35,7 +35,7 @@ from src.reconciler import (
     set_reconciler_scheduler,
 )
 from src.schemas import ResolvedConfiguration
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -450,12 +450,17 @@ class QueueManager:
                                     else:
                                         observers = []
 
+                                queue_item_message_ids = [
+                                    item.message_id
+                                    for item in items_to_process
+                                    if item.message_id is not None
+                                ]
                                 await process_representation_batch(
                                     messages_context,
                                     message_level_configuration,
                                     observers=observers,
                                     observed=work_unit.observed,
-                                    queue_items_count=len(items_to_process),
+                                    queue_item_message_ids=queue_item_message_ids,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
@@ -791,9 +796,9 @@ class QueueManager:
             if (
                 work_unit.task_type in ["representation", "summary"]
                 and work_unit.workspace_name is not None
-                and settings.OTEL.ENABLED
+                and settings.METRICS.ENABLED
             ):
-                otel_metrics.record_deriver_queue_item(
+                prometheus_metrics.record_deriver_queue_item(
                     count=len(items),
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,

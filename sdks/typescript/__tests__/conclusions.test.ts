@@ -423,4 +423,110 @@ describe('Conclusions', () => {
       expect(str).toContain(client.workspaceId)
     })
   })
+
+  // ===========================================================================
+  // Sessionless Conclusions (Optional session_id)
+  // ===========================================================================
+
+  describe('sessionless conclusions (optional session_id)', () => {
+    test('create conclusion without sessionId', async () => {
+      const peer = await client.peer('sessionless-create-peer', { metadata: {} })
+
+      // Create conclusion without sessionId
+      const conclusions = await peer.conclusions.create({
+        content: 'Global conclusion without session',
+        // No sessionId - this is the key test
+      })
+
+      expect(conclusions.length).toBe(1)
+      expect(conclusions[0]).toBeInstanceOf(Conclusion)
+      expect(conclusions[0].content).toBe('Global conclusion without session')
+      expect(conclusions[0].sessionId).toBeNull()
+    })
+
+    test('create multiple conclusions without sessionId', async () => {
+      const peer = await client.peer('sessionless-multi-peer', { metadata: {} })
+
+      const conclusions = await peer.conclusions.create([
+        { content: 'Global observation 1' },
+        { content: 'Global observation 2' },
+        { content: 'Global observation 3' },
+      ])
+
+      expect(conclusions.length).toBe(3)
+      for (const c of conclusions) {
+        expect(c.sessionId).toBeNull()
+      }
+    })
+
+    test('create mixed session and sessionless conclusions', async () => {
+      const peer = await client.peer('sessionless-mixed-peer', { metadata: {} })
+      const session = await client.session('sessionless-mixed-session', {
+        metadata: {},
+      })
+
+      const conclusions = await peer.conclusions.create([
+        { content: 'Session-scoped conclusion', sessionId: session },
+        { content: 'Global conclusion without session' },
+      ])
+
+      expect(conclusions.length).toBe(2)
+
+      const sessionConclusion = conclusions.find(
+        (c) => c.content === 'Session-scoped conclusion'
+      )
+      const globalConclusion = conclusions.find(
+        (c) => c.content === 'Global conclusion without session'
+      )
+
+      expect(sessionConclusion?.sessionId).toBe(session.id)
+      expect(globalConclusion?.sessionId).toBeNull()
+    })
+
+    test('list includes sessionless conclusions', async () => {
+      const peer = await client.peer('sessionless-list-peer', { metadata: {} })
+
+      // Create a sessionless conclusion
+      const [created] = await peer.conclusions.create({
+        content: 'Sessionless conclusion for list test',
+      })
+
+      // List all conclusions (no session filter)
+      const page = await peer.conclusions.list()
+
+      const found = page.items.find((c) => c.id === created.id)
+      expect(found).toBeDefined()
+      expect(found?.sessionId).toBeNull()
+    })
+
+    test('Conclusion.fromApiResponse handles null session_id', () => {
+      const response = {
+        id: 'test-id',
+        content: 'Test content',
+        observer_id: 'observer',
+        observed_id: 'observed',
+        session_id: null,
+        created_at: '2024-01-15T10:00:00Z',
+      }
+
+      const conclusion = Conclusion.fromApiResponse(response)
+
+      expect(conclusion.sessionId).toBeNull()
+      expect(conclusion.id).toBe('test-id')
+      expect(conclusion.content).toBe('Test content')
+    })
+
+    test('Conclusion constructor accepts null sessionId', () => {
+      const conclusion = new Conclusion(
+        'id',
+        'content',
+        'observer',
+        'observed',
+        null,
+        '2024-01-01'
+      )
+
+      expect(conclusion.sessionId).toBeNull()
+    })
+  })
 })

@@ -27,7 +27,7 @@ __all__ = [
 
 class ConclusionCreateParams(BaseModel):
     content: str
-    session_id: str
+    session_id: str | None = None
 
 
 class Conclusion:
@@ -50,7 +50,7 @@ class Conclusion:
     content: str
     observer_id: str
     observed_id: str
-    session_id: str
+    session_id: str | None = None
     created_at: datetime.datetime
 
     def __init__(
@@ -59,7 +59,7 @@ class Conclusion:
         content: str,
         observer_id: str,
         observed_id: str,
-        session_id: str,
+        session_id: str | None,
         created_at: datetime.datetime,
     ) -> None:
         self.id = id
@@ -269,7 +269,8 @@ class ConclusionScope:
 
         Args:
             conclusions: List of conclusions to create.
-                Each conclusion can be a ConclusionCreateParams object or a dictionary with 'content' and 'session_id' keys.
+                Each conclusion can be a ConclusionCreateParams object or a dictionary
+                with a required 'content' key and an optional 'session_id' key.
 
         Returns:
             List of created Conclusion objects
@@ -278,24 +279,51 @@ class ConclusionScope:
             ```python
             conclusions = peer.conclusions.create([
                 {"content": "User prefers dark mode", "session_id": "session1"},
-                {"content": "User is interested in AI", "session_id": "session1"},
+                {"content": "User is interested in AI"},
             ])
             ```
         """
         self._honcho._ensure_workspace()
-        conclusion_params = [
-            {
-                "content": c.content
-                if isinstance(c, ConclusionCreateParams)
-                else c["content"],
-                "session_id": c.session_id
-                if isinstance(c, ConclusionCreateParams)
-                else c["session_id"],
+
+        def build_conclusion_payload(
+            item: ConclusionCreateParams | dict[str, Any],
+        ) -> dict[str, Any]:
+            """
+            Build a single conclusion create payload.
+
+            This normalizes both `ConclusionCreateParams` instances and plain dictionaries
+            into the wire format expected by the Honcho API.
+
+            Notes:
+                - `content` is required.
+                - `session_id` is optional; when not provided it is omitted from the payload.
+                - `observer_id` and `observed_id` are always injected from this scope.
+
+            Args:
+                item: A `ConclusionCreateParams` instance or a dict with a required
+                    `content` key and an optional `session_id` key.
+
+            Returns:
+                A dictionary suitable for inclusion in the `conclusions` array for the
+                create conclusions endpoint.
+            """
+            payload: dict[str, Any] = {
                 "observer_id": self.observer,
                 "observed_id": self.observed,
             }
-            for c in conclusions
-        ]
+            if isinstance(item, ConclusionCreateParams):
+                payload["content"] = item.content
+                if item.session_id is not None:
+                    payload["session_id"] = item.session_id
+                return payload
+
+            payload["content"] = item["content"]
+            session_id = item.get("session_id")
+            if session_id is not None:
+                payload["session_id"] = session_id
+            return payload
+
+        conclusion_params = [build_conclusion_payload(c) for c in conclusions]
 
         data = self._honcho._http.post(
             routes.conclusions(self.workspace_id),

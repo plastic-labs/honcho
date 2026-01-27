@@ -17,14 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
-from src.telemetry import otel_metrics
+from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, DialecticPhaseMetrics, emit
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
     log_token_usage_metrics,
 )
-from src.telemetry.otel.metrics import DialecticComponents, TokenTypes
+from src.telemetry.prometheus.metrics import DialecticComponents, TokenTypes
 from src.utils.agent_tools import (
     DIALECTIC_TOOLS,
     DIALECTIC_TOOLS_MINIMAL,
@@ -338,15 +338,15 @@ class DialecticAgent:
         if not self.metric_key and run_id is not None:
             log_performance_metrics("dialectic_chat", run_id)
 
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_dialectic_tokens(
+        # Prometheus metrics
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_dialectic_tokens(
                 count=input_tokens,
                 token_type=TokenTypes.INPUT.value,
                 component=DialecticComponents.TOTAL.value,
                 reasoning_level=self.reasoning_level,
             )
-            otel_metrics.record_dialectic_tokens(
+            prometheus_metrics.record_dialectic_tokens(
                 count=output_tokens,
                 token_type=TokenTypes.OUTPUT.value,
                 component=DialecticComponents.TOTAL.value,
@@ -614,21 +614,6 @@ class DialecticAgent:
 
         if not self.metric_key and run_id is not None:
             log_performance_metrics("dialectic_chat", run_id)
-
-        # OTel metrics (push-based)
-        if settings.OTEL.ENABLED:
-            otel_metrics.record_dialectic_tokens(
-                count=total_input_tokens,
-                token_type=TokenTypes.INPUT.value,
-                component=DialecticComponents.TOTAL.value,
-                reasoning_level=self.reasoning_level,
-            )
-            otel_metrics.record_dialectic_tokens(
-                count=total_output_tokens,
-                token_type=TokenTypes.OUTPUT.value,
-                component=DialecticComponents.TOTAL.value,
-                reasoning_level=self.reasoning_level,
-            )
 
         # Get model/provider info for phase metrics
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]

@@ -186,7 +186,7 @@ export class Session {
   private async _getContext(params: {
     tokens?: number
     summary?: boolean
-    last_message?: string
+    search_query?: string
     peer_target?: string
     peer_perspective?: string
     limit_to_session?: boolean
@@ -699,7 +699,7 @@ export class Session {
     summary?: boolean
     tokens?: number
     peerTarget?: string | Peer
-    lastUserMessage?: string | Message
+    searchQuery?: string | Message
     peerPerspective?: string | Peer
     limitToSession?: boolean
     representationOptions?: RepresentationOptions
@@ -713,30 +713,30 @@ export class Session {
       typeof opts.peerPerspective === 'object'
         ? opts.peerPerspective.id
         : opts.peerPerspective
-    const lastUserMessageText =
-      typeof opts.lastUserMessage === 'string'
-        ? opts.lastUserMessage
-        : opts.lastUserMessage?.content
+    const searchQueryText =
+      typeof opts.searchQuery === 'string'
+        ? opts.searchQuery
+        : opts.searchQuery?.content
 
     const contextParams = ContextParamsSchema.parse({
       summary: opts.summary,
       tokens: opts.tokens,
       peerTarget: peerTargetId,
-      lastUserMessage: lastUserMessageText,
+      searchQuery: searchQueryText,
       peerPerspective: peerPerspectiveId,
       limitToSession: opts.limitToSession,
       representationOptions: opts.representationOptions,
     })
 
-    const lastMessageText =
-      typeof contextParams.lastUserMessage === 'string'
-        ? contextParams.lastUserMessage
-        : contextParams.lastUserMessage?.content
+    const searchQueryParsed =
+      typeof contextParams.searchQuery === 'string'
+        ? contextParams.searchQuery
+        : contextParams.searchQuery?.content
 
     const context = await this._getContext({
       tokens: contextParams.tokens,
       summary: contextParams.summary,
-      last_message: lastMessageText,
+      search_query: searchQueryParsed,
       peer_target: contextParams.peerTarget,
       peer_perspective: contextParams.peerPerspective,
       limit_to_session: contextParams.limitToSession,

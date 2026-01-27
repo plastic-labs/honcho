@@ -1149,10 +1149,10 @@ def test_get_session_context_peer_perspective_without_target_fails(
     assert "peer_target" in error_detail.lower()
 
 
-def test_get_session_context_with_last_message(
+def test_get_session_context_with_search_query(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session context with last_message parameter for semantic search"""
+    """Test session context with search_query parameter for semantic search"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -1162,12 +1162,12 @@ def test_get_session_context_with_last_message(
         json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
-    # Get context with last_message and peer_target
+    # Get context with search_query and peer_target
     response = client.get(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
-            "last_message": "What is my favorite color?",
+            "search_query": "What is my favorite color?",
         },
     )
     assert response.status_code == 200
@@ -1193,7 +1193,7 @@ def test_get_session_context_with_limit_to_session(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
-            "last_message": "Test query",
+            "search_query": "Test query",
             "limit_to_session": True,
         },
     )
@@ -1220,7 +1220,7 @@ def test_get_session_context_with_search_parameters(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
-            "last_message": "Test query",
+            "search_query": "Test query",
             "search_top_k": 5,
             "search_max_distance": 0.8,  # float value (semantic distance 0.0-1.0)
         },
@@ -1248,7 +1248,7 @@ def test_get_session_context_with_include_most_frequent(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
-            "last_message": "Test query",
+            "search_query": "Test query",
             "include_most_frequent": True,
         },
     )
@@ -1275,7 +1275,7 @@ def test_get_session_context_with_max_observations(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
         params={
             "peer_target": test_peer.name,
-            "last_message": "Test query",
+            "search_query": "Test query",
             "max_observations": 10,
         },
     )
@@ -1312,7 +1312,7 @@ def test_get_session_context_with_all_representation_params(
             "tokens": 500,
             "peer_target": test_peer.name,
             "peer_perspective": peer2_name,
-            "last_message": "What do you know about me?",
+            "search_query": "What do you know about me?",
             "limit_to_session": True,
             "search_top_k": 10,
             "search_max_distance": 0.9,  # float value (semantic distance 0.0-1.0)
