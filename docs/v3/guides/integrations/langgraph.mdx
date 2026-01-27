@@ -227,7 +227,7 @@ const graph = new StateGraph(StateAnnotation)
 
 ### Understanding get_context()
 
-The [`get_context()`](/v3/documentation/core-concepts/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
+The [`get_context()`](/v3/documentation/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
 
 - **Manages conversation history** - Tracks all messages and determines what's relevant
 - **Respects token limits** - Stays within context window constraints without manual counting
@@ -248,7 +248,7 @@ That's it. Call `session.get_context().to_openai(assistant)` and you get properl
 </Tip>
 
 <Note>
-For more details on all available parameters, see [`get_context() documentation`](/v3/documentation/core-concepts/features/get-context)
+For more details on all available parameters, see [`get_context() documentation`](/v3/documentation/features/get-context)
 </Note>
 
 ## Chat Loop
@@ -354,10 +354,10 @@ Now that you have a working LangGraph integration with Honcho, you can:
 ## Related Resources
 
 <CardGroup cols={2}>
-  <Card title="Get Context" icon="messages" href="/v3/documentation/core-concepts/features/get-context">
+  <Card title="Get Context" icon="messages" href="/v3/documentation/features/get-context">
     Learn more about retrieving and formatting conversation context
   </Card>
-  <Card title="MCP Integration" icon="star-of-life" href="/v3/integrations/mcp">
+  <Card title="MCP Integration" icon="star-of-life" href="/v3/guides/integrations/mcp">
     Use Honcho in Claude Desktop with MCP
   </Card>
 </CardGroup>
