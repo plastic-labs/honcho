@@ -1,7 +1,7 @@
 import datetime
 import ipaddress
 from enum import Enum
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
@@ -172,6 +172,20 @@ class ResolvedConfiguration(BaseModel):
     peer_card: ResolvedPeerCardConfiguration
     summary: ResolvedSummaryConfiguration
     dream: ResolvedDreamConfiguration
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_deriver_to_reasoning(cls, data: Any) -> Any:
+        """Handle v3.0.0 migration: 'deriver' was renamed to 'reasoning'."""
+        if not isinstance(data, dict):
+            return data
+
+        config = cast(dict[str, Any], data)
+
+        if "deriver" in config and "reasoning" not in config:
+            config["reasoning"] = config.pop("deriver")
+
+        return config
 
 
 class PeerConfig(BaseModel):
