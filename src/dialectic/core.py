@@ -5,6 +5,7 @@ This agent uses tools to gather context from the memory system
 and synthesize responses to queries about a peer.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -432,7 +433,6 @@ class DialecticAgent:
 
         Args:
             search_messages: Full conversation history from search phase
-            synthesis_provider: Provider for synthesis model (kept for API compatibility)
 
         Returns:
             Messages list for synthesis model
@@ -768,6 +768,8 @@ class DialecticAgent:
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_search",
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             # Fallback to single-model on search failure
             logger.warning(f"Search phase failed: {e}, falling back to single-model")
@@ -959,6 +961,8 @@ class DialecticAgent:
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_search",
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             # Fallback to single-model streaming on search failure
             logger.warning(
