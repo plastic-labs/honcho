@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import crud
 from src.config import settings
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -52,7 +53,7 @@ class SpecialistResult:
 
 
 # Tool names to exclude when peer card creation is disabled
-PEER_CARD_TOOL_NAMES = {"update_peer_card", "get_peer_card"}
+PEER_CARD_TOOL_NAMES = {"update_peer_card"}
 
 
 class BaseSpecialist(ABC):
@@ -86,8 +87,12 @@ class BaseSpecialist(ABC):
         ...
 
     @abstractmethod
-    def build_user_prompt(self, probing_questions: list[str]) -> str:
-        """Build the user prompt with probing questions."""
+    def build_user_prompt(
+        self,
+        probing_questions: list[str] | None,
+        peer_card: list[str] | None = None,
+    ) -> str:
+        """Build the user prompt with optional exploration hints and current peer card."""
         ...
 
     async def run(
@@ -97,7 +102,7 @@ class BaseSpecialist(ABC):
         observer: str,
         observed: str,
         session_name: str | None,
-        probing_questions: list[str],
+        probing_questions: list[str] | None = None,
         configuration: ResolvedConfiguration | None = None,
         parent_run_id: str | None = None,
     ) -> SpecialistResult:
@@ -110,7 +115,7 @@ class BaseSpecialist(ABC):
             observer: The observing peer
             observed: The peer being observed
             session_name: Session identifier
-            probing_questions: Entry point questions to guide exploration
+            probing_questions: Optional hints to guide exploration (specialists explore freely if None)
             configuration: Resolved configuration for checking feature flags (optional)
             parent_run_id: Optional run_id from orchestrator for correlation
 
@@ -124,6 +129,16 @@ class BaseSpecialist(ABC):
         # Determine if peer card tools should be included
         peer_card_enabled = configuration is None or configuration.peer_card.create
 
+        # Fetch current peer card to inject into prompt (saves a tool call)
+        current_peer_card: list[str] | None = None
+        if peer_card_enabled:
+            current_peer_card = await crud.get_peer_card(
+                db,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+
         # Build messages
         messages: list[dict[str, str]] = [
             {
@@ -132,7 +147,10 @@ class BaseSpecialist(ABC):
                     observed, peer_card_enabled=peer_card_enabled
                 ),
             },
-            {"role": "user", "content": self.build_user_prompt(probing_questions)},
+            {
+                "role": "user",
+                "content": self.build_user_prompt(probing_questions, current_peer_card),
+            },
         ]
 
         # Create tool executor with telemetry context
@@ -242,10 +260,11 @@ class DeductionSpecialist(BaseSpecialist):
     Creates deductive observations from explicit observations.
 
     This specialist:
-    1. Searches for explicit observations using semantic queries
-    2. Identifies logical implications and connections
+    1. Explores recent observations and messages to understand what's there
+    2. Identifies logical implications, knowledge updates, and contradictions
     3. Creates new deductive observations with premise linkage
-    4. Deletes duplicate or redundant observations
+    4. Deletes outdated observations
+    5. Updates peer card with biographical facts
     """
 
     name: str = "deduction"
@@ -271,166 +290,120 @@ class DeductionSpecialist(BaseSpecialist):
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
     ) -> str:
-        # Base tools list
-        tools_section = """## TOOLS
-
-- `search_memory`: Find observations by semantic query
-- `create_observations`: Create new deductive OR contradiction observations (USE THIS!)
-- `delete_observations`: Remove outdated observations (USE AFTER KNOWLEDGE UPDATES!)
-- `get_recent_observations`: See recent activity"""
-
-        if peer_card_enabled:
-            tools_section += """
-- `get_peer_card`: Retrieve current peer card contents
-- `update_peer_card`: Update the peer card with key facts"""
-
-        # Peer card section (only if enabled)
         peer_card_section = ""
         if peer_card_enabled:
             peer_card_section = """
 
-## PEER CARD UPDATES
+## PEER CARD (REQUIRED)
 
-The peer card is a concise summary of permanent, stable information about the peer. Update it when you discover important facts that should be easily accessible.
+The peer card is a summary of stable biographical facts. You MUST update it when you learn:
+- Name, age, location, occupation
+- Family members and relationships
+- Standing instructions ("call me X", "don't mention Y")
+- Core preferences and traits
 
-**Peer card format** - Use these prefixes to organize entries:
-- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
-- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al", "INSTRUCTION: Send meeting agendas 24h in advance"
-- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings", "PREFERENCE: Likes detailed explanations"
-- `TRAIT: ...` for personality traits: "TRAIT: Analytical thinker", "TRAIT: Detail-oriented"
+Format entries as:
+- Plain facts: "Name: Alice", "Works at Google", "Lives in NYC"
+- `INSTRUCTION: ...` for standing instructions
+- `PREFERENCE: ...` for preferences
+- `TRAIT: ...` for personality traits
 
-Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list."""
+Call `update_peer_card` with the complete updated list when you have new biographical info."""
 
-        # Remember section
-        remember_section = """
+        return f"""You are a deductive reasoning agent analyzing observations about {observed}.
 
-REMEMBER:
-1. Knowledge updates are your #1 priority. When the same fact has different values at different times, CREATE an update observation AND DELETE the outdated observation.
-2. Flag contradictions when statements are logically incompatible (can't both be true)."""
+## YOUR JOB
 
-        if peer_card_enabled:
-            remember_section += """
-3. Update the peer card with permanent biographical facts and key insights."""
+Create deductive observations by finding logical implications in what's already known. Think like a detective connecting evidence.
 
-        return f"""You are a deductive reasoning specialist for {observed}. Your ONLY job is to create deductive observations by calling tools. Do NOT explain your reasoning - just make tool calls.
+## PHASE 1: DISCOVERY
 
-## MANDATORY WORKFLOW - YOU MUST FOLLOW THIS PATTERN
+Explore what's actually in memory. Use these tools freely:
+- `get_recent_observations` - See what's been learned recently
+- `search_memory` - Search for specific topics
+- `search_messages` - See actual conversation content
 
-For EACH topic, you MUST alternate: search → create → search → create → ...
+Spend a few tool calls understanding the landscape before creating anything.
 
-**CORRECT pattern:**
-1. search_memory("topic 1")
-2. create_observations([...deductions from topic 1...])
-3. search_memory("topic 2")
-4. create_observations([...deductions from topic 2...])
-5. search_memory("topic 3")
-6. create_observations([...deductions from topic 3...])
+## PHASE 2: ACTION
 
-**WRONG pattern (DO NOT DO THIS):**
-1. search_memory("topic 1")
-2. search_memory("topic 2")
-3. search_memory("topic 3")
-4. ... more searches ...
-5. create_observations([...]) ← TOO LATE, you'll hit iteration limit!
+Once you understand what's there, create observations and clean up:
 
-1. **ALTERNATE SEARCH/CREATE** - After each search, create observations BEFORE your next search.
-2. **CREATE OBSERVATIONS** - Your primary goal is to CREATE deductive observations, not just search.
-3. **MINIMIZE TEXT OUTPUT** - Do not write explanations. Just call tools.
-4. **DELETE OUTDATED INFO** - When you find updated information, DELETE the old observation after creating the update.
+### Knowledge Updates (HIGH PRIORITY)
+When the same fact has different values at different times:
+- "meeting Tuesday" [old] → "meeting moved to Thursday" [new]
+- Create a deductive update observation
+- DELETE the outdated observation immediately
 
-## PRIORITY FOCUS AREAS
+### Logical Implications
+Extract implicit information:
+- "works as SWE at Google" → "has software engineering skills", "employed in tech"
+- "has kids ages 5 and 8" → "is a parent", "has school-age children"
 
-### 1. KNOWLEDGE UPDATES + DELETION (HIGHEST PRIORITY)
-Look for the SAME fact appearing with DIFFERENT values at different times. This is critical!
+### Contradictions
+When statements can't both be true (not just updates), flag them:
+- "I love coffee" vs "I hate coffee" → contradiction observation
+{peer_card_section}
 
-Examples:
-- "meeting is on Tuesday" [old] + "meeting moved to Thursday" [new] → Update + Delete old
-- "lives in NYC" [old] + "moved to LA" [new] → Update + Delete old
-- "works at Google" [old] + "started job at Meta" [new] → Update + Delete old
-
-**WORKFLOW for knowledge updates:**
-1. Create the deductive update observation
-2. IMMEDIATELY call `delete_observations` to remove the OUTDATED observation (the old one)
-3. Keep the new observation (it's still current)
-
-```json
-// Step 1: Create update
-{{
-  "observations": [{{
-    "content": "[Topic] updated: [old value] → [new value]. Current: [new value]",
-    "level": "deductive",
-    "source_ids": ["old_obs_id", "new_obs_id"],
-    "premises": ["Original: [old fact]", "Update: [new fact]"]
-  }}]
-}}
-// Step 2: Delete outdated
-{{
-  "observation_ids": ["old_obs_id"]
-}}
-```
-
-### 2. CONTRADICTIONS (FLAG FOR CLARIFICATION)
-When you find two observations that CANNOT both be true (mutually exclusive statements), create a contradiction observation.
-
-**Update vs Contradiction:**
-- UPDATE: Same topic, value changed over time ("meeting on Tuesday" → "meeting on Thursday") - DELETE old
-- CONTRADICTION: Logically incompatible statements ("I love coffee" + "I hate coffee") - FLAG for user
-
-```json
-{{
-  "observations": [{{
-    "content": "Conflicting information about [topic]: [statement A] vs [statement B]",
-    "level": "contradiction",
-    "source_ids": ["obs_id_1", "obs_id_2"],
-    "sources": ["Statement A text", "Statement B text"]
-  }}]
-}}
-```
-
-### 3. EVENT ORDERING & TEMPORAL SEQUENCES
-Track sequences of events and their order:
-- "decided to apply" → "submitted application" → "got interview" → "received offer"
-- Create observations noting the sequence: "Applied for job, then interviewed, then received offer"
-
-### 4. INFORMATION EXTRACTION
-Create deductions that make implicit information explicit:
-- "works as SWE at Google" → "has software engineering skills" + "is employed in tech industry"
-- "has 2 kids ages 5 and 8" → "is a parent" + "has school-age children"
-
-## WORKFLOW (REPEAT FOR EACH QUESTION)
-
-1. Call `search_memory` with a relevant query
-2. Look at timestamps - are there OLDER and NEWER observations about the same topic?
-3. **IMMEDIATELY call `create_observations`** with any deductions you found
-4. If you created a knowledge update, call `delete_observations` for the outdated one
-
-## CREATING DEDUCTIVE OBSERVATIONS
+## CREATING OBSERVATIONS
 
 ```json
 {{
   "observations": [{{
     "content": "The logical conclusion",
-    "level": "deductive",
+    "level": "deductive",  // or "contradiction"
     "source_ids": ["id1", "id2"],
     "premises": ["premise 1 text", "premise 2 text"]
   }}]
 }}
 ```
 
-{tools_section}{peer_card_section}{remember_section}"""
+## RULES
 
-    def build_user_prompt(self, probing_questions: list[str]) -> str:
-        questions_text = "\n".join(f"- {q}" for q in probing_questions)
-        return f"""Process these topics by ALTERNATING search and create calls:
+1. Don't explain your reasoning - just call tools
+2. Create observations based on what you ACTUALLY FIND, not what you expect
+3. Always include source_ids linking to the observations you're synthesizing
+4. Delete outdated observations - don't leave duplicates
+5. Quality over quantity - fewer good deductions beat many weak ones"""
 
-{questions_text}
+    def build_user_prompt(
+        self,
+        probing_questions: list[str] | None,
+        peer_card: list[str] | None = None,
+    ) -> str:
+        # Build peer card context section
+        peer_card_context = ""
+        if peer_card:
+            facts = "\n".join(f"- {fact}" for fact in peer_card)
+            peer_card_context = f"""
+## CURRENT PEER CARD
 
-Start now:
-1. Search for topic 1
-2. Create observations from what you found
-3. Search for topic 2
-4. Create observations from what you found
-... and so on."""
+{facts}
+
+Update this with `update_peer_card` if you discover new biographical information.
+
+"""
+
+        if probing_questions:
+            hints = "\n".join(f"- {q}" for q in probing_questions[:5])
+            return f"""{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
+
+{hints}
+
+But follow the evidence - if you find something more interesting, pursue that instead.
+
+Begin with `get_recent_observations` to see what's there."""
+
+        return f"""{peer_card_context}Explore the observation space and create deductive observations.
+
+Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising.
+
+Look for:
+1. Knowledge updates (same fact, different values over time)
+2. Logical implications that haven't been made explicit
+3. Contradictions that need flagging
+
+Go."""
 
 
 class InductionSpecialist(BaseSpecialist):
@@ -438,9 +411,10 @@ class InductionSpecialist(BaseSpecialist):
     Creates inductive observations from explicit and deductive observations.
 
     This specialist:
-    1. Searches for observations (both explicit and deductive)
+    1. Explores observations to understand what's there
     2. Identifies patterns and generalizations across multiple observations
     3. Creates new inductive observations with source linkage
+    4. Updates peer card with high-confidence traits and tendencies
     """
 
     name: str = "induction"
@@ -466,103 +440,57 @@ class InductionSpecialist(BaseSpecialist):
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
     ) -> str:
-        # Base tools list
-        tools_section = """## TOOLS
-
-- `search_memory`: Find observations by semantic query
-- `create_observations`: Create new inductive observations (USE THIS!)
-- `get_recent_observations`: See recent activity"""
-
-        if peer_card_enabled:
-            tools_section += """
-- `get_peer_card`: Retrieve current peer card contents
-- `update_peer_card`: Update the peer card with key facts"""
-
-        # Peer card section (only if enabled)
         peer_card_section = ""
         if peer_card_enabled:
             peer_card_section = """
 
-## PEER CARD UPDATES
+## PEER CARD (REQUIRED)
 
-The peer card is a concise summary of permanent, stable information about the peer. After identifying high-confidence patterns, update the peer card.
+After identifying patterns, update the peer card with high-confidence traits and tendencies:
+- `TRAIT: Analytical thinker`
+- `TRAIT: Tends to reschedule when stressed`
+- `PREFERENCE: Prefers detailed explanations`
 
-**Peer card format** - Use these prefixes to organize entries:
-- Plain facts for biographical info: "Name: Alice", "Works at Google", "Lives in NYC"
-- `INSTRUCTION: ...` for standing instructions: "INSTRUCTION: Always call me Al"
-- `PREFERENCE: ...` for preferences: "PREFERENCE: Prefers morning meetings"
-- `TRAIT: ...` for personality/behavioral traits: "TRAIT: Analytical thinker", "TRAIT: Tends to reschedule when stressed"
+Call `update_peer_card` with the complete list when you identify new patterns."""
 
-Call `get_peer_card` first to see current contents, then `update_peer_card` with the complete updated list."""
+        return f"""You are an inductive reasoning agent identifying patterns about {observed}.
 
-        # Remember section
-        remember_section = """
+## YOUR JOB
 
-REMEMBER: Focus on temporal patterns and how things change. Create observations, don't just search."""
+Create inductive observations by finding patterns across multiple observations. Think like a psychologist identifying behavioral tendencies.
 
-        if peer_card_enabled:
-            remember_section += (
-                " Update the peer card with high-confidence patterns and traits."
-            )
+## PHASE 1: DISCOVERY
 
-        return f"""You are an inductive reasoning specialist for {observed}. Your ONLY job is to create inductive observations by calling tools. Do NOT explain your reasoning - just make tool calls.
+Explore broadly to find patterns. Use these tools:
+- `get_recent_observations` - Recent learnings
+- `search_memory` - Topic-specific search
+- `search_messages` - Actual conversation content
 
-## MANDATORY WORKFLOW - YOU MUST FOLLOW THIS PATTERN
+Look at BOTH explicit observations AND deductive ones. Patterns often emerge from synthesizing across both levels.
 
-For EACH topic, you MUST alternate: search → create → search → create → ...
+## PHASE 2: ACTION
 
-**CORRECT pattern:**
-1. search_memory("topic 1")
-2. create_observations([...inductions from topic 1...])
-3. search_memory("topic 2")
-4. create_observations([...inductions from topic 2...])
-5. search_memory("topic 3")
-6. create_observations([...inductions from topic 3...])
+Create inductive observations when you see patterns:
 
-**WRONG pattern (DO NOT DO THIS):**
-1. search_memory("topic 1")
-2. search_memory("topic 2")
-3. search_memory("topic 3")
-4. ... more searches ...
-5. create_observations([...]) ← TOO LATE, you'll hit iteration limit!
+### Behavioral Patterns
+- "Tends to reschedule meetings when stressed"
+- "Makes decisions after consulting with partner"
+- "Projects follow: enthusiasm → doubt → completion"
 
-1. **ALTERNATE SEARCH/CREATE** - After each search, create observations BEFORE your next search.
-2. **CREATE OBSERVATIONS** - Your primary goal is to CREATE inductive observations.
-3. **MINIMIZE TEXT OUTPUT** - Do not write explanations or summaries. Just call tools.
+### Preferences
+- "Prefers morning meetings"
+- "Likes detailed technical explanations"
 
-## PRIORITY FOCUS AREAS
+### Personality Traits
+- "Generally optimistic about outcomes"
+- "Detail-oriented in planning"
 
-### 1. TEMPORAL & SEQUENTIAL PATTERNS (HIGH PRIORITY)
-Look for patterns in HOW things change over time:
-- "User tends to reschedule meetings when stressed"
-- "User's priorities shift toward family on weekends"
-- "User makes major decisions after consulting with [person]"
+### Temporal Patterns
+- "Career goals have remained consistent"
+- "Living situation changes frequently"
+{peer_card_section}
 
-### 2. EVENT SEQUENCE PATTERNS
-Identify recurring sequences of events:
-- "When user faces conflict, they: reflect → consult friend → make decision"
-- "User's projects follow pattern: enthusiasm → doubt → completion"
-
-### 3. INFORMATION CONSISTENCY PATTERNS
-Note patterns in what information stays stable vs changes:
-- "User's career goals have remained consistent around [X]"
-- "User's living situation changes frequently"
-
-### 4. STANDARD PATTERNS
-Also look for:
-- **Preferences**: "prefers X", "likes Y" (from multiple mentions)
-- **Behaviors**: "tends to X", "usually does Y" (from repeated actions)
-- **Personality**: "is generally X" (from multiple indicators)
-
-## WORKFLOW (REPEAT FOR EACH QUESTION)
-
-1. Call `search_memory` with a relevant query
-2. Look for PATTERNS across multiple observations (both explicit and deductive levels)
-3. Pay special attention to deductive observations about knowledge updates - these reveal change patterns
-4. **IMMEDIATELY call `create_observations`** with any patterns you found (need 2+ sources)
-5. **ONLY THEN** move to the next question and search again
-
-## CREATING INDUCTIVE OBSERVATIONS
+## CREATING OBSERVATIONS
 
 ```json
 {{
@@ -570,32 +498,54 @@ Also look for:
     "content": "The pattern or generalization",
     "level": "inductive",
     "source_ids": ["id1", "id2", "id3"],
-    "sources": ["source 1 text", "source 2 text"],
+    "sources": ["evidence 1", "evidence 2"],
     "pattern_type": "tendency",  // preference|behavior|personality|tendency|correlation
-    "confidence": "medium"  // high (5+), medium (3-4), low (2)
+    "confidence": "medium"  // low (2 sources), medium (3-4), high (5+)
   }}]
 }}
 ```
 
-REQUIREMENTS:
-- Minimum 2 source observations (use source_ids!)
-- Confidence based on source count: low=2, medium=3-4, high=5+
-- Pattern must generalize, not just restate one fact
+## RULES
 
-{tools_section}{peer_card_section}{remember_section}"""
+1. Minimum 2 source observations required - patterns need evidence
+2. Don't just restate a single fact as a pattern
+3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
+4. Look for HOW things change over time, not just static facts
+5. Include source_ids - always link back to evidence"""
 
-    def build_user_prompt(self, probing_questions: list[str]) -> str:
-        questions_text = "\n".join(f"- {q}" for q in probing_questions)
-        return f"""Process these topics by ALTERNATING search and create calls:
+    def build_user_prompt(
+        self,
+        probing_questions: list[str] | None,
+        peer_card: list[str] | None = None,
+    ) -> str:
+        # Build peer card context section
+        peer_card_context = ""
+        if peer_card:
+            facts = "\n".join(f"- {fact}" for fact in peer_card)
+            peer_card_context = f"""
+## CURRENT PEER CARD
 
-{questions_text}
+{facts}
 
-Start now:
-1. Search for topic 1
-2. Create observations from patterns you found (need 2+ sources)
-3. Search for topic 2
-4. Create observations from patterns you found
-... and so on."""
+Update this with `update_peer_card` if you identify new patterns or traits.
+
+"""
+
+        if probing_questions:
+            hints = "\n".join(f"- {q}" for q in probing_questions[:5])
+            return f"""{peer_card_context}Explore and find patterns. These areas may be worth investigating:
+
+{hints}
+
+But follow the evidence - if you find patterns elsewhere, pursue those.
+
+Start with `get_recent_observations`."""
+
+        return f"""{peer_card_context}Explore the observation space and identify patterns.
+
+Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
+
+Go."""
 
 
 # Singleton instances
