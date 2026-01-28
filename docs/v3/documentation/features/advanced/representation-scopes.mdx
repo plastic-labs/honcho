@@ -72,9 +72,9 @@ The `target` parameter controls which representation you retrieve:
 
 | Query | Returns |
 |-------|---------|
-| `get_representation("alice")` | Conclusions from Honcho's representation of Alice (across all sessions) |
-| `get_representation("alice", target="bob")` | Conclusions from Alice's representation of Bob (from sessions Alice participated in) |
-| `get_representation("alice", target="charlie")` | Conclusions from Alice's representation of Charlie (from sessions Alice participated in) |
+| `representation("alice")` | Conclusions from Honcho's representation of Alice (across all sessions) |
+| `representation("alice", target="bob")` | Conclusions from Alice's representation of Bob (from sessions Alice participated in) |
+| `representation("alice", target="charlie")` | Conclusions from Alice's representation of Charlie (from sessions Alice participated in) |
 
 ### Code Examples
 
@@ -104,7 +104,7 @@ session.add_messages([
 # Different sessions with different participants
 session2 = honcho.session("game-session-2")
 session2.add_peers([alice, charlie])
-session2.set_peer_config(alice, SessionPeerConfig(observe_others=True))
+session2.set_peer_configuration(alice, SessionPeerConfig(observe_others=True))
 
 session2.add_messages([
     charlie.message("I didn't have breakfast. I lied to Bob.")
@@ -137,7 +137,7 @@ await session.addMessages([
 
 const session2 = await honcho.session("game-session-2");
 await session2.addPeers([alice, charlie]);
-await session2.setPeerConfig(alice, { observeOthers: true });
+await session2.setPeerConfiguration(alice, { observeOthers: true });
 
 await session2.addMessages([
     charlie.message("I didn't have breakfast. I lied to Bob.")

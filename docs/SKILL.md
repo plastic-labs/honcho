@@ -50,7 +50,7 @@ Ask how they want to use Honcho context:
 - options:
   - "Tool call (Recommended)" - "Agent queries Honcho on-demand via function calling"
   - "Pre-fetch" - "Fetch user context before each LLM call with predefined queries"
-  - "get_context()" - "Include conversation history and representations in prompt"
+  - "context()" - "Include conversation history and representations in prompt"
   - "Multiple patterns" - "Combine approaches for different use cases"
 
 #### Question Set 3 - Session Structure
@@ -371,7 +371,7 @@ async function getUserContextForPrompt(userId: string): Promise<Record<string, s
 
 ### Pattern C: Get Context for LLM Integration
 
-Use `get_context()` for conversation history with built-in LLM formatting.
+Use `context()` for conversation history with built-in LLM formatting.
 
 **Python:**
 
@@ -383,7 +383,7 @@ user = honcho.peer("user-123")
 assistant = honcho.peer("assistant", config={"observe_me": False})
 
 # Get context formatted for your LLM
-context = session.get_context(
+context = session.context(
     tokens=2000,
     peer_target=user.id,  # Include representation of this user
     summary=True           # Include conversation summaries
@@ -434,7 +434,7 @@ When integrating Honcho into an existing codebase:
 - [ ] Choose integration pattern:
   - [ ] Tool call pattern for agentic systems
   - [ ] Pre-fetch pattern for simpler integrations
-  - [ ] get_context() for conversation history
+  - [ ] context() for conversation history
 - [ ] Store messages after each exchange to build user models
 
 ## Common Mistakes to Avoid
