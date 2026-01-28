@@ -531,25 +531,31 @@ DREAMER_TOOLS: list[dict[str, Any]] = [
 
 # Tools for the deduction specialist (dreamer phase 1)
 # Creates deductive observations from explicit observations, can delete duplicates
+# Includes message access for context and self-directed exploration
+# Note: get_peer_card is not included - peer card is injected into the prompt directly
 DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
-    TOOLS["search_memory"],
+    # Discovery tools
     TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    TOOLS["search_messages"],
+    # Action tools
     TOOLS["create_observations"],
     TOOLS["delete_observations"],
-    TOOLS["get_reasoning_chain"],
     TOOLS["update_peer_card"],
-    TOOLS["get_peer_card"],
 ]
 
 # Tools for the induction specialist (dreamer phase 2)
 # Creates inductive observations from explicit and deductive observations
+# Includes message access for context and self-directed exploration
+# Note: get_peer_card is not included - peer card is injected into the prompt directly
 INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
-    TOOLS["search_memory"],
+    # Discovery tools
     TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    TOOLS["search_messages"],
+    # Action tools
     TOOLS["create_observations"],
-    TOOLS["get_reasoning_chain"],
     TOOLS["update_peer_card"],
-    TOOLS["get_peer_card"],
 ]
 
 
