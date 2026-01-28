@@ -60,7 +60,7 @@ The workflow has two parts (separated by sticky notes in the canvas):
 
 2. **AI Chat Interface**: Chat Trigger → Agent (with LLM and Honcho tools)
 
-The Agent uses Honcho's `get_context()` endpoint to retrieve relevant information about email conversations, enabling contextual conversations about your email data.
+The Agent uses Honcho's `context()` endpoint to retrieve relevant information about email conversations, enabling contextual conversations about your email data.
 
 ![Complete workflow overview showing both data ingestion and chat sections](/images/integrations/n8n/complete_workflow.png)
 
@@ -229,7 +229,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
     },
     {
       "parameters": {
-        "content": "## AI Chat With Honcho get_context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
+        "content": "## AI Chat With Honcho context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
         "height": 480,
         "width": 752
       },
