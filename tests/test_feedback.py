@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.feedback import (
     INTERVIEW_QUESTIONS,
-    _config_is_empty,
-    _is_simple_greeting,
     build_feedback_prompt,
+    config_is_empty,
+    is_simple_greeting,
     process_feedback,
 )
 from src.schemas import (
@@ -116,7 +116,9 @@ class TestHelperFunctions:
             "get started",
         ]
         for greeting in greetings:
-            assert _is_simple_greeting(greeting), f"Expected '{greeting}' to be a greeting"
+            assert is_simple_greeting(
+                greeting
+            ), f"Expected '{greeting}' to be a greeting"
 
     def test_is_simple_greeting_false_cases(self):
         """Test cases that should NOT be detected as simple greetings."""
@@ -127,26 +129,26 @@ class TestHelperFunctions:
             "Please configure the workspace to focus on user preferences",
         ]
         for msg in non_greetings:
-            assert not _is_simple_greeting(msg), f"Expected '{msg}' to NOT be a greeting"
+            assert not is_simple_greeting(msg), f"Expected '{msg}' to NOT be a greeting"
 
     def test_config_is_empty_true(self):
         """Test detecting empty configuration."""
         config = WorkspaceAgentConfig()
-        assert _config_is_empty(config)
+        assert config_is_empty(config)
 
         config = WorkspaceAgentConfig(deriver_rules="", dialectic_rules="")
-        assert _config_is_empty(config)
+        assert config_is_empty(config)
 
         config = WorkspaceAgentConfig(deriver_rules="   ", dialectic_rules="  ")
-        assert _config_is_empty(config)
+        assert config_is_empty(config)
 
     def test_config_is_empty_false(self):
         """Test detecting non-empty configuration."""
         config = WorkspaceAgentConfig(deriver_rules="Some rule")
-        assert not _config_is_empty(config)
+        assert not config_is_empty(config)
 
         config = WorkspaceAgentConfig(dialectic_rules="Another rule")
-        assert not _config_is_empty(config)
+        assert not config_is_empty(config)
 
 
 class TestBuildFeedbackPrompt:
@@ -240,11 +242,13 @@ class TestProcessFeedback:
 
         # Mock the LLM call
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "message": "I see you already have rules set up.",
-            "understood_intent": "Greeting with existing config",
-            "changes": [],
-        })
+        mock_response.content = json.dumps(
+            {
+                "message": "I see you already have rules set up.",
+                "understood_intent": "Greeting with existing config",
+                "changes": [],
+            }
+        )
 
         with patch(
             "src.feedback.honcho_llm_call",
@@ -268,16 +272,18 @@ class TestProcessFeedback:
 
         # Mock the LLM call to return a config change
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "message": "I've configured the workspace to focus on emotions.",
-            "understood_intent": "Configure deriver for emotion tracking",
-            "changes": [
-                {
-                    "field": "deriver_rules",
-                    "new_value": "Focus on emotional content and feelings",
-                }
-            ],
-        })
+        mock_response.content = json.dumps(
+            {
+                "message": "I've configured the workspace to focus on emotions.",
+                "understood_intent": "Configure deriver for emotion tracking",
+                "changes": [
+                    {
+                        "field": "deriver_rules",
+                        "new_value": "Focus on emotional content and feelings",
+                    }
+                ],
+            }
+        )
 
         with patch(
             "src.feedback.honcho_llm_call",
@@ -314,11 +320,13 @@ class TestProcessFeedback:
 
         # Mock LLM to return answer without changes
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "message": "Your current deriver rule is: 'Existing rule'",
-            "understood_intent": "Question about current config",
-            "changes": [],
-        })
+        mock_response.content = json.dumps(
+            {
+                "message": "Your current deriver rule is: 'Existing rule'",
+                "understood_intent": "Question about current config",
+                "changes": [],
+            }
+        )
 
         with patch(
             "src.feedback.honcho_llm_call",
@@ -402,16 +410,18 @@ class TestProcessFeedback:
 
         # Mock LLM to append new rule
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "message": "Added goal tracking to existing rules.",
-            "understood_intent": "Add goal tracking while preserving emotion tracking",
-            "changes": [
-                {
-                    "field": "deriver_rules",
-                    "new_value": "Track emotions\nAlso track goals and aspirations",
-                }
-            ],
-        })
+        mock_response.content = json.dumps(
+            {
+                "message": "Added goal tracking to existing rules.",
+                "understood_intent": "Add goal tracking while preserving emotion tracking",
+                "changes": [
+                    {
+                        "field": "deriver_rules",
+                        "new_value": "Track emotions\nAlso track goals and aspirations",
+                    }
+                ],
+            }
+        )
 
         with patch(
             "src.feedback.honcho_llm_call",
@@ -427,88 +437,4 @@ class TestProcessFeedback:
             assert "goals" in response.changes_made[0].new_value.lower()
 
 
-class TestFeedbackAPIEndpoint:
-    """Test the /feedback API endpoint via HTTP."""
-
-    def test_feedback_endpoint_basic(
-        self,
-        client,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """Test basic feedback endpoint functionality."""
-        workspace, _ = sample_data
-
-        # Mock the process_feedback function
-        mock_response = FeedbackResponse(
-            message="Configuration updated",
-            understood_intent="Test intent",
-            changes_made=[],
-            current_config=WorkspaceAgentConfig(),
-        )
-
-        with patch(
-            "src.routers.workspaces.process_feedback",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ):
-            response = client.post(
-                f"/v1/workspaces/{workspace.name}/feedback",
-                json={"message": "Test message"},
-            )
-            assert response.status_code == 200
-            data = response.json()
-            assert data["message"] == "Configuration updated"
-            assert "current_config" in data
-
-    def test_feedback_endpoint_with_introspection(
-        self,
-        client,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """Test feedback endpoint with introspection flag."""
-        workspace, _ = sample_data
-
-        mock_response = FeedbackResponse(
-            message="Used introspection data",
-            understood_intent="Test intent",
-            changes_made=[],
-            current_config=WorkspaceAgentConfig(),
-        )
-
-        with (
-            patch(
-                "src.routers.workspaces.process_feedback",
-                new_callable=AsyncMock,
-                return_value=mock_response,
-            ) as mock_process,
-            patch(
-                "src.routers.workspaces.get_latest_introspection_report",
-                new_callable=AsyncMock,
-                return_value=None,
-            ) as mock_introspection,
-        ):
-            response = client.post(
-                f"/v1/workspaces/{workspace.name}/feedback",
-                json={"message": "Help me", "include_introspection": True},
-            )
-            assert response.status_code == 200
-
-            # Verify introspection was fetched
-            mock_introspection.assert_called_once()
-            # Verify process_feedback was called
-            mock_process.assert_called_once()
-
-    def test_feedback_endpoint_validation_error(
-        self,
-        client,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """Test feedback endpoint with invalid input."""
-        workspace, _ = sample_data
-
-        # Empty message should fail validation
-        response = client.post(
-            f"/v1/workspaces/{workspace.name}/feedback",
-            json={"message": ""},
-        )
-        assert response.status_code == 422  # Validation error
+# Note: API endpoint tests are in tests/routes/test_feedback.py

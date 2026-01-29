@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 _DOC_ID_PATTERN = re.compile(r"\[id:([a-zA-Z0-9_-]+)\]")
 
 
-def _extract_doc_ids_from_messages(messages: list[dict[str, str]]) -> list[str]:
+def extract_doc_ids_from_messages(messages: list[dict[str, str]]) -> list[str]:
     """
     Extract document IDs from tool_result messages.
 
@@ -410,7 +410,7 @@ class DialecticAgent:
         )
 
         # Persist dialectic trace for meta-cognitive analysis
-        retrieved_doc_ids = _extract_doc_ids_from_messages(self.messages)
+        retrieved_doc_ids = extract_doc_ids_from_messages(self.messages)
         trace = DialecticTraceCreate(
             workspace_name=self.workspace_name,
             session_name=self.session_name,

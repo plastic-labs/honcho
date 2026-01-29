@@ -23,7 +23,7 @@ ABSTENTION_PATTERNS = [
 _ABSTENTION_REGEX = re.compile("|".join(ABSTENTION_PATTERNS), re.IGNORECASE)
 
 
-def _is_abstention(response: str) -> bool:
+def is_abstention(response: str) -> bool:
     """Check if a response indicates abstention from answering."""
     return bool(_ABSTENTION_REGEX.search(response))
 
@@ -132,7 +132,7 @@ async def get_dialectic_trace_stats(
     responses_result = await db.execute(responses_stmt)
     responses = [r[0] for r in responses_result.all()]
 
-    abstention_count = sum(1 for r in responses if _is_abstention(r))
+    abstention_count = sum(1 for r in responses if is_abstention(r))
     abstention_rate = abstention_count / total_queries if total_queries > 0 else 0.0
 
     return {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +41,7 @@ INTERVIEW_QUESTIONS = """Before I can help configure Honcho for your workspace, 
 Feel free to answer any or all of these questions, and I'll help configure your workspace accordingly."""
 
 
-def _is_simple_greeting(message: str) -> bool:
+def is_simple_greeting(message: str) -> bool:
     """Check if a message is a simple greeting or question that should trigger interview mode."""
     message_lower = message.lower().strip()
 
@@ -72,7 +73,7 @@ def _is_simple_greeting(message: str) -> bool:
     return any(re.match(pattern, message_lower) for pattern in greeting_patterns)
 
 
-def _config_is_empty(config: WorkspaceAgentConfig) -> bool:
+def config_is_empty(config: WorkspaceAgentConfig) -> bool:
     """Check if config has no custom rules set."""
     return not config.deriver_rules.strip() and not config.dialectic_rules.strip()
 
@@ -101,10 +102,10 @@ def build_feedback_prompt(
 **Performance Summary:** {introspection_report.performance_summary}
 
 **Identified Issues:**
-{chr(10).join(f'- {issue}' for issue in introspection_report.identified_issues) if introspection_report.identified_issues else '(none)'}
+{chr(10).join(f"- {issue}" for issue in introspection_report.identified_issues) if introspection_report.identified_issues else "(none)"}
 
 **Suggestions:**
-{chr(10).join(f'- [{s.target}] {s.rationale} (confidence: {s.confidence})' for s in introspection_report.suggestions) if introspection_report.suggestions else '(none)'}
+{chr(10).join(f"- [{s.target}] {s.rationale} (confidence: {s.confidence})" for s in introspection_report.suggestions) if introspection_report.suggestions else "(none)"}
 
 """
 
@@ -187,7 +188,7 @@ async def process_feedback(
     current_config = await crud.get_workspace_agent_config(db, workspace_name)
 
     # Check for interview mode: empty config + simple greeting
-    if _config_is_empty(current_config) and _is_simple_greeting(request.message):
+    if config_is_empty(current_config) and is_simple_greeting(request.message):
         logger.info(
             f"Feedback channel: Interview mode triggered for workspace {workspace_name}"
         )
@@ -233,10 +234,7 @@ async def process_feedback(
         raw_changes = response_data.get("changes", [])
 
         if isinstance(raw_changes, list):
-            for change_item in raw_changes:
-                if not isinstance(change_item, dict):
-                    continue
-
+            for change_item in cast(list[dict[str, Any]], raw_changes):
                 change_dict: dict[str, object] = change_item
                 field = str(change_dict.get("field", ""))
                 new_value = str(change_dict.get("new_value", ""))

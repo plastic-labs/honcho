@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+from typing import Any, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -314,43 +315,48 @@ async def run_introspection(
 
         # Build suggestions list
         suggestions: list[IntrospectionSuggestion] = []
-        raw_suggestions = response_data.get("suggestions", [])
-        if isinstance(raw_suggestions, list):
-            for raw_suggestion in raw_suggestions:
-                if isinstance(raw_suggestion, dict):
-                    try:
-                        # Validate target field
-                        target_raw = raw_suggestion.get("target", "deriver_rules")
-                        if target_raw not in ("deriver_rules", "dialectic_rules"):
-                            target_raw = "deriver_rules"
+        raw_suggestions: list[dict[str, Any]] = cast(
+            list[dict[str, Any]], response_data.get("suggestions", [])
+        )
+        for raw_suggestion in raw_suggestions:
+            try:
+                # Validate target field
+                target_raw = raw_suggestion.get("target", "deriver_rules")
+                if target_raw not in ("deriver_rules", "dialectic_rules"):
+                    target_raw = "deriver_rules"
 
-                        # Validate confidence field
-                        confidence_raw = raw_suggestion.get("confidence", "low")
-                        if confidence_raw not in ("high", "medium", "low"):
-                            confidence_raw = "low"
+                # Validate confidence field
+                confidence_raw = raw_suggestion.get("confidence", "low")
+                if confidence_raw not in ("high", "medium", "low"):
+                    confidence_raw = "low"
 
-                        suggestions.append(
-                            IntrospectionSuggestion(
-                                target=target_raw,  # type: ignore[arg-type]
-                                current_value=str(raw_suggestion.get("current_value", "")),
-                                suggested_value=str(raw_suggestion.get("suggested_value", "")),
-                                rationale=str(raw_suggestion.get("rationale", "")),
-                                confidence=confidence_raw,  # type: ignore[arg-type]
-                            )
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to parse suggestion: {e}")
+                suggestions.append(
+                    IntrospectionSuggestion(
+                        target=target_raw,  # type: ignore[arg-type]
+                        current_value=cast(
+                            str, raw_suggestion.get("current_value", "")
+                        ),
+                        suggested_value=str(raw_suggestion.get("suggested_value", "")),
+                        rationale=str(raw_suggestion.get("rationale", "")),
+                        confidence=confidence_raw,  # type: ignore[arg-type]
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Failed to parse suggestion: {e}")
 
         # Extract fields with type coercion
-        performance_summary = response_data.get("performance_summary", "Analysis completed.")
+        performance_summary = response_data.get(
+            "performance_summary", "Analysis completed."
+        )
         if not isinstance(performance_summary, str):
             performance_summary = "Analysis completed."
 
-        identified_issues_raw = response_data.get("identified_issues", [])
+        identified_issues_raw: list[Any] = cast(
+            list[Any], response_data.get("identified_issues", [])
+        )
         identified_issues: list[str] = []
-        if isinstance(identified_issues_raw, list):
-            for issue in identified_issues_raw:
-                identified_issues.append(str(issue))
+        for issue in identified_issues_raw:
+            identified_issues.append(str(issue))
 
         report = IntrospectionReport(
             workspace_name=workspace_name,

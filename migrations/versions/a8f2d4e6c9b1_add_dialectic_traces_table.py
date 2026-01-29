@@ -1,7 +1,7 @@
 """add dialectic_traces table
 
 Revision ID: a8f2d4e6c9b1
-Revises: 7c0d9a4e3b1f
+Revises: e4eba9cfaa6f
 Create Date: 2026-01-29
 
 """
@@ -16,7 +16,7 @@ from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "a8f2d4e6c9b1"
-down_revision: str | None = "7c0d9a4e3b1f"
+down_revision: str | None = "e4eba9cfaa6f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

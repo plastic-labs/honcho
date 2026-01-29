@@ -255,6 +255,10 @@ class TestDeriverIngestionMetrics:
                 "src.crud.representation.RepresentationManager.save_representation",
                 new=AsyncMock(),
             ),
+            patch(
+                "src.deriver.deriver.crud.get_workspace_agent_config",
+                new=AsyncMock(return_value=schemas.WorkspaceAgentConfig()),
+            ),
         ):
             await process_representation_tasks_batch(
                 messages=messages,
@@ -312,6 +316,10 @@ class TestDeriverIngestionMetrics:
                 "src.crud.representation.RepresentationManager.save_representation",
                 new=AsyncMock(),
             ),
+            patch(
+                "src.deriver.deriver.crud.get_workspace_agent_config",
+                new=AsyncMock(return_value=schemas.WorkspaceAgentConfig()),
+            ),
         ):
             await process_representation_tasks_batch(
                 messages=messages,
@@ -368,6 +376,10 @@ class TestDeriverIngestionMetrics:
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",
                 new=AsyncMock(),
+            ),
+            patch(
+                "src.deriver.deriver.crud.get_workspace_agent_config",
+                new=AsyncMock(return_value=schemas.WorkspaceAgentConfig()),
             ),
         ):
             await process_representation_tasks_batch(

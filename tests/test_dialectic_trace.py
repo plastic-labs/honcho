@@ -7,7 +7,8 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
-from src.crud.dialectic_trace import _is_abstention
+from src.crud.dialectic_trace import is_abstention
+from src.dialectic.core import extract_doc_ids_from_messages
 from src.schemas import DialecticTraceCreate
 
 
@@ -296,7 +297,7 @@ class TestAbstentionDetection:
         ]
 
         for response in abstention_responses:
-            assert _is_abstention(response), f"Should detect abstention: {response}"
+            assert is_abstention(response), f"Should detect abstention: {response}"
 
     def test_non_abstention_responses(self):
         """Test that normal responses are not flagged as abstentions."""
@@ -309,9 +310,9 @@ class TestAbstentionDetection:
         ]
 
         for response in normal_responses:
-            assert not _is_abstention(response), (
-                f"Should not detect abstention: {response}"
-            )
+            assert not is_abstention(
+                response
+            ), f"Should not detect abstention: {response}"
 
 
 class TestDocIdExtraction:
@@ -319,7 +320,6 @@ class TestDocIdExtraction:
 
     def test_extract_doc_ids_from_tool_results(self):
         """Test extracting document IDs from formatted tool results."""
-        from src.dialectic.core import _extract_doc_ids_from_messages
 
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -342,13 +342,12 @@ class TestDocIdExtraction:
             {"role": "assistant", "content": "Based on the observations..."},
         ]
 
-        doc_ids = _extract_doc_ids_from_messages(messages)
+        doc_ids = extract_doc_ids_from_messages(messages)
 
         assert set(doc_ids) == {"abc123", "def456", "ghi789"}
 
     def test_extract_doc_ids_no_matches(self):
         """Test extraction when no document IDs are present."""
-        from src.dialectic.core import _extract_doc_ids_from_messages
 
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -356,13 +355,12 @@ class TestDocIdExtraction:
             {"role": "assistant", "content": "Hi there!"},
         ]
 
-        doc_ids = _extract_doc_ids_from_messages(messages)
+        doc_ids = extract_doc_ids_from_messages(messages)
 
         assert doc_ids == []
 
     def test_extract_doc_ids_duplicates_removed(self):
         """Test that duplicate IDs are deduplicated."""
-        from src.dialectic.core import _extract_doc_ids_from_messages
 
         messages = [
             {
@@ -371,6 +369,6 @@ class TestDocIdExtraction:
             },
         ]
 
-        doc_ids = _extract_doc_ids_from_messages(messages)
+        doc_ids = extract_doc_ids_from_messages(messages)
 
         assert doc_ids == ["abc123"]

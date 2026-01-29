@@ -68,7 +68,9 @@ class TestGatherIntrospectionContext:
                 observer=peer.name,
                 observed=peer.name,
                 query=f"What does the user like? Query {i}",
-                response="The user likes coffee." if i < 3 else "I don't have information.",
+                response="The user likes coffee."
+                if i < 3
+                else "I don't have information.",
                 reasoning_level="low",
                 total_duration_ms=100.0 * (i + 1),
                 input_tokens=100,
@@ -190,19 +192,21 @@ class TestRunIntrospection:
 
         # Mock the LLM call
         mock_llm_response = MagicMock()
-        mock_llm_response.content = json.dumps({
-            "performance_summary": "The workspace is performing well.",
-            "identified_issues": ["High abstention rate"],
-            "suggestions": [
-                {
-                    "target": "deriver_rules",
-                    "current_value": "",
-                    "suggested_value": "Focus on capturing user preferences",
-                    "rationale": "Too many queries about preferences are being missed",
-                    "confidence": "medium",
-                }
-            ],
-        })
+        mock_llm_response.content = json.dumps(
+            {
+                "performance_summary": "The workspace is performing well.",
+                "identified_issues": ["High abstention rate"],
+                "suggestions": [
+                    {
+                        "target": "deriver_rules",
+                        "current_value": "",
+                        "suggested_value": "Focus on capturing user preferences",
+                        "rationale": "Too many queries about preferences are being missed",
+                        "confidence": "medium",
+                    }
+                ],
+            }
+        )
 
         with (
             patch(
@@ -278,7 +282,6 @@ class TestStoreIntrospectionReport:
         sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test that storing a report creates a document in the reserved collection."""
-        from src.crud.collection import get_or_create_collection as real_get_or_create_collection
 
         workspace, _ = sample_data
         # Capture workspace name before any potential session issues
@@ -386,7 +389,6 @@ class TestIntrospectionDreamDispatch:
     @pytest.mark.asyncio
     async def test_introspection_dream_type_dispatch(
         self,
-        db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test that INTROSPECTION dream type is properly dispatched."""
