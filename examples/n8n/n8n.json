@@ -18,7 +18,7 @@
       },
       {
         "parameters": {
-          "content": "## AI Chat With Honcho get_context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
+          "content": "## AI Chat With Honcho context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
           "height": 480,
           "width": 752
         },
@@ -54,7 +54,7 @@
       {
         "parameters": {
           "options": {
-            "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Get_Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
+            "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
           }
         },
         "id": "049c3c19-756c-4755-88d9-94312857d9bb",
@@ -339,7 +339,7 @@
           784
         ],
         "id": "095e62d6-aae3-4eb8-9b9c-c473bfe2716d",
-        "name": "Get_Context",
+        "name": "Context",
         "credentials": {
           "httpBearerAuth": {
             "id": "NbrkGo1GdYWQY3OX",
@@ -482,7 +482,7 @@
           ]
         ]
       },
-      "Get_Context": {
+      "Context": {
         "ai_tool": [
           [
             {

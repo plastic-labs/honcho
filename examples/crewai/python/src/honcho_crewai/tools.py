@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Input Schemas
 class GetContextInput(BaseModel):
-    """Input schema for get_context tool."""
+    """Input schema for context tool."""
 
     tokens: Optional[int] = Field(
         default=None, gt=0, description="Maximum number of tokens to include in the context"
@@ -84,7 +84,7 @@ class HonchoGetContextTool(BaseTool):
 
     def __init__(self, honcho: Honcho, session_id: str, peer_id: str) -> None:
         """
-        Initialize the get_context tool.
+        Initialize the context tool.
 
         Args:
             honcho: Honcho client instance
@@ -105,7 +105,7 @@ class HonchoGetContextTool(BaseTool):
         peer_perspective: Optional[str] = None,
     ) -> str:
         """
-        Execute get_context and format results.
+        Execute context retrieval and format results.
 
         Args:
             tokens: Maximum tokens to include

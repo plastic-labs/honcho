@@ -60,7 +60,7 @@ The workflow has two parts (separated by sticky notes in the canvas):
 
 2. **AI Chat Interface**: Chat Trigger → Agent (with LLM and Honcho tools)
 
-The Agent uses Honcho's `get_context()` endpoint to retrieve relevant information about email conversations, enabling contextual conversations about your email data.
+The Agent uses Honcho's `context()` endpoint to retrieve relevant information about email conversations, enabling contextual conversations about your email data.
 
 ![Complete workflow overview showing both data ingestion and chat sections](/images/integrations/n8n/complete_workflow.png)
 
@@ -179,7 +179,7 @@ Add a **When chat message received** node (from LangChain nodes) to create an in
 ```
 You are a helpful assistant that retrieves context about email conversations.
 
-Use the Get_Context tool to retrieve session context.
+Use the Context tool to retrieve session context.
 
 Today's date: {{ $now }}
 ```
@@ -192,7 +192,7 @@ Add an **OpenAI Chat Model** node (or your preferred LLM) and connect it to the 
 
 Create an HTTP Request Tool node for Honcho's context retrieval:
 
-**Get Context Tool:**
+**Context Tool:**
 - **Method**: `GET`
 - **URL**: `https://api.honcho.dev/v3/workspaces/email-test/sessions/new_session/context`
 - Returns formatted context for the entire session including all messages and peer interactions
@@ -229,7 +229,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
     },
     {
       "parameters": {
-        "content": "## AI Chat With Honcho get_context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
+        "content": "## AI Chat With Honcho context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
         "height": 480,
         "width": 752
       },
@@ -265,7 +265,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
     {
       "parameters": {
         "options": {
-          "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Get_Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
+          "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
         }
       },
       "id": "049c3c19-756c-4755-88d9-94312857d9bb",
@@ -550,7 +550,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
         784
       ],
       "id": "095e62d6-aae3-4eb8-9b9c-c473bfe2716d",
-      "name": "Get_Context",
+      "name": "Context",
       "credentials": {
         "httpBearerAuth": {
           "id": "NbrkGo1GdYWQY3OX",
@@ -693,7 +693,7 @@ Want to skip the manual setup? Import this workflow directly into n8n. In n8n, g
         ]
       ]
     },
-    "Get_Context": {
+    "Context": {
       "ai_tool": [
         [
           {
