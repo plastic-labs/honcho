@@ -10,7 +10,9 @@ from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver.enqueue import enqueue_dream
+from src.dreamer.introspection import get_latest_introspection_report
 from src.exceptions import AuthenticationException
+from src.feedback import process_feedback
 from src.security import JWTParams, require_auth
 from src.telemetry.events import DeletionCompletedEvent, emit
 from src.utils.search import search
@@ -258,3 +260,33 @@ async def schedule_dream(
         observed,
         request.session_id,
     )
+
+
+@router.post(
+    "/{workspace_id}/feedback",
+    response_model=schemas.FeedbackResponse,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def process_developer_feedback(
+    workspace_id: str = Path(...),
+    request: schemas.FeedbackRequest = Body(...),
+    db: AsyncSession = db,
+):
+    """
+    Process developer feedback and update workspace agent configuration.
+
+    This endpoint provides a natural language interface for developers to configure
+    Honcho's agent behavior. Developers can give instructions, ask questions, and
+    receive configuration updates - all via conversation.
+
+    The feedback channel supports:
+    - First-time setup with interview questions
+    - Incremental configuration updates
+    - Questions about current configuration
+    - Introspection-informed suggestions (when include_introspection=True)
+    """
+    introspection_report = None
+    if request.include_introspection:
+        introspection_report = await get_latest_introspection_report(db, workspace_id)
+
+    return await process_feedback(db, workspace_id, request, introspection_report)

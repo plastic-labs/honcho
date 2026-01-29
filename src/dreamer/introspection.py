@@ -452,3 +452,33 @@ async def store_introspection_report(
         logger.error(f"Failed to store introspection report: {e}")
         await db.rollback()
         # Don't re-raise - storing the report is secondary to generating it
+
+
+async def get_latest_introspection_report(
+    db: AsyncSession,
+    workspace_name: str,
+) -> IntrospectionReport | None:
+    """
+    Retrieve the most recent introspection report for a workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Returns:
+        The most recent IntrospectionReport, or None if not found
+    """
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.observer == SYSTEM_OBSERVER)
+        .where(models.Document.observed == INTROSPECTION_OBSERVED)
+        .where(models.Document.deleted_at.is_(None))
+        .order_by(models.Document.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        return None
+    return IntrospectionReport.model_validate(json.loads(doc.content))

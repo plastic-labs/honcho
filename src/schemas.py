@@ -83,6 +83,30 @@ class IntrospectionReport(BaseModel):
     signals: IntrospectionSignals
 
 
+class FeedbackRequest(BaseModel):
+    """Request to the developer feedback channel."""
+
+    message: str = Field(..., min_length=1, max_length=10000)
+    include_introspection: bool = Field(default=False)
+
+
+class ConfigChange(BaseModel):
+    """A configuration change made by the feedback processor."""
+
+    field: Literal["deriver_rules", "dialectic_rules"]
+    previous_value: str
+    new_value: str
+
+
+class FeedbackResponse(BaseModel):
+    """Response from the developer feedback channel."""
+
+    message: str
+    understood_intent: str
+    changes_made: list[ConfigChange] = Field(default_factory=list)
+    current_config: WorkspaceAgentConfig
+
+
 class ReconcilerType(str, Enum):
     """Types of reconciler tasks that can be performed."""
 
