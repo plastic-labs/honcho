@@ -1,6 +1,5 @@
 """Tests for the developer feedback channel (Phase 4 of Agentic FDE)."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.feedback import (
     INTERVIEW_QUESTIONS,
+    FeedbackChange,
+    FeedbackLLMResponse,
     build_feedback_prompt,
     config_is_empty,
     is_simple_greeting,
@@ -240,14 +241,12 @@ class TestProcessFeedback:
         config = WorkspaceAgentConfig(deriver_rules="Existing rule")
         await crud.set_workspace_agent_config(db_session, workspace.name, config)
 
-        # Mock the LLM call
+        # Mock the LLM call (structured output)
         mock_response = MagicMock()
-        mock_response.content = json.dumps(
-            {
-                "message": "I see you already have rules set up.",
-                "understood_intent": "Greeting with existing config",
-                "changes": [],
-            }
+        mock_response.content = FeedbackLLMResponse(
+            message="I see you already have rules set up.",
+            understood_intent="Greeting with existing config",
+            changes=[],
         )
 
         with patch(
@@ -270,19 +269,17 @@ class TestProcessFeedback:
         """Test that config changes are applied correctly."""
         workspace, _ = sample_data
 
-        # Mock the LLM call to return a config change
+        # Mock the LLM call to return a config change (structured output)
         mock_response = MagicMock()
-        mock_response.content = json.dumps(
-            {
-                "message": "I've configured the workspace to focus on emotions.",
-                "understood_intent": "Configure deriver for emotion tracking",
-                "changes": [
-                    {
-                        "field": "deriver_rules",
-                        "new_value": "Focus on emotional content and feelings",
-                    }
-                ],
-            }
+        mock_response.content = FeedbackLLMResponse(
+            message="I've configured the workspace to focus on emotions.",
+            understood_intent="Configure deriver for emotion tracking",
+            changes=[
+                FeedbackChange(
+                    field="deriver_rules",
+                    new_value="Focus on emotional content and feelings",
+                )
+            ],
         )
 
         with patch(
@@ -318,14 +315,12 @@ class TestProcessFeedback:
         config = WorkspaceAgentConfig(deriver_rules="Existing rule")
         await crud.set_workspace_agent_config(db_session, workspace.name, config)
 
-        # Mock LLM to return answer without changes
+        # Mock LLM to return answer without changes (structured output)
         mock_response = MagicMock()
-        mock_response.content = json.dumps(
-            {
-                "message": "Your current deriver rule is: 'Existing rule'",
-                "understood_intent": "Question about current config",
-                "changes": [],
-            }
+        mock_response.content = FeedbackLLMResponse(
+            message="Your current deriver rule is: 'Existing rule'",
+            understood_intent="Question about current config",
+            changes=[],
         )
 
         with patch(
@@ -368,20 +363,21 @@ class TestProcessFeedback:
             assert response.current_config.deriver_rules == "Existing rule"
 
     @pytest.mark.asyncio
-    async def test_invalid_json_response(
+    async def test_invalid_response_type(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Test handling of invalid JSON from LLM."""
+        """Test handling of unexpected response type from LLM."""
         workspace, _ = sample_data
 
         # Set initial config
         config = WorkspaceAgentConfig(deriver_rules="Existing rule")
         await crud.set_workspace_agent_config(db_session, workspace.name, config)
 
+        # Mock returns something unexpected (string instead of FeedbackLLMResponse)
         mock_response = MagicMock()
-        mock_response.content = "This is not valid JSON"
+        mock_response.content = "This is not a FeedbackLLMResponse"
 
         with patch(
             "src.feedback.honcho_llm_call",
@@ -391,8 +387,8 @@ class TestProcessFeedback:
             request = FeedbackRequest(message="Update my config")
             response = await process_feedback(db_session, workspace.name, request)
 
-            # Should return error message
-            assert "trouble" in response.message.lower()
+            # Should return error message (caught by generic exception handler)
+            assert "error" in response.message.lower()
             assert len(response.changes_made) == 0
 
     @pytest.mark.asyncio
@@ -408,19 +404,17 @@ class TestProcessFeedback:
         config = WorkspaceAgentConfig(deriver_rules="Track emotions")
         await crud.set_workspace_agent_config(db_session, workspace.name, config)
 
-        # Mock LLM to append new rule
+        # Mock LLM to append new rule (structured output)
         mock_response = MagicMock()
-        mock_response.content = json.dumps(
-            {
-                "message": "Added goal tracking to existing rules.",
-                "understood_intent": "Add goal tracking while preserving emotion tracking",
-                "changes": [
-                    {
-                        "field": "deriver_rules",
-                        "new_value": "Track emotions\nAlso track goals and aspirations",
-                    }
-                ],
-            }
+        mock_response.content = FeedbackLLMResponse(
+            message="Added goal tracking to existing rules.",
+            understood_intent="Add goal tracking while preserving emotion tracking",
+            changes=[
+                FeedbackChange(
+                    field="deriver_rules",
+                    new_value="Track emotions\nAlso track goals and aspirations",
+                )
+            ],
         )
 
         with patch(

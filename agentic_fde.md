@@ -103,7 +103,9 @@ The same primitives (workspaces, peers, sessions, messages, documents) can achie
 | 4     | ~350        | 514 lines (23 tests) |
 | **Total** | **~2,950** | **1,559 lines (61 tests)** |
 
-## Testing Checklist
+## Testing
+
+### Unit Tests
 
 - [ ] Run full test suite: `uv run pytest tests/`
 - [ ] Test Phase 1: Create a dialectic query, verify trace is logged
@@ -112,3 +114,35 @@ The same primitives (workspaces, peers, sessions, messages, documents) can achie
 - [ ] Test Phase 4: Submit feedback, verify config updated
 - [ ] Test interview flow: New workspace + greeting triggers questions
 - [ ] Test incremental updates: Existing rules preserved when adding new ones
+
+### Unified End-to-End Tests
+
+New actions added to the unified test system (`tests/unified/`):
+
+| Action | Description |
+|--------|-------------|
+| `set_agent_config` | Set custom deriver_rules and/or dialectic_rules |
+| `submit_feedback` | Submit natural language feedback to configure Honcho |
+| `trigger_introspection` | Trigger meta-cognitive introspection dream |
+| `query_introspection` | Query the latest introspection report |
+
+Test cases for agentic FDE:
+
+- `agentic_fde_custom_deriver_rules.json` - Verifies custom deriver rules filter observation extraction
+- `agentic_fde_custom_dialectic_rules.json` - Verifies custom dialectic rules change response format
+- `agentic_fde_feedback_updates_config.json` - Verifies feedback endpoint updates configuration
+
+Run unified tests:
+
+```bash
+python -m tests.unified.run --test-dir tests/unified/test_cases
+```
+
+### API Endpoints
+
+New endpoints added:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/workspaces/{id}/feedback` | POST | Developer feedback channel |
+| `/workspaces/{id}/introspection` | GET | Get latest introspection report |

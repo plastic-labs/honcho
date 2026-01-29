@@ -44,10 +44,14 @@ from tests.unified.schema import (
     LLMJudgeAssertion,
     NotContainsAssertion,
     QueryAction,
+    QueryIntrospectionAction,
     ScheduleDreamAction,
+    SetAgentConfigAction,
     SetSessionConfigAction,
     SetWorkspaceConfigAction,
+    SubmitFeedbackAction,
     TestDefinition,
+    TriggerIntrospectionAction,
     WaitAction,
 )
 
@@ -183,10 +187,12 @@ class UnifiedTestExecutor:
         honcho_client: Honcho,
         anthropic_client: AsyncAnthropic | None,
         redis_url: str,
+        base_url: str,
     ):
         self.client: Honcho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
         self.redis_url: str = redis_url
+        self.base_url: str = base_url
 
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
         logger.info(f"Starting test: {test_name}")
@@ -301,6 +307,24 @@ class UnifiedTestExecutor:
 
         elif isinstance(step, QueryAction):
             result = await self.perform_query(step)
+            for assertion in step.assertions:
+                await self.check_assertion(result, assertion)
+
+        # --- Agentic FDE Actions ---
+
+        elif isinstance(step, SetAgentConfigAction):
+            await self.set_agent_config(step)
+
+        elif isinstance(step, SubmitFeedbackAction):
+            result = await self.submit_feedback(step)
+            for assertion in step.assertions:
+                await self.check_assertion(result, assertion)
+
+        elif isinstance(step, TriggerIntrospectionAction):
+            await self.trigger_introspection(step)
+
+        elif isinstance(step, QueryIntrospectionAction):
+            result = await self.query_introspection()
             for assertion in step.assertions:
                 await self.check_assertion(result, assertion)
 
@@ -489,6 +513,90 @@ class UnifiedTestExecutor:
                             f"Value mismatch for '{k}': expected {v}, got {result_dict[k]}"
                         )
 
+    # --- Agentic FDE Methods ---
+
+    async def set_agent_config(self, step: SetAgentConfigAction) -> None:
+        """Set workspace agent configuration via HTTP API."""
+        workspace_name = self.client.workspace_id
+
+        # Build agent config
+        agent_config: dict[str, str] = {}
+        if step.deriver_rules is not None:
+            agent_config["deriver_rules"] = step.deriver_rules
+        if step.dialectic_rules is not None:
+            agent_config["dialectic_rules"] = step.dialectic_rules
+
+        async with httpx.AsyncClient() as http_client:
+            # Use PUT to update workspace with _agent_config in metadata
+            response = await http_client.put(
+                f"{self.base_url}/v3/workspaces/{workspace_name}",
+                json={"metadata": {"_agent_config": agent_config}},
+            )
+            response.raise_for_status()
+
+        logger.info(f"Set agent config: {agent_config}")
+
+    async def submit_feedback(self, step: SubmitFeedbackAction) -> dict[str, Any]:
+        """Submit feedback to the workspace feedback endpoint."""
+        workspace_name = self.client.workspace_id
+
+        async with httpx.AsyncClient(timeout=120.0) as http_client:
+            response = await http_client.post(
+                f"{self.base_url}/v3/workspaces/{workspace_name}/feedback",
+                json={
+                    "message": step.message,
+                    "include_introspection": step.include_introspection,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        logger.info(f"Feedback response: {result.get('message', '')[:100]}...")
+        return result
+
+    async def trigger_introspection(self, step: TriggerIntrospectionAction) -> None:
+        """Trigger an introspection dream."""
+        workspace_name = self.client.workspace_id
+
+        async with httpx.AsyncClient() as http_client:
+            # Introspection ignores observer/observed but endpoint requires them
+            response = await http_client.post(
+                f"{self.base_url}/v3/workspaces/{workspace_name}/schedule_dream",
+                json={
+                    "observer": "_system",
+                    "observed": "_introspection",
+                    "dream_type": "introspection",
+                },
+            )
+            response.raise_for_status()
+
+        logger.info("Triggered introspection dream")
+
+        if step.wait_for_completion:
+            # Wait for dream to complete - introspection goes through dream queue
+            await asyncio.sleep(2)  # Give it time to enqueue
+            # For now, just wait a fixed time since dream queue is separate
+            await asyncio.sleep(step.timeout)
+            logger.info("Introspection wait period complete")
+
+    async def query_introspection(self) -> dict[str, Any]:
+        """Query the latest introspection report."""
+        workspace_name = self.client.workspace_id
+
+        async with httpx.AsyncClient() as http_client:
+            response = await http_client.get(
+                f"{self.base_url}/v3/workspaces/{workspace_name}/introspection"
+            )
+            if response.status_code == 404:
+                return {"error": "No introspection report found"}
+            response.raise_for_status()
+            result = response.json()
+
+        logger.info(
+            f"Retrieved introspection report from {result.get('generated_at', 'unknown')}"
+        )
+        return result
+
 
 class UnifiedTestRunner:
     def __init__(
@@ -577,13 +685,14 @@ class UnifiedTestRunner:
             logger.info(f"Found {len(test_files)} test(s)")
 
             # 3. Execute Tests
+            base_url = f"http://localhost:{self.harness.api_port}"
             client = Honcho(
-                base_url=f"http://localhost:{self.harness.api_port}",
+                base_url=base_url,
                 workspace_id="default",  # Will be overridden per test
             )
             redis_url = f"redis://localhost:{self.harness.redis_port}/0"
 
-            executor = UnifiedTestExecutor(client, self.anthropic, redis_url)
+            executor = UnifiedTestExecutor(client, self.anthropic, redis_url, base_url)
 
             suite_start_time = time.time()
 

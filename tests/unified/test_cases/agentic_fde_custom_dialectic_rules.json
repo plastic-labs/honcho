@@ -1,0 +1,67 @@
+{
+  "description": "Test that custom dialectic rules modify chat response behavior",
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "dialectic_rules_test",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "dialectic_rules_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "I started a new job at Google last week as a senior engineer."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Congratulations on the new role! That's exciting."
+        },
+        {
+          "peer_id": "user",
+          "content": "Thanks! I'm working on their cloud infrastructure team."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 120,
+      "flush": true
+    },
+    {
+      "step_type": "set_agent_config",
+      "description": "Configure dialectic to respond in bullet points only",
+      "dialectic_rules": "CRITICAL: Always format your response as exactly 3 bullet points using '•' characters. Never use prose paragraphs. Be extremely concise - each bullet should be under 10 words."
+    },
+    {
+      "step_type": "query",
+      "description": "Test that response follows bullet point format",
+      "target": "chat",
+      "session_id": "dialectic_rules_test",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "input": "What do you know about this user's job?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this response mention the user's job at Google or on a cloud infrastructure team? It should reference their employment."
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Is this response formatted primarily as bullet points (using • or - or * characters) rather than flowing prose paragraphs? The response should have a list-like structure."
+        }
+      ]
+    }
+  ]
+}

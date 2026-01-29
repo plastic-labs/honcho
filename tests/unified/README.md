@@ -47,6 +47,20 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
     * `query`: Perform an action and assert on the result.
         * `target`: "chat", "get_context", "get_peer_card", "get_representation"
 
+5. **Agentic FDE** (Self-adapting Honcho):
+    * `set_agent_config`: Set custom rules for deriver and/or dialectic prompts.
+        * `deriver_rules`: Custom rules injected into observation extraction.
+        * `dialectic_rules`: Custom rules injected into query responses.
+    * `submit_feedback`: Submit natural language feedback to configure Honcho.
+        * `message`: The feedback message.
+        * `include_introspection`: Include latest introspection report (default: true).
+        * `assertions`: Optional assertions on the feedback response.
+    * `trigger_introspection`: Trigger a meta-cognitive introspection dream.
+        * `wait_for_completion`: Wait for introspection to finish (default: true).
+        * `timeout`: Timeout in seconds (default: 120).
+    * `query_introspection`: Query the latest introspection report.
+        * `assertions`: Assertions to run on the report.
+
 ### Assertions
 
 * `llm_judge`: Use Claude to evaluate the result against a natural language prompt.

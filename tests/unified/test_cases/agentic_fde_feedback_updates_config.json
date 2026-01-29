@@ -1,0 +1,95 @@
+{
+  "description": "Test that the feedback endpoint updates workspace agent configuration",
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "feedback_test",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "submit_feedback",
+      "description": "Submit feedback to configure for a cooking app",
+      "message": "I'm building a cooking and recipe app. Please configure Honcho to focus on extracting food preferences, dietary restrictions, allergies, and favorite cuisines. Ignore any non-food related information.",
+      "include_introspection": false,
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this response acknowledge the cooking/food app use case and indicate that configuration was updated? It should mention something about food preferences, dietary info, or cooking."
+        }
+      ]
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "feedback_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "I'm allergic to peanuts and shellfish. Very serious allergies."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's important to know! I'll make sure to avoid those ingredients."
+        },
+        {
+          "peer_id": "user",
+          "content": "I work from home as a freelance writer. Mostly do tech blogs."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That sounds like a flexible lifestyle!"
+        },
+        {
+          "peer_id": "user",
+          "content": "My favorite cuisine is Thai food, especially pad thai and green curry."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 120,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Verify food-related observations were extracted",
+      "target": "get_representation",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "session_id": "feedback_test",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this representation contain information about food allergies (peanuts, shellfish) or cuisine preferences (Thai food, pad thai, curry)? It should focus on food-related facts."
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Verify non-food observations were filtered out",
+      "target": "get_representation",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "session_id": "feedback_test",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "freelance writer"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "tech blogs"
+        }
+      ]
+    }
+  ]
+}

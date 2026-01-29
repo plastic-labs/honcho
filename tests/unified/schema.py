@@ -92,6 +92,53 @@ class ScheduleDreamAction(TestStep):
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
 
 
+# --- Agentic FDE Actions ---
+
+
+class SetAgentConfigAction(TestStep):
+    """Set workspace agent configuration for prompt customization."""
+
+    step_type: Literal["set_agent_config"] = "set_agent_config"
+    deriver_rules: str | None = Field(
+        None, description="Custom rules to inject into the deriver prompt"
+    )
+    dialectic_rules: str | None = Field(
+        None, description="Custom rules to inject into the dialectic prompt"
+    )
+
+
+class SubmitFeedbackAction(TestStep):
+    """Submit natural language feedback to configure Honcho."""
+
+    step_type: Literal["submit_feedback"] = "submit_feedback"
+    message: str = Field(..., description="Natural language feedback message")
+    include_introspection: bool = Field(
+        True, description="Include latest introspection report in context"
+    )
+    assertions: list["AssertionType"] = Field(
+        default_factory=list, description="Assertions to run on the feedback response"
+    )
+
+
+class TriggerIntrospectionAction(TestStep):
+    """Trigger an introspection dream to analyze workspace usage."""
+
+    step_type: Literal["trigger_introspection"] = "trigger_introspection"
+    wait_for_completion: bool = Field(
+        True, description="Wait for introspection to complete"
+    )
+    timeout: int = Field(120, description="Timeout in seconds when waiting")
+
+
+class QueryIntrospectionAction(TestStep):
+    """Query the latest introspection report and run assertions."""
+
+    step_type: Literal["query_introspection"] = "query_introspection"
+    assertions: list["AssertionType"] = Field(
+        default_factory=list, description="Assertions to run on the report"
+    )
+
+
 # --- Assertions ---
 
 
@@ -128,6 +175,17 @@ class JsonMatchAssertion(Assertion):
     key_value_pairs: dict[str, Any] | None = None
 
 
+# --- Assertion Type Alias ---
+
+AssertionType = (
+    LLMJudgeAssertion
+    | ContainsAssertion
+    | NotContainsAssertion
+    | ExactMatchAssertion
+    | JsonMatchAssertion
+)
+
+
 # --- Query/Assertion Actions ---
 
 
@@ -149,13 +207,7 @@ class QueryAction(TestStep):
     # for chat - reasoning level
     reasoning_level: ReasoningLevel | None = None
 
-    assertions: list[
-        LLMJudgeAssertion
-        | ContainsAssertion
-        | NotContainsAssertion
-        | ExactMatchAssertion
-        | JsonMatchAssertion
-    ]
+    assertions: list[AssertionType]
 
 
 # --- Unified Step Type ---
@@ -173,7 +225,12 @@ class TestDefinition(BaseModel):
             | AddMessagesAction
             | WaitAction
             | ScheduleDreamAction
-            | QueryAction,
+            | QueryAction
+            # Agentic FDE actions
+            | SetAgentConfigAction
+            | SubmitFeedbackAction
+            | TriggerIntrospectionAction
+            | QueryIntrospectionAction,
             Field(discriminator="step_type"),
         ]
     ]

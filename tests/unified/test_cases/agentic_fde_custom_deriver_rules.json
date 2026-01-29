@@ -1,0 +1,92 @@
+{
+  "description": "Test that custom deriver rules modify observation extraction behavior",
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "deriver_rules_test",
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "set_agent_config",
+      "description": "Configure deriver to ONLY extract food-related observations",
+      "deriver_rules": "ONLY extract observations about food preferences, dietary restrictions, and cooking. Completely ignore all other topics like work, location, hobbies, and personal information."
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "deriver_rules_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "I love pizza and hate sushi. Raw fish just isn't for me."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's interesting! Pizza is definitely a popular choice. Any particular toppings you prefer?"
+        },
+        {
+          "peer_id": "user",
+          "content": "I work as a software engineer in Seattle. Been there for 5 years now."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Seattle is a great tech hub! The food scene there is amazing too."
+        },
+        {
+          "peer_id": "user",
+          "content": "Yeah, I'm vegetarian so I appreciate all the plant-based options."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 120,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Verify food observations were extracted",
+      "target": "get_representation",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "session_id": "deriver_rules_test",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this representation mention food-related facts like pizza, sushi, or vegetarian? It should contain at least one food-related observation."
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Verify non-food observations were NOT extracted",
+      "target": "get_representation",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "session_id": "deriver_rules_test",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "software engineer"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "Seattle"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "5 years"
+        }
+      ]
+    }
+  ]
+}

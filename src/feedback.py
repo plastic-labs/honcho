@@ -7,11 +7,11 @@ workspace agent settings through conversation.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-from typing import Any, cast
+from typing import Literal
 
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
@@ -24,6 +24,24 @@ from src.schemas import (
     WorkspaceAgentConfig,
 )
 from src.utils.clients import honcho_llm_call
+
+
+class FeedbackChange(BaseModel):
+    """A single configuration change from the feedback LLM."""
+
+    field: Literal["deriver_rules", "dialectic_rules"]
+    new_value: str
+
+
+class FeedbackLLMResponse(BaseModel):
+    """Structured response from the feedback LLM."""
+
+    message: str = Field(description="Response message to the developer")
+    understood_intent: str = Field(description="Brief description of understood intent")
+    changes: list[FeedbackChange] = Field(
+        default_factory=list, description="Configuration changes to apply"
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -212,54 +230,33 @@ async def process_feedback(
             prompt=prompt,
             max_tokens=4096,
             track_name="feedback_channel",
-            json_mode=True,
+            response_model=FeedbackLLMResponse,
             temperature=0.3,
         )
 
-        # Parse response
-        response_text = llm_response.content
-        try:
-            response_data: dict[str, object] = json.loads(response_text)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse feedback LLM response: {e}")
-            return FeedbackResponse(
-                message="I had trouble processing your request. Could you try rephrasing?",
-                understood_intent="Error parsing response",
-                changes_made=[],
-                current_config=current_config,
+        # Process changes from structured response
+        changes_made: list[ConfigChange] = []
+        parsed_response = llm_response.content
+
+        for change in parsed_response.changes:
+            # Get previous value
+            previous_value = (
+                current_config.deriver_rules
+                if change.field == "deriver_rules"
+                else current_config.dialectic_rules
             )
 
-        # Process changes
-        changes_made: list[ConfigChange] = []
-        raw_changes = response_data.get("changes", [])
+            # Skip if no actual change
+            if previous_value == change.new_value:
+                continue
 
-        if isinstance(raw_changes, list):
-            for change_item in cast(list[dict[str, Any]], raw_changes):
-                change_dict: dict[str, object] = change_item
-                field = str(change_dict.get("field", ""))
-                new_value = str(change_dict.get("new_value", ""))
-
-                if field not in ("deriver_rules", "dialectic_rules"):
-                    continue
-
-                # Get previous value
-                previous_value = (
-                    current_config.deriver_rules
-                    if field == "deriver_rules"
-                    else current_config.dialectic_rules
+            changes_made.append(
+                ConfigChange(
+                    field=change.field,
+                    previous_value=previous_value,
+                    new_value=change.new_value,
                 )
-
-                # Skip if no actual change
-                if previous_value == new_value:
-                    continue
-
-                changes_made.append(
-                    ConfigChange(
-                        field=field,  # type: ignore[arg-type]
-                        previous_value=previous_value,
-                        new_value=new_value,
-                    )
-                )
+            )
 
         # Apply changes if any
         if changes_made:
@@ -281,12 +278,9 @@ async def process_feedback(
                 f"Feedback channel: Applied {len(changes_made)} changes to workspace {workspace_name}"
             )
 
-        message = response_data.get("message", "Configuration updated.")
-        understood_intent = response_data.get("understood_intent", "Processed feedback")
-
         return FeedbackResponse(
-            message=str(message),
-            understood_intent=str(understood_intent),
+            message=parsed_response.message,
+            understood_intent=parsed_response.understood_intent,
             changes_made=changes_made,
             current_config=current_config,
         )
