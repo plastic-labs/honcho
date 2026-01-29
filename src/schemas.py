@@ -1,7 +1,7 @@
 import datetime
 import ipaddress
 from enum import Enum
-from typing import Annotated, Any, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
@@ -25,6 +25,7 @@ class DreamType(str, Enum):
     """Types of dreams that can be triggered."""
 
     OMNI = "omni"
+    INTROSPECTION = "introspection"
 
 
 class WorkspaceAgentConfig(BaseModel):
@@ -42,6 +43,44 @@ class WorkspaceAgentConfig(BaseModel):
         default="",
         description="Custom rules injected into the dialectic prompt WORKFLOW section",
     )
+
+
+class IntrospectionSignals(BaseModel):
+    """Signals gathered for introspection analysis."""
+
+    total_dialectic_queries: int = 0
+    avg_dialectic_duration_ms: float = 0.0
+    abstention_count: int = 0
+    abstention_rate: float = 0.0
+    recent_queries: list[str] = Field(default_factory=list)
+    total_observations: int = 0
+    observations_by_level: dict[str, int] = Field(default_factory=dict)
+    contradiction_count: int = 0
+    total_peers: int = 0
+    total_sessions: int = 0
+    current_deriver_rules: str = ""
+    current_dialectic_rules: str = ""
+
+
+class IntrospectionSuggestion(BaseModel):
+    """A single configuration suggestion."""
+
+    target: Literal["deriver_rules", "dialectic_rules"]
+    current_value: str
+    suggested_value: str
+    rationale: str
+    confidence: Literal["high", "medium", "low"]
+
+
+class IntrospectionReport(BaseModel):
+    """Complete introspection report for a workspace."""
+
+    workspace_name: str
+    generated_at: datetime.datetime
+    performance_summary: str
+    identified_issues: list[str] = Field(default_factory=list)
+    suggestions: list[IntrospectionSuggestion] = Field(default_factory=list)
+    signals: IntrospectionSignals
 
 
 class ReconcilerType(str, Enum):

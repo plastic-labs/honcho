@@ -360,6 +360,17 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
+            case DreamType.INTROSPECTION:
+                from src.dreamer.introspection import run_introspection
+
+                async with tracked_db("introspection") as db:
+                    result = await run_introspection(db, workspace_name)
+
+                if result is not None:
+                    logger.info(
+                        f"Introspection completed: {len(result.suggestions)} suggestions"
+                    )
+
     except Exception as e:
         logger.error(
             f"Error processing dream task {payload.dream_type} for {payload.observer}/{payload.observed}: {str(e)}",
