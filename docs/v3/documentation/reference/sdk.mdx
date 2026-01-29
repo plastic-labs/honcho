@@ -612,13 +612,15 @@ const context = await session.context({ summary: true, tokens: 2000 });
 const richContext = await session.context({
   tokens: 2000,
   peerTarget: "user",
-  peerPerspective: "assistant",
   searchQuery: "What are my preferences?",
+  peerPerspective: "assistant",
   limitToSession: true,
-  searchTopK: 10,
-  searchMaxDistance: 0.8,
-  includeMostFrequent: true,
-  maxConclusions: 25
+  representationOptions: {
+    searchTopK: 10,
+    searchMaxDistance: 0.8,
+    includeMostFrequent: true,
+    maxConclusions: 25
+  }
 });
 
 // Search session content
