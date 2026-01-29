@@ -27,6 +27,23 @@ class DreamType(str, Enum):
     OMNI = "omni"
 
 
+class WorkspaceAgentConfig(BaseModel):
+    """
+    Configuration for per-workspace agent prompt customization.
+
+    Stored in workspace.metadata["_agent_config"].
+    """
+
+    deriver_rules: str = Field(
+        default="",
+        description="Custom rules injected into the deriver prompt RULES section",
+    )
+    dialectic_rules: str = Field(
+        default="",
+        description="Custom rules injected into the dialectic prompt WORKFLOW section",
+    )
+
+
 class ReconcilerType(str, Enum):
     """Types of reconciler tasks that can be performed."""
 

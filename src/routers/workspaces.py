@@ -92,6 +92,18 @@ async def update_workspace(
     db: AsyncSession = db,
 ):
     """Update Workspace metadata and/or configuration."""
+    # Validate _agent_config if present in metadata
+    if workspace.metadata and "_agent_config" in workspace.metadata:
+        try:
+            schemas.WorkspaceAgentConfig.model_validate(
+                workspace.metadata["_agent_config"]
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid _agent_config in metadata: {e}",
+            ) from e
+
     # ResourceNotFoundException will be caught by global handler if workspace not found
     honcho_workspace = await crud.update_workspace(
         db, workspace_name=workspace_id, workspace=workspace

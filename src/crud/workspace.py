@@ -15,6 +15,8 @@ from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
+AGENT_CONFIG_KEY = "_agent_config"
+
 logger = getLogger(__name__)
 
 
@@ -450,4 +452,53 @@ async def delete_workspace(
         sessions_deleted=sessions_count,
         messages_deleted=messages_count,
         conclusions_deleted=conclusions_count,
+    )
+
+
+async def get_workspace_agent_config(
+    db: AsyncSession,
+    workspace_name: str,
+) -> schemas.WorkspaceAgentConfig:
+    """
+    Get the agent configuration for a workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Returns:
+        WorkspaceAgentConfig with the workspace's custom rules,
+        or defaults if not configured
+    """
+    workspace = await get_workspace(db, workspace_name)
+    agent_config_data = workspace.h_metadata.get(AGENT_CONFIG_KEY, {})
+    return schemas.WorkspaceAgentConfig.model_validate(agent_config_data)
+
+
+async def set_workspace_agent_config(
+    db: AsyncSession,
+    workspace_name: str,
+    config: schemas.WorkspaceAgentConfig,
+) -> models.Workspace:
+    """
+    Set the agent configuration for a workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        config: The agent configuration to set
+
+    Returns:
+        The updated workspace
+    """
+    workspace = await get_workspace(db, workspace_name)
+
+    # Merge agent config into metadata
+    new_metadata = workspace.h_metadata.copy()
+    new_metadata[AGENT_CONFIG_KEY] = config.model_dump()
+
+    return await update_workspace(
+        db,
+        workspace_name,
+        schemas.WorkspaceUpdate(metadata=new_metadata),
     )

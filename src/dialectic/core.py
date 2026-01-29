@@ -89,6 +89,7 @@ class DialecticAgent:
         observed_peer_card: list[str] | None = None,
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
+        custom_rules: str = "",
     ):
         """
         Initialize the dialectic agent.
@@ -103,6 +104,7 @@ class DialecticAgent:
             observed_peer_card: Biographical information about the observed peer
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
+            custom_rules: Workspace-specific rules to inject into the prompt
         """
         self.db: AsyncSession = db
         self.workspace_name: str = workspace_name
@@ -119,7 +121,11 @@ class DialecticAgent:
             {
                 "role": "system",
                 "content": prompts.agent_system_prompt(
-                    observer, observed, observer_peer_card, observed_peer_card
+                    observer,
+                    observed,
+                    observer_peer_card,
+                    observed_peer_card,
+                    custom_rules,
                 ),
             }
         ]

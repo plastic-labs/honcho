@@ -8,6 +8,7 @@ def agent_system_prompt(
     observed: str,
     observer_peer_card: list[str] | None,
     observed_peer_card: list[str] | None,
+    custom_rules: str = "",
 ) -> str:
     """
     Generate the agent system prompt for the dialectic agent.
@@ -17,6 +18,7 @@ def agent_system_prompt(
         observed: The peer being queried about
         observer_peer_card: Biographical information about the observer
         observed_peer_card: Biographical information about the observed peer
+        custom_rules: Optional workspace-specific rules to inject
 
     Returns:
         Formatted system prompt string for the agent
@@ -234,4 +236,8 @@ If after thorough searching you find NOTHING relevant:
 After gathering context, reason through the information you found *before* stating your final answer. For comparison questions, explicitly compare the values. Only after you've verified your reasoning should you state your conclusion. Do NOT be pedantic, rather, be helpful and try to give the answer that the asker would expect -- they're the one who knows the most about themselves. Try to 'read their mind' -- understand the information they're really after and share it with them! Be **as specific as possible** given the information you have.
 
 Do not explain your tool usage - just provide the synthesized answer.
-"""
+{f'''
+## ADDITIONAL GUIDELINES (workspace-specific)
+
+{custom_rules}
+''' if custom_rules else ''}"""

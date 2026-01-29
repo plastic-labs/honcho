@@ -14,6 +14,7 @@ from src.utils.tokens import estimate_tokens
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
+    custom_rules: str = "",
 ) -> str:
     """
     Generate minimal prompt for fast observation extraction.
@@ -21,10 +22,19 @@ def minimal_deriver_prompt(
     Args:
         peer_id: The ID of the user being analyzed.
         messages: All messages in the range (interleaving messages and new turns combined).
+        custom_rules: Optional workspace-specific rules to inject.
 
     Returns:
         Formatted prompt string for observation extraction.
     """
+    # Build optional custom rules section
+    custom_rules_section = ""
+    if custom_rules:
+        custom_rules_section = f"""
+ADDITIONAL RULES (workspace-specific):
+{custom_rules}
+"""
+
     return c(
         f"""
 Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
@@ -39,7 +49,7 @@ RULES:
 - Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
-
+{custom_rules_section}
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"

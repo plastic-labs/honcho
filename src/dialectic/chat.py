@@ -61,6 +61,9 @@ async def agentic_chat(
                     db, workspace_name, observer=observer, observed=observed
                 )
 
+        # Get workspace agent config for custom dialectic rules
+        agent_config = await crud.get_workspace_agent_config(db, workspace_name)
+
         # Create and run the dialectic agent
         agent = DialecticAgent(
             db=db,
@@ -71,6 +74,7 @@ async def agentic_chat(
             observer_peer_card=observer_peer_card,
             observed_peer_card=observed_peer_card,
             reasoning_level=reasoning_level,
+            custom_rules=agent_config.dialectic_rules,
         )
 
         response = await agent.answer(query)
@@ -122,6 +126,9 @@ async def agentic_chat_stream(
                     db, workspace_name, observer=observer, observed=observed
                 )
 
+        # Get workspace agent config for custom dialectic rules
+        agent_config = await crud.get_workspace_agent_config(db, workspace_name)
+
         # Create and run the dialectic agent
         agent = DialecticAgent(
             db=db,
@@ -132,6 +139,7 @@ async def agentic_chat_stream(
             observer_peer_card=observer_peer_card,
             observed_peer_card=observed_peer_card,
             reasoning_level=reasoning_level,
+            custom_rules=agent_config.dialectic_rules,
         )
 
         async for chunk in agent.answer_stream(query):

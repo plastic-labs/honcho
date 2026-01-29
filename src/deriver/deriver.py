@@ -70,6 +70,12 @@ async def process_representation_tasks_batch(
                 ),
             )
 
+    # Fetch workspace agent config for custom deriver rules
+    async with tracked_db("minimal_deriver.get_agent_config") as db:
+        agent_config = await crud.get_workspace_agent_config(
+            db, latest_message.workspace_name
+        )
+
     # Skip if disabled
     if message_level_configuration.reasoning.enabled is False:
         return
@@ -108,7 +114,11 @@ async def process_representation_tasks_batch(
     )
 
     # Build prompt
-    prompt = minimal_deriver_prompt(peer_id=observed, messages=formatted_messages)
+    prompt = minimal_deriver_prompt(
+        peer_id=observed,
+        messages=formatted_messages,
+        custom_rules=agent_config.deriver_rules,
+    )
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
