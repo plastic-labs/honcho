@@ -1,5 +1,10 @@
 from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status, get_queue_status
+from .dialectic_trace import (
+    create_dialectic_trace,
+    get_dialectic_trace_stats,
+    get_dialectic_traces,
+)
 from .document import (
     create_documents,
     create_observations,
@@ -73,6 +78,10 @@ __all__ = [
     # Deriver
     "get_deriver_status",
     "get_queue_status",
+    # Dialectic Trace
+    "create_dialectic_trace",
+    "get_dialectic_traces",
+    "get_dialectic_trace_stats",
     # Document
     "create_documents",
     "create_observations",

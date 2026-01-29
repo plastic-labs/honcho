@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
@@ -574,3 +575,33 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+@final
+class DialecticTrace(Base):
+    """Internal logging of dialectic interactions for meta-cognitive analysis."""
+
+    __tablename__: str = "dialectic_traces"
+
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False, index=True
+    )
+    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    observer: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
+    observed: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
+    query: Mapped[str] = mapped_column(TEXT, nullable=False)
+    retrieved_doc_ids: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    response: Mapped[str] = mapped_column(TEXT, nullable=False)
+    reasoning_level: Mapped[str] = mapped_column(TEXT, nullable=False)
+    total_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )

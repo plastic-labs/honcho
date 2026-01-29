@@ -6,6 +6,7 @@ and synthesize responses to queries about a peer.
 """
 
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
+from src.schemas import DialecticTraceCreate
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, emit
 from src.telemetry.logging import (
@@ -38,6 +40,33 @@ from src.utils.clients import (
 from src.utils.formatting import format_new_turn_with_timestamp
 
 logger = logging.getLogger(__name__)
+
+# Regex to extract document IDs from tool result messages
+# Matches patterns like [id:abc123] in formatted observation output
+_DOC_ID_PATTERN = re.compile(r"\[id:([a-zA-Z0-9_-]+)\]")
+
+
+def _extract_doc_ids_from_messages(messages: list[dict[str, str]]) -> list[str]:
+    """
+    Extract document IDs from tool_result messages.
+
+    Tool results contain formatted strings like:
+    [id:abc123] [2025-01-01] The user likes coffee
+
+    Args:
+        messages: List of conversation messages
+
+    Returns:
+        List of unique document IDs found in tool results
+    """
+    doc_ids: set[str] = set()
+    for msg in messages:
+        if msg.get("role") == "user":
+            # Tool results appear as user messages in the conversation
+            content = msg.get("content", "")
+            matches = _DOC_ID_PATTERN.findall(content)
+            doc_ids.update(matches)
+    return list(doc_ids)
 
 
 class DialecticAgent:
@@ -287,17 +316,18 @@ class DialecticAgent:
 
         return tool_executor, task_name, run_id, start_time
 
-    def _log_response_metrics(
+    async def _log_response_metrics(
         self,
         task_name: str,
         run_id: str | None,
         start_time: float,
+        query: str,
         response_content: str,
         input_tokens: int,
         output_tokens: int,
         cache_read_input_tokens: int | None,
         cache_creation_input_tokens: int | None,
-        tool_calls_count: int,
+        tool_calls_made: list[dict[str, Any]],
         thinking_content: str | None,
         iterations: int,
     ) -> None:
@@ -308,15 +338,17 @@ class DialecticAgent:
             task_name: Metrics task identifier
             run_id: Run identifier (None if using caller-provided metric_key)
             start_time: Start time from time.perf_counter()
+            query: The original query string
             response_content: The full response text
             input_tokens: Input token count (actual from API)
             output_tokens: Output token count (actual from API)
             cache_read_input_tokens: Cache read tokens (if any)
             cache_creation_input_tokens: Cache creation tokens (if any)
-            tool_calls_count: Number of tool calls made
+            tool_calls_made: List of tool calls made during the response
             thinking_content: Thinking trace content (if any)
             iterations: Number of iterations in the tool execution loop
         """
+        tool_calls_count = len(tool_calls_made)
         accumulate_metric(task_name, "tool_calls", tool_calls_count, "count")
 
         if thinking_content:
@@ -371,6 +403,28 @@ class DialecticAgent:
             )
         )
 
+        # Persist dialectic trace for meta-cognitive analysis
+        retrieved_doc_ids = _extract_doc_ids_from_messages(self.messages)
+        trace = DialecticTraceCreate(
+            workspace_name=self.workspace_name,
+            session_name=self.session_name,
+            observer=self.observer,
+            observed=self.observed,
+            query=query,
+            retrieved_doc_ids=retrieved_doc_ids,
+            tool_calls=tool_calls_made,
+            response=response_content,
+            reasoning_level=self.reasoning_level,
+            total_duration_ms=elapsed_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        try:
+            await crud.create_dialectic_trace(self.db, trace)
+        except Exception as e:
+            # Don't fail the request if trace persistence fails
+            logger.warning(f"Failed to persist dialectic trace: {e}")
+
     async def answer(self, query: str) -> str:
         """
         Answer a query about the peer using agentic tool calling.
@@ -419,16 +473,17 @@ class DialecticAgent:
             trace_name="dialectic_chat",
         )
 
-        self._log_response_metrics(
+        await self._log_response_metrics(
             task_name=task_name,
             run_id=run_id,
             start_time=start_time,
+            query=query,
             response_content=response.content,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             cache_read_input_tokens=response.cache_read_input_tokens,
             cache_creation_input_tokens=response.cache_creation_input_tokens,
-            tool_calls_count=len(response.tool_calls_made),
+            tool_calls_made=response.tool_calls_made,
             thinking_content=response.thinking_content,
             iterations=response.iterations,
         )
@@ -494,16 +549,17 @@ class DialecticAgent:
                 accumulated_content.append(chunk.content)
                 yield chunk.content
 
-        self._log_response_metrics(
+        await self._log_response_metrics(
             task_name=task_name,
             run_id=run_id,
             start_time=start_time,
+            query=query,
             response_content="".join(accumulated_content),
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             cache_read_input_tokens=response.cache_read_input_tokens,
             cache_creation_input_tokens=response.cache_creation_input_tokens,
-            tool_calls_count=len(response.tool_calls_made),
+            tool_calls_made=response.tool_calls_made,
             thinking_content=response.thinking_content,
             iterations=response.iterations,
         )

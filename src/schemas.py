@@ -829,3 +829,20 @@ class WebhookEndpoint(WebhookEndpointBase):
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
+
+
+class DialecticTraceCreate(BaseModel):
+    """Internal schema for creating DialecticTrace records. Not exposed via API."""
+
+    workspace_name: str
+    session_name: str | None = None
+    observer: str
+    observed: str
+    query: str
+    retrieved_doc_ids: list[str] = Field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    response: str
+    reasoning_level: str
+    total_duration_ms: float
+    input_tokens: int
+    output_tokens: int
