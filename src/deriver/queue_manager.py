@@ -190,21 +190,23 @@ class QueueManager:
                 minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
             )
 
-            stale_ids = (
-                (
-                    await db.execute(
-                        select(models.ActiveQueueSession.id)
-                        .where(models.ActiveQueueSession.last_updated < cutoff)
-                        .order_by(models.ActiveQueueSession.last_updated)
-                        .with_for_update(skip_locked=True)
+            stale_rows = (
+                await db.execute(
+                    select(
+                        models.ActiveQueueSession.id,
+                        models.ActiveQueueSession.work_unit_key,
                     )
+                    .where(models.ActiveQueueSession.last_updated < cutoff)
+                    .order_by(models.ActiveQueueSession.last_updated)
+                    .with_for_update(skip_locked=True)
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
 
             # Delete only the records we successfully got locks for
-            if stale_ids:
+            if stale_rows:
+                stale_ids = [r[0] for r in stale_rows]
+                stale_keys = [r[1] for r in stale_rows]
+                logger.info("STALE_CLEANUP count=%d keys=%s", len(stale_ids), stale_keys)
                 await db.execute(
                     delete(models.ActiveQueueSession).where(
                         models.ActiveQueueSession.id.in_(stale_ids)
@@ -221,6 +223,11 @@ class QueueManager:
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
         if limit == 0:
+            logger.info(
+                "POLL_SKIP reason=limit_zero workers=%d ownership=%d",
+                self.workers,
+                self.get_total_owned_work_units(),
+            )
             return {}
 
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
@@ -288,6 +295,13 @@ class QueueManager:
             claimed_mapping = await self.claim_work_units(db, available_units)
             await db.commit()
 
+            if claimed_mapping:
+                logger.info(
+                    "POLL_CLAIMED count=%d keys=%s",
+                    len(claimed_mapping),
+                    list(claimed_mapping.keys()),
+                )
+
             return claimed_mapping
 
     async def claim_work_units(
@@ -321,15 +335,31 @@ class QueueManager:
         logger.debug("Starting polling loop")
         try:
             while not self.shutdown_event.is_set():
+                # Log state
+                async with tracked_db("poll_log") as db:
+                    aqs_count = (
+                        await db.execute(
+                            select(func.count()).select_from(models.ActiveQueueSession)
+                        )
+                    ).scalar() or 0
+                    await db.commit()
+                logger.info(
+                    "POLL semaphore_locked=%s semaphore_value=%d ownership=%d aqs=%d ownership_keys=%s",
+                    self.semaphore.locked(),
+                    self.semaphore._value,
+                    len(self.worker_ownership),
+                    aqs_count,
+                    [o.work_unit_key for o in self.worker_ownership.values()],
+                )
+
                 if self.queue_empty_flag.is_set():
-                    # logger.debug("Queue empty flag set, waiting")
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     self.queue_empty_flag.clear()
                     continue
 
                 # Check if we have capacity before querying
                 if self.semaphore.locked():
-                    # logger.debug("All workers busy, waiting")
+                    logger.info("POLL_SKIP reason=semaphore_locked")
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     continue
 
