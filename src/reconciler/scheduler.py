@@ -161,11 +161,16 @@ class ReconcilerScheduler:
                         try:
                             enqueued = await self._try_enqueue_task(task)
                             if enqueued:
-                                logger.debug("Enqueued task: %s", task_name)
+                                logger.info("Enqueued task: %s", task_name)
                         except Exception as e:
                             logger.exception("Error enqueueing task %s", task_name)
                             if settings.SENTRY.ENABLED:
                                 sentry_sdk.capture_exception(e)
+                        logger.info(
+                            "next run for task %s is in %s seconds",
+                            task_name,
+                            task.interval_seconds,
+                        )
 
                         # Schedule next run regardless of whether we enqueued
                         # (if already pending/in-progress, we'll skip next time too)

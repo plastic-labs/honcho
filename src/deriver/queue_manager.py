@@ -364,8 +364,11 @@ class QueueManager:
                     continue
 
                 try:
+                    logger.info("POLL_STEP cleanup_stale_start")
                     await self.cleanup_stale_work_units()
+                    logger.info("POLL_STEP get_and_claim_start")
                     claimed_work_units = await self.get_and_claim_work_units()
+                    logger.info("POLL_STEP get_and_claim_done claimed=%d", len(claimed_work_units))
                     if claimed_work_units:
                         for work_unit_key, aqs_id in claimed_work_units.items():
                             # Create a new task for processing this work unit
@@ -386,13 +389,16 @@ class QueueManager:
                             settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
                         )
                 except Exception as e:
-                    logger.exception("Error in polling loop")
+                    logger.exception("POLL_ERROR in polling loop")
                     if settings.SENTRY.ENABLED:
                         sentry_sdk.capture_exception(e)
                     # Note: rollback is handled by tracked_db dependency
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+        except Exception:
+            logger.exception("POLL_LOOP_CRASHED unexpected exception escaped the loop")
+            raise
         finally:
-            logger.info("Polling loop stopped")
+            logger.info("POLL_LOOP_EXIT polling loop stopped")
 
     ######################
     # Queue Worker Logic #
