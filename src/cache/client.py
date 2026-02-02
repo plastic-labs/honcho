@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import cast
-from urllib.parse import urlparse, urlunparse
 
-import redis.asyncio as aioredis
 import sentry_sdk
 from cashews import cache
 from cashews.picklers import PicklerType
@@ -119,7 +117,6 @@ async def close_cache() -> None:
 
 
 # Deriver flush mode - bypasses batch token threshold when enabled
-# Uses direct Redis access to avoid cashews serialization/namespace issues
 DERIVER_FLUSH_KEY = "honcho:deriver:flush_mode"
 
 
@@ -128,16 +125,8 @@ async def is_deriver_flush_enabled() -> bool:
     if not is_cache_enabled():
         return False
     try:
-        # Strip query parameters - redis-py doesn't support custom params like ?suppress=true
-        parsed = urlparse(settings.CACHE.URL)
-        clean_url = urlunparse(parsed._replace(query=""))
-
-        redis_client = aioredis.from_url(clean_url)  # pyright: ignore[reportUnknownMemberType]
-        try:
-            result = await redis_client.get(DERIVER_FLUSH_KEY)
-            return result == b"1"
-        finally:
-            await redis_client.aclose()
+        result = await cache.get(DERIVER_FLUSH_KEY)
+        return result in ("1", b"1", 1)
     except Exception:
         return False
 
