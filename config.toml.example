@@ -86,6 +86,7 @@ LOG_OBSERVATIONS = false
 MAX_INPUT_TOKENS = 23000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 1024
+FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
 
 # Peer card settings
 [peer_card]

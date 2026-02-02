@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src import models
-from src.cache.client import close_cache, init_cache, is_deriver_flush_enabled
+from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
@@ -216,7 +216,7 @@ class QueueManager:
         """
         Get available work units that aren't being processed.
         For representation tasks, only returns work units with accumulated tokens
-        >= REPRESENTATION_BATCH_MAX_TOKENS (forced batching), unless flush mode is enabled.
+        >= REPRESENTATION_BATCH_MAX_TOKENS (forced batching), unless FLUSH_ENABLED is True.
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
@@ -224,7 +224,6 @@ class QueueManager:
             return {}
 
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-        flush_enabled = await is_deriver_flush_enabled()
 
         async with tracked_db("get_available_work_units") as db:
             representation_prefix = "representation:"
@@ -267,8 +266,8 @@ class QueueManager:
                 )
             )
 
-            # Apply batch threshold filter unless flush mode is enabled
-            if not flush_enabled and batch_max_tokens > 0:
+            # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
+            if not settings.DERIVER.FLUSH_ENABLED and batch_max_tokens > 0:
                 query = query.where(
                     or_(
                         ~work_units_subq.c.work_unit_key.startswith(

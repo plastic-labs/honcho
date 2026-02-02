@@ -273,6 +273,9 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
 
+    # When enabled, bypasses the batch token threshold and processes work immediately
+    FLUSH_ENABLED: bool = False
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:

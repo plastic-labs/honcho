@@ -116,24 +116,8 @@ async def close_cache() -> None:
     await cache.close()
 
 
-# Deriver flush mode - bypasses batch token threshold when enabled
-DERIVER_FLUSH_KEY = "honcho:deriver:flush_mode"
-
-
-async def is_deriver_flush_enabled() -> bool:
-    """Check if deriver flush mode is enabled (bypasses batch threshold)."""
-    if not is_cache_enabled():
-        return False
-    try:
-        result = await cache.get(DERIVER_FLUSH_KEY)
-        return result in ("1", b"1", 1)
-    except Exception:
-        return False
-
-
 __all__ = [
     "init_cache",
     "close_cache",
     "cache",
-    "is_deriver_flush_enabled",
 ]
