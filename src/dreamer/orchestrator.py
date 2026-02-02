@@ -174,7 +174,7 @@ async def run_dream(
             observer=observer,
             observed=observed,
             session_name=session_name,
-            probing_questions=exploration_hints,
+            hints=exploration_hints,
             configuration=configuration,
             parent_run_id=run_id,
         )
@@ -199,7 +199,7 @@ async def run_dream(
             observer=observer,
             observed=observed,
             session_name=session_name,
-            probing_questions=exploration_hints,
+            hints=exploration_hints,
             configuration=configuration,
             parent_run_id=run_id,
         )

@@ -60,6 +60,8 @@ class BaseSpecialist(ABC):
     """Base class for agentic specialists."""
 
     name: str = "base"
+    # Subclasses can override to customize the peer card update instruction
+    peer_card_update_instruction: str = "Update this with `update_peer_card` if needed."
 
     @abstractmethod
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
@@ -89,11 +91,25 @@ class BaseSpecialist(ABC):
     @abstractmethod
     def build_user_prompt(
         self,
-        probing_questions: list[str] | None,
+        hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
         """Build the user prompt with optional exploration hints and current peer card."""
         ...
+
+    def _build_peer_card_context(self, peer_card: list[str] | None) -> str:
+        """Build the peer card context section for user prompts."""
+        if not peer_card:
+            return ""
+        facts = "\n".join(f"- {fact}" for fact in peer_card)
+        return f"""
+## CURRENT PEER CARD
+
+{facts}
+
+{self.peer_card_update_instruction}
+
+"""
 
     async def run(
         self,
@@ -102,7 +118,7 @@ class BaseSpecialist(ABC):
         observer: str,
         observed: str,
         session_name: str | None,
-        probing_questions: list[str] | None = None,
+        hints: list[str] | None = None,
         configuration: ResolvedConfiguration | None = None,
         parent_run_id: str | None = None,
     ) -> SpecialistResult:
@@ -115,7 +131,7 @@ class BaseSpecialist(ABC):
             observer: The observing peer
             observed: The peer being observed
             session_name: Session identifier
-            probing_questions: Optional hints to guide exploration (specialists explore freely if None)
+            hints: Optional hints to guide exploration (specialists explore freely if None)
             configuration: Resolved configuration for checking feature flags (optional)
             parent_run_id: Optional run_id from orchestrator for correlation
 
@@ -149,7 +165,7 @@ class BaseSpecialist(ABC):
             },
             {
                 "role": "user",
-                "content": self.build_user_prompt(probing_questions, current_peer_card),
+                "content": self.build_user_prompt(hints, current_peer_card),
             },
         ]
 
@@ -268,6 +284,7 @@ class DeductionSpecialist(BaseSpecialist):
     """
 
     name: str = "deduction"
+    peer_card_update_instruction: str = "Update this with `update_peer_card` if you discover new biographical information."
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -368,27 +385,16 @@ When statements can't both be true (not just updates), flag them:
 
     def build_user_prompt(
         self,
-        probing_questions: list[str] | None,
+        hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
-        # Build peer card context section
-        peer_card_context = ""
-        if peer_card:
-            facts = "\n".join(f"- {fact}" for fact in peer_card)
-            peer_card_context = f"""
-## CURRENT PEER CARD
+        peer_card_context = self._build_peer_card_context(peer_card)
 
-{facts}
-
-Update this with `update_peer_card` if you discover new biographical information.
-
-"""
-
-        if probing_questions:
-            hints = "\n".join(f"- {q}" for q in probing_questions[:5])
+        if hints:
+            hints_str = "\n".join(f"- {q}" for q in hints[:5])
             return f"""{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
 
-{hints}
+{hints_str}
 
 But follow the evidence - if you find something more interesting, pursue that instead.
 
@@ -418,6 +424,9 @@ class InductionSpecialist(BaseSpecialist):
     """
 
     name: str = "induction"
+    peer_card_update_instruction: str = (
+        "Update this with `update_peer_card` if you identify new patterns or traits."
+    )
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -515,27 +524,16 @@ Create inductive observations when you see patterns:
 
     def build_user_prompt(
         self,
-        probing_questions: list[str] | None,
+        hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
-        # Build peer card context section
-        peer_card_context = ""
-        if peer_card:
-            facts = "\n".join(f"- {fact}" for fact in peer_card)
-            peer_card_context = f"""
-## CURRENT PEER CARD
+        peer_card_context = self._build_peer_card_context(peer_card)
 
-{facts}
-
-Update this with `update_peer_card` if you identify new patterns or traits.
-
-"""
-
-        if probing_questions:
-            hints = "\n".join(f"- {q}" for q in probing_questions[:5])
+        if hints:
+            hints_str = "\n".join(f"- {q}" for q in hints[:5])
             return f"""{peer_card_context}Explore and find patterns. These areas may be worth investigating:
 
-{hints}
+{hints_str}
 
 But follow the evidence - if you find patterns elsewhere, pursue those.
 
