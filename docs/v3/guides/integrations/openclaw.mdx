@@ -1,0 +1,91 @@
+---
+title: "OpenClaw"
+icon: 'plug'
+description: "Add AI-native memory to OpenClaw"
+sidebarTitle: 'OpenClaw'
+---
+
+[OpenClaw](https://openclaw.ai) is a general AI agent that can perform actions on behalf of a user. The Honcho plugin gives OpenClaw memory across every channel — WhatsApp, Telegram, Discord, Slack, and more.
+
+## Get Your API Key
+
+Create a Honcho API key from [app.honcho.dev](https://app.honcho.dev), then add it to your OpenClaw env file:
+
+```bash
+echo "HONCHO_API_KEY=hc_..." >> ~/.openclaw/.env
+```
+
+## Install the Plugin
+
+```bash
+openclaw plugins install @honcho-ai/openclaw-honcho
+```
+
+The install script automatically syncs workspace docs, migrates existing memory to Honcho, and archives legacy files. Restart the gateway after installing:
+
+```bash
+openclaw gateway restart
+```
+
+## How It Works
+
+Once installed, the plugin runs automatically:
+
+* **Context Injection** — Before every AI turn, Honcho injects the user's profile, representation, and conversation summary.
+* **Message Observation** — After every AI turn, the exchange is persisted to Honcho for extraction and long-term storage.
+* **Dual Peer Model** — Honcho maintains separate representations for the user and the agent.
+
+## AI Tools
+
+### Data Retrieval (fast, no LLM)
+
+| Tool | Description |
+| ---- | ----------- |
+| `honcho_session` | Conversation history and summaries from the current session. |
+| `honcho_profile` | User's peer card — key facts (name, preferences, role). |
+| `honcho_search` | Semantic search over stored observations. |
+| `honcho_context` | Full user representation across all sessions. |
+
+### Q&A (LLM-powered)
+
+| Tool | Description |
+| ---- | ----------- |
+| `honcho_recall` | Simple factual question — minimal reasoning. |
+| `honcho_analyze` | Complex question requiring synthesis — medium reasoning. |
+
+## CLI Commands
+
+```bash
+openclaw honcho status                          # Connection status
+openclaw honcho ask <question>                  # Query Honcho about the user
+openclaw honcho search <query> [-k N] [-d D]    # Semantic search (topK, maxDistance)
+```
+
+## Configuration
+
+Optional — the plugin works out of the box with `HONCHO_API_KEY` set.
+
+| Key | Default | Description |
+| --- | ------- | ----------- |
+| `workspaceId` | `"openclaw"` | Honcho workspace ID for memory isolation. |
+| `baseUrl` | `"https://api.honcho.dev"` | API endpoint (for self-hosted instances). |
+
+### Self-Hosted Honcho
+
+Point the plugin to your local instance:
+
+```bash
+echo "HONCHO_BASE_URL=http://localhost:8000" >> ~/.openclaw/.env
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/openclaw-honcho">
+    Source code, issues, and README.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>
