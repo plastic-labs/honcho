@@ -259,6 +259,7 @@ print(f"Workspace: {alice.workspace_id}")
 response = alice.chat("What did I have for breakfast?")
 response = alice.chat("What do I know about Bob?", target="bob")
 response = alice.chat("What happened in session-1?", session="session-1")
+response = alice.chat("Summarize what matters most to me.", reasoning_level="high")
 
 # Add content to a session with a peer
 session = honcho.session("session-1")
@@ -304,6 +305,9 @@ const response = await alice.chat("What did I have for breakfast?");
 const targetResponse = await alice.chat("What do I know about Bob?", { target: "bob" });
 const sessionResponse = await alice.chat("What happened in session-1?", {
   sessionId: "session-1"
+});
+const deeperResponse = await alice.chat("Summarize what matters most to me.", {
+  reasoningLevel: "high"
 });
 
 // Chat with streaming support
