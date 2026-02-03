@@ -63,6 +63,14 @@ claude
 
 **That's it!** You should see the Honcho pixel art and memory loading on startup.
 
+### Step 5: (Optional) Kickstart with an Interview
+
+```
+/honcho:interview
+```
+
+Claude will interview you about your personal preferences to kickstart a representation of you. What it learns will be saved in Honcho and remembered forever. The interview is specific to the peer name you chose — it carries across different projects!
+
 ## What You Get
 
 - **Persistent Memory** — Claude remembers your preferences, projects, and context across sessions
@@ -70,7 +78,17 @@ claude
 - **Git Awareness** — Detects branch switches, commits, and changes made outside Claude
 - **Per-Project Sessions** — Each directory has its own conversation history
 - **AI Self-Awareness** — Claude knows what it was working on, even after restarts
+- **MCP Tools** — Search memory, query knowledge about you, and save insights
 
+## MCP Tools
+
+The plugin provides these tools via MCP:
+
+| Tool | Description |
+|------|-------------|
+| `search` | Semantic search across session messages |
+| `chat` | Query Honcho's knowledge about the user |
+| `create_conclusion` | Save insights about the user to memory |
 
 ## Environment Variables Reference
 
@@ -89,7 +107,20 @@ claude
 | Command | Description |
 | ------- | ----------- |
 | `/honcho:status` | Show current memory status and configuration |
+| `/honcho:interview` | Interview to capture stable, cross-project user preferences |
 
+### The Interview
+
+The `/honcho:interview` skill conducts a short interview to learn stable, cross-project aspects about you:
+
+- **Communication style** — Concise answers, detailed explanations, or a mix
+- **Tone** — Direct and professional or conversational
+- **Structure** — Bullet points, step-by-step, or narrative
+- **Technical depth** — Beginner, intermediate, or expert
+- **Code quality focus** — Clarity, performance, tests, or minimal changes
+- **Collaboration style** — Make changes directly, propose options, or ask first
+
+Each answer is saved as a conclusion in Honcho memory and persists across all your projects.
 
 ### Using a local Honcho instance
 
@@ -97,6 +128,88 @@ claude
 export HONCHO_ENDPOINT="local"  # Uses http://localhost:8000/v3
 ```
 
+
+---
+
+## Using Honcho with Claude Desktop
+
+You can also use Honcho with the Claude Desktop app via MCP. This lets Claude manage its own memory in the native desktop experience.
+
+### Step 1: Get Your API Key
+
+Get an API key from [app.honcho.dev](https://app.honcho.dev).
+
+### Step 2: Configure Claude Desktop
+
+<Note>
+This requires [Node.js](https://nodejs.org). Claude Desktop or Claude Code can help you install it!
+</Note>
+
+Navigate to Claude Desktop's custom MCP servers settings and add Honcho:
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>"
+      }
+    }
+  }
+}
+```
+
+**Optional customization** — You can also set a custom assistant name and workspace ID:
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}",
+        "--header",
+        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
+        "--header",
+        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>",
+        "ASSISTANT_NAME": "<your-assistant-name>",
+        "WORKSPACE_ID": "<your-custom-workspace-id>"
+      }
+    }
+  }
+}
+```
+
+### Step 3: Restart Claude Desktop
+
+Upon relaunch, Honcho should start and the tools will be available.
+
+### Step 4: Add Instructions
+
+The Desktop app doesn't allow system prompts directly, but you can create a project and paste [these instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into the "Project Instructions" field.
+
+Claude will then query for insights before responding and write your messages to storage!
+
+---
 
 ## Next Steps
 
