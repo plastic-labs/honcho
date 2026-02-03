@@ -1123,7 +1123,34 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
-        return f"No observations found for query '{tool_input['query']}'"
+        # fallback behavior: if the memory is *empty*, that means we're quite
+        # early in a workspace/peer/session -- in order to give good answers in
+        # this stage, and be efficient with tool calls, and make sure the model
+        # doesn't short-circuit and think there's nothing here, we
+        # automatically search the message history for relevant information.
+        query = tool_input["query"]
+        if ctx.agent_type == "dialectic":
+            limit = min(tool_input.get("top_k", 20), 20)
+            snippets = await crud.search_messages(
+                ctx.db,
+                workspace_name=ctx.workspace_name,
+                session_name=ctx.session_name,
+                query=query,
+                limit=limit,
+                context_window=0,
+            )
+            if snippets:
+                message_output = _format_message_snippets(
+                    snippets, f"for query '{query}'"
+                )
+                return (
+                    f"No observations yet. Message search results:\n\n{message_output}"
+                )
+            return (
+                f"No observations found for query '{query}', and no messages found in "
+                "history. Try a different phrasing or use grep_messages for exact text."
+            )
+        return f"No observations found for query '{query}'"
     mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
     return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
 
@@ -1690,12 +1717,14 @@ async def create_tool_executor(
         Returns:
             String result describing what was done
         """
-        logger.info(f"[tool call] {tool_name}")
+        logger.info(f"[tool call] {tool_name} {tool_input}")
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
-                return await handler(ctx, tool_input)
+                result = await handler(ctx, tool_input)
+                logger.info(f"[tool result] {tool_name} {result}")
+                return result
             return f"Unknown tool: {tool_name}"
 
         except ValueError as e:
