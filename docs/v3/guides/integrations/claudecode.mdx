@@ -1,0 +1,111 @@
+---
+title: "Claude Code"
+icon: 'terminal'
+description: "Add AI-native memory to Claude Code"
+sidebarTitle: 'Claude Code'
+---
+
+Give Claude Code long-term memory that survives context wipes, session restarts, and `ctrl+c`. Claude remembers what you're working on, your preferences, and what it was doing across all your projects.
+
+
+## Quick Start
+
+### Step 1: Get Your Honcho API Key
+
+1. Go to **[app.honcho.dev](https://app.honcho.dev)**
+2. Sign up or log in
+3. Copy your API key (starts with `hch-`)
+
+### Step 2: Set Environment Variables
+
+Add these to your shell config (`~/.zshrc`, `~/.bashrc`, or `~/.profile`):
+
+```bash
+# Required
+export HONCHO_API_KEY="hch-your-api-key-here"
+
+# Optional (defaults shown)
+export HONCHO_PEER_NAME="$USER"           # Your name/identity
+export HONCHO_WORKSPACE="claude_code"     # Workspace name
+```
+
+Then reload your shell:
+
+```bash
+source ~/.zshrc  # or ~/.bashrc
+```
+
+### Step 3: Install the Plugin
+
+<Note>
+This plugin requires [Bun](https://bun.sh). If you don't have it: `curl -fsSL https://bun.sh/install | bash`
+</Note>
+
+Open Claude Code and run:
+
+```
+/plugin marketplace add plastic-labs/claude-honcho
+```
+
+Then install:
+
+```
+/plugin install honcho@honcho-memory
+```
+
+### Step 4: Restart Claude Code
+
+```bash
+# Exit Claude Code (ctrl+c or /exit)
+# Start it again
+claude
+```
+
+**That's it!** You should see the Honcho pixel art and memory loading on startup.
+
+## What You Get
+
+- **Persistent Memory** — Claude remembers your preferences, projects, and context across sessions
+- **Survives Context Wipes** — Even when Claude's context window resets, memory persists
+- **Git Awareness** — Detects branch switches, commits, and changes made outside Claude
+- **Per-Project Sessions** — Each directory has its own conversation history
+- **AI Self-Awareness** — Claude knows what it was working on, even after restarts
+
+
+## Environment Variables Reference
+
+| Variable | Required | Default | Description |
+| -------- | -------- | ------- | ----------- |
+| `HONCHO_API_KEY` | **Yes** | — | Your Honcho API key from [app.honcho.dev](https://app.honcho.dev) |
+| `HONCHO_PEER_NAME` | No | `$USER` | Your identity in the memory system |
+| `HONCHO_WORKSPACE` | No | `claude_code` | Workspace name (groups your sessions) |
+| `HONCHO_CLAUDE_PEER` | No | `claude` | How the AI is identified |
+| `HONCHO_ENDPOINT` | No | `production` | `production`, `local`, or a custom URL |
+| `HONCHO_ENABLED` | No | `true` | Set to `false` to disable |
+| `HONCHO_SAVE_MESSAGES` | No | `true` | Set to `false` to stop saving messages |
+
+## Skills (Slash Commands)
+
+| Command | Description |
+| ------- | ----------- |
+| `/honcho:status` | Show current memory status and configuration |
+
+
+### Using a local Honcho instance
+
+```bash
+export HONCHO_ENDPOINT="local"  # Uses http://localhost:8000/v3
+```
+
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/claude-honcho">
+    Source code, issues, and README.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="/documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>
