@@ -3,9 +3,12 @@ Dream orchestrator for the specialist-based architecture.
 
 This module coordinates the full dream cycle:
 0. [Optional] Surprisal sampling: Pre-filter observations by geometric surprisal
-1. Generate probing questions about the peer (or use surprisal-based queries)
-2. Run deduction specialist (creates deductive observations, deletes duplicates)
-3. Run induction specialist (creates inductive observations from explicit + deductive)
+1. Run deduction specialist (self-directed exploration, creates deductive observations)
+2. Run induction specialist (self-directed exploration, creates inductive observations)
+
+Specialists are self-directed agents that explore the observation space and create
+higher-level observations. When surprisal sampling finds interesting observations,
+they're passed as hints, but specialists are free to follow the evidence wherever it leads.
 """
 
 from __future__ import annotations
@@ -58,27 +61,6 @@ class DreamResult:
     total_duration_ms: float
     input_tokens: int
     output_tokens: int
-
-
-# Predefined probing questions to guide the specialists
-# These serve as semantic entry points for searching observations
-PROBING_QUESTIONS: list[str] = [
-    "What information has changed or been updated? Look for dates, deadlines, schedules that moved.",
-    "What decisions or plans have changed? Look for rescheduled, moved, changed, updated.",
-    # Temporal and sequential events
-    "What events happened in sequence? Look for things that happened first, then, after, before.",
-    "What deadlines, dates, or scheduled events have been mentioned?",
-    # Identity and background
-    "What do we know about this person's identity, name, or background?",
-    # Recent activity
-    "What has this entity been doing or discussing recently?",
-    # Preferences and interests
-    "What are their preferences, likes, or dislikes?",
-    # Relationships
-    "Who are the important people in their life (family, friends, colleagues)?",
-    # Goals and plans
-    "What goals, plans, or aspirations have they shared? Have any changed?",
-]
 
 
 async def run_dream(
@@ -138,7 +120,8 @@ async def run_dream(
     induction_result: SpecialistResult | None = None
 
     # Phase 0: Surprisal-based sampling (if enabled)
-    probing_questions = PROBING_QUESTIONS  # Default
+    # Specialists are self-directed by default - hints are optional suggestions
+    exploration_hints: list[str] | None = None
 
     if settings.DREAM.SURPRISAL.ENABLED:
         logger.info(f"[{run_id}] Phase 0: Computing surprisal scores")
@@ -160,27 +143,12 @@ async def run_dream(
                 task_name, "surprisal_observations", len(high_surprisal_obs), "count"
             )
 
-            # Hybrid mode: Replace if sufficient high-surprisal observations
-            if (
-                len(high_surprisal_obs)
-                >= settings.DREAM.SURPRISAL.MIN_HIGH_SURPRISAL_FOR_REPLACE
-            ):
-                probing_questions = _create_queries_from_surprisal(high_surprisal_obs)
+            if len(high_surprisal_obs) > 0:
+                # Use high-surprisal observations as hints for exploration
+                exploration_hints = _create_queries_from_surprisal(high_surprisal_obs)
                 logger.info(
-                    f"[{run_id}] ✨ SURPRISAL REPLACE MODE: Using {len(probing_questions)} "
-                    + "surprisal-based queries instead of standard questions"
-                )
-                logger.info(
-                    f"[{run_id}] Targeting observations with surprisal range: "
-                    + f"{high_surprisal_obs[-1].surprisal:.3f} to {high_surprisal_obs[0].surprisal:.3f}"
-                )
-            elif len(high_surprisal_obs) > 0:
-                # Supplement mode: Add to standard questions
-                surprisal_queries = _create_queries_from_surprisal(high_surprisal_obs)
-                probing_questions = surprisal_queries + PROBING_QUESTIONS
-                logger.info(
-                    f"[{run_id}] ✨ SURPRISAL SUPPLEMENT MODE: Adding {len(surprisal_queries)} "
-                    + f"surprisal queries to {len(PROBING_QUESTIONS)} standard questions"
+                    f"[{run_id}] ✨ SURPRISAL HINTS: Suggesting {len(exploration_hints)} "
+                    + "high-surprisal topics for specialists to investigate"
                 )
                 logger.info(
                     f"[{run_id}] Targeting observations with surprisal range: "
@@ -188,13 +156,13 @@ async def run_dream(
                 )
             else:
                 logger.info(
-                    f"[{run_id}] No high-surprisal observations found using standard probing questions"
+                    f"[{run_id}] No high-surprisal observations - specialists will explore freely"
                 )
 
         except SurprisalError as e:
             logger.error(f"[{run_id}] Surprisal sampling failed: {e}", exc_info=True)
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
-            # Fall back to standard probing questions
+            # Specialists will explore freely without hints
 
     # Phase 1: Run deduction specialist
     logger.info(f"[{run_id}] Phase 1: Running deduction specialist")
@@ -206,7 +174,7 @@ async def run_dream(
             observer=observer,
             observed=observed,
             session_name=session_name,
-            probing_questions=probing_questions,
+            hints=exploration_hints,
             configuration=configuration,
             parent_run_id=run_id,
         )
@@ -231,7 +199,7 @@ async def run_dream(
             observer=observer,
             observed=observed,
             session_name=session_name,
-            probing_questions=probing_questions,
+            hints=exploration_hints,
             configuration=configuration,
             parent_run_id=run_id,
         )

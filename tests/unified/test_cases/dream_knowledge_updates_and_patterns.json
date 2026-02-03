@@ -1,0 +1,236 @@
+{
+  "description": "Challenging dream test: knowledge updates, temporal patterns, biographical extraction, and inductive reasoning",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "maya_life_story",
+      "peer_configs": {
+        "maya": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "maya_life_story",
+      "messages": [
+        {
+          "peer_id": "maya",
+          "content": "Hey! I'm Maya, 28 years old. I work as a software engineer at a startup in Austin."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Nice to meet you Maya! Tell me more about yourself."
+        },
+        {
+          "peer_id": "maya",
+          "content": "I'm originally from Portland. Moved to Austin 3 years ago for this job. I live with my partner Sam - we've been together for 2 years."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's great! What do you like to do outside of work?"
+        },
+        {
+          "peer_id": "maya",
+          "content": "I'm really into rock climbing - I go to the gym 3 times a week. Also love cooking Thai food. Oh and I have a cat named Pixel."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "maya_life_story",
+      "messages": [
+        {
+          "peer_id": "maya",
+          "content": "Big news - I just accepted a new job! I'm going to be a senior engineer at Google starting next month."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Congratulations! That's a huge move. Will you be relocating?"
+        },
+        {
+          "peer_id": "maya",
+          "content": "Yes! We're moving to Seattle. Sam got a remote work arrangement so it works out. Excited but nervous - this will be my third city in 5 years."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's quite a journey. How are you feeling about it?"
+        },
+        {
+          "peer_id": "maya",
+          "content": "Honestly, I've always been restless. I changed my college major twice, switched careers from biology to tech, and now this. I think I thrive on change."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "maya_life_story",
+      "messages": [
+        {
+          "peer_id": "maya",
+          "content": "Update on life - Sam and I broke up last month. It was mutual, the move made us realize we wanted different things."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "I'm sorry to hear that. How are you holding up?"
+        },
+        {
+          "peer_id": "maya",
+          "content": "Actually doing okay. I adopted another cat - now I have Pixel and a new one named Binary. They keep me company in my new Seattle apartment."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's good to hear. How's the new job going?"
+        },
+        {
+          "peer_id": "maya",
+          "content": "Google is intense but I love it. I'm working on AI infrastructure. Oh and I've switched from rock climbing to bouldering - there's an amazing gym near my place."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Sounds like you're settling in well!"
+        },
+        {
+          "peer_id": "maya",
+          "content": "Yeah! I also started learning Korean - my goal is to visit Seoul next year. Adding it to my language collection after Spanish and a bit of Japanese."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "schedule_dream",
+      "observer": "assistant",
+      "observed": "maya",
+      "session_id": "maya_life_story",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "get_peer_card",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "maya",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The peer card should contain CURRENT biographical facts about Maya. Check that it includes: (1) her name is Maya, (2) her age is 28, (3) her CURRENT job is at Google (NOT 'works at a startup' as current status), (4) her CURRENT city is Seattle (NOT 'lives in Austin' as current status), (5) she has cats. The peer card should reflect she is currently SINGLE (not in a relationship). It's OK to mention the breakup as context for her current single status. Return passed=true if the peer card correctly reflects her CURRENT situation - job at Google, living in Seattle, single, has cats.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "maya",
+      "session_id": "maya_life_story",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The representation should contain DEDUCTIVE observations that show the dreamer understood knowledge updates. Look for observations that note: (1) Maya changed jobs from startup to Google, (2) Maya moved from Austin to Seattle, (3) Maya's relationship status changed (broke up with Sam). The deductive level should show logical implications like 'works in tech industry', 'has software engineering expertise', 'relocated for career'. Return passed=true if there are meaningful deductive observations showing these transitions and implications.",
+          "pass_if": true
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The representation should contain INDUCTIVE observations identifying behavioral patterns. Look for patterns like: (1) tendency toward change/restlessness (changed majors, careers, cities, relationships), (2) pattern of pursuing new hobbies or interests (climbing->bouldering, learning multiple languages), (3) adaptability or comfort with transitions. Return passed=true if the inductive observations capture meaningful patterns about Maya's personality and behavioral tendencies, not just restated facts.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "maya",
+      "session_id": "maya_life_story",
+      "input": "Where does Maya currently live and work?",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "Seattle",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "contains",
+          "text": "Google",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "Austin",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "startup",
+          "case_sensitive": false
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "maya",
+      "session_id": "maya_life_story",
+      "input": "What pets does Maya have?",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "Pixel",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "contains",
+          "text": "Binary",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The response should indicate Maya has TWO cats (Pixel and Binary). It should NOT say she only has one cat. Return passed=true if the response correctly reflects she has two cats.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "maya",
+      "session_id": "maya_life_story",
+      "input": "What patterns have you noticed about Maya's personality or life choices?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The response should identify patterns in Maya's behavior, such as: embracing change, being restless or adventurous, frequently transitioning between jobs/cities/interests, being adaptable, or pursuing growth. The response should NOT just list facts but should synthesize them into personality insights. Return passed=true if the response demonstrates pattern recognition and personality inference.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
