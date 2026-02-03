@@ -14,6 +14,21 @@ We follow the llms.txt standard. There are both an llms.txt and llms-full.txt av
 
 ---
 
+## Claude Code Plugin
+
+Give Claude Code native access to Honcho! The [plugin](/v3/guides/integrations/claudecode) provides claude code persistent memory that survives context wipes and session restarts.
+
+```bash
+/plugin marketplace add plastic-labs/claude-honcho
+/plugin install honcho@honcho-memory
+```
+
+The plugin includes all the agent skills below, so you can use `/honcho-integration` directly after installing.
+
+See the [full Claude Code integration guide](/v3/guides/integrations/claudecode) for setup details.
+
+---
+
 ## Agent Skills
 
 We provide agent skills for coding assistants like Claude Code, Cursor, Windsurf, and others.
