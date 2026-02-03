@@ -489,6 +489,8 @@ class HonchoHarness:
         # Create environment with instance-specific database connection
         env = os.environ.copy()
         env.update(self.get_database_env_vars())
+        # Enable flush mode for tests - process messages immediately without waiting for batch threshold
+        env["DERIVER_FLUSH_ENABLED"] = "true"
 
         process = subprocess.Popen(
             [sys.executable, "-m", "src.deriver"],

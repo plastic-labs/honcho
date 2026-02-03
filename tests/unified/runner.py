@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from honcho.api_types import (
     MessageCreateParams,
@@ -182,11 +181,9 @@ class UnifiedTestExecutor:
         self,
         honcho_client: Honcho,
         anthropic_client: AsyncAnthropic | None,
-        redis_url: str,
     ):
         self.client: Honcho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
-        self.redis_url: str = redis_url
 
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
         logger.info(f"Starting test: {test_name}")
@@ -288,8 +285,7 @@ class UnifiedTestExecutor:
             if step.duration:
                 await asyncio.sleep(step.duration)
             if step.target == "queue_empty":
-                if step.flush:
-                    await self.flush_deriver_queue()
+                # Flush mode is enabled by default in the harness (DERIVER_FLUSH_ENABLED=true)
                 await self.wait_for_queue(step.timeout)
 
         elif isinstance(step, ScheduleDreamAction):
@@ -303,17 +299,6 @@ class UnifiedTestExecutor:
             result = await self.perform_query(step)
             for assertion in step.assertions:
                 await self.check_assertion(result, assertion)
-
-    async def flush_deriver_queue(self):
-        """Enable deriver flush mode to bypass batch token threshold."""
-        # Use direct Redis connection to set the flush key
-        # This avoids issues with settings being loaded before env vars are set
-        redis_client = aioredis.from_url(self.redis_url)  # pyright: ignore[reportUnknownMemberType]
-        try:
-            await redis_client.set("honcho:deriver:flush_mode", "1", ex=60)
-            logger.info("Enabled deriver flush mode")
-        finally:
-            await redis_client.aclose()
 
     async def wait_for_queue(self, timeout: int):
         # Poll deriver status
@@ -541,7 +526,6 @@ class UnifiedTestRunner:
             if not self.harness.wait_for_redis():
                 raise RuntimeError("Redis failed to start")
 
-            await self.harness.init_cache()
             self.harness.provision_database()
             self.harness.verify_empty_database()
 
@@ -581,9 +565,8 @@ class UnifiedTestRunner:
                 base_url=f"http://localhost:{self.harness.api_port}",
                 workspace_id="default",  # Will be overridden per test
             )
-            redis_url = f"redis://localhost:{self.harness.redis_port}/0"
 
-            executor = UnifiedTestExecutor(client, self.anthropic, redis_url)
+            executor = UnifiedTestExecutor(client, self.anthropic)
 
             suite_start_time = time.time()
 

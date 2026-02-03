@@ -17,12 +17,10 @@ from logging import Logger
 from pathlib import Path
 from typing import Any, Generic, Literal, TypeVar
 
-import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from honcho import Honcho
 from honcho.api_types import SessionConfiguration, SummaryConfiguration
 from openai import AsyncOpenAI
-from redis.asyncio.client import Redis
 
 from src.telemetry.metrics_collector import MetricsCollector
 
@@ -44,7 +42,6 @@ class RunnerConfig:
     batch_size: int = 10
     cleanup_workspace: bool = False
     use_get_context: bool = False
-    redis_url: str = "redis://localhost:6379/0"
     reasoning_level: ReasoningLevel | None = None
     base_url: str | None = None
     api_key: str | None = None
@@ -66,7 +63,6 @@ class RunnerConfig:
             batch_size=args.batch_size,
             cleanup_workspace=args.cleanup_workspace,
             use_get_context=args.use_get_context,
-            redis_url=args.redis_url,
             reasoning_level=args.reasoning_level,
             base_url=args.base_url,
             api_key=args.api_key,
@@ -153,13 +149,6 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         "--use-get-context",
         action="store_true",
         help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
-    )
-
-    parser.add_argument(
-        "--redis-url",
-        type=str,
-        default="redis://localhost:6379/0",
-        help="Redis URL for flush mode signaling (default: redis://localhost:6379/0)",
     )
 
     parser.add_argument(
@@ -521,7 +510,6 @@ class BaseRunner(ABC, Generic[ResultT]):
             # Wait for deriver queue
             print(f"[{workspace_id}] Waiting for deriver queue to empty...")
             await asyncio.sleep(1)  # Give time for tasks to be queued
-            await self._flush_deriver_queue()
 
             queue_empty = await self._wait_for_queue_empty(ctx.honcho_client)
             if not queue_empty:
@@ -621,19 +609,6 @@ class BaseRunner(ABC, Generic[ResultT]):
         """Get default session configuration with summaries disabled."""
         return SessionConfiguration(summary=SummaryConfiguration(enabled=False))
 
-    async def _flush_deriver_queue(self) -> None:
-        """Enable deriver flush mode to bypass batch token threshold."""
-        default_redis_url = "redis://localhost:6379/0"
-        if self.config.base_url and self.config.redis_url == default_redis_url:
-            print("Skipping flush mode (remote instance, no --redis-url provided)")
-            return
-        redis_client: Redis = aioredis.from_url(self.config.redis_url)  # pyright: ignore[reportUnknownMemberType]
-        try:
-            await redis_client.set("honcho:deriver:flush_mode", "1", ex=3600)
-            print(f"Enabled deriver flush mode via {self.config.redis_url}")
-        finally:
-            await redis_client.aclose()
-
     async def _wait_for_queue_empty(
         self, honcho_client: Honcho, session_id: str | None = None
     ) -> bool:
@@ -689,7 +664,6 @@ class BaseRunner(ABC, Generic[ResultT]):
 
         # Wait for dream to complete
         await asyncio.sleep(2)
-        await self._flush_deriver_queue()
         success = await self._wait_for_queue_empty(honcho_client)
         if success:
             print(f"[{workspace_id}] Dream for {observer} completed")
