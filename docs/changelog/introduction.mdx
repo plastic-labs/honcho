@@ -27,7 +27,23 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.0.1 (Current)">
+        <Update label="v3.0.2 (Current)">
+        ### Added
+
+        - Documentation for reasoning_level and Claude Code plugin
+
+        ### Changed
+
+        - Gave dreaming sub-agents better prompting around peer card creation, tweaked overall prompts
+
+        ### Fixed
+
+        - Added message-search fallback for memory search tool, necessary in fresh sessions
+        - Made FLUSH_ENABLED a config value
+        - Removed N+1 query in search_messages
+        </Update>
+
+        <Update label="v3.0.1">
         ### Fixed
 
         - Token counting in Explicit Agent Loop

@@ -7,7 +7,7 @@ description: Migrates Honcho TypeScript SDK code from v1.6.0 to v2.0.0. Use when
 
 ## Overview
 
-This skill migrates code from `@honcho-ai/sdk` v1.6.0 to v2.0.0 (required for Honcho 3.0.0).
+This skill migrates code from `@honcho-ai/sdk` v1.6.0 to v2.0.0 (required for Honcho 3.0.0+).
 
 **Key breaking changes:**
 
