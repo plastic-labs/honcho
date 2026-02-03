@@ -1,0 +1,58 @@
+name: Claude Code
+
+on:
+  pull_request_review_comment:
+    types: [created]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  # Automatic PR review when PRs are opened or updated
+  review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Review PR
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.REVIEW_ANTHROPIC_KEY }}
+          prompt: /review
+          claude_args: |
+            --max-turns 10
+            --model claude-opus-4-5-20251101
+
+  # Interactive responses to @claude mentions in PR comments
+  claude:
+    if: github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.REVIEW_ANTHROPIC_KEY }}
+          claude_args: |
+            --max-turns 10
+            --model claude-opus-4-5-20251101
