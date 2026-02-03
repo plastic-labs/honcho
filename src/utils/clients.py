@@ -706,6 +706,7 @@ async def _execute_tool_loop(
     total_output_tokens = 0
     total_cache_creation_tokens = 0
     total_cache_read_tokens = 0
+    empty_response_retries = 0
     # Track effective tool_choice - switches from "required" to "auto" after first iteration
     effective_tool_choice = tool_choice
 
@@ -777,6 +778,25 @@ async def _execute_tool_loop(
         if not response.tool_calls_made:
             # No tool calls, return final response
             logger.debug("No tool calls in response, finishing")
+
+            if (
+                isinstance(response.content, str)
+                and not response.content.strip()
+                and empty_response_retries < 1
+                and iteration < max_tool_iterations - 1
+            ):
+                empty_response_retries += 1
+                conversation_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your last response was empty. Provide a concise answer "
+                            "to the original query using the available context."
+                        ),
+                    }
+                )
+                iteration += 1
+                continue
 
             if stream_final:
                 # Stream the final response with metadata from tool execution
