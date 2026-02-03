@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.2] - 2026-01-27
+
+### Added
+
+- Documentation for reasoning_level and Claude Code plugin
+
+### Changed
+
+- Gave dreaming sub-agents better prompting around peer card creation, tweaked overall prompts
+
+### Fixed
+
+- Added message-search fallback for memory search tool, necessary in fresh sessions
+- Made FLUSH_ENABLED a config value
+- Removed N+1 query in search_messages
+
 ## [3.0.1] - 2026-01-27
 
 ### Fixed
