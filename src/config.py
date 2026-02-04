@@ -251,6 +251,9 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
     TEMPERATURE: float | None = None
+    TOP_P: float | None = None
+    REPETITION_PENALTY: float | None = None
+    NO_REPEAT_NGRAM_SIZE: int | None = None
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
