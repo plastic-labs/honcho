@@ -98,7 +98,8 @@
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/mcp",
                   "v3/guides/integrations/n8n",
-                  "v3/guides/integrations/openclaw"
+                  "v3/guides/integrations/openclaw",
+                  "v3/guides/integrations/claudecode"
                 ]
               },
               {
