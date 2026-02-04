@@ -575,7 +575,6 @@ async def _stream_final_response(
     temperature: float | None,
     top_p: float | None,
     repetition_penalty: float | None,
-    no_repeat_ngram_size: int | None,
     stop_seqs: list[str] | None,
     reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
@@ -621,7 +620,6 @@ async def _stream_final_response(
         _get_effective_temperature(temperature),
         top_p,
         repetition_penalty,
-        no_repeat_ngram_size,
         stop_seqs,
         reasoning_effort,
         verbosity,
@@ -651,7 +649,6 @@ async def _execute_tool_loop(
     temperature: float | None,
     top_p: float | None,
     repetition_penalty: float | None,
-    no_repeat_ngram_size: int | None,
     stop_seqs: list[str] | None,
     reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
@@ -756,7 +753,6 @@ async def _execute_tool_loop(
                 _get_effective_temperature(temperature),
                 top_p,
                 repetition_penalty,
-                no_repeat_ngram_size,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -822,7 +818,6 @@ async def _execute_tool_loop(
                     temperature=temperature,
                     top_p=top_p,
                     repetition_penalty=repetition_penalty,
-                    no_repeat_ngram_size=no_repeat_ngram_size,
                     stop_seqs=stop_seqs,
                     reasoning_effort=reasoning_effort,
                     verbosity=verbosity,
@@ -958,7 +953,6 @@ async def _execute_tool_loop(
             temperature=temperature,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
-            no_repeat_ngram_size=no_repeat_ngram_size,
             stop_seqs=stop_seqs,
             reasoning_effort=reasoning_effort,
             verbosity=verbosity,
@@ -997,7 +991,6 @@ async def _execute_tool_loop(
             _get_effective_temperature(temperature),
             top_p,
             repetition_penalty,
-            no_repeat_ngram_size,
             stop_seqs,
             reasoning_effort,
             verbosity,
@@ -1205,7 +1198,6 @@ async def honcho_llm_call(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1237,7 +1229,6 @@ async def honcho_llm_call(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1269,7 +1260,6 @@ async def honcho_llm_call(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1301,7 +1291,6 @@ async def honcho_llm_call(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1457,7 +1446,6 @@ async def honcho_llm_call(
                 _get_effective_temperature(temperature),
                 top_p,
                 repetition_penalty,
-                no_repeat_ngram_size,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1477,7 +1465,6 @@ async def honcho_llm_call(
                 _get_effective_temperature(temperature),
                 top_p,
                 repetition_penalty,
-                no_repeat_ngram_size,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1563,7 +1550,6 @@ async def honcho_llm_call(
         temperature=temperature,
         top_p=top_p,
         repetition_penalty=repetition_penalty,
-        no_repeat_ngram_size=no_repeat_ngram_size,
         stop_seqs=stop_seqs,
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
@@ -1603,7 +1589,6 @@ async def honcho_llm_call_inner(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1627,7 +1612,6 @@ async def honcho_llm_call_inner(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1651,7 +1635,6 @@ async def honcho_llm_call_inner(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1674,7 +1657,6 @@ async def honcho_llm_call_inner(
     temperature: float | None = None,
     top_p: float | None = None,
     repetition_penalty: float | None = None,
-    no_repeat_ngram_size: int | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1929,8 +1911,6 @@ async def honcho_llm_call_inner(
                 extra_body: dict[str, Any] = {}
                 if repetition_penalty is not None:
                     extra_body["repetition_penalty"] = repetition_penalty
-                if no_repeat_ngram_size is not None:
-                    extra_body["no_repeat_ngram_size"] = no_repeat_ngram_size
                 if extra_body:
                     openai_params["extra_body"] = extra_body
 

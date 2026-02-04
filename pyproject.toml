@@ -93,11 +93,6 @@ asyncio_default_fixture_loop_scope = "session"
 addopts = "--strict-markers --cov=src/ --cov=sdks/python/src/honcho --cov-report=term-missing --ignore=tests/alembic"
 testpaths = ["tests"]
 pythonpath = ["src"]
-filterwarnings = [
-    "ignore::DeprecationWarning:cashews.*:",
-    "ignore::DeprecationWarning:websockets.*:",
-    "ignore::DeprecationWarning:uvicorn.*:",
-]
 
 [tool.coverage.report]
 exclude_lines = [

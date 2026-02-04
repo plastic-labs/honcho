@@ -253,7 +253,6 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     TEMPERATURE: float | None = None
     TOP_P: float | None = None
     REPETITION_PENALTY: float | None = None
-    NO_REPEAT_NGRAM_SIZE: int | None = None
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
