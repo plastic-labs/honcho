@@ -7,9 +7,6 @@ on:
     types: [created]
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    paths:
-      - "src/**"
-      - "tests/**"
   pull_request_review:
     types: [submitted]
 
