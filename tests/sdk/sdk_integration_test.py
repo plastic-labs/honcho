@@ -114,7 +114,7 @@ def test_peer_card_operations(honcho_test_client: Honcho):
     target = honcho_test_client.peer(id="card-test-target")
 
     # Initially card should be None
-    card = peer.card()
+    card = peer.get_card()
     assert card is None
 
     # Set own card
@@ -123,7 +123,7 @@ def test_peer_card_operations(honcho_test_client: Honcho):
     assert result == own_card
 
     # Verify with get
-    card = peer.card()
+    card = peer.get_card()
     assert card == own_card
 
     # Set card for target
@@ -132,9 +132,9 @@ def test_peer_card_operations(honcho_test_client: Honcho):
     assert result == target_card
 
     # Verify with get
-    card = peer.card(target=target)
+    card = peer.get_card(target=target)
     assert card == target_card
 
     # Own card should still be unchanged
-    card = peer.card()
+    card = peer.get_card()
     assert card == own_card

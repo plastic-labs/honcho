@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -588,7 +589,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def card(
+    async def get_card(
         self,
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
@@ -603,6 +604,20 @@ class PeerAio(AsyncMetadataConfigMixin):
         )
         response = PeerCardResponse.model_validate(data)
         return response.peer_card
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def card(
+        self,
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """Deprecated: use get_card() instead."""
+
+        warnings.warn(
+            "card() is deprecated, use get_card() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.get_card(target=target)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def set_card(

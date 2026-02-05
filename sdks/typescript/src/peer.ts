@@ -664,7 +664,7 @@ export class Peer {
    * @returns Promise resolving to an array of strings containing the peer card items,
    *          or null if no peer card exists
    */
-  async card(target?: string | Peer): Promise<string[] | null> {
+  async getCard(target?: string | Peer): Promise<string[] | null> {
     const validatedTarget = CardTargetSchema.parse(target)
 
     const response = await this._getCard({
@@ -672,6 +672,13 @@ export class Peer {
     })
 
     return response.peer_card
+  }
+
+  /**
+   * @deprecated Use {@link getCard} instead.
+   */
+  async card(target?: string | Peer): Promise<string[] | null> {
+    return this.getCard(target)
   }
 
   /**

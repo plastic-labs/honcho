@@ -444,7 +444,7 @@ describe('Peer', () => {
       expect(result).toEqual(cardData)
 
       // Verify with get
-      const card = await peer.card()
+      const card = await peer.getCard()
       expect(card).toEqual(cardData)
     })
 
@@ -458,7 +458,7 @@ describe('Peer', () => {
       expect(result).toEqual(cardData)
 
       // Verify with get
-      const card = await observer.card(observed)
+      const card = await observer.getCard(observed)
       expect(card).toEqual(cardData)
     })
 

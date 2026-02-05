@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import warnings
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -446,7 +447,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def card(
+    def get_card(
         self,
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
@@ -475,6 +476,19 @@ class Peer(PeerBase, MetadataConfigMixin):
         response = PeerCardResponse.model_validate(data)
 
         return response.peer_card
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def card(
+        self,
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """Deprecated: use get_card() instead."""
+        warnings.warn(
+            "card() is deprecated, use get_card() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_card(target=target)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def set_card(
