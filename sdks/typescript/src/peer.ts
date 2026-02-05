@@ -295,6 +295,18 @@ export class Peer {
     )
   }
 
+  private async _setCard(params: {
+    peer_card: string[]
+    target?: string
+  }): Promise<PeerCardResponse> {
+    await this._ensureWorkspace()
+    const { peer_card, ...query } = params
+    return this._http.put<PeerCardResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/card`,
+      { body: { peer_card }, query }
+    )
+  }
+
   // ===========================================================================
   // Public Methods
   // ===========================================================================
@@ -659,6 +671,30 @@ export class Peer {
       target: validatedTarget,
     })
 
+    return response.peer_card
+  }
+
+  /**
+   * Set the peer card for this peer.
+   *
+   * Makes an API call to set the peer card. If a target is provided, sets this
+   * peer's local card of the target peer.
+   *
+   * @param peerCard - An array of strings to set as the peer card.
+   * @param target - Optional target peer for local card. If provided, sets this
+   *                 peer's card of the target peer. Can be a Peer object or peer ID string.
+   * @returns Promise resolving to an array of strings containing the updated peer card items,
+   *          or null if no peer card exists
+   */
+  async setCard(
+    peerCard: string[],
+    target?: string | Peer
+  ): Promise<string[] | null> {
+    const validatedTarget = CardTargetSchema.parse(target)
+    const response = await this._setCard({
+      peer_card: peerCard,
+      target: validatedTarget,
+    })
     return response.peer_card
   }
 

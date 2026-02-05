@@ -431,6 +431,48 @@ describe('Peer', () => {
   })
 
   // ===========================================================================
+  // Set Peer Card (PUT /peers/:id/card)
+  // ===========================================================================
+
+  describe('PUT /peers/:id/card', () => {
+    test('setCard sets and returns peer card', async () => {
+      const peer = await client.peer('setcard-peer')
+
+      const cardData = ['fact one', 'fact two']
+      const result = await peer.setCard(cardData)
+
+      expect(result).toEqual(cardData)
+
+      // Verify with get
+      const card = await peer.card()
+      expect(card).toEqual(cardData)
+    })
+
+    test('setCard with target peer', async () => {
+      const observer = await client.peer('setcard-observer')
+      const observed = await client.peer('setcard-observed')
+
+      const cardData = ['target likes TypeScript', 'target is clever']
+      const result = await observer.setCard(cardData, observed)
+
+      expect(result).toEqual(cardData)
+
+      // Verify with get
+      const card = await observer.card(observed)
+      expect(card).toEqual(cardData)
+    })
+
+    test('setCard with target ID string', async () => {
+      const peer = await client.peer('setcard-string-peer')
+
+      const cardData = ['some fact']
+      const result = await peer.setCard(cardData, 'setcard-string-target')
+
+      expect(result).toEqual(cardData)
+    })
+  })
+
+  // ===========================================================================
   // Peer Context (POST /peers/:id/context)
   // ===========================================================================
 

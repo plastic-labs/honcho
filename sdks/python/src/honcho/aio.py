@@ -605,6 +605,25 @@ class PeerAio(AsyncMetadataConfigMixin):
         return response.peer_card
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def set_card(
+        self,
+        peer_card: list[str],
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """Set the peer card asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
+        target_id = resolve_id(target)
+
+        query = {"target": target_id} if target_id else None
+        data = await self._peer._honcho._async_http_client.put(
+            routes.peer_card(self._peer.workspace_id, self._peer.id),
+            body={"peer_card": peer_card},
+            query=query,
+        )
+        response = PeerCardResponse.model_validate(data)
+        return response.peer_card
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def representation(
         self,
         session: str | SessionBase | None = None,

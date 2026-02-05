@@ -1136,7 +1136,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.0.0"
+version = "2.0.1"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },
