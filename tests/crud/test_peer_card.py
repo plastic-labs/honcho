@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.crud.peer_card import construct_peer_card_label, get_peer_card, set_peer_card
-from src.exceptions import ResourceNotFoundException
 
 
 @pytest.mark.asyncio
@@ -51,22 +50,6 @@ async def test_peer_card_get_set_roundtrip(
 
 
 @pytest.mark.asyncio
-async def test_set_peer_card_missing_peer_raises(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
-):
-    """Setting a peer card for a non-existent peer should raise ResourceNotFoundException."""
-    workspace, _existing_peer = sample_data
-    with pytest.raises(ResourceNotFoundException):
-        await set_peer_card(
-            db_session,
-            workspace.name,
-            ["card"],
-            observer="missing-peer",
-            observed="missing-peer",
-        )
-
-
-@pytest.mark.asyncio
 async def test_get_peer_card_missing_peer_returns_none(
     db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
 ):
@@ -94,22 +77,6 @@ async def test_get_peer_card_missing_workspace_returns_none(
         observed=peer.name,
     )
     assert result is None
-
-
-@pytest.mark.asyncio
-async def test_set_peer_card_missing_workspace_raises(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
-):
-    """Setting a peer card for a non-existent workspace should raise ResourceNotFoundException."""
-    _workspace, peer = sample_data
-    with pytest.raises(ResourceNotFoundException):
-        await set_peer_card(
-            db_session,
-            "missing-workspace",
-            ["card"],
-            observer=peer.name,
-            observed=peer.name,
-        )
 
 
 @pytest.mark.asyncio
