@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, Protocol
+from typing import Annotated, Any, ClassVar, Literal, Protocol, cast
 
 import tomllib
 from dotenv import load_dotenv
@@ -356,43 +356,49 @@ class DialecticSettings(HonchoSettings):
         env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
     )
 
+    # Default level configurations - defined as class var so we can merge partial overrides
+    _DEFAULT_LEVELS: ClassVar[dict[ReasoningLevel, dict[str, Any]]] = {
+        "minimal": {
+            "PROVIDER": "google",
+            "MODEL": "gemini-2.5-flash-lite",
+            "THINKING_BUDGET_TOKENS": 0,
+            "MAX_TOOL_ITERATIONS": 1,
+            "MAX_OUTPUT_TOKENS": 250,
+            "TOOL_CHOICE": "any",
+        },
+        "low": {
+            "PROVIDER": "google",
+            "MODEL": "gemini-2.5-flash-lite",
+            "THINKING_BUDGET_TOKENS": 0,
+            "MAX_TOOL_ITERATIONS": 5,
+            "TOOL_CHOICE": "any",
+        },
+        "medium": {
+            "PROVIDER": "anthropic",
+            "MODEL": "claude-haiku-4-5",
+            "THINKING_BUDGET_TOKENS": 1024,
+            "MAX_TOOL_ITERATIONS": 2,
+        },
+        "high": {
+            "PROVIDER": "anthropic",
+            "MODEL": "claude-haiku-4-5",
+            "THINKING_BUDGET_TOKENS": 1024,
+            "MAX_TOOL_ITERATIONS": 4,
+        },
+        "max": {
+            "PROVIDER": "anthropic",
+            "MODEL": "claude-haiku-4-5",
+            "THINKING_BUDGET_TOKENS": 2048,
+            "MAX_TOOL_ITERATIONS": 10,
+        },
+    }
+
     # Per-level settings for provider, model, thinking budget, and tool iterations
-    # TODO: Fill in appropriate values for each reasoning level
+    # Defaults defined in _DEFAULT_LEVELS class var above
     LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
         default_factory=lambda: {
-            "minimal": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
-                THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=1,
-                MAX_OUTPUT_TOKENS=250,
-                TOOL_CHOICE="any",
-            ),
-            "low": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
-                THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=5,
-                TOOL_CHOICE="any",
-            ),
-            "medium": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=2,
-            ),
-            "high": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=4,
-            ),
-            "max": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=2048,
-                MAX_TOOL_ITERATIONS=10,
-            ),
+            level: DialecticLevelSettings(**config)
+            for level, config in DialecticSettings._DEFAULT_LEVELS.items()
         }
     )
 
@@ -407,6 +413,37 @@ class DialecticSettings(HonchoSettings):
     SESSION_HISTORY_MAX_TOKENS: Annotated[
         int, Field(default=4_096, ge=0, le=16_384)
     ] = 4_096
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_levels_with_defaults(cls, data: Any) -> Any:
+        """Merge partial LEVELS config with defaults so users can override just one level."""
+        if not isinstance(data, dict):
+            return data
+
+        data_dict = cast(dict[str, Any], data)
+        levels: dict[str, Any] | None = data_dict.get("LEVELS")
+        if levels is None:
+            return data_dict
+
+        # Build merged levels: start with defaults, overlay user config
+        merged: dict[str, Any] = {}
+        for level_name, default_config in cls._DEFAULT_LEVELS.items():
+            user_config: dict[str, Any] | DialecticLevelSettings | None = levels.get(
+                level_name
+            )
+            if user_config is None:
+                # Use default entirely
+                merged[level_name] = default_config.copy()
+            elif isinstance(user_config, dict):
+                # Merge user config over defaults
+                merged[level_name] = {**default_config, **user_config}
+            else:
+                # Already a DialecticLevelSettings - use as-is
+                merged[level_name] = user_config
+
+        data_dict["LEVELS"] = merged
+        return data_dict
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
