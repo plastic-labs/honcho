@@ -56,6 +56,7 @@ dev = [
     "fakeredis>=2.32.0",
     "scipy>=1.15.3",
     "boto3>=1.42.5",
+    "pyarrow>=19.0.0",
 ]
 
 [tool.uv.workspace]
