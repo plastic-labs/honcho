@@ -177,6 +177,35 @@ async def process_representation_tasks_batch(
             latest_message.workspace_name,
             latest_message.session_name,
         )
+        logger.warning(
+            "LLM response debug — finish_reasons=%s, output_tokens=%d, input_tokens=%d, "
+            + "raw_explicit_count=%d, message_ids_count=%d, formatted_messages_len=%d",
+            response.finish_reasons,
+            response.output_tokens,
+            response.input_tokens,
+            len(response.content.explicit),
+            len(message_ids),
+            len(formatted_messages),
+        )
+        if response.thinking_content:
+            logger.warning(
+                "LLM thinking content present (%d chars): %.500s",
+                len(response.thinking_content),
+                response.thinking_content,
+            )
+        if response.content.explicit:
+            logger.warning(
+                "Raw explicit observations before conversion: %s",
+                [obs.content[:200] for obs in response.content.explicit],
+            )
+        else:
+            logger.warning(
+                "LLM returned no explicit observations. Raw content type: %s",
+                type(response.content),
+            )
+        logger.warning(
+            "Raw LLM output (parsed model JSON): %s", response.content.model_dump_json()
+        )
     else:
         # Save to all observer collections
         for observer in observers:
