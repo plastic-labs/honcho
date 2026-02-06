@@ -731,6 +731,7 @@ async def search_memory(
     query: str,
     limit: int,
     levels: list[str] | None = None,
+    embedding: list[float] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -744,6 +745,7 @@ async def search_memory(
         limit: Maximum number of results
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
+        embedding: Optional pre-computed embedding to avoid redundant API calls
 
     Returns:
         Representation object containing relevant observations
@@ -761,6 +763,7 @@ async def search_memory(
         query=query,
         top_k=limit,
         filters=filters,
+        embedding=embedding,
     )
 
     return Representation.from_documents(documents)
