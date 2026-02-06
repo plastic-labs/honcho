@@ -189,6 +189,48 @@ const goals = await peer.chat("What are the user's main goals or objectives?");
 ```
 </CodeGroup>
 
+## Workspace-Level Chat
+
+While `peer.chat()` queries knowledge about a single peer, `honcho.chat()` searches across **all peers and observations** in the workspace. This is useful for cross-peer analysis, discovering common themes, or asking workspace-wide questions.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+
+# Ask about the entire workspace
+answer = honcho.chat("What are common themes across all users?")
+print(answer)
+
+# With streaming
+stream = honcho.chat_stream("Summarize all peer activity this week.")
+for chunk in stream:
+    print(chunk, end="", flush=True)
+
+# Async
+answer = await honcho.aio.chat("Which users have discussed topic X?")
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({});
+
+// Ask about the entire workspace
+const answer = await honcho.chat("What are common themes across all users?");
+console.log(answer);
+
+// With streaming
+const stream = await honcho.chatStream("Summarize all peer activity this week.");
+for await (const chunk of stream) {
+  process.stdout.write(chunk);
+}
+```
+</CodeGroup>
+
+Workspace chat accepts the same `reasoning_level` parameter and optional `session` scoping as peer-level chat.
+
 ## How Honcho Answers
 
 When you call `peer.chat(query)`:
