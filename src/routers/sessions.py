@@ -266,8 +266,11 @@ async def delete_session(
         )
 
         await db.commit()
-        await cache.delete(session_cache_key(workspace_id, session_id))
-        await cache.delete(session_peer_config_cache_key(workspace_id, session_id))
+        try:
+            await cache.delete(session_cache_key(workspace_id, session_id))
+            await cache.delete(session_peer_config_cache_key(workspace_id, session_id))
+        except Exception:  # nosec B110 — best-effort; TTL will clean up
+            pass
 
         logger.debug("Session %s marked as inactive, deletion enqueued", session_id)
         return {"message": "Session deleted successfully"}

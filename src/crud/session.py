@@ -247,6 +247,10 @@ async def get_or_create_session(
     await db.commit()
     await db.refresh(honcho_session)
 
+    # Invalidate peer config cache
+    if session.peer_names:
+        await cache.delete(session_peer_config_cache_key(workspace_name, session.name))
+
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
         cache_key = session_cache_key(workspace_name, session.name)
@@ -937,6 +941,10 @@ async def _get_or_add_peers_to_session(
     Add multiple peers to an existing session. If a peer already exists in the session,
     it will be skipped gracefully.
 
+    Does not commit or invalidate caches. Callers must commit the transaction and
+    invalidate the session peer config cache (via ``session_peer_config_cache_key``)
+    after commit.
+
     Args:
         db: Database session
         session_name: Name of the session
@@ -1021,9 +1029,6 @@ async def _get_or_add_peers_to_session(
         models.SessionPeer.left_at.is_(None),  # Only active peers
     )
     result = await db.execute(select_stmt)
-
-    # Invalidate peer config cache after upsert
-    await cache.delete(session_peer_config_cache_key(workspace_name, session_name))
 
     return list(result.scalars().all())
 

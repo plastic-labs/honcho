@@ -149,4 +149,5 @@ async def update_collection_internal_metadata(
         )
     )
     await db.execute(stmt)
+    await db.commit()
     await cache.delete(collection_cache_key(workspace_name, observer, observed))
