@@ -66,8 +66,13 @@ DB_URI = (
     or "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 )
 CONNECTION_URI = make_url(DB_URI)
-TEST_DB_URL = CONNECTION_URI.set(database="test_db")
-DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
+
+
+def _get_test_db_url(worker_id: str) -> URL:
+    """Get a worker-specific test database URL for pytest-xdist parallelism."""
+    db_name = "test_db" if worker_id == "master" else f"test_db_{worker_id}"
+    return CONNECTION_URI.set(database=db_name)
+
 
 # Test API authorization - no longer needed as module-level constants
 # We'll use settings.AUTH directly where needed
@@ -128,9 +133,10 @@ async def setup_test_database(db_url: URL):
 
 
 @pytest_asyncio.fixture(scope="session")
-async def db_engine():
-    create_test_database(TEST_DB_URL)
-    engine = await setup_test_database(TEST_DB_URL)
+async def db_engine(worker_id: str):
+    test_db_url = _get_test_db_url(worker_id)
+    create_test_database(test_db_url)
+    engine = await setup_test_database(test_db_url)
 
     # Force the schema to 'public' for tests
     # Save the original schema to restore later
@@ -156,7 +162,7 @@ async def db_engine():
     for table in Base.metadata.tables.values():
         table.schema = original_schema
 
-    drop_database(TEST_DB_URL)
+    drop_database(test_db_url)
 
 
 @pytest_asyncio.fixture(scope="function")
