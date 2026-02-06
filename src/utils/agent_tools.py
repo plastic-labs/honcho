@@ -626,13 +626,36 @@ async def create_observations(
     if not contents:
         return
 
-    # Batch embed all observation contents
-    embeddings = await embedding_client.simple_batch_embed(contents)
+    # Batch embed all observation contents.
+    # If batching fails, fall back to per-observation embedding.
+    embeddings_by_index: dict[int, list[float]] | None = None
+    try:
+        embeddings = await embedding_client.simple_batch_embed(contents)
+        embeddings_by_index = dict(
+            zip(range(len(valid_observations)), embeddings, strict=True)
+        )
+    except Exception as e:
+        logger.warning(
+            "Batch embedding failed for create_observations; "
+            + f"falling back to per-observation embedding: {e}"
+        )
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    for (obs, level), embedding in zip(valid_observations, embeddings, strict=False):
+    for i, (obs, level) in enumerate(valid_observations):
         content = obs.get("content", "")
+
+        embedding: list[float]
+        if embeddings_by_index is not None:
+            embedding = embeddings_by_index[i]
+        else:
+            try:
+                embedding = await embedding_client.embed(content)
+            except Exception as e:
+                logger.warning(
+                    f"Error embedding observation content for level '{level}': {e}"
+                )
+                continue
 
         # Build metadata with level-specific fields
         metadata = schemas.DocumentMetadata(
@@ -877,6 +900,20 @@ async def extract_preferences(
         "things user wants or does not want",
     ]
 
+    # Batch embed all queries in a single API call.
+    # If batching fails, each search call will generate its own embedding.
+    query_embeddings_by_query: dict[str, list[float]] | None = None
+    try:
+        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
+        query_embeddings_by_query = dict(
+            zip(semantic_queries, query_embeddings, strict=True)
+        )
+    except Exception as e:
+        logger.warning(
+            "Batch embedding failed for extract_preferences; "
+            + f"falling back to per-query embedding in search_messages: {e}"
+        )
+
     for query in semantic_queries:
         try:
             snippets = await crud.search_messages(
@@ -886,6 +923,11 @@ async def extract_preferences(
                 query=query,
                 limit=10,
                 context_window=0,
+                embedding=(
+                    query_embeddings_by_query.get(query)
+                    if query_embeddings_by_query is not None
+                    else None
+                ),
             )
             for matches, _ in snippets:
                 for msg in matches:
