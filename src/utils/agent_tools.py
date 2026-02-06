@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
+from src.exceptions import ValidationException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import (
@@ -1175,13 +1176,22 @@ async def _handle_get_recent_history(
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
     top_k = min(tool_input.get("top_k", 20), 40)
+    query = tool_input["query"]
+    try:
+        query_embedding = await embedding_client.embed(query)
+    except ValueError as e:
+        raise ValidationException(
+            f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+        ) from e
+
     documents = await crud.query_documents(
         db=ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        query=tool_input["query"],
+        query=query,
         top_k=top_k,
+        embedding=query_embedding,
     )
     mem = Representation.from_documents(documents)
     total_count = mem.len()
@@ -1191,7 +1201,6 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # this stage, and be efficient with tool calls, and make sure the model
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
-        query = tool_input["query"]
         if ctx.agent_type == "dialectic":
             limit = min(tool_input.get("top_k", 20), 20)
             snippets = await crud.search_messages(
@@ -1201,6 +1210,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
                 query=query,
                 limit=limit,
                 context_window=0,
+                embedding=query_embedding,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1215,7 +1225,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
             )
         return f"No observations found for query '{query}'"
     mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
-    return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
+    return f"Found {total_count} observations for query '{query}':\n\n{mem_str}"
 
 
 async def _handle_get_observation_context(
