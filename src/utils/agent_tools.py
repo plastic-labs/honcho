@@ -598,8 +598,9 @@ async def create_observations(
         observed=observed,
     )
 
-    # Generate embeddings and create document objects for all observations
-    documents: list[schemas.DocumentCreate] = []
+    # Validate observations and collect content for batch embedding
+    valid_observations: list[tuple[dict[str, Any], DocumentLevel]] = []
+    contents: list[str] = []
     for obs in observations:
         content = obs.get("content", "")
         level_str = obs.get("level", "explicit")
@@ -619,8 +620,19 @@ async def create_observations(
         else:
             level = "explicit"
 
-        # Generate embedding for the observation
-        embedding = await embedding_client.embed(content)
+        valid_observations.append((obs, level))
+        contents.append(content)
+
+    if not contents:
+        return
+
+    # Batch embed all observation contents
+    embeddings = await embedding_client.simple_batch_embed(contents)
+
+    # Build document objects with pre-computed embeddings
+    documents: list[schemas.DocumentCreate] = []
+    for (obs, level), embedding in zip(valid_observations, embeddings, strict=False):
+        content = obs.get("content", "")
 
         # Build metadata with level-specific fields
         metadata = schemas.DocumentMetadata(
