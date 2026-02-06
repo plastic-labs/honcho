@@ -294,7 +294,7 @@ async def chat(
                 yield f"data: {json.dumps({'done': True})}\n\n"
             except Exception as e:
                 logger.error("Workspace chat stream failed: %s", e, exc_info=True)
-                yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+                yield f"data: {json.dumps({'error': 'Internal server error', 'done': True})}\n\n"
 
         if settings.METRICS.ENABLED:
             prometheus_metrics.record_dialectic_call(
