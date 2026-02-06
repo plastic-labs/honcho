@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -1230,14 +1230,17 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
 
 
-async def _handle_get_observation_context(
-    ctx: ToolContext, tool_input: dict[str, Any]
+async def _get_observation_context_impl(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None,
+    tool_input: dict[str, Any],
 ) -> str:
-    """Handle get_observation_context tool."""
+    """Shared implementation for get_observation_context (peer and workspace)."""
     messages = await get_observation_context(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
         message_ids=tool_input["message_ids"],
     )
     if not messages:
@@ -1254,6 +1257,15 @@ async def _handle_get_observation_context(
     )
     output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
     return _truncate_tool_output(output)
+
+
+async def _handle_get_observation_context(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_observation_context tool."""
+    return await _get_observation_context_impl(
+        ctx.db, ctx.workspace_name, ctx.session_name, tool_input
+    )
 
 
 async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
@@ -1612,10 +1624,22 @@ def _format_message_snippets(
     return _truncate_tool_output(output)
 
 
-async def _handle_get_reasoning_chain(
-    ctx: ToolContext, tool_input: dict[str, Any]
+async def _get_reasoning_chain_impl(
+    db: AsyncSession,
+    workspace_name: str,
+    tool_input: dict[str, Any],
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
+    include_attribution: bool = False,
 ) -> str:
-    """Handle get_reasoning_chain tool."""
+    """Shared implementation for get_reasoning_chain (peer and workspace).
+
+    Args:
+        observer/observed: Passed through to crud.get_child_observations.
+            None means no filter (workspace-level).
+        include_attribution: If True, adds (observer->observed) to the header.
+    """
     observation_id = tool_input.get("observation_id")
     if not observation_id:
         return "ERROR: 'observation_id' is required"
@@ -1624,24 +1648,24 @@ async def _handle_get_reasoning_chain(
     if direction not in ("premises", "conclusions", "both"):
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
-    # Get the observation itself
-    docs = await crud.get_documents_by_ids(ctx.db, ctx.workspace_name, [observation_id])
+    docs = await crud.get_documents_by_ids(db, workspace_name, [observation_id])
     if not docs or not docs[0]:
         return f"ERROR: Observation '{observation_id}' not found"
 
     doc: Document = docs[0]
-
     output_parts: list[str] = []
 
-    # Format the main observation
     level = doc.level or "explicit"
-    output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
+    header = f"**Observation [id:{doc.id}] ({level}"
+    if include_attribution:
+        header += f", {doc.observer}\u2192{doc.observed}"
+    header += f"):**\n{doc.content}"
+    output_parts.append(header)
 
-    # Get premises/sources if requested
     if direction in ("premises", "both"):
         if level == "deductive" and doc.source_ids:
             premises = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
+                db, workspace_name, doc.source_ids
             )
             if premises:
                 premise_lines: list[Any] = []
@@ -1657,7 +1681,7 @@ async def _handle_get_reasoning_chain(
                 )
         elif level == "inductive" and doc.source_ids:
             sources = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
+                db, workspace_name, doc.source_ids
             )
             if sources:
                 source_lines: list[Any] = []
@@ -1678,14 +1702,13 @@ async def _handle_get_reasoning_chain(
         else:
             output_parts.append("\n**Premises/Sources:** None recorded")
 
-    # Get conclusions if requested
     if direction in ("conclusions", "both"):
         children = await crud.get_child_observations(
-            ctx.db,
-            ctx.workspace_name,
+            db,
+            workspace_name,
             observation_id,
-            observer=ctx.observer,
-            observed=ctx.observed,
+            observer=observer,
+            observed=observed,
         )
         if children:
             child_lines: list[Any] = []
@@ -1700,6 +1723,19 @@ async def _handle_get_reasoning_chain(
             output_parts.append("\n**Derived Conclusions:** None found")
 
     return "\n".join(output_parts)
+
+
+async def _handle_get_reasoning_chain(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_reasoning_chain tool."""
+    return await _get_reasoning_chain_impl(
+        ctx.db,
+        ctx.workspace_name,
+        tool_input,
+        observer=ctx.observer,
+        observed=ctx.observed,
+    )
 
 
 # Tool handler dispatch table
@@ -1722,6 +1758,38 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "extract_preferences": _handle_extract_preferences,
     "get_reasoning_chain": _handle_get_reasoning_chain,
 }
+
+
+async def _execute_with_error_handling(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    dispatch: Callable[[], Awaitable[str]],
+    db: AsyncSession,
+    log_prefix: str = "tool",
+) -> str:
+    """Execute a tool dispatch function with unified logging and error handling.
+
+    Handles ValueError/KeyError (returned to LLM) and unexpected exceptions
+    (logged with traceback, db rolled back, returned to LLM).
+    """
+    logger.info(f"[{log_prefix} call] {tool_name} {tool_input}")
+    try:
+        result = await dispatch()
+        logger.info(f"[{log_prefix} result] {tool_name} {result}")
+        return result
+    except ValueError as e:
+        error_msg = f"Tool {tool_name} failed with invalid input: {e}"
+        logger.warning(error_msg)
+        return error_msg
+    except KeyError as e:
+        error_msg = f"Tool {tool_name} missing required parameter: {e}"
+        logger.warning(error_msg)
+        return error_msg
+    except Exception as e:
+        error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
+        logger.error(error_msg, exc_info=True)
+        await db.rollback()
+        return error_msg
 
 
 async def create_tool_executor(
@@ -1782,45 +1850,15 @@ async def create_tool_executor(
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
-        """
-        Execute a tool and return result for LLM.
-
-        Args:
-            tool_name: Name of the tool to execute
-            tool_input: Tool input arguments
-
-        Returns:
-            String result describing what was done
-        """
-        logger.info(f"[tool call] {tool_name} {tool_input}")
-
-        try:
+        async def dispatch() -> str:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
-                result = await handler(ctx, tool_input)
-                logger.info(f"[tool result] {tool_name} {result}")
-                return result
+                return await handler(ctx, tool_input)
             return f"Unknown tool: {tool_name}"
 
-        except ValueError as e:
-            # Recoverable errors (bad input, validation failures) - return to LLM
-            error_msg = f"Tool {tool_name} failed with invalid input: {e}"
-            logger.warning(error_msg)
-            return error_msg
-        except KeyError as e:
-            # Missing required parameters - return to LLM
-            error_msg = f"Tool {tool_name} missing required parameter: {e}"
-            logger.warning(error_msg)
-            return error_msg
-        except Exception as e:
-            # Unexpected errors - log with full traceback but still return to LLM
-            # We don't re-raise because the LLM should be able to continue with other tools
-            error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
-            logger.error(error_msg, exc_info=True)
-            # Rollback the transaction to clear any failed state
-            # This is critical for PostgreSQL which blocks subsequent queries on failed transactions
-            await ctx.db.rollback()
-            return error_msg
+        return await _execute_with_error_handling(
+            tool_name, tool_input, dispatch, ctx.db, log_prefix="tool"
+        )
 
     return execute_tool
 
@@ -1920,97 +1958,18 @@ async def _handle_get_observation_context_workspace(
     ctx: WorkspaceToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_observation_context tool for workspace context (no session constraint)."""
-    from src.utils.formatting import format_new_turn_with_timestamp
-
-    messages = await get_observation_context(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=None,
-        message_ids=tool_input["message_ids"],
+    return await _get_observation_context_impl(
+        ctx.db, ctx.workspace_name, None, tool_input
     )
-    if not messages:
-        return f"No messages found for IDs {tool_input['message_ids']}"
-    messages_text = "\n".join(
-        [
-            format_new_turn_with_timestamp(
-                _truncate_message_content(m.content),
-                m.created_at,
-                m.peer_name,
-            )
-            for m in messages
-        ]
-    )
-    output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
-    return _truncate_tool_output(output)
 
 
 async def _handle_get_reasoning_chain_workspace(
     ctx: WorkspaceToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_reasoning_chain tool for workspace context (no observer/observed constraint on children)."""
-    observation_id = tool_input.get("observation_id")
-    if not observation_id:
-        return "ERROR: 'observation_id' is required"
-
-    direction = tool_input.get("direction", "both")
-    if direction not in ("premises", "conclusions", "both"):
-        return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
-
-    docs = await crud.get_documents_by_ids(ctx.db, ctx.workspace_name, [observation_id])
-    if not docs or not docs[0]:
-        return f"ERROR: Observation '{observation_id}' not found"
-
-    doc: Document = docs[0]
-    output_parts: list[str] = []
-    level = doc.level or "explicit"
-    output_parts.append(
-        f"**Observation [id:{doc.id}] ({level}, {doc.observer}→{doc.observed}):**\n{doc.content}"
+    return await _get_reasoning_chain_impl(
+        ctx.db, ctx.workspace_name, tool_input, include_attribution=True
     )
-
-    if direction in ("premises", "both"):
-        if level == "deductive" and doc.source_ids:
-            premises = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
-            )
-            if premises:
-                premise_lines: list[Any] = []
-                for p in premises:
-                    p_level = p.level or "explicit"
-                    premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
-                output_parts.append(
-                    f"\n**Premises ({len(premises)}):**\n" + "\n".join(premise_lines)
-                )
-        elif level == "inductive" and doc.source_ids:
-            sources = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
-            )
-            if sources:
-                source_lines: list[Any] = []
-                for s in sources:
-                    s_level = s.level or "explicit"
-                    source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
-                output_parts.append(
-                    f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
-                )
-
-    if direction in ("conclusions", "both"):
-        # Workspace-level: no observer/observed filter on children
-        children = await crud.get_child_observations(
-            ctx.db, ctx.workspace_name, observation_id
-        )
-        if children:
-            child_lines: list[Any] = []
-            for c in children:
-                c_level = c.level or "explicit"
-                child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
-            output_parts.append(
-                f"\n**Derived Conclusions ({len(children)}):**\n"
-                + "\n".join(child_lines)
-            )
-        else:
-            output_parts.append("\n**Derived Conclusions:** None found")
-
-    return "\n".join(output_parts)
 
 
 # Workspace tool handler dispatch table
@@ -2086,37 +2045,23 @@ async def create_workspace_tool_executor(
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
-        logger.info(f"[workspace tool call] {tool_name} {tool_input}")
-        try:
+        async def dispatch() -> str:
             # Check workspace-specific handlers first
             ws_handler = _WORKSPACE_TOOL_HANDLERS.get(tool_name)
             if ws_handler:
-                result = await ws_handler(ws_ctx, tool_input)
-                logger.info(f"[workspace tool result] {tool_name} {result}")
-                return result
+                return await ws_handler(ws_ctx, tool_input)
 
             # Fall through to standard handlers (only those safe with empty observer/observed)
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
                 if tool_name not in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS:
                     return f"Tool '{tool_name}' is not available in workspace context"
-                result = await handler(peer_ctx, tool_input)
-                logger.info(f"[workspace tool result] {tool_name} {result}")
-                return result
+                return await handler(peer_ctx, tool_input)
 
             return f"Unknown tool: {tool_name}"
-        except ValueError as e:
-            error_msg = f"Tool {tool_name} failed with invalid input: {e}"
-            logger.warning(error_msg)
-            return error_msg
-        except KeyError as e:
-            error_msg = f"Tool {tool_name} missing required parameter: {e}"
-            logger.warning(error_msg)
-            return error_msg
-        except Exception as e:
-            error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
-            logger.error(error_msg, exc_info=True)
-            await ws_ctx.db.rollback()
-            return error_msg
+
+        return await _execute_with_error_handling(
+            tool_name, tool_input, dispatch, ws_ctx.db, log_prefix="workspace tool"
+        )
 
     return execute_tool
