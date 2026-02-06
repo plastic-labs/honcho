@@ -229,7 +229,7 @@ for await (const chunk of stream) {
 ```
 </CodeGroup>
 
-Workspace chat accepts the same `reasoning_level` parameter and optional `session` scoping as peer-level chat.
+Workspace chat accepts `reasoning_level` and optional `session` scoping. For streaming, use the separate `chat_stream()` / `chatStream()` method rather than a `stream` parameter.
 
 ## How Honcho Answers
 
