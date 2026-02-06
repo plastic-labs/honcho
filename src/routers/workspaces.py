@@ -1,6 +1,9 @@
+import json
 import logging
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy import func, select
@@ -10,8 +13,10 @@ from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver.enqueue import enqueue_dream
+from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
+from src.telemetry import prometheus_metrics
 from src.telemetry.events import DeletionCompletedEvent, emit
 from src.utils.search import search
 
@@ -246,3 +251,72 @@ async def schedule_dream(
         observed,
         request.session_id,
     )
+
+
+@router.post(
+    "/{workspace_id}/chat",
+    summary="Query workspace knowledge using natural language",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "schema": schemas.DialecticResponse.model_json_schema()
+                },
+                "text/event-stream": {},
+            },
+        },
+    },
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def chat(
+    workspace_id: str = Path(...),
+    options: schemas.WorkspaceChatOptions = Body(...),
+):
+    """
+    Query the workspace's collective knowledge using natural language.
+
+    Performs agentic search and reasoning across ALL peers and observations
+    in the workspace to synthesize a comprehensive answer. Useful for
+    cross-peer analysis, discovering common themes, and workspace-wide queries.
+    """
+    if options.stream:
+
+        async def format_sse_stream(
+            chunks: AsyncIterator[str],
+        ) -> AsyncIterator[str]:
+            async for chunk in chunks:
+                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_dialectic_call(
+                workspace_name=workspace_id,
+                reasoning_level=options.reasoning_level,
+            )
+
+        return StreamingResponse(
+            format_sse_stream(
+                workspace_chat_stream(
+                    workspace_name=workspace_id,
+                    session_name=options.session_id,
+                    query=options.query,
+                    reasoning_level=options.reasoning_level,
+                )
+            ),
+            media_type="text/event-stream",
+        )
+
+    response = await workspace_chat(
+        workspace_name=workspace_id,
+        session_name=options.session_id,
+        query=options.query,
+        reasoning_level=options.reasoning_level,
+    )
+
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        )
+
+    return schemas.DialecticResponse(content=response if response else None)

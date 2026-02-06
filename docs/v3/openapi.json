@@ -13,7 +13,7 @@
       "name": "GNU Affero General Public License v3.0",
       "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
     },
-    "version": "3.0.0"
+    "version": "3.0.2"
   },
   "servers": [
     {
@@ -81,7 +81,7 @@
           "workspaces"
         ],
         "summary": "Get All Workspaces",
-        "description": "Get all Workspaces",
+        "description": "Get all Workspaces, paginated with optional filters.",
         "operationId": "get_all_workspaces_v3_workspaces_list_post",
         "security": [
           {
@@ -433,7 +433,7 @@
           "workspaces"
         ],
         "summary": "Schedule Dream",
-        "description": "",
+        "description": "Manually schedule a dream task for a specific collection.\n\nThis endpoint bypasses all automatic dream conditions (document threshold,\nminimum hours between dreams) and schedules the dream task for a future execution.\n\nCurrently this endpoint only supports scheduling immediate dreams. In the future,\nusers may pass a cron-style expression to schedule dreams at specific times.",
         "operationId": "schedule_dream_v3_workspaces__workspace_id__schedule_dream_post",
         "security": [
           {
@@ -480,13 +480,90 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/chat": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Query workspace knowledge using natural language",
+        "description": "Query the workspace's collective knowledge using natural language.\n\nPerforms agentic search and reasoning across ALL peers and observations\nin the workspace to synthesize a comprehensive answer. Useful for\ncross-peer analysis, discovering common themes, and workspace-wide queries.",
+        "operationId": "chat_v3_workspaces__workspace_id__chat_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceChatOptions"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "content": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Content"
+                    }
+                  },
+                  "required": [
+                    "content"
+                  ],
+                  "title": "DialecticResponse",
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/peers/list": {
       "post": {
         "tags": [
           "peers"
         ],
         "summary": "Get Peers",
-        "description": "Get all Peers for a Workspace",
+        "description": "Get all Peers for a Workspace, paginated with optional filters.",
         "operationId": "get_peers_v3_workspaces__workspace_id__peers_list_post",
         "security": [
           {
@@ -709,7 +786,7 @@
           "peers"
         ],
         "summary": "Get Sessions For Peer",
-        "description": "Get all Sessions for a Peer",
+        "description": "Get all Sessions for a Peer, paginated with optional filters.",
         "operationId": "get_sessions_for_peer_v3_workspaces__workspace_id__peers__peer_id__sessions_post",
         "security": [
           {
@@ -811,8 +888,8 @@
         "tags": [
           "peers"
         ],
-        "summary": "Chat",
-        "description": "",
+        "summary": "Query a Peer's representation using natural language",
+        "description": "Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively\nanswer the query based on all latent knowledge gathered about the peer from their messages and conclusions.",
         "operationId": "chat_v3_workspaces__workspace_id__peers__peer_id__chat_post",
         "security": [
           {
@@ -1373,7 +1450,7 @@
           "sessions"
         ],
         "summary": "Get Sessions",
-        "description": "Get all Sessions for a Workspace",
+        "description": "Get all Sessions for a Workspace, paginated with optional filters.",
         "operationId": "get_sessions_v3_workspaces__workspace_id__sessions_list_post",
         "security": [
           {
@@ -1939,7 +2016,7 @@
           "sessions"
         ],
         "summary": "Get Session Peers",
-        "description": "Get all Peers in a Session",
+        "description": "Get all Peers in a Session. Results are paginated.",
         "operationId": "get_session_peers_v3_workspaces__workspace_id__sessions__session_id__peers_get",
         "security": [
           {
@@ -2662,7 +2739,7 @@
           "messages"
         ],
         "summary": "Get Messages",
-        "description": "Get all messages for a Session with optional filters",
+        "description": "Get all messages for a Session with optional filters. Results are paginated.",
         "operationId": "get_messages_v3_workspaces__workspace_id__sessions__session_id__messages_list_post",
         "security": [
           {
@@ -2991,7 +3068,7 @@
           "conclusions"
         ],
         "summary": "List Conclusions",
-        "description": "List Conclusions using optional filters, ordered by recency unless `reverse` is true",
+        "description": "List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.",
         "operationId": "list_conclusions_v3_workspaces__workspace_id__conclusions_list_post",
         "security": [
           {
@@ -5350,6 +5427,52 @@
           "created_at"
         ],
         "title": "Workspace"
+      },
+      "WorkspaceChatOptions": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Query",
+            "description": "Natural language query about the workspace"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Optional session ID to scope message searches"
+          },
+          "stream": {
+            "type": "boolean",
+            "title": "Stream",
+            "default": false
+          },
+          "reasoning_level": {
+            "type": "string",
+            "enum": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "title": "Reasoning Level",
+            "description": "Level of reasoning to apply: minimal, low, medium, high, or max",
+            "default": "low"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "WorkspaceChatOptions"
       },
       "WorkspaceConfiguration": {
         "properties": {

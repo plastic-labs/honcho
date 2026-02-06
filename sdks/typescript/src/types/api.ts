@@ -78,6 +78,17 @@ export interface PeerChatResponse {
   content: string | null
 }
 
+export interface WorkspaceChatParams {
+  query: string
+  stream?: boolean
+  session_id?: string
+  reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
+}
+
+export interface WorkspaceChatResponse {
+  content: string | null
+}
+
 export interface PeerRepresentationParams {
   session_id?: string
   target?: string

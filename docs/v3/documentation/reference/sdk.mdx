@@ -233,6 +233,45 @@ const workspaces = await honcho.workspaces();
 ```
 </CodeGroup>
 
+**Workspace Chat:**
+
+<CodeGroup>
+```python Python
+# Query knowledge across ALL peers in the workspace
+response = honcho.chat("What are common themes across all users?")
+
+# With reasoning level
+response = honcho.chat("Summarize all peer activity.", reasoning_level="high")
+
+# Streaming
+stream = honcho.chat_stream("What do all users have in common?")
+for chunk in stream:
+    print(chunk, end="", flush=True)
+
+# Async
+response = await honcho.aio.chat("Which users discussed topic X?")
+stream = await honcho.aio.chat_stream("Summarize the workspace.")
+async for chunk in stream:
+    print(chunk, end="", flush=True)
+```
+
+```typescript TypeScript
+// Query knowledge across ALL peers in the workspace
+const response = await honcho.chat("What are common themes across all users?");
+
+// With reasoning level
+const response = await honcho.chat("Summarize all peer activity.", {
+  reasoningLevel: "high"
+});
+
+// Streaming
+const stream = await honcho.chatStream("What do all users have in common?");
+for await (const chunk of stream) {
+  process.stdout.write(chunk);
+}
+```
+</CodeGroup>
+
 <Info>
 Peer and session creation is **lazy** - no API calls are made until you actually use the peer or session.
 </Info>

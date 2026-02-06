@@ -312,6 +312,67 @@ async def query_documents(
     return ordered_docs
 
 
+async def query_documents_workspace(
+    db: AsyncSession,
+    workspace_name: str,
+    query: str,
+    *,
+    filters: dict[str, Any] | None = None,
+    max_distance: float | None = None,
+    top_k: int = 5,
+    embedding: list[float] | None = None,
+) -> Sequence[models.Document]:
+    """
+    Query documents across an entire workspace using semantic similarity.
+
+    Unlike query_documents(), this searches ALL observer/observed pairs.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        query: Search query text
+        filters: Optional filters to apply (supports: level, session_name)
+        max_distance: Maximum cosine distance for results
+        top_k: Number of results to return
+        embedding: Optional pre-computed embedding for the query
+
+    Returns:
+        Sequence of matching documents
+    """
+    if embedding is None:
+        try:
+            embedding = await embedding_client.embed(query)
+        except ValueError as e:
+            raise ValidationException(
+                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+            ) from e
+
+    if settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED:
+        stmt = (
+            select(models.Document)
+            .where(models.Document.workspace_name == workspace_name)
+            .where(models.Document.embedding.isnot(None))
+            .where(models.Document.deleted_at.is_(None))
+        )
+
+        if max_distance is not None:
+            stmt = stmt.where(
+                models.Document.embedding.cosine_distance(embedding) <= max_distance
+            )
+
+        stmt = apply_filter(stmt, models.Document, filters)
+        stmt = stmt.order_by(
+            models.Document.embedding.cosine_distance(embedding)
+        ).limit(top_k)
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    raise ValidationException(
+        "Workspace-level search requires pgvector (external vector stores not supported)"
+    )
+
+
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],

@@ -468,6 +468,51 @@ TOOLS: dict[str, dict[str, Any]] = {
             "properties": {},
         },
     },
+    "search_memory_workspace": {
+        "name": "search_memory",
+        "description": "Search for observations across ALL peers in the workspace using semantic similarity. Results are grouped by which peer pair they belong to.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query text",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "(Optional) number of results to return (default: 20, max: 40)",
+                    "default": 20,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "list_peers": {
+        "name": "list_peers",
+        "description": "List all peers in the workspace. Use this to discover which peers exist before querying about specific ones.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    "get_peer_card_by_name": {
+        "name": "get_peer_card",
+        "description": "Get the peer card for a specific peer relationship. Specify the observer and observed peer names.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observer": {
+                    "type": "string",
+                    "description": "Name of the observer peer",
+                },
+                "observed": {
+                    "type": "string",
+                    "description": "Name of the observed peer",
+                },
+            },
+            "required": ["observer", "observed"],
+        },
+    },
     "get_reasoning_chain": {
         "name": "get_reasoning_chain",
         "description": "Get the reasoning chain for an observation - traverse the tree to find premises (for deductive) or sources (for inductive), and/or find conclusions derived from this observation. Use this to understand how an observation was derived or what conclusions depend on it.",
@@ -556,6 +601,20 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Action tools
     TOOLS["create_observations"],
     TOOLS["update_peer_card"],
+]
+
+
+# Tools for the workspace dialectic agent (workspace-level analysis)
+WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
+    TOOLS["search_memory_workspace"],
+    TOOLS["search_messages"],
+    TOOLS["get_observation_context"],
+    TOOLS["grep_messages"],
+    TOOLS["list_peers"],
+    TOOLS["get_peer_card_by_name"],
+    TOOLS["get_messages_by_date_range"],
+    TOOLS["search_messages_temporal"],
+    TOOLS["get_reasoning_chain"],
 ]
 
 
@@ -1751,6 +1810,299 @@ async def create_tool_executor(
             # Rollback the transaction to clear any failed state
             # This is critical for PostgreSQL which blocks subsequent queries on failed transactions
             await ctx.db.rollback()
+            return error_msg
+
+    return execute_tool
+
+
+# =============================================================================
+# Workspace-level tool handlers
+# =============================================================================
+
+
+@dataclass
+class WorkspaceToolContext:
+    """Context object passed to workspace-level tool handlers."""
+
+    db: AsyncSession
+    workspace_name: str
+    session_name: str | None
+    include_observation_ids: bool
+    history_token_limit: int
+    db_lock: asyncio.Lock
+    run_id: str | None = None
+    agent_type: str | None = None
+    parent_category: str | None = None
+
+
+async def _handle_search_memory_workspace(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle workspace-level search_memory tool (searches ALL peers)."""
+    from src.utils.representation import format_documents_with_attribution
+
+    top_k = min(tool_input.get("top_k", 20), 40)
+    documents = await crud.query_documents_workspace(
+        db=ctx.db,
+        workspace_name=ctx.workspace_name,
+        query=tool_input["query"],
+        top_k=top_k,
+    )
+    if not documents:
+        # Fallback to message search
+        snippets = await crud.search_messages(
+            ctx.db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            query=tool_input["query"],
+            limit=min(tool_input.get("top_k", 20), 20),
+            context_window=0,
+        )
+        if snippets:
+            message_output = _format_message_snippets(
+                snippets, f"for query '{tool_input['query']}'"
+            )
+            return f"No observations yet. Message search results:\n\n{message_output}"
+        return f"No observations found for query '{tool_input['query']}', and no messages found."
+
+    formatted = format_documents_with_attribution(
+        documents, include_ids=ctx.include_observation_ids
+    )
+    return f"Found {len(documents)} observations across workspace for query '{tool_input['query']}':\n\n{formatted}"
+
+
+async def _handle_list_peers(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle list_peers tool."""
+    _ = tool_input
+    stmt = await crud.get_peers(workspace_name=ctx.workspace_name)
+    result = await ctx.db.execute(stmt)
+    peers = list(result.scalars().all())
+    if not peers:
+        return "No peers found in this workspace."
+    peer_list = "\n".join(f"- {p.name}" for p in peers)
+    return f"Found {len(peers)} peers in workspace:\n{peer_list}"
+
+
+async def _handle_get_peer_card_by_name(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_peer_card tool with explicit observer/observed params."""
+    observer = tool_input.get("observer", "")
+    observed = tool_input.get("observed", "")
+    if not observer or not observed:
+        return "ERROR: 'observer' and 'observed' are required parameters"
+    peer_card = await crud.get_peer_card(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        observer=observer,
+        observed=observed,
+    )
+    if not peer_card:
+        return f"No peer card available for {observed} (observed by {observer})"
+    return f"Peer card for {observed} (observed by {observer}):\n" + "\n".join(
+        f"- {fact}" for fact in peer_card
+    )
+
+
+async def _handle_get_observation_context_workspace(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_observation_context tool for workspace context (no session constraint)."""
+    from src.utils.formatting import format_new_turn_with_timestamp
+
+    messages = await get_observation_context(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=None,
+        message_ids=tool_input["message_ids"],
+    )
+    if not messages:
+        return f"No messages found for IDs {tool_input['message_ids']}"
+    messages_text = "\n".join(
+        [
+            format_new_turn_with_timestamp(
+                _truncate_message_content(m.content),
+                m.created_at,
+                m.peer_name,
+            )
+            for m in messages
+        ]
+    )
+    output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
+    return _truncate_tool_output(output)
+
+
+async def _handle_get_reasoning_chain_workspace(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_reasoning_chain tool for workspace context (no observer/observed constraint on children)."""
+    observation_id = tool_input.get("observation_id")
+    if not observation_id:
+        return "ERROR: 'observation_id' is required"
+
+    direction = tool_input.get("direction", "both")
+    if direction not in ("premises", "conclusions", "both"):
+        return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
+
+    docs = await crud.get_documents_by_ids(ctx.db, ctx.workspace_name, [observation_id])
+    if not docs or not docs[0]:
+        return f"ERROR: Observation '{observation_id}' not found"
+
+    doc: Document = docs[0]
+    output_parts: list[str] = []
+    level = doc.level or "explicit"
+    output_parts.append(
+        f"**Observation [id:{doc.id}] ({level}, {doc.observer}→{doc.observed}):**\n{doc.content}"
+    )
+
+    if direction in ("premises", "both"):
+        if level == "deductive" and doc.source_ids:
+            premises = await crud.get_documents_by_ids(
+                ctx.db, ctx.workspace_name, doc.source_ids
+            )
+            if premises:
+                premise_lines: list[Any] = []
+                for p in premises:
+                    p_level = p.level or "explicit"
+                    premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
+                output_parts.append(
+                    f"\n**Premises ({len(premises)}):**\n" + "\n".join(premise_lines)
+                )
+        elif level == "inductive" and doc.source_ids:
+            sources = await crud.get_documents_by_ids(
+                ctx.db, ctx.workspace_name, doc.source_ids
+            )
+            if sources:
+                source_lines: list[Any] = []
+                for s in sources:
+                    s_level = s.level or "explicit"
+                    source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
+                output_parts.append(
+                    f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
+                )
+
+    if direction in ("conclusions", "both"):
+        # Workspace-level: no observer/observed filter on children
+        children = await crud.get_child_observations(
+            ctx.db, ctx.workspace_name, observation_id
+        )
+        if children:
+            child_lines: list[Any] = []
+            for c in children:
+                c_level = c.level or "explicit"
+                child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
+            output_parts.append(
+                f"\n**Derived Conclusions ({len(children)}):**\n"
+                + "\n".join(child_lines)
+            )
+        else:
+            output_parts.append("\n**Derived Conclusions:** None found")
+
+    return "\n".join(output_parts)
+
+
+# Workspace tool handler dispatch table
+_WORKSPACE_TOOL_HANDLERS: dict[
+    str, Callable[[WorkspaceToolContext, dict[str, Any]], Any]
+] = {
+    "search_memory": _handle_search_memory_workspace,
+    "list_peers": _handle_list_peers,
+    "get_peer_card": _handle_get_peer_card_by_name,
+    "get_observation_context": _handle_get_observation_context_workspace,
+    "get_reasoning_chain": _handle_get_reasoning_chain_workspace,
+}
+
+
+async def create_workspace_tool_executor(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None = None,
+    history_token_limit: int = 8192,
+    run_id: str | None = None,
+    agent_type: str | None = None,
+    parent_category: str | None = None,
+) -> Callable[[str, dict[str, Any]], Any]:
+    """
+    Create a tool executor for workspace-level operations.
+
+    Unlike create_tool_executor(), this does not require observer/observed
+    and uses workspace-wide handlers for search_memory, get_peer_card, etc.
+
+    Args:
+        db: Database session
+        workspace_name: Workspace identifier
+        session_name: Optional session scope for message searches
+        history_token_limit: Maximum tokens for history retrieval
+        run_id: Optional run ID for telemetry
+        agent_type: Optional agent type for telemetry
+        parent_category: Optional parent category for CloudEvents
+
+    Returns:
+        An async callable that executes tools with the captured context
+    """
+    shared_lock = asyncio.Lock()
+
+    ws_ctx = WorkspaceToolContext(
+        db=db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        include_observation_ids=True,
+        history_token_limit=history_token_limit,
+        db_lock=shared_lock,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
+    )
+
+    # Build a ToolContext for fallthrough handlers that need observer/observed
+    # We use empty strings since these handlers won't need them
+    peer_ctx = ToolContext(
+        db=db,
+        workspace_name=workspace_name,
+        observer="",
+        observed="",
+        session_name=session_name,
+        current_messages=None,
+        include_observation_ids=True,
+        history_token_limit=history_token_limit,
+        db_lock=shared_lock,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
+    )
+
+    async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
+        logger.info(f"[workspace tool call] {tool_name} {tool_input}")
+        try:
+            # Check workspace-specific handlers first
+            ws_handler = _WORKSPACE_TOOL_HANDLERS.get(tool_name)
+            if ws_handler:
+                result = await ws_handler(ws_ctx, tool_input)
+                logger.info(f"[workspace tool result] {tool_name} {result}")
+                return result
+
+            # Fall through to standard handlers (for search_messages, grep_messages, etc.)
+            handler = _TOOL_HANDLERS.get(tool_name)
+            if handler:
+                result = await handler(peer_ctx, tool_input)
+                logger.info(f"[workspace tool result] {tool_name} {result}")
+                return result
+
+            return f"Unknown tool: {tool_name}"
+        except ValueError as e:
+            error_msg = f"Tool {tool_name} failed with invalid input: {e}"
+            logger.warning(error_msg)
+            return error_msg
+        except KeyError as e:
+            error_msg = f"Tool {tool_name} missing required parameter: {e}"
+            logger.warning(error_msg)
+            return error_msg
+        except Exception as e:
+            error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
+            logger.error(error_msg, exc_info=True)
+            await ws_ctx.db.rollback()
             return error_msg
 
     return execute_tool
