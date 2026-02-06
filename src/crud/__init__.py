@@ -1,4 +1,8 @@
-from .collection import get_collection, get_or_create_collection
+from .collection import (
+    get_collection,
+    get_or_create_collection,
+    update_collection_internal_metadata,
+)
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
     create_documents,
@@ -41,6 +45,7 @@ from .session import (
     SessionDeletionResult,
     clone_session,
     delete_session,
+    fetch_session_peer_configs,
     get_or_create_session,
     get_peer_config,
     get_peers_from_session,
@@ -70,6 +75,7 @@ __all__ = [
     # Collection
     "get_collection",
     "get_or_create_collection",
+    "update_collection_internal_metadata",
     # Deriver
     "get_deriver_status",
     "get_queue_status",
@@ -110,6 +116,7 @@ __all__ = [
     "get_working_representation",
     # Session
     "SessionDeletionResult",
+    "fetch_session_peer_configs",
     "get_sessions",
     "get_or_create_session",
     "get_session",
