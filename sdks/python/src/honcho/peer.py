@@ -477,7 +477,6 @@ class Peer(PeerBase, MetadataConfigMixin):
 
         return response.peer_card
 
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def card(
         self,
         target: str | PeerBase | None = None,

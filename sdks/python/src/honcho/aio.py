@@ -605,7 +605,6 @@ class PeerAio(AsyncMetadataConfigMixin):
         response = PeerCardResponse.model_validate(data)
         return response.peer_card
 
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def card(
         self,
         target: str | PeerBase | None = None,
@@ -625,7 +624,20 @@ class PeerAio(AsyncMetadataConfigMixin):
         peer_card: list[str],
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
-        """Set the peer card asynchronously."""
+        """
+        Set the peer card for this peer.
+
+        Makes an API call to set the peer card. If a target is provided, sets this
+        peer's local card of the target peer.
+
+        Args:
+            peer_card: A list of strings to set as the peer card.
+            target: Optional target peer for local card. If provided, sets this
+                    peer's card of the target peer. Can be a Peer object or peer ID string.
+
+        Returns:
+            A list of strings representing the updated peer card, or None if none is available
+        """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
 

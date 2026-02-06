@@ -53,7 +53,7 @@ async def test_peer_card_get_set_roundtrip(
 async def test_get_peer_card_missing_peer_returns_none(
     db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
 ):
-    """Getting a peer card for a non-existent peer should return None."""
+    """Getting a peer card for a non-existent peer should return None while creating the peer."""
     workspace, _existing_peer = sample_data
     result = await get_peer_card(
         db_session,

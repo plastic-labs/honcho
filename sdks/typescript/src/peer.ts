@@ -28,6 +28,7 @@ import {
   MessageConfigurationSchema,
   MessageContentSchema,
   MessageMetadataSchema,
+  PeerCardContentSchema,
   type PeerConfig,
   PeerConfigSchema,
   PeerGetRepresentationParamsSchema,
@@ -697,9 +698,10 @@ export class Peer {
     peerCard: string[],
     target?: string | Peer
   ): Promise<string[] | null> {
+    const validatedPeerCard = PeerCardContentSchema.parse(peerCard)
     const validatedTarget = CardTargetSchema.parse(target)
     const response = await this._setCard({
-      peer_card: peerCard,
+      peer_card: validatedPeerCard,
       target: validatedTarget,
     })
     return response.peer_card
