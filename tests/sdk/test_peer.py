@@ -93,7 +93,7 @@ async def test_peer_card_global(client_fixture: tuple[Honcho, str]):
         await session.aio.add_messages([peer.message("I like pizza")])
 
         # Get global peer card
-        card_response = await peer.aio.card()
+        card_response = await peer.aio.get_card()
         assert card_response is None or isinstance(card_response, list)
     else:
         peer = honcho_client.peer(id="test-card-global-peer")
@@ -103,7 +103,7 @@ async def test_peer_card_global(client_fixture: tuple[Honcho, str]):
         session.add_messages([peer.message("I like pizza")])
 
         # Get global peer card
-        card_response = peer.card()
+        card_response = peer.get_card()
         assert card_response is None or isinstance(card_response, list)
 
 
@@ -125,11 +125,11 @@ async def test_peer_card_local(client_fixture: tuple[Honcho, str]):
         )
 
         # Get local peer card with target as Peer object
-        card_response = await observer.aio.card(target=target)
+        card_response = await observer.aio.get_card(target=target)
         assert card_response is None or isinstance(card_response, list)
 
         # Get local peer card with target as string
-        card_response = await observer.aio.card(target=target.id)
+        card_response = await observer.aio.get_card(target=target.id)
         assert card_response is None or isinstance(card_response, list)
     else:
         observer = honcho_client.peer(id="test-card-local-observer")
@@ -140,11 +140,11 @@ async def test_peer_card_local(client_fixture: tuple[Honcho, str]):
         session.add_messages([observer.message("Hello"), target.message("Hi there")])
 
         # Get local peer card with target as Peer object
-        card_response = observer.card(target=target)
+        card_response = observer.get_card(target=target)
         assert card_response is None or isinstance(card_response, list)
 
         # Get local peer card with target as string
-        card_response = observer.card(target=target.id)
+        card_response = observer.get_card(target=target.id)
         assert card_response is None or isinstance(card_response, list)
 
 
@@ -161,13 +161,13 @@ async def test_peer_card_with_empty_target(client_fixture: tuple[Honcho, str]):
         peer = await honcho_client.aio.peer(id="test-card-validation-peer")
 
         # Empty target is treated as no target (same as None)
-        result = await peer.aio.card(target="")
+        result = await peer.aio.get_card(target="")
         assert result is None or isinstance(result, list)
     else:
         peer = honcho_client.peer(id="test-card-validation-peer")
 
         # Empty target is treated as no target (same as None)
-        result = peer.card(target="")
+        result = peer.get_card(target="")
         assert result is None or isinstance(result, list)
 
 
