@@ -6,7 +6,6 @@ and synthesize responses to queries about a peer.
 """
 
 import logging
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -165,14 +164,16 @@ class DialecticAgent(BaseDialecticAgent):
     # Hook overrides
     # ------------------------------------------------------------------
 
-    async def _pre_prepare_query(self) -> None:
+    async def _prepare_query(
+        self, query: str
+    ) -> tuple[Callable[[str, dict[str, Any]], Any], str, str | None, float]:
         await self._initialize_session_history()
+        return await super()._prepare_query(query)
 
     def _get_task_name(self) -> tuple[str, str | None]:
         if self.metric_key:
             return self.metric_key, None
-        run_id = str(uuid.uuid4())[:8]
-        return f"dialectic_chat_{run_id}", run_id
+        return f"dialectic_chat_{self._run_id}", self._run_id
 
     def _get_context_string(self) -> str:
         return (

@@ -288,13 +288,10 @@ async def chat(
         async def format_sse_stream(
             chunks: AsyncIterator[str],
         ) -> AsyncIterator[str]:
-            try:
-                async for chunk in chunks:
-                    yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
-                yield f"data: {json.dumps({'done': True})}\n\n"
-            except Exception as e:
-                logger.error("Workspace chat stream failed: %s", e, exc_info=True)
-                yield f"data: {json.dumps({'error': 'Internal server error', 'done': True})}\n\n"
+            """Format chunks as SSE events."""
+            async for chunk in chunks:
+                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
 
         if settings.METRICS.ENABLED:
             prometheus_metrics.record_dialectic_call(

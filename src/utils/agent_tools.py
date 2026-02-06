@@ -21,7 +21,7 @@ from src.telemetry.events import (
 )
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
-from src.utils.representation import Representation
+from src.utils.representation import Representation, format_documents_with_attribution
 from src.utils.types import DocumentLevel, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -1810,7 +1810,7 @@ async def create_tool_executor(
     Create a unified tool executor function for all agent operations.
 
     This factory function captures the agent's context and returns an async callable
-    that can execute any tool from AGENT_TOOLS or DIALECTIC_AGENT_TOOLS.
+    that can execute any tool registered in _TOOL_HANDLERS.
 
     Args:
         db: Database session
@@ -1887,8 +1887,6 @@ async def _handle_search_memory_workspace(
     ctx: WorkspaceToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle workspace-level search_memory tool (searches ALL peers)."""
-    from src.utils.representation import format_documents_with_attribution
-
     top_k = min(tool_input.get("top_k", 20), 40)
     documents = await crud.query_documents_workspace(
         db=ctx.db,

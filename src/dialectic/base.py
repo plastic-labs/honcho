@@ -111,14 +111,10 @@ class BaseDialecticAgent(ABC):
     # Overridable hooks — base provides defaults, subclass may override
     # ------------------------------------------------------------------
 
-    async def _pre_prepare_query(self) -> None:  # noqa: B027
-        """Hook called at the start of _prepare_query. Default: no-op."""
-
     def _get_task_name(self) -> tuple[str, str | None]:
-        """Return (task_name, run_id). Default generates a fresh run_id."""
-        run_id = str(uuid.uuid4())[:8]
-        task_name = f"{self._trace_name}_{run_id}"
-        return task_name, run_id
+        """Return (task_name, run_id). Default uses self._run_id."""
+        task_name = f"{self._trace_name}_{self._run_id}"
+        return task_name, self._run_id
 
     def _get_context_string(self) -> str:
         """Return the context blob logged via accumulate_metric."""
@@ -139,8 +135,6 @@ class BaseDialecticAgent(ABC):
     async def _prepare_query(
         self, query: str
     ) -> tuple[Callable[[str, dict[str, Any]], Any], str, str | None, float]:
-        await self._pre_prepare_query()
-
         task_name, run_id = self._get_task_name()
         start_time = time.perf_counter()
 

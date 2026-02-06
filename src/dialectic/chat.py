@@ -1,8 +1,8 @@
 """
 Chat functionality for the Dialectic API.
 
-Provides the agentic_chat function for answering queries about peers
-using the DialecticAgent.
+Provides peer-level (agentic_chat) and workspace-level (workspace_chat)
+entry points for answering queries.
 """
 
 import logging
@@ -158,6 +158,11 @@ async def workspace_chat(
         The synthesized answer string
     """
     async with tracked_db("dialectic.workspace_chat") as db:
+        if session_name:
+            await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+
         agent = WorkspaceDialecticAgent(
             db=db,
             workspace_name=workspace_name,
@@ -188,6 +193,11 @@ async def workspace_chat_stream(
         Chunks of the response text as they are generated
     """
     async with tracked_db("dialectic.workspace_chat_stream") as db:
+        if session_name:
+            await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+
         agent = WorkspaceDialecticAgent(
             db=db,
             workspace_name=workspace_name,
