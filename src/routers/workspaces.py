@@ -271,6 +271,7 @@ async def schedule_dream(
 async def chat(
     workspace_id: str = Path(...),
     options: schemas.WorkspaceChatOptions = Body(...),
+    db: AsyncSession = db,
 ):
     """
     Query the workspace's collective knowledge using natural language.
@@ -279,14 +280,21 @@ async def chat(
     in the workspace to synthesize a comprehensive answer. Useful for
     cross-peer analysis, discovering common themes, and workspace-wide queries.
     """
+    # Verify workspace exists before expensive agent pipeline
+    await crud.get_workspace(db, workspace_name=workspace_id)
+
     if options.stream:
 
         async def format_sse_stream(
             chunks: AsyncIterator[str],
         ) -> AsyncIterator[str]:
-            async for chunk in chunks:
-                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
+            try:
+                async for chunk in chunks:
+                    yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            except Exception as e:
+                logger.error("Workspace chat stream failed: %s", e, exc_info=True)
+                yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
         if settings.METRICS.ENABLED:
             prometheus_metrics.record_dialectic_call(

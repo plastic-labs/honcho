@@ -604,6 +604,16 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# Fallthrough tools that are safe to call with an empty-string ToolContext
+# (observer/observed=""). These handlers filter by workspace_name/session_name
+# only and do not use observer/observed.
+_WORKSPACE_SAFE_FALLTHROUGH_TOOLS = {
+    "search_messages",
+    "grep_messages",
+    "get_messages_by_date_range",
+    "search_messages_temporal",
+}
+
 # Tools for the workspace dialectic agent (workspace-level analysis)
 WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_memory_workspace"],
@@ -2056,8 +2066,10 @@ async def create_workspace_tool_executor(
         parent_category=parent_category,
     )
 
-    # Build a ToolContext for fallthrough handlers that need observer/observed
-    # We use empty strings since these handlers won't need them
+    # Build a ToolContext for fallthrough handlers (search_messages, grep_messages,
+    # get_messages_by_date_range, search_messages_temporal). These use only
+    # workspace_name/session_name; observer/observed are empty-string sentinels
+    # guarded by _WORKSPACE_SAFE_FALLTHROUGH_TOOLS.
     peer_ctx = ToolContext(
         db=db,
         workspace_name=workspace_name,
@@ -2083,9 +2095,11 @@ async def create_workspace_tool_executor(
                 logger.info(f"[workspace tool result] {tool_name} {result}")
                 return result
 
-            # Fall through to standard handlers (for search_messages, grep_messages, etc.)
+            # Fall through to standard handlers (only those safe with empty observer/observed)
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
+                if tool_name not in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS:
+                    return f"Tool '{tool_name}' is not available in workspace context"
                 result = await handler(peer_ctx, tool_input)
                 logger.info(f"[workspace tool result] {tool_name} {result}")
                 return result

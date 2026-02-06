@@ -260,7 +260,7 @@ async for chunk in stream:
 const response = await honcho.chat("What are common themes across all users?");
 
 // With reasoning level
-const response = await honcho.chat("Summarize all peer activity.", {
+const detailed = await honcho.chat("Summarize all peer activity.", {
   reasoningLevel: "high"
 });
 
