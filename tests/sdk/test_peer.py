@@ -159,12 +159,20 @@ async def test_peer_card_with_empty_target(client_fixture: tuple[Honcho, str]):
 
     if client_type == "async":
         peer = await honcho_client.aio.peer(id="test-card-validation-peer")
+        session = await honcho_client.aio.session(id="test-card-validation-session")
+
+        # Create the peer on the server by adding a message
+        await session.aio.add_messages([peer.message("hello")])
 
         # Empty target is treated as no target (same as None)
         result = await peer.aio.get_card(target="")
         assert result is None or isinstance(result, list)
     else:
         peer = honcho_client.peer(id="test-card-validation-peer")
+        session = honcho_client.session(id="test-card-validation-session")
+
+        # Create the peer on the server by adding a message
+        session.add_messages([peer.message("hello")])
 
         # Empty target is treated as no target (same as None)
         result = peer.get_card(target="")
