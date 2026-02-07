@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
+from src.embedding_client import embedding_client
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, emit
 from src.telemetry.logging import (
@@ -168,6 +169,9 @@ class DialecticAgent:
         prefetch_limit = 10 if self.reasoning_level == "minimal" else 25
 
         try:
+            # Pre-compute embedding once for both searches
+            query_embedding = await embedding_client.embed(query)
+
             # Search explicit observations separately
             explicit_repr = await search_memory(
                 db=self.db,
@@ -177,6 +181,7 @@ class DialecticAgent:
                 query=query,
                 limit=prefetch_limit,
                 levels=["explicit"],
+                embedding=query_embedding,
             )
 
             # Search derived observations separately
@@ -188,6 +193,7 @@ class DialecticAgent:
                 query=query,
                 limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
+                embedding=query_embedding,
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():

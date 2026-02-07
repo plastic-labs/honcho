@@ -28,7 +28,9 @@ from src.utils.agent_tools import (
     _handle_search_memory,  # pyright: ignore[reportPrivateUsage]
     _handle_search_messages,  # pyright: ignore[reportPrivateUsage]
     _handle_update_peer_card,  # pyright: ignore[reportPrivateUsage]
+    create_observations,
     create_tool_executor,
+    extract_preferences,
 )
 
 # =============================================================================
@@ -242,6 +244,67 @@ class TestCreateObservations:
         assert "ERROR" in result
         assert "empty" in result.lower()
 
+    async def test_batch_embedding_fallback_embeds_per_observation(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """If batch embedding fails, create_observations should fall back per item."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+
+        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("embedding provider timeout")
+
+        async def embed_per_observation(content: str) -> list[float]:
+            if content == "Fails embed":
+                raise RuntimeError("single-item embed failure")
+            return [0.1, 0.2, 0.3]
+
+        created_documents: list[Any] = []
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> int:
+            _ = (workspace_name, observer, observed, deduplicate)
+            created_documents.extend(documents)
+            return len(documents)
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fail_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.embed",
+            embed_per_observation,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        await create_observations(
+            db_session,
+            observations=[
+                {"content": "Embeds fine", "level": "explicit"},
+                {"content": "Fails embed", "level": "explicit"},
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert len(created_documents) == 1
+        assert created_documents[0].content == "Embeds fine"
+
 
 @pytest.mark.asyncio
 class TestDeleteObservations:
@@ -365,6 +428,77 @@ class TestSearchMemory:
         result = await _handle_search_memory(ctx, {"query": "anything"})
 
         assert "No observations found" in result
+
+    async def test_reuses_single_embedding_for_dialectic_fallback(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Uses one embedding for query_documents and search_messages fallback."""
+        ctx = make_tool_context()
+        ctx.agent_type = "dialectic"
+
+        embed_calls: list[str] = []
+        query_embeddings: list[list[float] | None] = []
+        fallback_embeddings: list[list[float] | None] = []
+
+        async def fake_embed(query: str) -> list[float]:
+            embed_calls.append(query)
+            return [0.1, 0.2, 0.3]
+
+        async def fake_query_documents(
+            db: AsyncSession,
+            workspace_name: str,
+            query: str,
+            *,
+            observer: str,
+            observed: str,
+            top_k: int = 5,
+            embedding: list[float] | None = None,
+            **_kwargs: Any,
+        ) -> list[models.Document]:
+            _ = (db, workspace_name, query, observer, observed, top_k)
+            query_embeddings.append(embedding)
+            return []
+
+        async def fake_search_messages(
+            db: AsyncSession,
+            workspace_name: str,
+            session_name: str | None,
+            query: str,
+            limit: int = 10,
+            context_window: int = 2,
+            embedding: list[float] | None = None,
+        ) -> list[tuple[list[models.Message], list[models.Message]]]:
+            _ = (db, workspace_name, session_name, query, limit, context_window)
+            fallback_embeddings.append(embedding)
+            msg = models.Message(
+                workspace_name=ctx.workspace_name,
+                session_name=ctx.session_name,
+                peer_name=ctx.observed,
+                content="Relevant fallback message",
+                seq_in_session=1,
+                token_count=5,
+                created_at=datetime.now(timezone.utc),
+            )
+            return [([msg], [msg])]
+
+        monkeypatch.setattr("src.utils.agent_tools.embedding_client.embed", fake_embed)
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.query_documents", fake_query_documents
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.search_messages",
+            fake_search_messages,
+        )
+
+        result = await _handle_search_memory(ctx, {"query": "coffee preferences"})
+
+        assert "No observations yet. Message search results:" in result
+        assert embed_calls == ["coffee preferences"]
+        assert len(query_embeddings) == 1
+        assert len(fallback_embeddings) == 1
+        assert query_embeddings[0] == fallback_embeddings[0]
 
 
 @pytest.mark.asyncio
@@ -683,6 +817,72 @@ class TestExtractPreferences:
 
         # Should return some result about preferences
         assert isinstance(result, str)
+
+    async def test_falls_back_to_per_query_embedding_when_batch_fails(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Batch embedding failure should not abort preference extraction."""
+        workspace, _, observed_peer, session, _, _ = tool_test_data
+
+        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("embedding provider timeout")
+
+        async def unexpected_embed_call(_query: str) -> list[float]:
+            raise AssertionError(
+                "extract_preferences should not call embedding_client.embed "
+                + "when batch embedding fails"
+            )
+
+        embedding_args: list[list[float] | None] = []
+
+        async def fake_search_messages(
+            _db: AsyncSession,
+            workspace_name: str,
+            session_name: str | None,
+            query: str,
+            limit: int,
+            context_window: int,
+            embedding: list[float] | None,
+        ) -> list[tuple[list[models.Message], list[models.Message]]]:
+            _ = (limit, context_window)
+            embedding_args.append(embedding)
+            msg = models.Message(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=observed_peer.name,
+                content=f"Relevant from {query}",
+                seq_in_session=1,
+                token_count=5,
+                created_at=datetime.now(timezone.utc),
+            )
+            return [([msg], [])]
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fail_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.embed",
+            unexpected_embed_call,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.search_messages", fake_search_messages
+        )
+
+        result = await extract_preferences(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=observed_peer.name,
+        )
+
+        # We still get partial results despite one per-query failure.
+        assert result["messages"]
+        assert len(embedding_args) == 5
+        assert all(embedding is None for embedding in embedding_args)
 
 
 @pytest.mark.asyncio

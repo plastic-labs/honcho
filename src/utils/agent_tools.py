@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
+from src.exceptions import ValidationException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import (
@@ -598,8 +599,9 @@ async def create_observations(
         observed=observed,
     )
 
-    # Generate embeddings and create document objects for all observations
-    documents: list[schemas.DocumentCreate] = []
+    # Validate observations and collect content for batch embedding
+    valid_observations: list[tuple[dict[str, Any], DocumentLevel]] = []
+    contents: list[str] = []
     for obs in observations:
         content = obs.get("content", "")
         level_str = obs.get("level", "explicit")
@@ -619,8 +621,42 @@ async def create_observations(
         else:
             level = "explicit"
 
-        # Generate embedding for the observation
-        embedding = await embedding_client.embed(content)
+        valid_observations.append((obs, level))
+        contents.append(content)
+
+    if not contents:
+        return
+
+    # Batch embed all observation contents.
+    # If batching fails, fall back to per-observation embedding.
+    embeddings_by_index: dict[int, list[float]] | None = None
+    try:
+        embeddings = await embedding_client.simple_batch_embed(contents)
+        embeddings_by_index = dict(
+            zip(range(len(valid_observations)), embeddings, strict=True)
+        )
+    except Exception as e:
+        logger.warning(
+            "Batch embedding failed for create_observations; "
+            + f"falling back to per-observation embedding: {e}"
+        )
+
+    # Build document objects with pre-computed embeddings
+    documents: list[schemas.DocumentCreate] = []
+    for i, (obs, level) in enumerate(valid_observations):
+        content = obs.get("content", "")
+
+        embedding: list[float]
+        if embeddings_by_index is not None:
+            embedding = embeddings_by_index[i]
+        else:
+            try:
+                embedding = await embedding_client.embed(content)
+            except Exception as e:
+                logger.warning(
+                    f"Error embedding observation content for level '{level}': {e}"
+                )
+                continue
 
         # Build metadata with level-specific fields
         metadata = schemas.DocumentMetadata(
@@ -731,6 +767,7 @@ async def search_memory(
     query: str,
     limit: int,
     levels: list[str] | None = None,
+    embedding: list[float] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -744,6 +781,7 @@ async def search_memory(
         limit: Maximum number of results
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
+        embedding: Optional pre-computed embedding to avoid redundant API calls
 
     Returns:
         Representation object containing relevant observations
@@ -761,6 +799,7 @@ async def search_memory(
         query=query,
         top_k=limit,
         filters=filters,
+        embedding=embedding,
     )
 
     return Representation.from_documents(documents)
@@ -862,6 +901,20 @@ async def extract_preferences(
         "things user wants or does not want",
     ]
 
+    # Batch embed all queries in a single API call.
+    # If batching fails, each search call will generate its own embedding.
+    query_embeddings_by_query: dict[str, list[float]] | None = None
+    try:
+        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
+        query_embeddings_by_query = dict(
+            zip(semantic_queries, query_embeddings, strict=True)
+        )
+    except Exception as e:
+        logger.warning(
+            "Batch embedding failed for extract_preferences; "
+            + f"falling back to per-query embedding in search_messages: {e}"
+        )
+
     for query in semantic_queries:
         try:
             snippets = await crud.search_messages(
@@ -871,6 +924,11 @@ async def extract_preferences(
                 query=query,
                 limit=10,
                 context_window=0,
+                embedding=(
+                    query_embeddings_by_query.get(query)
+                    if query_embeddings_by_query is not None
+                    else None
+                ),
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -1118,13 +1176,22 @@ async def _handle_get_recent_history(
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
     top_k = min(tool_input.get("top_k", 20), 40)
+    query = tool_input["query"]
+    try:
+        query_embedding = await embedding_client.embed(query)
+    except ValueError as e:
+        raise ValidationException(
+            f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+        ) from e
+
     documents = await crud.query_documents(
         db=ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        query=tool_input["query"],
+        query=query,
         top_k=top_k,
+        embedding=query_embedding,
     )
     mem = Representation.from_documents(documents)
     total_count = mem.len()
@@ -1134,7 +1201,6 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # this stage, and be efficient with tool calls, and make sure the model
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
-        query = tool_input["query"]
         if ctx.agent_type == "dialectic":
             limit = min(tool_input.get("top_k", 20), 20)
             snippets = await crud.search_messages(
@@ -1144,6 +1210,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
                 query=query,
                 limit=limit,
                 context_window=0,
+                embedding=query_embedding,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1158,7 +1225,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
             )
         return f"No observations found for query '{query}'"
     mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
-    return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
+    return f"Found {total_count} observations for query '{query}':\n\n{mem_str}"
 
 
 async def _handle_get_observation_context(
