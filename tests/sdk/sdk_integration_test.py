@@ -113,6 +113,10 @@ def test_peer_card_operations(honcho_test_client: Honcho):
     peer = honcho_test_client.peer(id="card-test-peer")
     target = honcho_test_client.peer(id="card-test-target")
 
+    # Create the peers on the server by adding a message
+    session = honcho_test_client.session(id="card-test-session")
+    session.add_messages([peer.message("hello"), target.message("hi")])
+
     # Initially card should be None
     card = peer.get_card()
     assert card is None

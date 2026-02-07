@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.crud.peer_card import construct_peer_card_label, get_peer_card, set_peer_card
+from src.exceptions import ResourceNotFoundException
 
 
 @pytest.mark.asyncio
@@ -50,33 +51,33 @@ async def test_peer_card_get_set_roundtrip(
 
 
 @pytest.mark.asyncio
-async def test_get_peer_card_missing_peer_returns_none(
+async def test_get_peer_card_missing_peer_raises(
     db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
 ):
-    """Getting a peer card for a non-existent peer should return None while creating the peer."""
+    """Getting a peer card for a non-existent peer should raise ResourceNotFoundException."""
     workspace, _existing_peer = sample_data
-    result = await get_peer_card(
-        db_session,
-        workspace.name,
-        observer="missing-peer",
-        observed="missing-peer",
-    )
-    assert result is None
+    with pytest.raises(ResourceNotFoundException):
+        await get_peer_card(
+            db_session,
+            workspace.name,
+            observer="missing-peer",
+            observed="missing-peer",
+        )
 
 
 @pytest.mark.asyncio
-async def test_get_peer_card_missing_workspace_returns_none(
+async def test_get_peer_card_missing_workspace_raises(
     db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
 ):
-    """Getting a peer card for a non-existent workspace should return None."""
+    """Getting a peer card for a non-existent workspace should raise ResourceNotFoundException."""
     _workspace, peer = sample_data
-    result = await get_peer_card(
-        db_session,
-        "missing-workspace",
-        observer=peer.name,
-        observed=peer.name,
-    )
-    assert result is None
+    with pytest.raises(ResourceNotFoundException):
+        await get_peer_card(
+            db_session,
+            "missing-workspace",
+            observer=peer.name,
+            observed=peer.name,
+        )
 
 
 @pytest.mark.asyncio

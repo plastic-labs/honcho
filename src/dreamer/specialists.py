@@ -20,7 +20,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud
+from src import crud, schemas
 from src.config import settings
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -141,6 +141,11 @@ class BaseSpecialist(ABC):
         run_id = parent_run_id or str(uuid.uuid4())[:8]
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
+
+        # Validate that the peers exist before proceeding
+        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        if observer != observed:
+            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
 
         # Determine if peer card tools should be included
         peer_card_enabled = configuration is None or configuration.peer_card.create
