@@ -65,7 +65,7 @@ repos:
       # Run main application tests
       - id: pytest-main
         name: pytest (main app)
-        entry: uv run pytest tests/ --ignore=tests/alembic/
+        entry: uv run pytest -x tests/ --ignore=tests/alembic/
         language: system
         files: ^(src/|tests/).*\.py$
         stages: [pre-push]

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -588,7 +589,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def card(
+    async def get_card(
         self,
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
@@ -599,6 +600,51 @@ class PeerAio(AsyncMetadataConfigMixin):
         query = {"target": target_id} if target_id else None
         data = await self._peer._honcho._async_http_client.get(
             routes.peer_card(self._peer.workspace_id, self._peer.id),
+            query=query,
+        )
+        response = PeerCardResponse.model_validate(data)
+        return response.peer_card
+
+    async def card(
+        self,
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """Deprecated: use get_card() instead."""
+
+        warnings.warn(
+            "card() is deprecated, use get_card() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.get_card(target=target)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def set_card(
+        self,
+        peer_card: list[str],
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """
+        Set the peer card for this peer.
+
+        Makes an API call to set the peer card. If a target is provided, sets this
+        peer's local card of the target peer.
+
+        Args:
+            peer_card: A list of strings to set as the peer card.
+            target: Optional target peer for local card. If provided, sets this
+                    peer's card of the target peer. Can be a Peer object or peer ID string.
+
+        Returns:
+            A list of strings representing the updated peer card, or None if none is available
+        """
+        await self._peer._honcho._ensure_workspace_async()
+        target_id = resolve_id(target)
+
+        query = {"target": target_id} if target_id else None
+        data = await self._peer._honcho._async_http_client.put(
+            routes.peer_card(self._peer.workspace_id, self._peer.id),
+            body={"peer_card": peer_card},
             query=query,
         )
         response = PeerCardResponse.model_validate(data)

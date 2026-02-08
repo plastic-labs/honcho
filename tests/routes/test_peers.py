@@ -909,3 +909,52 @@ async def test_get_peer_card_with_data(
     assert response.status_code == 200
     data = response.json()
     assert data["peer_card"] == target_card_content
+
+
+def test_set_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    """Test setting peer cards via the PUT endpoint."""
+    test_workspace, observer_peer = sample_data
+
+    # Create a target peer
+    target_peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+    assert response.status_code in [200, 201]
+
+    # Set the observer's own card
+    self_card = ["I am a test peer", "I like writing tests"]
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
+        json={"peer_card": self_card},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["peer_card"] == self_card
+
+    # Verify with GET
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card"
+    )
+    assert response.status_code == 200
+    assert response.json()["peer_card"] == self_card
+
+    # Set a card for the target peer
+    target_card = ["Target is helpful", "Target knows Python"]
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
+        params={"target": target_peer_name},
+        json={"peer_card": target_card},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["peer_card"] == target_card
+
+    # Verify with GET
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
+        params={"target": target_peer_name},
+    )
+    assert response.status_code == 200
+    assert response.json()["peer_card"] == target_card

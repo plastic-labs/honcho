@@ -377,6 +377,11 @@ export const CardTargetSchema = z
   )
 
 /**
+ * Schema for peer card content (array of strings).
+ */
+export const PeerCardContentSchema = z.array(z.string())
+
+/**
  * Schema for peer addition to session.
  */
 export const PeerAdditionSchema = z.union([

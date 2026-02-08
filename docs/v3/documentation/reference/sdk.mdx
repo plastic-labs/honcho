@@ -280,6 +280,12 @@ metadata = alice.get_metadata()
 metadata["location"] = "Paris"
 alice.set_metadata(metadata)
 
+# Peer card management
+card = alice.get_card()                          # Get peer card
+card = alice.get_card(target="bob")              # Get card about another peer
+updated = alice.set_card(["Likes Python", "Lives in NYC"])  # Set peer card
+updated = alice.set_card(["Works at Acme"], target="bob")   # Set card about another peer
+
 # Get peer context (representation + peer card in one call)
 context = alice.context()
 context = alice.context(target="bob")  # What alice knows about bob
@@ -333,6 +339,12 @@ await alice.setMetadata({
   ...metadata,
   location: "Paris"
 });
+
+// Peer card management
+const card = await alice.getCard();                              // Get peer card
+const targetCard = await alice.getCard("bob");                   // Get card about another peer
+const updated = await alice.setCard(["Likes TypeScript", "Lives in NYC"]);  // Set peer card
+const updatedTarget = await alice.setCard(["Works at Acme"], "bob");        // Set card about another peer
 
 // Get peer context (representation + peer card in one call)
 const context = await alice.context();
@@ -395,6 +407,46 @@ const searchedContext = await alice.context({
 });
 ```
 </CodeGroup>
+
+### Peer Card
+
+The peer card contains stable biographical facts about a peer (name, preferences, background). Use `get_card()` / `getCard()` to retrieve it and `set_card()` / `setCard()` to overwrite it:
+
+<CodeGroup>
+```python Python
+# Get peer's own card
+card = alice.get_card()
+print(card)  # ["Likes Python", "Lives in NYC", ...]
+
+# Get card about another peer (local representation)
+bob_card = alice.get_card(target="bob")
+
+# Set peer's own card
+updated = alice.set_card(["Likes Python", "Lives in NYC"])
+
+# Set card about another peer
+updated = alice.set_card(["Works at Acme", "Enjoys hiking"], target="bob")
+```
+
+```typescript TypeScript
+// Get peer's own card
+const card = await alice.getCard();
+console.log(card);  // ["Likes TypeScript", "Lives in NYC", ...]
+
+// Get card about another peer (local representation)
+const bobCard = await alice.getCard("bob");
+
+// Set peer's own card
+const updated = await alice.setCard(["Likes TypeScript", "Lives in NYC"]);
+
+// Set card about another peer
+const updatedBob = await alice.setCard(["Works at Acme", "Enjoys hiking"], "bob");
+```
+</CodeGroup>
+
+<Info>
+Peer cards are automatically maintained by the dreaming agent during message processing. Use `set_card()` / `setCard()` when you need to manually override or seed the card — the peer will be created automatically if it doesn't already exist.
+</Info>
 
 ### Conclusions
 
