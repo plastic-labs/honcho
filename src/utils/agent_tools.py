@@ -1723,13 +1723,11 @@ async def create_tool_executor(
         Returns:
             String result describing what was done
         """
-        logger.info(f"[tool call] {tool_name} {tool_input}")
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
                 result = await handler(ctx, tool_input)
-                logger.info(f"[tool result] {tool_name} {result}")
                 return result
             return f"Unknown tool: {tool_name}"
 
