@@ -682,6 +682,25 @@ class DialecticOptions(BaseModel):
     )
 
 
+class WorkspaceChatOptions(BaseModel):
+    query: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=10000,
+            description="Natural language query about the workspace",
+        ),
+    ]
+    session_id: str | None = Field(
+        None, description="Optional session ID to scope message searches"
+    )
+    stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+
+
 class DialecticResponse(BaseModel):
     content: str | None
 

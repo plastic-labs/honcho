@@ -715,7 +715,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.dialectic.base.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
@@ -763,7 +763,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.dialectic.base.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
@@ -827,7 +827,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.dialectic.base.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
