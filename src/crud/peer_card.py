@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.cache.client import cache
-from src.crud.peer import get_or_create_peers, peer_cache_key
+from src.crud.peer import get_or_create_peers, get_peer, peer_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +32,12 @@ async def get_peer_card(
         observer: Peer name of the observer
 
     Returns:
-        The peer's card text if present, otherwise None (also None if peer not found).
+        The peer's card text if present, otherwise None.
+
+    Raises:
+        ResourceNotFoundException: If the peer does not exist.
     """
-    peer = await db.scalar(
-        select(models.Peer)
-        .where(models.Peer.workspace_name == workspace_name)
-        .where(models.Peer.name == observer)
-    )
-    if peer is None:
-        return None
+    peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
     return cast(
         list[str] | None,
         peer.internal_metadata.get(
