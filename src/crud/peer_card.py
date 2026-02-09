@@ -6,7 +6,7 @@ from typing import cast
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models, schemas
+from src import exceptions, models, schemas
 from src.cache.client import cache
 from src.crud.peer import get_or_create_peers, get_peer, peer_cache_key
 
@@ -84,7 +84,11 @@ async def set_peer_card(
             )
         )
     )
-    await db.execute(stmt)
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise exceptions.ResourceNotFoundException(
+            f"Peer {observer} not found in workspace {workspace_name}"
+        )
     await db.commit()
 
     # Invalidate cache - read-through pattern
