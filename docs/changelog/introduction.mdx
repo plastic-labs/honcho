@@ -461,10 +461,32 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.0.0 (Current)">
-            ### Changed
+        <Update label="v2.0.1 (Current)">
+            ### Added
 
-            - Major version release
+        - `set_peer_card` method
+
+        ### Changed
+
+        - `card` is now `get_card` with `card` kept for backwards compatibility and marked as deprecated
+        </Update>
+        <Update label="v2.0.0">
+        ### Added
+
+        - `ConclusionScope` object for CRUD operations on conclusions (renamed from observations)
+        - Representation configuration support
+
+        ### Changed
+
+        - Observations renamed to Conclusions across the SDK
+        - Major SDK refactoring and cleanup
+        - Simplified method signatures throughout
+        - Representation endpoints now return `string` instead of old Representation object
+
+        ### Removed
+
+        - Standalone types module (now uses honcho-core types)
+        - Representation object
         </Update>
         <Update label="v1.6.0">
             ### Added
@@ -553,10 +575,36 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.0.0 (Current)">
-            ### Changed
+        <Update label="v2.0.1 (Current)">
+        ### Added
 
-            - Major version release
+        - `setPeerCard` method
+
+        ### Changed
+
+        - `card` is now `getCard` with `card` kept for backwards compatibility and marked as deprecated
+        </Update>
+        <Update label="v2.0.0">
+        ### Added
+
+        - `ConclusionScope` object for CRUD operations on conclusions (renamed from observations)
+        - Representation configuration support
+
+        ### Changed
+
+        - Observations renamed to Conclusions across the SDK
+        - Major SDK refactoring and cleanup
+        - Simplified method signatures throughout
+        - Representation endpoints now return `string` instead of old Representation object
+
+        ### Fixed
+
+        - Pagination `this` binding issue
+
+        ### Removed
+
+        - Representation object
+        - Stainless "core" SDK -- this SDK is now standalone
         </Update>
         <Update label="v1.6.0">
             ### Added
