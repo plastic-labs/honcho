@@ -338,11 +338,7 @@ async def set_peer_card(
         observed=observed,
     )
 
-    # Return the updated peer card
-    peer_card = await crud.get_peer_card(
-        db, workspace_id, observer=peer_id, observed=observed
-    )
-    return schemas.PeerCardResponse(peer_card=peer_card)
+    return schemas.PeerCardResponse(peer_card=peer_card_data.peer_card)
 
 
 @router.get(
