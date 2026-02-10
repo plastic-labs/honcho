@@ -10,9 +10,10 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import settings
 from src.utils.agent_tools import (
+    ObservationsCreatedResult,
     ToolContext,
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
@@ -244,13 +245,74 @@ class TestCreateObservations:
         assert "ERROR" in result
         assert "empty" in result.lower()
 
-    async def test_batch_embedding_fallback_embeds_per_observation(
+    async def test_batch_embedding_failure_falls_back_to_individual_embeds(
         self,
         db_session: AsyncSession,
         tool_test_data: Any,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """If batch embedding fails, create_observations should fall back per item."""
+        """If batch embedding fails but individual embeds succeed, all observations are created."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+
+        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("embedding provider timeout")
+
+        async def succeed_single_embed(_content: str) -> list[float]:
+            return [0.1, 0.2, 0.3]
+
+        created_documents: list[Any] = []
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> int:
+            _ = (workspace_name, observer, observed, deduplicate)
+            created_documents.extend(documents)
+            return len(documents)
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fail_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.embed",
+            succeed_single_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        result = await create_observations(
+            db_session,
+            observations=[
+                schemas.ObservationInput(content="First obs", level="explicit"),
+                schemas.ObservationInput(content="Second obs", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert result.created_count == 2
+        assert len(result.failed) == 0
+        assert len(created_documents) == 2
+
+    async def test_batch_embedding_failure_individual_embed_partial_failure(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """If batch embedding fails and some individual embeds also fail, only successful ones are created."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
         async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
@@ -288,11 +350,11 @@ class TestCreateObservations:
             "src.utils.agent_tools.crud.create_documents", fake_create_documents
         )
 
-        await create_observations(
+        result = await create_observations(
             db_session,
             observations=[
-                {"content": "Embeds fine", "level": "explicit"},
-                {"content": "Fails embed", "level": "explicit"},
+                schemas.ObservationInput(content="Embeds fine", level="explicit"),
+                schemas.ObservationInput(content="Fails embed", level="explicit"),
             ],
             observer=peer1.name,
             observed=peer2.name,
@@ -302,6 +364,11 @@ class TestCreateObservations:
             message_created_at=str(datetime.now(timezone.utc)),
         )
 
+        assert isinstance(result, ObservationsCreatedResult)
+        assert result.created_count == 1
+        assert len(result.failed) == 1
+        assert result.failed[0].content_preview == "Fails embed"
+        assert "Embedding failed" in result.failed[0].error
         assert len(created_documents) == 1
         assert created_documents[0].content == "Embeds fine"
 

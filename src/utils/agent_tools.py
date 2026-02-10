@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +24,7 @@ from src.telemetry.events import (
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import DocumentLevel, get_current_iteration
+from src.utils.types import get_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,23 @@ async def get_observation_lock(
         if key not in _observation_locks:
             _observation_locks[key] = asyncio.Lock()
         return _observation_locks[key]
+
+
+@dataclass
+class ObservationFailure:
+    """Records a single observation that failed during creation."""
+
+    content_preview: str
+    error: str
+
+
+@dataclass
+class ObservationsCreatedResult:
+    """Result of a batch create_observations call."""
+
+    created_count: int
+    created_levels: list[str]
+    failed: list[ObservationFailure]
 
 
 def _truncate_tool_output(output: str, max_chars: int | None = None) -> str:
@@ -562,20 +580,20 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 
 async def create_observations(
     db: AsyncSession,
-    observations: list[dict[str, Any]],
+    observations: list[schemas.ObservationInput],
     observer: str,
     observed: str,
     session_name: str | None,
     workspace_name: str,
     message_ids: list[int],
     message_created_at: str,
-) -> None:
+) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
 
     Args:
         db: Database session
-        observations: List of observations, each with 'content', 'level', and level-specific fields
+        observations: List of validated observation inputs
         observer: The peer making the observation
         observed: The peer being observed
         session_name: Session identifier
@@ -583,13 +601,12 @@ async def create_observations(
         message_ids: List of message IDs these observations are based on
         message_created_at: Timestamp of the message that triggered these observations
 
-    Level-specific fields:
-        - deductive: 'premises' (list of strings)
-        - inductive: 'sources' (list of strings), 'pattern_type', 'confidence'
+    Returns:
+        ObservationsCreatedResult with created count and any per-observation failures
     """
     if not observations:
         logger.warning("create_observations called with empty list")
-        return
+        return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
     # Get or create collection
     await crud.get_or_create_collection(
@@ -599,33 +616,7 @@ async def create_observations(
         observed=observed,
     )
 
-    # Validate observations and collect content for batch embedding
-    valid_observations: list[tuple[dict[str, Any], DocumentLevel]] = []
-    contents: list[str] = []
-    for obs in observations:
-        content = obs.get("content", "")
-        level_str = obs.get("level", "explicit")
-
-        if not content:
-            logger.warning("Skipping observation with empty content")
-            continue
-
-        # Validate and cast level
-        level: DocumentLevel
-        if level_str == "inductive":
-            level = "inductive"
-        elif level_str == "deductive":
-            level = "deductive"
-        elif level_str == "contradiction":
-            level = "contradiction"
-        else:
-            level = "explicit"
-
-        valid_observations.append((obs, level))
-        contents.append(content)
-
-    if not contents:
-        return
+    contents = [obs.content for obs in observations]
 
     # Batch embed all observation contents.
     # If batching fails, fall back to per-observation embedding.
@@ -633,7 +624,7 @@ async def create_observations(
     try:
         embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
-            zip(range(len(valid_observations)), embeddings, strict=True)
+            zip(range(len(observations)), embeddings, strict=True)
         )
     except Exception as e:
         logger.warning(
@@ -643,18 +634,23 @@ async def create_observations(
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    for i, (obs, level) in enumerate(valid_observations):
-        content = obs.get("content", "")
-
+    failed: list[ObservationFailure] = []
+    for i, obs in enumerate(observations):
         embedding: list[float]
         if embeddings_by_index is not None:
             embedding = embeddings_by_index[i]
         else:
             try:
-                embedding = await embedding_client.embed(content)
+                embedding = await embedding_client.embed(obs.content)
             except Exception as e:
                 logger.warning(
-                    f"Error embedding observation content for level '{level}': {e}"
+                    f"Error embedding observation content for level '{obs.level}': {e}"
+                )
+                failed.append(
+                    ObservationFailure(
+                        content_preview=obs.content[:50],
+                        error=f"Embedding failed: {e}",
+                    )
                 )
                 continue
 
@@ -662,30 +658,27 @@ async def create_observations(
         metadata = schemas.DocumentMetadata(
             message_ids=message_ids,
             message_created_at=message_created_at,
-            source_ids=obs.get("source_ids")
-            if level in ("deductive", "inductive", "contradiction")
+            source_ids=obs.source_ids
+            if obs.level in ("deductive", "inductive", "contradiction")
             else None,
-            # Deductive-specific (human-readable premises)
-            premises=obs.get("premises") if level == "deductive" else None,
-            # Inductive/Contradiction-specific (human-readable sources)
-            sources=obs.get("sources")
-            if level in ("inductive", "contradiction")
+            premises=obs.premises if obs.level == "deductive" else None,
+            sources=obs.sources
+            if obs.level in ("inductive", "contradiction")
             else None,
-            pattern_type=obs.get("pattern_type") if level == "inductive" else None,
-            confidence=obs.get("confidence", "medium")
-            if level == "inductive"
+            pattern_type=obs.pattern_type if obs.level == "inductive" else None,
+            confidence=(obs.confidence or "medium")
+            if obs.level == "inductive"
             else None,
         )
 
-        # Create document with tree linkage at top level
         doc = schemas.DocumentCreate(
-            content=content,
+            content=obs.content,
             session_name=session_name,
-            level=level,
+            level=obs.level,
             metadata=metadata,
             embedding=embedding,
-            source_ids=obs.get("source_ids")
-            if level in ("deductive", "inductive", "contradiction")
+            source_ids=obs.source_ids
+            if obs.level in ("deductive", "inductive", "contradiction")
             else None,
         )
         documents.append(doc)
@@ -703,6 +696,12 @@ async def create_observations(
         logger.info(
             f"Created {len(documents)} observations in {workspace_name}/{observer}/{observed}"
         )
+
+    return ObservationsCreatedResult(
+        created_count=len(documents),
+        created_levels=[doc.level for doc in documents],
+        failed=failed,
+    )
 
 
 async def get_recent_history(
@@ -975,106 +974,77 @@ async def _handle_create_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle create_observations tool."""
-    observations = tool_input.get("observations", [])
+    raw_observations = tool_input.get("observations", [])
 
-    if not observations:
+    if not raw_observations:
         return "ERROR: observations list is empty"
 
-    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
-    valid_pattern_types = [
-        "preference",
-        "behavior",
-        "personality",
-        "tendency",
-        "correlation",
-    ]
-    valid_confidence = ["high", "medium", "low"]
+    # Set context-specific default level before Pydantic validation
+    default_level = "explicit" if ctx.current_messages else "deductive"
+    for obs in raw_observations:
+        obs.setdefault("level", default_level)
 
-    # Determine message context based on whether we have current_messages
+    # Validate observations individually so valid ones are still processed
+    observations: list[schemas.ObservationInput] = []
+    validation_failures: list[ObservationFailure] = []
+    for obs in raw_observations:
+        try:
+            validated = schemas.ObservationInput.model_validate(obs)
+        except ValidationError as e:
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=str(obs.get("content", ""))[:50],
+                    error=f"Validation failed: {e}",
+                )
+            )
+            continue
+        # Deriver can only create explicit observations
+        if ctx.current_messages and validated.level != "explicit":
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=validated.content[:50],
+                    error=f"Deriver can only create 'explicit' observations, got '{validated.level}'",
+                )
+            )
+            continue
+        observations.append(validated)
+
+    if not observations:
+        failure_details = "; ".join(
+            f"'{f.content_preview}': {f.error}" for f in validation_failures
+        )
+        return f"ERROR: All observations failed validation: {failure_details}"
+
+    # Determine message context
     if ctx.current_messages:
-        # Deriver agent: uses simplified schema, default all to explicit
-        for i, obs in enumerate(observations):
-            if "content" not in obs:
-                return f"ERROR: observation {i} missing 'content' field"
-            # Default to explicit - the simplified deriver schema doesn't include level
-            if "level" not in obs:
-                obs["level"] = "explicit"
-            # Enforce explicit-only for deriver
-            if obs["level"] != "explicit":
-                return f"ERROR: Deriver can only create 'explicit' observations, got '{obs['level']}' at index {i}"
-
         message_ids = [msg.id for msg in ctx.current_messages]
         message_created_at = str(ctx.current_messages[-1].created_at)
-        obs_session_name = ctx.session_name
     else:
-        # Dreamer/Dialectic agent: allow deductive and inductive, no source messages
-        for i, obs in enumerate(observations):
-            if "content" not in obs:
-                return f"ERROR: observation {i} missing 'content' field"
-            # Default to deductive for backwards compatibility
-            if "level" not in obs:
-                obs["level"] = "deductive"
-            if obs["level"] not in valid_levels:
-                return f"ERROR: observation {i} has invalid level '{obs['level']}'"
-
-            # Validate deductive-specific fields (tree linkage required)
-            if obs["level"] == "deductive":
-                if not obs.get("source_ids"):
-                    return f"ERROR: deductive observation {i} requires 'source_ids' field with document IDs of premises"
-                # Validate source_ids are strings
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-
-            # Validate inductive-specific fields (tree linkage required)
-            if obs["level"] == "inductive":
-                if not obs.get("source_ids"):
-                    return f"ERROR: inductive observation {i} requires 'source_ids' field with document IDs of sources"
-                # Validate source_ids are strings
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-                if (
-                    obs.get("pattern_type")
-                    and obs["pattern_type"] not in valid_pattern_types
-                ):
-                    return f"ERROR: observation {i} has invalid pattern_type '{obs['pattern_type']}'"
-                if obs.get("confidence") and obs["confidence"] not in valid_confidence:
-                    return f"ERROR: observation {i} has invalid confidence '{obs['confidence']}'"
-
-            # Validate contradiction-specific fields (need source_ids for the two contradicting obs)
-            if obs["level"] == "contradiction":
-                if not obs.get("source_ids"):
-                    return f"ERROR: contradiction observation {i} requires 'source_ids' field with IDs of contradicting observations"
-                if len(obs.get("source_ids", [])) < 2:
-                    return f"ERROR: contradiction observation {i} requires at least 2 source_ids (the contradicting observations)"
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-
         message_ids = []
         message_created_at = utc_now_iso()
-        obs_session_name = ctx.session_name
 
     # Use lock to serialize database writes (prevents concurrent commit issues)
     async with ctx.db_lock:
-        await create_observations(
+        result = await create_observations(
             ctx.db,
             observations=observations,
             observer=ctx.observer,
             observed=ctx.observed,
-            session_name=obs_session_name,
+            session_name=ctx.session_name,
             workspace_name=ctx.workspace_name,
             message_ids=message_ids,
             message_created_at=message_created_at,
         )
 
-    explicit_count = sum(1 for o in observations if o.get("level") == "explicit")
-    deductive_count = sum(1 for o in observations if o.get("level") == "deductive")
-    inductive_count = sum(1 for o in observations if o.get("level") == "inductive")
-    contradiction_count = sum(
-        1 for o in observations if o.get("level") == "contradiction"
-    )
+    # Merge validation and embedding failures
+    all_failures = validation_failures + result.failed
+
+    # Count levels from actually-created observations
+    levels = result.created_levels
+    explicit_count = levels.count("explicit")
+    deductive_count = levels.count("deductive")
+    inductive_count = levels.count("inductive")
+    contradiction_count = levels.count("contradiction")
 
     # Emit telemetry event if context is available
     if ctx.run_id and ctx.agent_type and ctx.parent_category:
@@ -1087,12 +1057,24 @@ async def _handle_create_observations(
                 workspace_name=ctx.workspace_name,
                 observer=ctx.observer,
                 observed=ctx.observed,
-                conclusion_count=len(observations),
-                levels=[o.get("level", "explicit") for o in observations],
+                conclusion_count=result.created_count,
+                levels=levels,
             )
         )
 
-    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive, {contradiction_count} contradiction)"
+    response = (
+        f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer} "
+        f"({explicit_count} explicit, {deductive_count} deductive, "
+        f"{inductive_count} inductive, {contradiction_count} contradiction)"
+    )
+
+    if all_failures:
+        failure_details = "; ".join(
+            f"'{f.content_preview}': {f.error}" for f in all_failures
+        )
+        response += f"\nFailed {len(all_failures)}: {failure_details}"
+
+    return response
 
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
