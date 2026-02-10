@@ -7,7 +7,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 
@@ -111,7 +116,7 @@ async def get_or_create_collection(
             await db.commit()
 
             key = collection_cache_key(workspace_name, observer, observed)
-            await cache.set(
+            await safe_cache_set(
                 key,
                 honcho_collection,
                 expire=settings.CACHE.DEFAULT_TTL_SECONDS,
@@ -150,4 +155,5 @@ async def update_collection_internal_metadata(
     )
     await db.execute(stmt)
     await db.commit()
-    await cache.delete(collection_cache_key(workspace_name, observer, observed))
+
+    await safe_cache_delete(collection_cache_key(workspace_name, observer, observed))

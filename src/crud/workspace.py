@@ -8,7 +8,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
@@ -108,7 +113,7 @@ async def get_or_create_workspace(
         logger.debug("Workspace created successfully: %s", workspace.name)
 
         cache_key = workspace_cache_key(workspace.name)
-        await cache.set(
+        await safe_cache_set(
             cache_key, honcho_workspace, expire=settings.CACHE.DEFAULT_TTL_SECONDS
         )
         return GetOrCreateResult(honcho_workspace, created=True)
@@ -221,7 +226,7 @@ async def update_workspace(
 
     # Only invalidate if we actually updated
     cache_key = workspace_cache_key(workspace_name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace

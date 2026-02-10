@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -39,13 +44,6 @@ class SessionDeletionResult:
 SESSION_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:session:{session_name}"
 SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
 
-SESSION_PEER_CONFIG_CACHE_KEY_TEMPLATE = (
-    "workspace:{workspace_name}:session:{session_name}:peer_configs"
-)
-SESSION_PEER_CONFIG_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
-
-PEER_CONFIG_TTL_SECONDS = 60
-
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
     """Generate cache key for session."""
@@ -53,18 +51,6 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
         get_cache_namespace()
         + ":"
         + SESSION_CACHE_KEY_TEMPLATE.format(
-            workspace_name=workspace_name,
-            session_name=session_name,
-        )
-    )
-
-
-def session_peer_config_cache_key(workspace_name: str, session_name: str) -> str:
-    """Generate cache key for session peer configs."""
-    return (
-        get_cache_namespace()
-        + ":"
-        + SESSION_PEER_CONFIG_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
             session_name=session_name,
         )
@@ -247,14 +233,10 @@ async def get_or_create_session(
     await db.commit()
     await db.refresh(honcho_session)
 
-    # Invalidate peer config cache
-    if session.peer_names:
-        await cache.delete(session_peer_config_cache_key(workspace_name, session.name))
-
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
         cache_key = session_cache_key(workspace_name, session.name)
-        await cache.set(
+        await safe_cache_set(
             cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
         )
         logger.debug(
@@ -364,7 +346,7 @@ async def update_session(
 
     # Only invalidate if we actually updated
     cache_key = session_cache_key(workspace_name, session_name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Session %s updated successfully", session_name)
     return honcho_session
@@ -584,9 +566,8 @@ async def delete_session(
         await db.delete(honcho_session)
         await db.commit()
 
-        # Invalidate caches
-        await cache.delete(session_cache_key(workspace_name, session_name))
-        await cache.delete(session_peer_config_cache_key(workspace_name, session_name))
+        # Invalidate session cache
+        await safe_cache_delete(session_cache_key(workspace_name, session_name))
 
         logger.debug("Session %s and all associated data deleted", session_name)
     except Exception as e:
@@ -754,10 +735,6 @@ async def remove_peers_from_session(
     await db.execute(update_stmt)
 
     await db.commit()
-
-    # Invalidate peer config cache
-    await cache.delete(session_peer_config_cache_key(workspace_name, session_name))
-
     return True
 
 
@@ -816,43 +793,6 @@ async def get_session_peer_configuration(
     )
 
     return stmt
-
-
-@cache(
-    key=SESSION_PEER_CONFIG_CACHE_KEY_TEMPLATE,
-    ttl=f"{PEER_CONFIG_TTL_SECONDS}s",
-    prefix=get_cache_namespace(),
-    condition=NOT_NONE,
-)
-@cache.locked(
-    key=SESSION_PEER_CONFIG_CACHE_KEY_TEMPLATE,
-    ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
-    prefix=SESSION_PEER_CONFIG_LOCK_PREFIX,
-)
-async def fetch_session_peer_configs(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str,
-) -> dict[str, list[Any]] | None:
-    """Cached: fetch peer configs for a session, return as plain dict.
-
-    Returns:
-        Dict mapping peer_name -> [peer_configuration, session_peer_configuration, is_active],
-        or None if no peers found (so NOT_NONE prevents caching empty results).
-    """
-    stmt = await get_session_peer_configuration(workspace_name, session_name)
-    result = await db.execute(stmt)
-    rows = result.all()
-    if not rows:
-        return None
-    return {
-        row.peer_name: [
-            row.peer_configuration,
-            row.session_peer_configuration,
-            row.is_active,
-        ]
-        for row in rows
-    }
 
 
 async def set_peers_for_session(
@@ -924,10 +864,6 @@ async def set_peers_for_session(
     )
 
     await db.commit()
-
-    # Invalidate peer config cache
-    await cache.delete(session_peer_config_cache_key(workspace_name, session_name))
-
     return peers
 
 
@@ -940,10 +876,6 @@ async def _get_or_add_peers_to_session(
     """
     Add multiple peers to an existing session. If a peer already exists in the session,
     it will be skipped gracefully.
-
-    Does not commit or invalidate caches. Callers must commit the transaction and
-    invalidate the session peer config cache (via ``session_peer_config_cache_key``)
-    after commit.
 
     Args:
         db: Database session
@@ -1029,7 +961,6 @@ async def _get_or_add_peers_to_session(
         models.SessionPeer.left_at.is_(None),  # Only active peers
     )
     result = await db.execute(select_stmt)
-
     return list(result.scalars().all())
 
 
@@ -1160,6 +1091,3 @@ async def set_peer_config(
         db.add(session_peer)
 
     await db.commit()
-
-    # Invalidate peer config cache
-    await cache.delete(session_peer_config_cache_key(workspace_name, session_name))

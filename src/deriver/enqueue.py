@@ -151,10 +151,19 @@ async def get_peers_with_configuration(
     Returns:
         Dictionary mapping peer names to their configurations
     """
-    result = await crud.fetch_session_peer_configs(
-        db_session, workspace_name, session_name
+    configuration_query = await crud.get_session_peer_configuration(
+        workspace_name=workspace_name, session_name=session_name
     )
-    return result or {}
+    peers_with_configuration_result = await db_session.execute(configuration_query)
+    peers_with_configuration_list = peers_with_configuration_result.all()
+    return {
+        row.peer_name: [
+            row.peer_configuration,
+            row.session_peer_configuration,
+            row.is_active,
+        ]
+        for row in peers_with_configuration_list
+    }
 
 
 def create_representation_record(
