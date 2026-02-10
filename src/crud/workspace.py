@@ -227,6 +227,32 @@ async def update_workspace(
     return honcho_workspace
 
 
+async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> None:
+    """
+    Verify that a workspace has no active sessions.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Raises:
+        ConflictException: If active sessions exist in the workspace
+    """
+    active_sessions_count = int(
+        await db.scalar(
+            select(func.count(models.Session.id)).where(
+                models.Session.workspace_name == workspace_name,
+                models.Session.is_active == True,  # noqa: E712
+            )
+        )
+        or 0
+    )
+    if active_sessions_count > 0:
+        raise ConflictException(
+            f"Cannot delete workspace '{workspace_name}': {active_sessions_count} active session(s) remain. Delete all sessions first."
+        )
+
+
 async def delete_workspace(
     db: AsyncSession, workspace_name: str
 ) -> WorkspaceDeletionResult:
@@ -249,6 +275,9 @@ async def delete_workspace(
     if honcho_workspace is None:
         logger.warning("Workspace %s not found", workspace_name)
         raise ResourceNotFoundException()
+
+    # Check for active sessions — workspace cannot be deleted while active sessions exist
+    await check_no_active_sessions(db, workspace_name)
 
     # Create a snapshot of the workspace data before deletion
     workspace_snapshot = schemas.Workspace(

@@ -63,7 +63,7 @@ class DeletionPayload(BasePayload):
     """Payload for deletion tasks."""
 
     task_type: Literal["deletion"] = "deletion"
-    deletion_type: Literal["session", "observation"]
+    deletion_type: Literal["session", "observation", "workspace"]
     resource_id: str
 
 
@@ -101,7 +101,7 @@ def create_dream_payload(
 
 
 def create_deletion_payload(
-    deletion_type: Literal["session", "observation"],
+    deletion_type: Literal["session", "observation", "workspace"],
     resource_id: str,
 ) -> dict[str, Any]:
     """Create a deletion payload."""

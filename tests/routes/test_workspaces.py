@@ -278,7 +278,7 @@ def test_delete_workspace(client: TestClient):
 
     # Delete the workspace
     response = client.delete(f"/v3/workspaces/{name}")
-    assert response.status_code == 204
+    assert response.status_code == 202
 
     # Verify the workspace no longer exists by trying to update it
     response = client.put(
@@ -321,22 +321,15 @@ def test_delete_workspace_with_peers(client: TestClient):
 
     # Delete workspace
     response = client.delete(f"/v3/workspaces/{workspace_name}")
-    assert response.status_code == 204
+    assert response.status_code == 202
 
 
 def test_delete_workspace_with_sessions(client: TestClient):
-    """Test deleting a workspace that has sessions"""
+    """Test that deleting a workspace with active sessions returns 409"""
     workspace_name = str(generate_nanoid())
 
     # Create workspace
     response = client.post("/v3/workspaces", json={"name": workspace_name})
-    assert response.status_code in [200, 201]
-
-    # Create peer
-    peer_name = str(generate_nanoid())
-    response = client.post(
-        f"/v3/workspaces/{workspace_name}/peers", json={"name": peer_name}
-    )
     assert response.status_code in [200, 201]
 
     # Create sessions
@@ -351,9 +344,11 @@ def test_delete_workspace_with_sessions(client: TestClient):
     )
     assert response.status_code in [200, 201]
 
-    # Delete workspace
+    # Delete workspace should fail with 409
     response = client.delete(f"/v3/workspaces/{workspace_name}")
-    assert response.status_code == 204
+    assert response.status_code == 409
+    data = response.json()
+    assert "active session" in data["detail"].lower()
 
 
 def test_delete_workspace_with_messages(client: TestClient):
@@ -397,9 +392,13 @@ def test_delete_workspace_with_messages(client: TestClient):
     )
     assert response.status_code == 201
 
+    # Delete session first (marks inactive, required before workspace deletion)
+    response = client.delete(f"/v3/workspaces/{workspace_name}/sessions/{session_name}")
+    assert response.status_code == 202
+
     # Delete workspace
     response = client.delete(f"/v3/workspaces/{workspace_name}")
-    assert response.status_code == 204
+    assert response.status_code == 202
 
 
 def test_delete_workspace_with_webhooks(client: TestClient):
@@ -421,7 +420,7 @@ def test_delete_workspace_with_webhooks(client: TestClient):
 
     # Delete workspace
     response = client.delete(f"/v3/workspaces/{workspace_name}")
-    assert response.status_code == 204
+    assert response.status_code == 202
 
     # Verify webhook is deleted by checking workspace doesn't exist
     response = client.get(f"/v3/workspaces/{workspace_name}/webhooks")
@@ -479,13 +478,20 @@ def test_delete_workspace_cascade(client: TestClient):
         )
         assert response.status_code == 201
 
+    # Delete sessions first (marks inactive, required before workspace deletion)
+    for session_name in session_names:
+        response = client.delete(
+            f"/v3/workspaces/{workspace_name}/sessions/{session_name}"
+        )
+        assert response.status_code == 202
+
     # Delete the workspace
     response = client.delete(f"/v3/workspaces/{workspace_name}")
-    assert response.status_code == 204
+    assert response.status_code == 202
 
 
-def test_delete_workspace_returns_no_content(client: TestClient):
-    """Test that delete workspace returns 204 No Content"""
+def test_delete_workspace_returns_accepted(client: TestClient):
+    """Test that delete workspace returns 202 Accepted"""
     name = str(generate_nanoid())
     metadata = {"key": "value", "number": 42}
     configuration = {"feature": True}
@@ -499,4 +505,67 @@ def test_delete_workspace_returns_no_content(client: TestClient):
 
     # Delete workspace
     response = client.delete(f"/v3/workspaces/{name}")
-    assert response.status_code == 204
+    assert response.status_code == 202
+
+
+def test_delete_workspace_blocked_by_sessions_returns_409(client: TestClient):
+    """Test that deleting a workspace with active sessions returns 409 with descriptive message"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v3/workspaces", json={"name": workspace_name})
+    assert response.status_code in [200, 201]
+
+    # Create a session
+    session_name = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{workspace_name}/sessions", json={"name": session_name}
+    )
+    assert response.status_code in [200, 201]
+
+    # Attempt to delete workspace
+    response = client.delete(f"/v3/workspaces/{workspace_name}")
+    assert response.status_code == 409
+    data = response.json()
+    assert "detail" in data
+    assert "1 active session" in data["detail"]
+    assert "delete all sessions first" in data["detail"].lower()
+
+
+def test_delete_workspace_after_session_deletion(client: TestClient):
+    """Test that workspace deletion succeeds after all sessions are deleted"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v3/workspaces", json={"name": workspace_name})
+    assert response.status_code in [200, 201]
+
+    # Create sessions
+    session1_name = str(generate_nanoid())
+    session2_name = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{workspace_name}/sessions", json={"name": session1_name}
+    )
+    assert response.status_code in [200, 201]
+    response = client.post(
+        f"/v3/workspaces/{workspace_name}/sessions", json={"name": session2_name}
+    )
+    assert response.status_code in [200, 201]
+
+    # Workspace deletion should fail
+    response = client.delete(f"/v3/workspaces/{workspace_name}")
+    assert response.status_code == 409
+
+    # Delete all sessions (marks inactive)
+    response = client.delete(
+        f"/v3/workspaces/{workspace_name}/sessions/{session1_name}"
+    )
+    assert response.status_code == 202
+    response = client.delete(
+        f"/v3/workspaces/{workspace_name}/sessions/{session2_name}"
+    )
+    assert response.status_code == 202
+
+    # Now workspace deletion should succeed
+    response = client.delete(f"/v3/workspaces/{workspace_name}")
+    assert response.status_code == 202
