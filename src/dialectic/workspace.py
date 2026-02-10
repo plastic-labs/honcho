@@ -1,9 +1,8 @@
 """
 Workspace-level Dialectic Agent implementation.
 
-This agent answers queries across ALL peers in a workspace,
-providing an omniscient view that synthesizes across the entire
-workspace's data.
+This agent answers queries across all peers in a workspace,
+synthesizing information from multiple peer representations.
 """
 
 import logging
@@ -12,16 +11,14 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud
+import src.crud as crud
 from src.config import ReasoningLevel, settings
 from src.dialectic import prompts
 from src.dialectic.base import BaseDialecticAgent
-from src.exceptions import ValidationException
 from src.utils.agent_tools import (
     WORKSPACE_DIALECTIC_TOOLS,
     create_workspace_tool_executor,
 )
-from src.utils.representation import format_documents_with_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +28,9 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
     A workspace-level dialectic agent that answers queries across all peers.
 
     Unlike DialecticAgent which focuses on a single observer/observed pair,
-    this agent has an omniscient view of all observations and conversations
-    in the workspace.
+    this agent can query any peer representation in the workspace. It must
+    discover peers via list_peers and search within specific observer/observed
+    pairs using search_memory.
     """
 
     def __init__(
@@ -55,32 +53,15 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
     # ------------------------------------------------------------------
 
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
-        prefetch_limit = 10 if self.reasoning_level == "minimal" else 25
-
-        try:
-            documents = await crud.query_documents_workspace(
-                db=self.db,
-                workspace_name=self.workspace_name,
-                query=query,
-                top_k=prefetch_limit,
-            )
-
-            if not documents:
-                return None
-
-            self._prefetched_conclusion_count: int = len(documents)
-            return format_documents_with_attribution(documents, include_ids=True)
-
-        except ValidationException:
-            raise
-        except Exception as e:
-            logger.error(
-                "Failed to prefetch workspace observations for workspace=%s: %s",
-                self.workspace_name,
-                e,
-                exc_info=True,
-            )
+        """Prefetch the list of peers so the agent can skip the list_peers tool call."""
+        _ = query
+        stmt = await crud.get_peers(workspace_name=self.workspace_name)
+        result = await self.db.execute(stmt)
+        peers = list(result.scalars().all())
+        if not peers:
             return None
+        peer_list = "\n".join(f"- {p.name}" for p in peers)
+        return f"Found {len(peers)} peers in workspace:\n{peer_list}"
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         return await create_workspace_tool_executor(
@@ -114,8 +95,4 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
 
     @property
     def _prefetch_header(self) -> str:
-        return (
-            "## Relevant Observations (prefetched from across workspace)\n"
-            "The following observations were found to be semantically relevant to your query. "
-            "They span multiple peers. Use these as primary context. You may still use tools to find additional information."
-        )
+        return "Peers in this workspace (already fetched — do NOT call list_peers):"

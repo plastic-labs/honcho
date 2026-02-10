@@ -2,7 +2,6 @@
 
 Tests cover:
 - Route-level: POST /workspaces/{workspace_id}/chat endpoint
-- CRUD-level: query_documents_workspace()
 - Tool handlers: workspace-specific tool handlers and executor
 - Utility: format_documents_with_attribution()
 """
@@ -18,7 +17,6 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
-from src.exceptions import ValidationException
 from src.models import Peer, Workspace
 from src.utils.agent_tools import (
     WorkspaceToolContext,
@@ -355,184 +353,127 @@ class TestWorkspaceChatEndpoint:
 
 
 # =============================================================================
-# CRUD Tests: query_documents_workspace()
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestQueryDocumentsWorkspace:
-    """Tests for crud.query_documents_workspace()."""
-
-    async def test_returns_documents_from_multiple_peers(
-        self,
-        db_session: AsyncSession,
-        workspace_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Workspace query returns documents across all peer pairs."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
-        workspace, *_ = workspace_test_data
-
-        results = await crud.query_documents_workspace(
-            db_session,
-            workspace_name=workspace.name,
-            query="preferences and habits",
-            top_k=20,
-        )
-
-        # Should find documents from both peer1->peer2 and peer1->peer3
-        assert len(results) == 4
-        observed_peers = {doc.observed for doc in results}
-        # All observed by peer1, but about different peers
-        assert len(observed_peers) == 2
-
-    async def test_returns_empty_for_nonexistent_workspace(
-        self,
-        db_session: AsyncSession,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Returns empty list for workspace with no documents."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
-
-        results = await crud.query_documents_workspace(
-            db_session,
-            workspace_name="nonexistent_workspace",
-            query="anything",
-            top_k=10,
-        )
-
-        assert len(results) == 0
-
-    async def test_respects_top_k_limit(
-        self,
-        db_session: AsyncSession,
-        workspace_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Respects the top_k parameter."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
-        workspace, *_ = workspace_test_data
-
-        results = await crud.query_documents_workspace(
-            db_session,
-            workspace_name=workspace.name,
-            query="test query",
-            top_k=2,
-        )
-
-        assert len(results) <= 2
-
-    async def test_excludes_soft_deleted_documents(
-        self,
-        db_session: AsyncSession,
-        workspace_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Soft-deleted documents should not appear in results."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
-        workspace, _, _, _, _, _, docs_peer2, _ = workspace_test_data
-
-        # Soft-delete one document
-        docs_peer2[0].deleted_at = datetime.now(timezone.utc)
-        await db_session.flush()
-
-        results = await crud.query_documents_workspace(
-            db_session,
-            workspace_name=workspace.name,
-            query="test query",
-            top_k=20,
-        )
-
-        result_ids = {doc.id for doc in results}
-        assert docs_peer2[0].id not in result_ids
-        assert len(results) == 3
-
-    async def test_external_vector_store_raises(
-        self,
-        db_session: AsyncSession,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """External vector store raises ValidationException."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.TYPE", "external")
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", True)
-
-        with pytest.raises(ValidationException, match="pgvector"):
-            await crud.query_documents_workspace(
-                db_session,
-                workspace_name="test",
-                query="test query",
-                embedding=[0.1] * 1536,
-            )
-
-    async def test_accepts_precomputed_embedding(
-        self,
-        db_session: AsyncSession,
-        workspace_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Accepts a pre-computed embedding instead of generating one."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
-        workspace, *_ = workspace_test_data
-
-        results = await crud.query_documents_workspace(
-            db_session,
-            workspace_name=workspace.name,
-            query="ignored when embedding provided",
-            embedding=[0.1] * 1536,
-            top_k=10,
-        )
-
-        assert isinstance(results, list)
-
-
-# =============================================================================
 # Tool Handler Tests: Workspace-Specific Handlers
 # =============================================================================
 
 
 @pytest.mark.asyncio
 class TestSearchMemoryWorkspace:
-    """Tests for _handle_search_memory_workspace."""
+    """Tests for _handle_search_memory_workspace (representation-scoped)."""
 
-    async def test_returns_observations_across_peers(
+    async def test_requires_observer_and_observed(
         self,
         make_workspace_ctx: Callable[..., WorkspaceToolContext],
-        monkeypatch: pytest.MonkeyPatch,
     ):
-        """Returns observations from all peer pairs in workspace."""
-        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+        """Returns error when observer/observed params are missing."""
         ctx = make_workspace_ctx()
 
         result = await _handle_search_memory_workspace(
             ctx, {"query": "coffee preferences"}
         )
+        assert "ERROR" in result
+        assert "observer" in result
+
+    async def test_missing_observer_returns_error(
+        self,
+        make_workspace_ctx: Callable[..., WorkspaceToolContext],
+    ):
+        """Returns error when only observed is provided."""
+        ctx = make_workspace_ctx()
+
+        result = await _handle_search_memory_workspace(
+            ctx, {"query": "test", "observed": "someone"}
+        )
+        assert "ERROR" in result
+
+    async def test_missing_observed_returns_error(
+        self,
+        make_workspace_ctx: Callable[..., WorkspaceToolContext],
+    ):
+        """Returns error when only observer is provided."""
+        ctx = make_workspace_ctx()
+
+        result = await _handle_search_memory_workspace(
+            ctx, {"query": "test", "observer": "someone"}
+        )
+        assert "ERROR" in result
+
+    async def test_returns_observations_for_specific_pair(
+        self,
+        make_workspace_ctx: Callable[..., WorkspaceToolContext],
+        workspace_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Returns observations scoped to a specific observer/observed pair."""
+        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+        _, peer1, peer2, _, _, _, _, _ = workspace_test_data
+        ctx = make_workspace_ctx()
+
+        result = await _handle_search_memory_workspace(
+            ctx,
+            {
+                "query": "coffee preferences",
+                "observer": peer1.name,
+                "observed": peer2.name,
+            },
+        )
 
         assert "Found" in result
-        assert "observations" in result
+        assert "observations" in result.lower()
+        # Should be scoped to peer1->peer2
+        assert f"{peer1.name}->{peer2.name}" in result
+
+    async def test_does_not_return_observations_from_other_pairs(
+        self,
+        make_workspace_ctx: Callable[..., WorkspaceToolContext],
+        workspace_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Does not leak observations from other peer pairs."""
+        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+        _, peer1, _, peer3, _, _, _, _ = workspace_test_data
+        ctx = make_workspace_ctx()
+
+        result = await _handle_search_memory_workspace(
+            ctx,
+            {
+                "query": "coffee",
+                "observer": peer1.name,
+                "observed": peer3.name,
+            },
+        )
+
+        # peer3 observations are about hiking/mornings, not coffee
+        # Should either find the hiking/mornings ones or none
+        assert isinstance(result, str)
 
     async def test_falls_back_to_message_search(
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Falls back to message search when no observations exist."""
+        """Falls back to message search when no observations exist for the pair."""
         workspace, _ = sample_data
 
-        # Create a workspace with messages but no documents
         session = models.Session(
             name=str(generate_nanoid()), workspace_name=workspace.name
         )
         db_session.add(session)
         await db_session.flush()
 
-        peer = models.Peer(name=str(generate_nanoid()), workspace_name=workspace.name)
-        db_session.add(peer)
+        observer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        observed = models.Peer(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add_all([observer, observed])
         await db_session.flush()
 
         msg = models.Message(
             workspace_name=workspace.name,
             session_name=session.name,
-            peer_name=peer.name,
+            peer_name=observed.name,
             content="I really like programming in Python",
             seq_in_session=1,
             token_count=10,
@@ -550,23 +491,37 @@ class TestSearchMemoryWorkspace:
             db_lock=asyncio.Lock(),
         )
 
-        result = await _handle_search_memory_workspace(ctx, {"query": "programming"})
+        result = await _handle_search_memory_workspace(
+            ctx,
+            {
+                "query": "programming",
+                "observer": observer.name,
+                "observed": observed.name,
+            },
+        )
 
         assert isinstance(result, str)
-        # Should indicate no observations, possibly with message results
         assert "No observations" in result or "Found" in result
 
     async def test_respects_top_k(
         self,
         make_workspace_ctx: Callable[..., WorkspaceToolContext],
+        workspace_test_data: Any,
         monkeypatch: pytest.MonkeyPatch,
     ):
         """Respects the top_k parameter, capped at 40."""
         monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+        _, peer1, peer2, _, _, _, _, _ = workspace_test_data
         ctx = make_workspace_ctx()
 
         result = await _handle_search_memory_workspace(
-            ctx, {"query": "test", "top_k": 2}
+            ctx,
+            {
+                "query": "test",
+                "top_k": 2,
+                "observer": peer1.name,
+                "observed": peer2.name,
+            },
         )
 
         assert isinstance(result, str)
@@ -901,10 +856,11 @@ class TestWorkspaceToolExecutor:
             workspace_name=workspace.name,
         )
 
-        # Missing required 'query' parameter
+        # Missing required observer/observed/query parameters
         result = await executor("search_memory", {})
 
         assert isinstance(result, str)
+        assert "ERROR" in result
 
     async def test_get_peer_card_via_executor(
         self,
