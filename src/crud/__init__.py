@@ -12,7 +12,6 @@ from .document import (
     query_documents,
     query_documents_most_derived,
     query_documents_recent,
-    query_documents_workspace,
 )
 from .message import (
     create_messages,
@@ -84,7 +83,6 @@ __all__ = [
     "query_documents",
     "query_documents_most_derived",
     "query_documents_recent",
-    "query_documents_workspace",
     "delete_document",
     "delete_document_by_id",
     # Message

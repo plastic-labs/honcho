@@ -21,7 +21,7 @@ from src.telemetry.events import (
 )
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
-from src.utils.representation import Representation, format_documents_with_attribution
+from src.utils.representation import Representation
 from src.utils.types import DocumentLevel, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -470,10 +470,18 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_memory_workspace": {
         "name": "search_memory",
-        "description": "Search for observations across ALL peers in the workspace using semantic similarity. Results are grouped by which peer pair they belong to.",
+        "description": "Search within a specific peer representation's memory using semantic similarity. You MUST specify observer and observed. To get a peer's global representation, set observer AND observed to the SAME peer name (this is where most information lives). Only use different observer/observed when seeking one peer's specific understanding of another.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "observer": {
+                    "type": "string",
+                    "description": "Name of the observer peer",
+                },
+                "observed": {
+                    "type": "string",
+                    "description": "Name of the observed peer",
+                },
                 "query": {
                     "type": "string",
                     "description": "Search query text",
@@ -484,7 +492,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "default": 20,
                 },
             },
-            "required": ["query"],
+            "required": ["observer", "observed", "query"],
         },
     },
     "list_peers": {
@@ -1886,11 +1894,18 @@ class WorkspaceToolContext:
 async def _handle_search_memory_workspace(
     ctx: WorkspaceToolContext, tool_input: dict[str, Any]
 ) -> str:
-    """Handle workspace-level search_memory tool (searches ALL peers)."""
+    """Handle workspace-level search_memory tool (scoped to a specific peer pair)."""
+    observer = tool_input.get("observer", "")
+    observed = tool_input.get("observed", "")
+    if not observer or not observed:
+        return "ERROR: 'observer' and 'observed' are required parameters. Use the peer list provided in your query."
+
     top_k = min(tool_input.get("top_k", 20), 40)
-    documents = await crud.query_documents_workspace(
+    documents = await crud.query_documents(
         db=ctx.db,
         workspace_name=ctx.workspace_name,
+        observer=observer,
+        observed=observed,
         query=tool_input["query"],
         top_k=top_k,
     )
@@ -1908,13 +1923,12 @@ async def _handle_search_memory_workspace(
             message_output = _format_message_snippets(
                 snippets, f"for query '{tool_input['query']}'"
             )
-            return f"No observations yet. Message search results:\n\n{message_output}"
-        return f"No observations found for query '{tool_input['query']}', and no messages found."
+            return f"No observations yet for {observer}->{observed}. Message search results:\n\n{message_output}"
+        return f"No observations found for {observer}->{observed} for query '{tool_input['query']}', and no messages found."
 
-    formatted = format_documents_with_attribution(
-        documents, include_ids=ctx.include_observation_ids
-    )
-    return f"Found {len(documents)} observations across workspace for query '{tool_input['query']}':\n\n{formatted}"
+    mem = Representation.from_documents(documents)
+    mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
+    return f"Found {len(documents)} observations for {observer}->{observed} for query '{tool_input['query']}':\n\n{mem_str}"
 
 
 async def _handle_list_peers(

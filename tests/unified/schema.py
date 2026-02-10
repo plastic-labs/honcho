@@ -133,7 +133,9 @@ class JsonMatchAssertion(Assertion):
 
 class QueryAction(TestStep):
     step_type: Literal["query"] = "query"
-    target: Literal["chat", "get_context", "get_peer_card", "get_representation"]
+    target: Literal[
+        "chat", "workspace_chat", "get_context", "get_peer_card", "get_representation"
+    ]
 
     session_id: str | None = None
 
