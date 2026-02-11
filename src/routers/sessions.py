@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
@@ -126,6 +127,96 @@ async def _get_session_context_task(
         # Convert SQLAlchemy models to Pydantic schemas while session is active
         message_schemas = [schemas.Message.model_validate(msg) for msg in messages]
         return summary, message_schemas
+
+
+async def _get_both_summaries_task(
+    workspace_id: str,
+    session_id: str,
+) -> tuple[schemas.Summary | None, schemas.Summary | None]:
+    """
+    Atomic task to fetch both short and long summaries using tracked_db.
+
+    Returns:
+        Tuple of (short_summary, long_summary) as Pydantic schemas.
+    """
+    async with tracked_db("get_both_summaries") as db:
+        short_raw, long_raw = await summarizer.get_both_summaries(
+            db, workspace_name=workspace_id, session_name=session_id
+        )
+        short = summarizer.to_schema_summary(short_raw) if short_raw else None
+        long = summarizer.to_schema_summary(long_raw) if long_raw else None
+        return short, long
+
+
+async def _get_messages_for_context_task(
+    workspace_id: str,
+    session_id: str,
+    start_id: int,
+    token_limit: int,
+) -> list[schemas.Message]:
+    """
+    Atomic task to fetch messages for context using tracked_db.
+
+    Args:
+        workspace_id: The workspace identifier
+        session_id: The session identifier
+        start_id: Internal message PK to start from (messages after summary coverage)
+        token_limit: Maximum tokens for the messages
+
+    Returns:
+        List of messages as Pydantic schemas
+    """
+    async with tracked_db("get_messages_for_context") as db:
+        messages = await crud.get_messages_id_range(
+            db,
+            workspace_id,
+            session_id,
+            start_id=start_id,
+            token_limit=token_limit,
+        )
+        return [schemas.Message.model_validate(msg) for msg in messages]
+
+
+def _select_summary_for_context(
+    short_summary: schemas.Summary | None,
+    long_summary: schemas.Summary | None,
+    token_limit: int,
+    include_summary: bool,
+) -> tuple[schemas.Summary | None, int, int]:
+    """
+    Pick the best summary that fits within the token budget using 40/60 allocation.
+
+    Args:
+        short_summary: The short summary, or None
+        long_summary: The long summary, or None
+        token_limit: Total token budget for summary + messages
+        include_summary: Whether summaries should be considered
+
+    Returns:
+        Tuple of (chosen_summary, messages_start_id, messages_token_budget)
+    """
+    if not include_summary or token_limit <= 0:
+        return None, 0, max(token_limit, 0)
+
+    summary_budget = int(token_limit * 0.4)
+
+    long_len = long_summary.token_count if long_summary else 0
+    short_len = short_summary.token_count if short_summary else 0
+
+    if long_summary and long_len <= summary_budget and long_len > short_len:
+        return (
+            long_summary,
+            long_summary.message_id,
+            token_limit - long_len,
+        )
+    if short_summary and short_len <= summary_budget and short_len > 0:
+        return (
+            short_summary,
+            short_summary.message_id,
+            token_limit - short_len,
+        )
+
+    return None, 0, token_limit
 
 
 @router.post(
@@ -581,30 +672,35 @@ async def get_session_context(
     observer = peer_perspective or peer_target
     observed = peer_target
 
-    # Run representation and card tasks sequentially to avoid event loop issues
-    # with tracked_db creating separate database sessions
-    representation = await _get_working_representation_task(
-        workspace_id,
-        search_query,
-        observer=observer,
-        observed=observed,
-        session_name=session_id if limit_to_session else None,
-        search_top_k=search_top_k,
-        search_max_distance=search_max_distance,
-        include_most_derived=include_most_frequent,
-        max_observations=max_conclusions,
-    )
-    card = await _get_peer_card_task(workspace_id, observer=observer, observed=observed)
-
-    # adjust token limit downward to account for approximate token count of representation and card
-    # TODO determine if this impacts performance too much
-    adjusted_token_limit = (
-        token_limit - estimate_tokens(str(representation)) - estimate_tokens(card)
+    # Phase 1: Fetch representation, card, and summaries concurrently — all independent
+    representation, card, (short_summary, long_summary) = await asyncio.gather(
+        _get_working_representation_task(
+            workspace_id,
+            search_query,
+            observer=observer,
+            observed=observed,
+            session_name=session_id if limit_to_session else None,
+            search_top_k=search_top_k,
+            search_max_distance=search_max_distance,
+            include_most_derived=include_most_frequent,
+            max_observations=max_conclusions,
+        ),
+        _get_peer_card_task(workspace_id, observer=observer, observed=observed),
+        _get_both_summaries_task(workspace_id, session_id),
     )
 
-    # Get the session context with the adjusted limit
-    summary, messages = await _get_session_context_task(
-        workspace_id, session_id, adjusted_token_limit, include_summary
+    # Compute adjusted budget after accounting for representation + card tokens
+    repr_card_tokens = estimate_tokens(str(representation)) + estimate_tokens(card)
+    adjusted_limit = token_limit - repr_card_tokens
+
+    # Pick summary with correct 40/60 allocation against the adjusted budget
+    summary, messages_start_id, messages_budget = _select_summary_for_context(
+        short_summary, long_summary, adjusted_limit, include_summary
+    )
+
+    # Phase 2: Fetch messages with the correct start_id and budget
+    messages = await _get_messages_for_context_task(
+        workspace_id, session_id, messages_start_id, messages_budget
     )
 
     return schemas.SessionContext(
