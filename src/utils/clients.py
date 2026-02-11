@@ -573,6 +573,8 @@ async def _stream_final_response(
     response_model: type[BaseModel] | None,
     json_mode: bool,
     temperature: float | None,
+    top_p: float | None,
+    repetition_penalty: float | None,
     stop_seqs: list[str] | None,
     reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
@@ -616,6 +618,8 @@ async def _stream_final_response(
         response_model,
         json_mode,
         _get_effective_temperature(temperature),
+        top_p,
+        repetition_penalty,
         stop_seqs,
         reasoning_effort,
         verbosity,
@@ -643,6 +647,8 @@ async def _execute_tool_loop(
     response_model: type[BaseModel] | None,
     json_mode: bool,
     temperature: float | None,
+    top_p: float | None,
+    repetition_penalty: float | None,
     stop_seqs: list[str] | None,
     reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
@@ -745,6 +751,8 @@ async def _execute_tool_loop(
                 response_model,
                 json_mode,
                 _get_effective_temperature(temperature),
+                top_p,
+                repetition_penalty,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -808,6 +816,8 @@ async def _execute_tool_loop(
                     response_model=response_model,
                     json_mode=json_mode,
                     temperature=temperature,
+                    top_p=top_p,
+                    repetition_penalty=repetition_penalty,
                     stop_seqs=stop_seqs,
                     reasoning_effort=reasoning_effort,
                     verbosity=verbosity,
@@ -941,6 +951,8 @@ async def _execute_tool_loop(
             response_model=response_model,
             json_mode=json_mode,
             temperature=temperature,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
             stop_seqs=stop_seqs,
             reasoning_effort=reasoning_effort,
             verbosity=verbosity,
@@ -977,6 +989,8 @@ async def _execute_tool_loop(
             response_model,
             json_mode,
             _get_effective_temperature(temperature),
+            top_p,
+            repetition_penalty,
             stop_seqs,
             reasoning_effort,
             verbosity,
@@ -1182,6 +1196,8 @@ async def honcho_llm_call(
     response_model: type[M],
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1211,6 +1227,8 @@ async def honcho_llm_call(
     response_model: None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1240,6 +1258,8 @@ async def honcho_llm_call(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1269,6 +1289,8 @@ async def honcho_llm_call(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1422,6 +1444,8 @@ async def honcho_llm_call(
                 response_model,
                 json_mode,
                 _get_effective_temperature(temperature),
+                top_p,
+                repetition_penalty,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1439,6 +1463,8 @@ async def honcho_llm_call(
                 response_model,
                 json_mode,
                 _get_effective_temperature(temperature),
+                top_p,
+                repetition_penalty,
                 stop_seqs,
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
@@ -1522,6 +1548,8 @@ async def honcho_llm_call(
         response_model=response_model,
         json_mode=json_mode,
         temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
         stop_seqs=stop_seqs,
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
@@ -1559,6 +1587,8 @@ async def honcho_llm_call_inner(
     response_model: type[M],
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1580,6 +1610,8 @@ async def honcho_llm_call_inner(
     response_model: None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1601,6 +1633,8 @@ async def honcho_llm_call_inner(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1621,6 +1655,8 @@ async def honcho_llm_call_inner(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float | None = None,
     stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -1865,6 +1901,19 @@ async def honcho_llm_call_inner(
             if temperature is not None and "gpt-5" not in model:
                 openai_params["temperature"] = temperature
 
+            # Add generation parameters for explicit control
+            if top_p is not None:
+                openai_params["top_p"] = top_p
+
+            # Add vLLM-specific parameters only for vLLM provider
+            # These are not standard OpenAI API parameters and must be passed via extra_body
+            if provider == "vllm":
+                extra_body: dict[str, Any] = {}
+                if repetition_penalty is not None:
+                    extra_body["repetition_penalty"] = repetition_penalty
+                if extra_body:
+                    openai_params["extra_body"] = extra_body
+
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
                 if reasoning_effort:
@@ -1887,17 +1936,17 @@ async def honcho_llm_call_inner(
             # NOTE: this is all specific to the Representation model.
             # Do not call with any other response model.
             if provider == "vllm" and response_model:
-                if response_model is not PromptRepresentation:
-                    raise NotImplementedError(
-                        "vLLM structured output currently supports only PromptRepresentation"
-                    )
-                openai_params["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_model.__name__,
-                        "schema": response_model.model_json_schema(),
-                    },
-                }
+                # if response_model is not PromptRepresentation:
+                #     raise NotImplementedError(
+                #         "vLLM structured output currently supports only PromptRepresentation"
+                #     )
+                # openai_params["response_format"] = {
+                #     "type": "json_schema",
+                #     "json_schema": {
+                #         "name": response_model.__name__,
+                #         "schema": response_model.model_json_schema(),
+                #     },
+                # }
                 if stop_seqs:
                     openai_params["stop"] = stop_seqs
                 vllm_response: ChatCompletion = cast(
@@ -1913,7 +1962,11 @@ async def honcho_llm_call_inner(
                     if vllm_response.choices[0].message.content is not None:
                         test_rep = vllm_response.choices[0].message.content
 
+                    # logger.info(f"test_rep: {test_rep}")
+
                     final = validate_and_repair_json(test_rep)
+
+                    # logger.info(f"final: {final}")
 
                     # Schema-aware repair: ensure deductive observations have required fields
 
