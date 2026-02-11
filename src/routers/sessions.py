@@ -1,4 +1,5 @@
 import logging
+from contextlib import suppress
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
@@ -593,7 +594,9 @@ async def get_session_context(
 
     embedding: list[float] | None = None
     if search_query:
-        embedding = await embedding_client.embed(search_query)
+        with suppress(Exception):
+            # Best-effort precompute
+            embedding = await embedding_client.embed(search_query)
 
     representation = await _get_working_representation_task(
         db,

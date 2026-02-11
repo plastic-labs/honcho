@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import time
+from contextlib import suppress
 from typing import Any
 
 from sqlalchemy import select
@@ -208,7 +209,9 @@ class RepresentationManager:
             Representation combining various query strategies
         """
         if include_semantic_query and embedding is None:
-            embedding = await embedding_client.embed(include_semantic_query)
+            with suppress(Exception):
+                # Best-effort precompute
+                embedding = await embedding_client.embed(include_semantic_query)
 
         if db is not None:
             return await self._get_working_representation_internal(
