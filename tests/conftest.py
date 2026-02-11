@@ -345,18 +345,18 @@ async def sample_data(
     # Create test app
     test_workspace = models.Workspace(name=str(generate_nanoid()))
     db_session.add(test_workspace)
-    await db_session.flush()
 
     # Create test user
     test_peer = models.Peer(
         name=str(generate_nanoid()), workspace_name=test_workspace.name
     )
     db_session.add(test_peer)
-    await db_session.flush()
+
+    # Commit so data is visible to independent tracked_db sessions.
+    # _truncate_all_tables handles cleanup between tests.
+    await db_session.commit()
 
     yield test_workspace, test_peer
-
-    await db_session.rollback()
 
 
 @pytest.fixture(autouse=True)
@@ -687,13 +687,20 @@ def mock_honcho_llm_call():
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_session: AsyncSession):
-    """Mock tracked_db to use the test database session"""
+def mock_tracked_db(db_engine: AsyncEngine):
+    """Mock tracked_db to create fresh sessions per call.
+
+    Using a session factory instead of a shared session avoids asyncio lock
+    errors when multiple tracked_db calls run concurrently via asyncio.gather.
+    """
     from contextlib import asynccontextmanager
+
+    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
     async def mock_tracked_db_context(_: str | None = None):
-        yield db_session
+        async with session_factory() as session:
+            yield session
 
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
