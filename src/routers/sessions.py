@@ -6,8 +6,9 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
-from src.dependencies import db, tracked_db
+from src.dependencies import db
 from src.deriver.enqueue import enqueue_deletion
+from src.embedding_client import embedding_client
 from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
@@ -28,6 +29,7 @@ router = APIRouter(
 
 
 async def _get_working_representation_task(
+    db: AsyncSession,
     workspace_id: str,
     last_message: str | None,
     *,
@@ -38,11 +40,13 @@ async def _get_working_representation_task(
     search_max_distance: float | None,
     include_most_derived: bool,
     max_observations: int | None,
+    embedding: list[float] | None = None,
 ) -> Representation:
     """
-    Atomic task to get working representation using tracked_db.
+    Get working representation using an externally-provided DB session.
 
     Args:
+        db: Database session to use for queries
         workspace_id: The workspace identifier
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
@@ -52,12 +56,14 @@ async def _get_working_representation_task(
         search_max_distance: Maximum distance to search for semantically relevant observations
         include_most_derived: Whether to include the most derived observations in the representation
         max_observations: Maximum number of observations to include in the representation
+        embedding: Pre-computed embedding for the semantic query
 
     Returns:
         The working representation
     """
     return await crud.get_working_representation(
         workspace_name=workspace_id,
+        db=db,
         observer=observer,
         observed=observed,
         session_name=session_name,
@@ -65,6 +71,7 @@ async def _get_working_representation_task(
         semantic_search_top_k=search_top_k,
         semantic_search_max_distance=search_max_distance,
         include_most_derived=include_most_derived,
+        embedding=embedding,
         max_observations=max_observations
         if max_observations is not None
         else config.settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
@@ -72,15 +79,17 @@ async def _get_working_representation_task(
 
 
 async def _get_peer_card_task(
+    db: AsyncSession,
     workspace_id: str,
     *,
     observer: str,
     observed: str,
 ) -> list[str] | None:
     """
-    Atomic task to get peer card using tracked_db.
+    Get peer card using an externally-provided DB session.
 
     Args:
+        db: Database session to use for queries
         workspace_id: The workspace identifier
         observer: Name of the observer peer
         observed: Name of the observed peer
@@ -88,25 +97,26 @@ async def _get_peer_card_task(
     Returns:
         The peer card or None if not found
     """
-    async with tracked_db("get_peer_card") as db:
-        return await crud.get_peer_card(
-            db,
-            workspace_name=workspace_id,
-            observer=observer,
-            observed=observed,
-        )
+    return await crud.get_peer_card(
+        db,
+        workspace_name=workspace_id,
+        observer=observer,
+        observed=observed,
+    )
 
 
 async def _get_session_context_task(
+    db: AsyncSession,
     workspace_id: str,
     session_id: str,
     token_limit: int,
     include_summary: bool,
 ) -> tuple[schemas.Summary | None, list[schemas.Message]]:
     """
-    Atomic task to get session context using tracked_db.
+    Get session context
 
     Args:
+        db: Database session to use for queries
         workspace_id: The workspace identifier
         session_id: The session identifier
         token_limit: Maximum tokens for the context
@@ -115,17 +125,16 @@ async def _get_session_context_task(
     Returns:
         Tuple of (summary, messages)
     """
-    async with tracked_db("get_session_context") as db:
-        summary, messages = await summarizer.get_session_context(
-            db,
-            workspace_name=workspace_id,
-            session_name=session_id,
-            token_limit=token_limit,
-            include_summary=include_summary,
-        )
-        # Convert SQLAlchemy models to Pydantic schemas while session is active
-        message_schemas = [schemas.Message.model_validate(msg) for msg in messages]
-        return summary, message_schemas
+    summary, messages = await summarizer.get_session_context(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+        token_limit=token_limit,
+        include_summary=include_summary,
+    )
+    # Convert SQLAlchemy models to Pydantic schemas while session is active
+    message_schemas = [schemas.Message.model_validate(msg) for msg in messages]
+    return summary, message_schemas
 
 
 @router.post(
@@ -502,6 +511,7 @@ async def get_session_peers(
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
+    db: AsyncSession = db,
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
@@ -570,7 +580,7 @@ async def get_session_context(
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
-            workspace_id, session_id, token_limit, include_summary
+            db, workspace_id, session_id, token_limit, include_summary
         )
         return schemas.SessionContext(
             name=session_id,
@@ -581,9 +591,12 @@ async def get_session_context(
     observer = peer_perspective or peer_target
     observed = peer_target
 
-    # Run representation and card tasks sequentially to avoid event loop issues
-    # with tracked_db creating separate database sessions
+    embedding: list[float] | None = None
+    if search_query:
+        embedding = await embedding_client.embed(search_query)
+
     representation = await _get_working_representation_task(
+        db,
         workspace_id,
         search_query,
         observer=observer,
@@ -593,8 +606,11 @@ async def get_session_context(
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
         max_observations=max_conclusions,
+        embedding=embedding,
     )
-    card = await _get_peer_card_task(workspace_id, observer=observer, observed=observed)
+    card = await _get_peer_card_task(
+        db, workspace_id, observer=observer, observed=observed
+    )
 
     # adjust token limit downward to account for approximate token count of representation and card
     # TODO determine if this impacts performance too much
@@ -604,7 +620,7 @@ async def get_session_context(
 
     # Get the session context with the adjusted limit
     summary, messages = await _get_session_context_task(
-        workspace_id, session_id, adjusted_token_limit, include_summary
+        db, workspace_id, session_id, adjusted_token_limit, include_summary
     )
 
     return schemas.SessionContext(
