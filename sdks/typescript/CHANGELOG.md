@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.1] - 2026-02-09
+
+### Added
+
+- `setPeerCard` method
+
+### Changed
+
+- `card` is now `getCard` with `card` kept for backwards compatibility and marked as deprecated
+
 ## [2.0.0] - 2026-01-13
 
 ### Added

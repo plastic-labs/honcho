@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import warnings
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -446,7 +447,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    def card(
+    def get_card(
         self,
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
@@ -474,6 +475,50 @@ class Peer(PeerBase, MetadataConfigMixin):
         )
         response = PeerCardResponse.model_validate(data)
 
+        return response.peer_card
+
+    def card(
+        self,
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """Deprecated: use get_card() instead."""
+        warnings.warn(
+            "card() is deprecated, use get_card() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_card(target=target)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def set_card(
+        self,
+        peer_card: list[str],
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """
+        Set the peer card for this peer.
+
+        Makes an API call to set the peer card. If a target is provided, sets this
+        peer's local card of the target peer.
+
+        Args:
+            peer_card: A list of strings to set as the peer card.
+            target: Optional target peer for local card. If provided, sets this
+                    peer's card of the target peer. Can be a Peer object or peer ID string.
+
+        Returns:
+            A list of strings representing the updated peer card, or None if none is available
+        """
+        self._honcho._ensure_workspace()
+        target_id = resolve_id(target)
+
+        query = {"target": target_id} if target_id else None
+        data = self._honcho._http.put(
+            routes.peer_card(self.workspace_id, self.id),
+            body={"peer_card": peer_card},
+            query=query,
+        )
+        response = PeerCardResponse.model_validate(data)
         return response.peer_card
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))

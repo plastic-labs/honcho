@@ -345,7 +345,7 @@ class UnifiedTestExecutor:
                 raise ValueError("peer_id required for get_peer_card")
 
             peer = await self.client.aio.peer(id=step.observer_peer_id)
-            card = await peer.aio.card(
+            card = await peer.aio.get_card(
                 step.observed_peer_id
                 if step.observed_peer_id
                 else step.observer_peer_id

@@ -80,6 +80,20 @@ Claude will interview you about your personal preferences to kickstart a represe
 - **AI Self-Awareness** — Claude knows what it was working on, even after restarts
 - **MCP Tools** — Search memory, query knowledge about you, and save insights
 
+## Building with Teammates
+
+Honcho works naturally for teams. Every team member contributes to and retrieves from a shared workspace, while Honcho models each person individually. Your sessions within a repo are scoped to your peer name (`HONCHO_PEER_NAME`), so your memory stays yours even though the workspace is shared.
+
+- **Session naming** is automatic — set to `{user}-{repo}` by default so each team member gets their own session per project
+- **Workspace** (`HONCHO_WORKSPACE`) groups all your team's sessions together. Set it to a shared value across the team
+- **Peer name** (`HONCHO_PEER_NAME`) identifies you individually within the workspace
+
+This means Claude builds a distinct understanding of each team member's preferences and context while everyone operates in the same workspace.
+
+## Logging
+
+The plugin logs activity to `~/.honcho/` and to Claude Code's verbose mode, so you can see exactly how Honcho is being used — what context is loaded at session start, what messages are saved, and what context is injected into Claude's prompts. Set `HONCHO_LOGGING` to `false` to disable file logging.
+
 ## MCP Tools
 
 The plugin provides these tools via MCP:
@@ -101,6 +115,7 @@ The plugin provides these tools via MCP:
 | `HONCHO_ENDPOINT` | No | `production` | `production`, `local`, or a custom URL |
 | `HONCHO_ENABLED` | No | `true` | Set to `false` to disable |
 | `HONCHO_SAVE_MESSAGES` | No | `true` | Set to `false` to stop saving messages |
+| `HONCHO_LOGGING` | No | `true` | Set to `false` to disable file logging to `~/.honcho/` |
 
 ## Skills (Slash Commands)
 
