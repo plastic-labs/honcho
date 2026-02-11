@@ -1936,17 +1936,17 @@ async def honcho_llm_call_inner(
             # NOTE: this is all specific to the Representation model.
             # Do not call with any other response model.
             if provider == "vllm" and response_model:
-                if response_model is not PromptRepresentation:
-                    raise NotImplementedError(
-                        "vLLM structured output currently supports only PromptRepresentation"
-                    )
-                openai_params["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_model.__name__,
-                        "schema": response_model.model_json_schema(),
-                    },
-                }
+                # if response_model is not PromptRepresentation:
+                #     raise NotImplementedError(
+                #         "vLLM structured output currently supports only PromptRepresentation"
+                #     )
+                # openai_params["response_format"] = {
+                #     "type": "json_schema",
+                #     "json_schema": {
+                #         "name": response_model.__name__,
+                #         "schema": response_model.model_json_schema(),
+                #     },
+                # }
                 if stop_seqs:
                     openai_params["stop"] = stop_seqs
                 vllm_response: ChatCompletion = cast(
@@ -1962,7 +1962,11 @@ async def honcho_llm_call_inner(
                     if vllm_response.choices[0].message.content is not None:
                         test_rep = vllm_response.choices[0].message.content
 
+                    # logger.info(f"test_rep: {test_rep}")
+
                     final = validate_and_repair_json(test_rep)
+
+                    # logger.info(f"final: {final}")
 
                     # Schema-aware repair: ensure deductive observations have required fields
 

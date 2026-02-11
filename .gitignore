@@ -191,3 +191,4 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+traces.jsonl
