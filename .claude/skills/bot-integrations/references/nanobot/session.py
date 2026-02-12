@@ -101,7 +101,7 @@ class HonchoSessionManager:
         """
         Get or create a Honcho peer.
 
-        Peers are lazy in SDK v2 -- no API call until first use.
+        Peers are lazy -- no API call until first use.
         Observation settings are controlled per-session via SessionPeerConfig.
 
         Args:
@@ -268,13 +268,13 @@ class HonchoSessionManager:
         for msg in new_messages:
             peer = user_peer if msg["role"] == "user" else assistant_peer
             honcho_messages.append(peer.message(msg["content"]))
-            msg["_synced"] = True
 
         try:
             honcho_session.add_messages(honcho_messages)
+            for msg in new_messages:
+                msg["_synced"] = True
             logger.debug(f"Synced {len(honcho_messages)} messages to Honcho for {session.key}")
         except Exception as e:
-            # Mark messages as not synced on failure
             for msg in new_messages:
                 msg["_synced"] = False
             logger.error(f"Failed to sync messages to Honcho: {e}")
@@ -301,6 +301,9 @@ class HonchoSessionManager:
         """
         Create a new session, preserving the old one for user modeling.
 
+        This creates a fresh session with a new ID while keeping the old
+        session's data in Honcho for continued user modeling.
+
         Args:
             key: Original session key (e.g., "discord:123456").
 
@@ -315,11 +318,17 @@ class HonchoSessionManager:
             self._sessions_cache.pop(old_session.honcho_session_id, None)
 
         # Create new session with timestamp suffix
+        # This preserves old session in Honcho while starting fresh
         timestamp = int(time.time())
         new_key = f"{key}:{timestamp}"
 
+        # Get or create will create a fresh session
         session = self.get_or_create(new_key)
+
+        # Cache under both original key (for future lookups) and timestamped
+        # key (so session.key matches a valid cache entry)
         self._cache[key] = session
+        self._cache[new_key] = session
 
         logger.info(f"Created new session for {key} (honcho: {session.honcho_session_id})")
         return session
@@ -351,6 +360,9 @@ class HonchoSessionManager:
         """
         Pre-fetch user context using Honcho's context() method.
 
+        This is a single API call that returns the user's representation
+        and peer card, using semantic search based on the user's message.
+
         Args:
             session_key: The session key to get context for.
             user_message: The user's message for semantic search.
@@ -367,12 +379,14 @@ class HonchoSessionManager:
             return {}
 
         try:
+            # Single API call to get user representation with semantic search
             ctx = honcho_session.context(
                 summary=False,
                 tokens=self._context_tokens,
                 peer_target=session.user_peer_id,
                 search_query=user_message,
             )
+            # peer_card is list[str] in SDK v2, join for prompt injection
             card = ctx.peer_card or []
             card_str = "\n".join(card) if isinstance(card, list) else str(card)
             return {
@@ -383,8 +397,174 @@ class HonchoSessionManager:
             logger.warning(f"Failed to fetch context from Honcho: {e}")
             return {}
 
+    def migrate_local_history(self, session_key: str, messages: list[dict[str, Any]]) -> bool:
+        """
+        Upload local session history to Honcho as a file.
+
+        Used when Honcho activates mid-conversation to preserve prior context.
+
+        Args:
+            session_key: The session key (e.g., "telegram:123456").
+            messages: Local messages (dicts with role, content, timestamp).
+
+        Returns:
+            True if upload succeeded, False otherwise.
+        """
+        sanitized = self._sanitize_id(session_key)
+        honcho_session = self._sessions_cache.get(sanitized)
+        if not honcho_session:
+            logger.warning(f"No Honcho session cached for '{session_key}', skipping migration")
+            return False
+
+        # Resolve user peer for attribution
+        parts = session_key.split(":", 1)
+        channel = parts[0] if len(parts) > 1 else "default"
+        chat_id = parts[1] if len(parts) > 1 else session_key
+        user_peer_id = self._sanitize_id(f"user-{channel}-{chat_id}")
+        user_peer = self._peers_cache.get(user_peer_id)
+        if not user_peer:
+            logger.warning(f"No user peer cached for '{user_peer_id}', skipping migration")
+            return False
+
+        content_bytes = self._format_migration_transcript(session_key, messages)
+        first_ts = messages[0].get("timestamp") if messages else None
+
+        try:
+            honcho_session.upload_file(
+                file=("prior_history.txt", content_bytes, "text/plain"),
+                peer=user_peer,
+                metadata={"source": "local_jsonl", "count": len(messages)},
+                created_at=first_ts,
+            )
+            logger.info(f"Migrated {len(messages)} local messages to Honcho for {session_key}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to upload local history to Honcho for {session_key}: {e}")
+            return False
+
+    @staticmethod
+    def _format_migration_transcript(session_key: str, messages: list[dict[str, Any]]) -> bytes:
+        """
+        Format local messages as an XML transcript for Honcho file upload.
+
+        Args:
+            session_key: The session key for metadata.
+            messages: Local messages (dicts with role, content, timestamp).
+
+        Returns:
+            UTF-8 encoded transcript bytes.
+        """
+        timestamps = [m.get("timestamp", "") for m in messages]
+        time_range = f"{timestamps[0]} to {timestamps[-1]}" if timestamps else "unknown"
+
+        lines = [
+            "<prior_conversation_history>",
+            "<context>",
+            "This conversation history occurred BEFORE the Honcho memory system was activated.",
+            "These messages are the preceding elements of this conversation session and should",
+            "be treated as foundational context for all subsequent interactions. The user and",
+            "assistant have already established rapport through these exchanges.",
+            "</context>",
+            "",
+            f'<transcript session_key="{session_key}" message_count="{len(messages)}"',
+            f'           time_range="{time_range}">',
+            "",
+        ]
+        for msg in messages:
+            ts = msg.get("timestamp", "?")
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            lines.append(f"[{ts}] {role}: {content}")
+
+        lines.append("")
+        lines.append("</transcript>")
+        lines.append("</prior_conversation_history>")
+
+        return "\n".join(lines).encode("utf-8")
+
+    def migrate_memory_files(self, session_key: str, workspace: Any) -> bool:
+        """
+        Upload workspace/memory/MEMORY.md and HISTORY.md to Honcho as files.
+
+        Used when Honcho activates on an instance that already has locally
+        consolidated memory (from upstream's _consolidate_memory). Backwards
+        compatible -- skips gracefully if files don't exist.
+
+        Args:
+            session_key: The session key to associate files with.
+            workspace: Path to the workspace directory.
+
+        Returns:
+            True if at least one file was uploaded, False otherwise.
+        """
+        from pathlib import Path
+        workspace = Path(workspace)
+        memory_dir = workspace / "memory"
+
+        if not memory_dir.exists():
+            return False
+
+        sanitized = self._sanitize_id(session_key)
+        honcho_session = self._sessions_cache.get(sanitized)
+        if not honcho_session:
+            logger.warning(f"No Honcho session cached for '{session_key}', skipping memory migration")
+            return False
+
+        # Resolve user peer for attribution
+        parts = session_key.split(":", 1)
+        channel = parts[0] if len(parts) > 1 else "default"
+        chat_id = parts[1] if len(parts) > 1 else session_key
+        user_peer_id = self._sanitize_id(f"user-{channel}-{chat_id}")
+        user_peer = self._peers_cache.get(user_peer_id)
+        if not user_peer:
+            logger.warning(f"No user peer cached for '{user_peer_id}', skipping memory migration")
+            return False
+
+        uploaded = False
+        files = [
+            ("MEMORY.md", "consolidated_memory.md", "Long-term user facts and preferences"),
+            ("HISTORY.md", "conversation_history.md", "Chronological conversation summaries"),
+        ]
+
+        for filename, upload_name, description in files:
+            filepath = memory_dir / filename
+            if not filepath.exists():
+                continue
+            content = filepath.read_text(encoding="utf-8").strip()
+            if not content:
+                continue
+
+            wrapped = (
+                f"<prior_memory_file>\n"
+                f"<context>\n"
+                f"This file was consolidated from local conversations BEFORE Honcho was activated.\n"
+                f"{description}. Treat as foundational context for this user.\n"
+                f"</context>\n"
+                f"\n"
+                f"{content}\n"
+                f"</prior_memory_file>\n"
+            )
+
+            try:
+                honcho_session.upload_file(
+                    file=(upload_name, wrapped.encode("utf-8"), "text/plain"),
+                    peer=user_peer,
+                    metadata={"source": "local_memory", "original_file": filename},
+                )
+                logger.info(f"Uploaded {filename} to Honcho for {session_key}")
+                uploaded = True
+            except Exception as e:
+                logger.error(f"Failed to upload {filename} to Honcho: {e}")
+
+        return uploaded
+
     def list_sessions(self) -> list[dict[str, Any]]:
-        """List all cached sessions."""
+        """
+        List all cached sessions.
+
+        Returns:
+            List of session info dicts.
+        """
         return [
             {
                 "key": s.key,

@@ -62,11 +62,11 @@ def get_honcho_client(config: HonchoConfig | None = None) -> Honcho:
 
     try:
         from honcho import Honcho
-    except ImportError as e:
+    except ImportError:
         raise ImportError(
             "honcho-ai is required for Honcho integration. "
-            "Install it with: pip install honcho-ai"
-        ) from e
+            "Install it with: nanobot honcho enable --api-key YOUR_KEY"
+        )
 
     logger.info(f"Initializing Honcho client (workspace: {config.workspace_id})")
 
