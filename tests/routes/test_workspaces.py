@@ -528,7 +528,7 @@ def test_delete_workspace_blocked_by_sessions_returns_409(client: TestClient):
     assert response.status_code == 409
     data = response.json()
     assert "detail" in data
-    assert "1 active session" in data["detail"]
+    assert "active session" in data["detail"]
     assert "delete all sessions first" in data["detail"].lower()
 
 

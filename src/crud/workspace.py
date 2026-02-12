@@ -3,7 +3,7 @@ from logging import getLogger
 from typing import Any
 
 from cashews import NOT_NONE
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -238,18 +238,19 @@ async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> Non
     Raises:
         ConflictException: If active sessions exist in the workspace
     """
-    active_sessions_count = int(
+    has_active_sessions: bool = bool(
         await db.scalar(
-            select(func.count(models.Session.id)).where(
-                models.Session.workspace_name == workspace_name,
-                models.Session.is_active == True,  # noqa: E712
+            select(
+                exists().where(
+                    models.Session.workspace_name == workspace_name,
+                    models.Session.is_active == True,  # noqa: E712
+                )
             )
         )
-        or 0
     )
-    if active_sessions_count > 0:
+    if has_active_sessions:
         raise ConflictException(
-            f"Cannot delete workspace '{workspace_name}': {active_sessions_count} active session(s) remain. Delete all sessions first."
+            f"Cannot delete workspace '{workspace_name}': active session(s) remain. Delete all sessions first."
         )
 
 
@@ -276,8 +277,10 @@ async def delete_workspace(
         logger.warning("Workspace %s not found", workspace_name)
         raise ResourceNotFoundException()
 
-    # Check for active sessions — workspace cannot be deleted while active sessions exist
-    await check_no_active_sessions(db, workspace_name)
+    # NOTE: No active session check here — that gate lives in the router.
+    # This crud method is called by the background worker, where a session
+    # could have been created after the user's request was accepted (202).
+    # The deletion should proceed and cascade-delete any new sessions.
 
     # Create a snapshot of the workspace data before deletion
     workspace_snapshot = schemas.Workspace(
