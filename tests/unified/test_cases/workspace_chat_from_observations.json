@@ -1,0 +1,85 @@
+{
+  "description": "Test that workspace-level chat can gather information about peers from their global representations (observer==observed). Two peers share distinct facts; after deriver processes them, workspace chat should retrieve info about each peer.",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "ws_obs_session",
+      "peer_configs": {
+        "alice": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "bob": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "agent": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "ws_obs_session",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "I'm a professional violinist and I perform with the Chicago Symphony Orchestra every Friday evening."
+        },
+        {
+          "peer_id": "agent",
+          "content": "That's wonderful! How long have you been playing?"
+        },
+        {
+          "peer_id": "alice",
+          "content": "I've been playing violin since I was 5 years old, so about 25 years now."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I just got back from a scuba diving trip in Belize. I'm a certified rescue diver."
+        },
+        {
+          "peer_id": "agent",
+          "content": "That sounds amazing! Do you dive often?"
+        },
+        {
+          "peer_id": "bob",
+          "content": "Yes, I try to go diving at least twice a month. My favorite dive site is the Great Blue Hole."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "input": "What do you know about Alice's musical background?",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response mention that Alice is a violinist or plays violin? It should reference her connection to music/violin performance. The specific detail about the Chicago Symphony Orchestra is a bonus but not required.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "input": "What are Bob's hobbies?",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response mention that Bob is into scuba diving or diving? It should reference his diving hobby. The specific detail about Belize or the Great Blue Hole is a bonus but not required.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "description": "Test that workspace-level chat can fall back to searching messages directly. Deriver is disabled so no observations are created, forcing the agent to find information from raw message history.",
+  "workspace_config": {
+    "deriver": false
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "ws_msg_session",
+      "peer_configs": {
+        "carol": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "agent": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "ws_msg_session",
+      "messages": [
+        {
+          "peer_id": "carol",
+          "content": "I just finished writing my third novel. It's a mystery set in 1920s Paris called 'The Montmartre Cipher'."
+        },
+        {
+          "peer_id": "agent",
+          "content": "Congratulations! That's a great achievement. What inspired the setting?"
+        },
+        {
+          "peer_id": "carol",
+          "content": "I lived in Paris for two years and fell in love with the history of Montmartre. The artists and writers who gathered there in the 1920s were fascinating."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "duration": 2,
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "input": "What can you tell me about Carol's writing?",
+      "session_id": "ws_msg_session",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response reference Carol writing novels or a book? It should mention something about her being a writer/author or her novel. Mentioning 'The Montmartre Cipher' or Paris or mystery is a bonus but not required. The key point is that the system found information about Carol's writing from the message history.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
