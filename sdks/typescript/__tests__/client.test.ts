@@ -150,7 +150,7 @@ describe('Honcho Client', () => {
   // ===========================================================================
 
   describe('DELETE /workspaces/:id', () => {
-    test('deleteWorkspace removes workspace', async () => {
+    test('deleteWorkspace accepts deletion', async () => {
       // Create a workspace to delete
       const tempWorkspaceId = generateWorkspaceId('delete')
       const tempClient = new Honcho({
@@ -162,12 +162,8 @@ describe('Honcho Client', () => {
       // Ensure it exists
       await tempClient.getMetadata()
 
-      // Delete it (returns void)
+      // Delete it (returns 202 Accepted — deletion is processed in the background)
       await client.deleteWorkspace(tempWorkspaceId)
-
-      // Verify it's gone from list
-      const page = await client.workspaces()
-      expect(page.items).not.toContain(tempWorkspaceId)
     })
   })
 
