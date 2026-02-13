@@ -1,12 +1,18 @@
 ---
 name: honcho-integration
-description: Integrate Honcho memory and social cognition into existing Python or TypeScript codebases. Use when adding Honcho SDK, setting up peers, configuring sessions, or implementing the dialectic chat endpoint for AI agents.
+description: Integrate Honcho memory and social cognition into existing Python or TypeScript codebases. Use when adding Honcho SDK, setting up peers, configuring sessions, implementing the dialectic chat endpoint for AI agents, or wiring Honcho into bot frameworks (nanobot, openclaw, picoclaw, etc).
 allowed-tools: Read, Glob, Grep, Bash(uv:*), Bash(bun:*), Bash(npm:*), Edit, Write, WebFetch, AskUserQuestion
 ---
 
 # Honcho Integration Guide
 
-This skill helps you integrate Honcho into existing Python or TypeScript applications. Honcho provides AI-native memory for stateful agents—it uses custom reasoning models to learn continually.
+## What is Honcho
+
+Honcho is an open source memory library for building stateful agents. It works with any model, framework, or architecture. You send Honcho the messages from your conversations, and custom reasoning models process them in the background — extracting premises, drawing conclusions, and building rich representations of each participant over time. Your agent can then query those representations on-demand ("What does this user care about?", "How technical is this person?") and get grounded, reasoned answers.
+
+The key mental model: **Peers** are any participant — human or AI. Both are represented the same way. Observation settings (`observe_me`, `observe_others`) control which peers Honcho reasons about. Typically you want Honcho to model your users (`observe_me=True`) but not your AI assistant (`observe_me=False`). **Sessions** scope conversations between peers. **Messages** are the raw data you feed in — Honcho reasons about them asynchronously and stores the results as the peer's **representation**. No messages means no reasoning means no memory.
+
+Your agent accesses this memory through `peer.chat(query)` (ask a natural language question, get a reasoned answer), `session.context()` (get formatted conversation history + representations), or both.
 
 ## Integration Workflow
 
@@ -27,6 +33,8 @@ Use Glob and Grep to find:
 - `**/*.py` or `**/*.ts` files with "openai", "anthropic", "llm", "chat", "message"
 - User/session models or types
 - API routes handling chat or conversation endpoints
+
+> **Bot framework detected?** If the codebase is built around an agent loop, tool registry, session manager, and message bus (e.g., nanobot, openclaw, picoclaw), read `{baseDir}/references/bot-frameworks.md` for framework-specific integration guidance and check `{baseDir}/references/bot-frameworks/<framework>/` for concrete reference implementations.
 
 ### Phase 2: Interview (REQUIRED)
 
@@ -112,6 +120,31 @@ uv add honcho-ai
 bun add @honcho-ai/sdk
 ```
 
+## Sync vs Async
+
+**TypeScript** — The SDK is async by default. All methods return promises. No separate sync API.
+
+**Python** — The SDK provides both sync and async interfaces:
+
+- **Sync** (default): `from honcho import Honcho` — use in sync frameworks (Flask, Django, CLI scripts)
+- **Async**: `from honcho import Honcho` with `.aio` namespace — use in async frameworks (FastAPI, Starlette, async workers)
+
+```python
+# Sync usage (Flask, Django, scripts)
+from honcho import Honcho
+honcho = Honcho(workspace_id="my-app", api_key=os.environ["HONCHO_API_KEY"])
+peer = honcho.peer("user-123")
+response = peer.chat("What does this user prefer?")
+
+# Async usage (FastAPI, Starlette)
+from honcho import Honcho
+honcho = Honcho(workspace_id="my-app", api_key=os.environ["HONCHO_API_KEY"])
+peer = honcho.aio.peer("user-123")
+response = await peer.chat("What does this user prefer?")
+```
+
+Match the client to the framework — check whether the codebase uses `async def` handlers or sync `def` handlers and choose accordingly. The rest of this skill shows sync Python examples; swap to `.aio` equivalents for async codebases.
+
 ## Core Integration Patterns
 
 ### 1. Initialize with a Single Workspace
@@ -124,11 +157,15 @@ Use ONE workspace for your entire application. The workspace name should reflect
 from honcho import Honcho
 import os
 
+# Sync client (Flask, Django, scripts)
 honcho = Honcho(
     workspace_id="your-app-name",
     api_key=os.environ["HONCHO_API_KEY"],
     environment="production"
 )
+
+# Async client (FastAPI, Starlette) — use honcho.aio for all operations
+# honcho.aio.peer(), honcho.aio.session(), etc.
 ```
 
 **TypeScript:**
@@ -136,6 +173,7 @@ honcho = Honcho(
 ```typescript
 import { Honcho } from '@honcho-ai/sdk';
 
+// All methods are async by default
 const honcho = new Honcho({
     workspaceId: "your-app-name",
     apiKey: process.env.HONCHO_API_KEY,
@@ -150,12 +188,14 @@ Create peers for **every entity** in your business logic - users AND AI assistan
 **Python:**
 
 ```python
+from honcho import PeerConfig
+
 # Human users
 user = honcho.peer("user-123")
 
 # AI assistants - set observe_me=False so Honcho doesn't model the AI
-assistant = honcho.peer("assistant", config={"observe_me": False})
-support_bot = honcho.peer("support-bot", config={"observe_me": False})
+assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
+support_bot = honcho.peer("support-bot", configuration=PeerConfig(observe_me=False))
 ```
 
 **TypeScript:**
@@ -164,9 +204,9 @@ support_bot = honcho.peer("support-bot", config={"observe_me": False})
 // Human users
 const user = await honcho.peer("user-123");
 
-// AI assistants - set observe_me=False
-const assistant = await honcho.peer("assistant", { config: { observe_me: false } });
-const supportBot = await honcho.peer("support-bot", { config: { observe_me: false } });
+// AI assistants - set observeMe=false so Honcho doesn't model the AI
+const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
+const supportBot = await honcho.peer("support-bot", { configuration: { observeMe: false } });
 ```
 
 ### 3. Multi-Peer Sessions
@@ -176,7 +216,7 @@ Sessions can have multiple participants. Configure observation settings per-peer
 **Python:**
 
 ```python
-from honcho import SessionPeerConfig
+from honcho.api_types import SessionPeerConfig
 
 session = honcho.session("conversation-123")
 
@@ -380,7 +420,7 @@ import openai
 
 session = honcho.session("conversation-123")
 user = honcho.peer("user-123")
-assistant = honcho.peer("assistant", config={"observe_me": False})
+assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
 
 # Get context formatted for your LLM
 context = session.context(
@@ -410,15 +450,63 @@ session.add_messages([
 ])
 ```
 
+**TypeScript:**
+
+```typescript
+import OpenAI from 'openai';
+
+const session = await honcho.session("conversation-123");
+const user = await honcho.peer("user-123");
+const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
+
+// Get context formatted for your LLM
+const context = await session.context({
+    tokens: 2000,
+    peerTarget: user.id,  // Include representation of this user
+    summary: true          // Include conversation summaries
+});
+
+// Convert to OpenAI format
+const messages = context.toOpenAI(assistant);
+
+// Or Anthropic format
+// const messages = context.toAnthropic(assistant);
+
+// Add the new user message
+messages.push({ role: "user", content: "What should I focus on today?" });
+
+const openai = new OpenAI();
+const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages
+});
+
+// Store the exchange
+await session.addMessages([
+    user.message("What should I focus on today?"),
+    assistant.message(response.choices[0].message.content!)
+]);
+```
+
 ## Streaming Responses
 
 **Python:**
 
 ```python
-response_stream = peer.chat("What do we know about this user?", stream=True)
+stream = peer.chat_stream("What do we know about this user?")
 
-for chunk in response_stream.iter_text():
+for chunk in stream:
     print(chunk, end="", flush=True)
+```
+
+**TypeScript:**
+
+```typescript
+const stream = await peer.chatStream("What do we know about this user?");
+
+for await (const chunk of stream) {
+    process.stdout.write(chunk);
+}
 ```
 
 ## Integration Checklist
@@ -443,7 +531,7 @@ When integrating Honcho into an existing codebase:
 2. **Forgetting AI peers**: Create peers for AI assistants, not just users
 3. **Observing AI peers**: Set `observe_me=False` for AI peers unless you specifically want Honcho to model your AI's behavior
 4. **Not storing messages**: Always call `add_messages()` to feed Honcho's reasoning engine
-5. **Blocking on processing**: Messages are processed asynchronously; use `get_deriver_status()` if you need to wait
+5. **Blocking on processing**: Messages are processed asynchronously — don't poll or wait for reasoning to complete before continuing
 
 ## Resources
 
