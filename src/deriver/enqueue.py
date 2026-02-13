@@ -530,7 +530,7 @@ async def enqueue_dream(
                     }
                 },
             )
-            await db_session.commit()
+            # update_collection_internal_metadata commits already
 
             logger.info(
                 "Enqueued dream task for %s/%s/%s (type: %s)",

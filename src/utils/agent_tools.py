@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
-from src.exceptions import ValidationException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import (
@@ -628,8 +627,8 @@ async def create_observations(
         )
     except Exception as e:
         logger.warning(
-            "Batch embedding failed for create_observations; "
-            + f"falling back to per-observation embedding: {e}"
+            "Batch embedding failed for create_observations; falling back to per-observation embedding: %s",
+            e,
         )
 
     # Build document objects with pre-computed embeddings
@@ -644,7 +643,9 @@ async def create_observations(
                 embedding = await embedding_client.embed(obs.content)
             except Exception as e:
                 logger.warning(
-                    f"Error embedding observation content for level '{obs.level}': {e}"
+                    "Error embedding observation content for level '%s': %s",
+                    obs.level,
+                    e,
                 )
                 failed.append(
                     ObservationFailure(
@@ -694,7 +695,11 @@ async def create_observations(
             deduplicate=True,
         )
         logger.info(
-            f"Created {len(documents)} observations in {workspace_name}/{observer}/{observed}"
+            "Created %d observations in %s/%s/%s",
+            len(documents),
+            workspace_name,
+            observer,
+            observed,
         )
 
     return ObservationsCreatedResult(
@@ -910,8 +915,8 @@ async def extract_preferences(
         )
     except Exception as e:
         logger.warning(
-            "Batch embedding failed for extract_preferences; "
-            + f"falling back to per-query embedding in search_messages: {e}"
+            "Batch embedding failed for extract_preferences; falling back to per-query embedding in search_messages: %s",
+            e,
         )
 
     for query in semantic_queries:
@@ -937,7 +942,7 @@ async def extract_preferences(
                             seen_content.add(content_key)
                             messages.append(f"'{msg.content.strip()}'")
         except Exception as e:
-            logger.warning(f"Error in semantic search for '{query}': {e}")
+            logger.warning("Error in semantic search for '%s': %s", query, e)
 
     return {
         "instructions": [],  # Deprecated - LLM will categorize
@@ -1082,7 +1087,8 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
     # Check if peer card creation is disabled via configuration
     if ctx.configuration is not None and not ctx.configuration.peer_card.create:
         logger.info(
-            f"Peer card creation disabled for {ctx.workspace_name}, skipping update"
+            "Peer card creation disabled for %s, skipping update",
+            ctx.workspace_name,
         )
         return (
             "Peer card creation is disabled for this workspace/session configuration."
@@ -1161,10 +1167,8 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     query = tool_input["query"]
     try:
         query_embedding = await embedding_client.embed(query)
-    except ValueError as e:
-        raise ValidationException(
-            f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
-        ) from e
+    except ValueError:
+        return f"ERROR: Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}. Please use a shorter query."
 
     documents = await crud.query_documents(
         db=ctx.db,
@@ -1510,7 +1514,7 @@ async def _handle_delete_observations(
                 )
                 deleted_count += 1
             except Exception as e:
-                logger.warning(f"Failed to delete observation {obs_id}: {e}")
+                logger.warning("Failed to delete observation %s: %s", obs_id, e)
 
     # Emit telemetry event if context is available
     if deleted_count > 0 and ctx.run_id and ctx.agent_type and ctx.parent_category:
@@ -1772,13 +1776,13 @@ async def create_tool_executor(
         Returns:
             String result describing what was done
         """
-        logger.info(f"[tool call] {tool_name} {tool_input}")
+        logger.info("[tool call] %s %s", tool_name, tool_input)
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
                 result = await handler(ctx, tool_input)
-                logger.info(f"[tool result] {tool_name} {result}")
+                logger.info("[tool result] %s %s", tool_name, result)
                 return result
             return f"Unknown tool: {tool_name}"
 
