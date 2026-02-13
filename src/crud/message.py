@@ -18,7 +18,7 @@ from .session import get_or_create_session
 logger = getLogger(__name__)
 
 
-def _peer_visibility_condition(
+def peer_visibility_condition(
     workspace_name: str, peer_perspective: str
 ) -> ColumnElement[bool]:
     """
@@ -151,7 +151,7 @@ async def _build_merged_snippets(
         )
         if peer_perspective:
             context_stmt = context_stmt.where(
-                _peer_visibility_condition(workspace_name, peer_perspective)
+                peer_visibility_condition(workspace_name, peer_perspective)
             )
 
         context_result = await db.execute(context_stmt)
@@ -409,7 +409,7 @@ async def get_messages(
     ]
     if peer_perspective:
         base_conditions.append(
-            _peer_visibility_condition(workspace_name, peer_perspective)
+            peer_visibility_condition(workspace_name, peer_perspective)
         )
 
     # Apply message count limit first (takes precedence over token limit)
@@ -664,7 +664,7 @@ async def search_messages(
         )
     if peer_perspective:
         match_stmt = match_stmt.where(
-            _peer_visibility_condition(workspace_name, peer_perspective)
+            peer_visibility_condition(workspace_name, peer_perspective)
         )
 
     result = await db.execute(match_stmt)
@@ -719,7 +719,7 @@ async def grep_messages(
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
     if peer_perspective:
         match_stmt = match_stmt.where(
-            _peer_visibility_condition(workspace_name, peer_perspective)
+            peer_visibility_condition(workspace_name, peer_perspective)
         )
 
     result = await db.execute(match_stmt)
@@ -761,7 +761,7 @@ async def get_messages_by_date_range(
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
     if peer_perspective:
-        stmt = stmt.where(_peer_visibility_condition(workspace_name, peer_perspective))
+        stmt = stmt.where(peer_visibility_condition(workspace_name, peer_perspective))
     if after_date:
         stmt = stmt.where(models.Message.created_at >= after_date)
     if before_date:
@@ -829,7 +829,7 @@ async def search_messages_temporal(
         )
     if peer_perspective:
         match_stmt = match_stmt.where(
-            _peer_visibility_condition(workspace_name, peer_perspective)
+            peer_visibility_condition(workspace_name, peer_perspective)
         )
 
     # Apply date filters on the Message table
