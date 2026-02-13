@@ -3,12 +3,17 @@ from logging import getLogger
 from typing import Any
 
 from cashews import NOT_NONE
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
@@ -108,7 +113,7 @@ async def get_or_create_workspace(
         logger.debug("Workspace created successfully: %s", workspace.name)
 
         cache_key = workspace_cache_key(workspace.name)
-        await cache.set(
+        await safe_cache_set(
             cache_key, honcho_workspace, expire=settings.CACHE.DEFAULT_TTL_SECONDS
         )
         return GetOrCreateResult(honcho_workspace, created=True)
@@ -221,10 +226,37 @@ async def update_workspace(
 
     # Only invalidate if we actually updated
     cache_key = workspace_cache_key(workspace_name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace
+
+
+async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> None:
+    """
+    Verify that a workspace has no active sessions.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Raises:
+        ConflictException: If active sessions exist in the workspace
+    """
+    has_active_sessions: bool = bool(
+        await db.scalar(
+            select(
+                exists().where(
+                    models.Session.workspace_name == workspace_name,
+                    models.Session.is_active == True,  # noqa: E712
+                )
+            )
+        )
+    )
+    if has_active_sessions:
+        raise ConflictException(
+            f"Cannot delete workspace '{workspace_name}': active session(s) remain. Delete all sessions first."
+        )
 
 
 async def delete_workspace(
@@ -249,6 +281,11 @@ async def delete_workspace(
     if honcho_workspace is None:
         logger.warning("Workspace %s not found", workspace_name)
         raise ResourceNotFoundException()
+
+    # NOTE: No active session check here — that gate lives in the router.
+    # This crud method is called by the background worker, where a session
+    # could have been created after the user's request was accepted (202).
+    # The deletion should proceed and cascade-delete any new sessions.
 
     # Create a snapshot of the workspace data before deletion
     workspace_snapshot = schemas.Workspace(

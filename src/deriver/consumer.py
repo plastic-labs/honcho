@@ -207,6 +207,8 @@ async def process_deletion(
     resource_id = payload.resource_id
     success = True
     error_message: str | None = None
+    peers_deleted = 0
+    sessions_deleted = 0
     messages_deleted = 0
     conclusions_deleted = 0
 
@@ -260,6 +262,30 @@ async def process_deletion(
                     str(e),
                 )
 
+        elif deletion_type == "workspace":
+            try:
+                result = await crud.delete_workspace(db, workspace_name=workspace_name)
+                peers_deleted = result.peers_deleted
+                sessions_deleted = result.sessions_deleted
+                messages_deleted = result.messages_deleted
+                conclusions_deleted = result.conclusions_deleted
+                logger.info(
+                    "Successfully deleted workspace %s "
+                    + "(peers=%d, sessions=%d, messages=%d, conclusions=%d)",
+                    workspace_name,
+                    peers_deleted,
+                    sessions_deleted,
+                    messages_deleted,
+                    conclusions_deleted,
+                )
+            except ResourceNotFoundException as e:
+                # Workspace not found - may have already been deleted, treat as success
+                logger.warning(
+                    "Workspace %s not found during deletion (may already be deleted): %s",
+                    workspace_name,
+                    str(e),
+                )
+
         else:
             success = False
             error_message = f"Unsupported deletion type: {deletion_type}"
@@ -272,6 +298,8 @@ async def process_deletion(
             deletion_type=deletion_type,
             resource_id=resource_id,
             success=success,
+            peers_deleted=peers_deleted,
+            sessions_deleted=sessions_deleted,
             messages_deleted=messages_deleted,
             conclusions_deleted=conclusions_deleted,
             error_message=error_message,
