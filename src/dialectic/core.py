@@ -206,6 +206,7 @@ class DialecticAgent(BaseDialecticAgent):
             session_name=self.session_name,
             token_limit=max_tokens,
             reverse=False,
+            peer_perspective=self.observer,
         )
         result = await self.db.execute(stmt)
         messages = result.scalars().all()

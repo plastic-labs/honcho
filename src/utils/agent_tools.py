@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.message import peer_visibility_condition
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -751,6 +752,7 @@ async def get_recent_history(
     workspace_name: str,
     session_name: str | None,
     observed: str | None = None,
+    peer_perspective: str | None = None,
     token_limit: int = 8192,
 ) -> list[models.Message]:
     """
@@ -765,6 +767,7 @@ async def get_recent_history(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: Peer name to filter by when no session specified (optional)
+        peer_perspective: Optional peer perspective for visibility enforcement
         token_limit: Maximum tokens to retrieve (default: 8192)
 
     Returns:
@@ -777,6 +780,7 @@ async def get_recent_history(
             session_name=session_name,
             token_limit=token_limit,
             reverse=True,  # Get most recent first
+            peer_perspective=peer_perspective,
         )
         result = await db.execute(messages_stmt)
         messages = result.scalars().all()
@@ -791,6 +795,10 @@ async def get_recent_history(
             .order_by(models.Message.created_at.desc())
             .limit(50)  # Limit to recent messages
         )
+        if peer_perspective:
+            stmt = stmt.where(
+                peer_visibility_condition(workspace_name, peer_perspective)
+            )
         result = await db.execute(stmt)
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -911,6 +919,7 @@ async def extract_preferences(
     workspace_name: str,
     session_name: str | None,
     observed: str,
+    observer: str | None = None,
 ) -> dict[str, list[str]]:
     """
     Extract user preferences and standing instructions from conversation history.
@@ -923,6 +932,7 @@ async def extract_preferences(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: The peer whose preferences to extract
+        observer: Optional peer perspective to enforce session membership visibility
 
     Returns:
         Dict with 'messages' list containing potentially relevant messages
@@ -948,6 +958,7 @@ async def extract_preferences(
                 query=query,
                 limit=10,
                 context_window=0,
+                peer_perspective=observer,
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -1176,6 +1187,7 @@ async def _handle_get_recent_history(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         observed=ctx.observed,
+        peer_perspective=ctx.observer or None,
         token_limit=ctx.history_token_limit,
     )
     if not history:
@@ -1221,6 +1233,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
                 query=query,
                 limit=limit,
                 context_window=0,
+                peer_perspective=ctx.observer or None,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1287,6 +1300,7 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
         query=query,
         limit=limit,
         context_window=2,
+        peer_perspective=ctx.observer or None,
     )
     if not snippets:
         return f"No messages found for query '{query}'"
@@ -1309,6 +1323,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         text=text,
         limit=limit,
         context_window=context_window,
+        peer_perspective=ctx.observer or None,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -1371,6 +1386,7 @@ async def _handle_get_messages_by_date_range(
         before_date=before_date,
         limit=limit,
         order=order,
+        peer_perspective=ctx.observer or None,
     )
 
     date_range: list[str] = []
@@ -1429,6 +1445,7 @@ async def _handle_search_messages_temporal(
         before_date=before_date,
         limit=limit,
         context_window=context_window,
+        peer_perspective=ctx.observer or None,
     )
 
     date_filter: list[str] = []
@@ -1589,6 +1606,7 @@ async def _handle_extract_preferences(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         observed=ctx.observed,
+        observer=ctx.observer or None,
     )
 
     messages = results.get("messages", [])
