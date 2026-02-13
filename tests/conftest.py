@@ -67,6 +67,25 @@ DB_URI = (
 )
 CONNECTION_URI = make_url(DB_URI)
 
+_RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
+    # Benchmarks and migration tests have their own execution/runtime constraints.
+    "tests/bench/",
+    "tests/alembic/",
+    "tests/unified/",
+)
+
+
+def _requires_runtime_mocks(nodeid: str) -> bool:
+    return not any(
+        nodeid.startswith(prefix) for prefix in _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES
+    )
+
+
+def _get_nodeid(request: pytest.FixtureRequest) -> str:
+    node = getattr(request, "node", None)
+    nodeid = getattr(node, "nodeid", "")
+    return nodeid if isinstance(nodeid, str) else ""
+
 
 def _get_test_db_url(worker_id: str) -> URL:
     """Get a worker-specific test database URL for pytest-xdist parallelism."""
@@ -404,8 +423,12 @@ def _content_to_embedding(content: str) -> list[float]:
 
 
 @pytest.fixture(autouse=True)
-def mock_openai_embeddings():
+def mock_openai_embeddings(request: pytest.FixtureRequest):
     """Mock OpenAI embeddings API calls for testing"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     with (
         patch("src.embedding_client.embedding_client.embed") as mock_embed,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
@@ -431,8 +454,12 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_vector_store():
+def mock_vector_store(request: pytest.FixtureRequest):
     """Mock vector store operations for testing"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from unittest.mock import AsyncMock, MagicMock
 
     from src.vector_store import (
@@ -531,8 +558,11 @@ def mock_vector_store():
 
 
 @pytest.fixture(autouse=True)
-def mock_llm_call_functions():
+def mock_llm_call_functions(request: pytest.FixtureRequest):
     """Mock LLM functions to avoid needing API keys during tests"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
 
     # Create an async generator for streaming responses
     async def mock_stream(*args, **kwargs):  # pyright: ignore[reportUnusedParameter, reportMissingParameterType, reportUnknownParameterType]
@@ -574,8 +604,12 @@ def mock_llm_call_functions():
 
 
 @pytest.fixture(autouse=True)
-def mock_honcho_llm_call():
+def mock_honcho_llm_call(request: pytest.FixtureRequest):
     """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from unittest.mock import AsyncMock
 
     from src.utils.representation import (
@@ -687,12 +721,16 @@ def mock_honcho_llm_call():
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_engine: AsyncEngine):
+def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
     """Mock tracked_db to create fresh sessions per call.
 
     Using a session factory instead of a shared session avoids asyncio lock
     errors when multiple tracked_db calls run concurrently via asyncio.gather.
     """
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from contextlib import asynccontextmanager
 
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
@@ -719,8 +757,12 @@ def mock_tracked_db(db_engine: AsyncEngine):
 
 
 @pytest.fixture(autouse=True)
-def enable_deriver_for_tests():
+def enable_deriver_for_tests(request: pytest.FixtureRequest):
     """Enable deriver globally for tests that need queue processing"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from src.config import settings
 
     original_value = settings.DERIVER.ENABLED
@@ -730,8 +772,12 @@ def enable_deriver_for_tests():
 
 
 @pytest.fixture(autouse=True)
-def mock_crud_collection_operations():
+def mock_crud_collection_operations(request: pytest.FixtureRequest):
     """Mock CRUD operations that try to commit to database during tests"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from nanoid import generate as generate_nanoid
 
     from src import models

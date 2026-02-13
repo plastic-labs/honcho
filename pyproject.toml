@@ -94,6 +94,11 @@ asyncio_default_fixture_loop_scope = "session"
 addopts = "--strict-markers -n auto --ignore=tests/alembic"
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+    "ignore:Call to deprecated close\\. \\(Use aclose\\(\\) instead\\).*:DeprecationWarning",
+    "ignore:websockets\\.legacy is deprecated; see .* for upgrade instructions:DeprecationWarning",
+    "ignore:websockets\\.server\\.WebSocketServerProtocol is deprecated:DeprecationWarning",
+]
 
 [tool.coverage.report]
 exclude_lines = [

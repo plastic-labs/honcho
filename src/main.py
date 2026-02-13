@@ -28,7 +28,6 @@ from src.routers import (
     webhooks,
     workspaces,
 )
-from src.security import create_admin_jwt
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -73,12 +72,6 @@ logger = logging.getLogger(__name__)
 # Suppress cashews Redis error logs (NoScriptError, ConnectionError, etc.)
 # These are handled gracefully by SafeRedis and don't need full tracebacks
 logging.getLogger("cashews.backends.redis.client").setLevel(logging.CRITICAL)
-
-
-# JWT Setup
-async def setup_admin_jwt():
-    token = create_admin_jwt()
-    print(f"\n    ADMIN JWT: {token}\n")
 
 
 def before_send(event: "Event", hint: "Hint | None") -> "Event | None":
