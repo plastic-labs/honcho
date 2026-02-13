@@ -558,7 +558,7 @@ async def enqueue_dream(
 
 def create_deletion_record(
     workspace_name: str,
-    deletion_type: Literal["session", "observation"],
+    deletion_type: Literal["session", "observation", "workspace"],
     resource_id: str,
 ) -> dict[str, Any]:
     """
@@ -589,7 +589,7 @@ def create_deletion_record(
 
 async def enqueue_deletion(
     workspace_name: str,
-    deletion_type: Literal["session", "observation"],
+    deletion_type: Literal["session", "observation", "workspace"],
     resource_id: str,
     db_session: AsyncSession | None = None,
 ) -> None:

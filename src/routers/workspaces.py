@@ -9,10 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import db
-from src.deriver.enqueue import enqueue_dream
+from src.deriver.enqueue import enqueue_deletion, enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
-from src.telemetry.events import DeletionCompletedEvent, emit
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -101,8 +100,7 @@ async def update_workspace(
 
 @router.delete(
     "/{workspace_id}",
-    status_code=204,
-    response_model=None,
+    status_code=202,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def delete_workspace(
@@ -110,26 +108,26 @@ async def delete_workspace(
     db: AsyncSession = db,
 ):
     """
-    Delete a Workspace. This will permanently delete all sessions, peers, messages, and conclusions
-    associated with the workspace.
+    Delete a Workspace. This accepts the deletion request and processes it in the background,
+    permanently deleting all peers, messages, conclusions, and other resources associated
+    with the workspace.
+
+    Returns 409 Conflict if the workspace contains active sessions.
+    Delete all sessions first, then delete the workspace.
 
     This action cannot be undone.
     """
-    result = await crud.delete_workspace(db, workspace_name=workspace_id)
+    # Verify workspace exists
+    await crud.get_workspace(db, workspace_name=workspace_id)
 
-    # Emit telemetry event with cascade counts
-    emit(
-        DeletionCompletedEvent(
-            workspace_name=workspace_id,
-            deletion_type="workspace",
-            resource_id=workspace_id,
-            success=True,
-            peers_deleted=result.peers_deleted,
-            sessions_deleted=result.sessions_deleted,
-            messages_deleted=result.messages_deleted,
-            conclusions_deleted=result.conclusions_deleted,
-        )
-    )
+    # Check for active sessions before accepting
+    await crud.check_no_active_sessions(db, workspace_name=workspace_id)
+
+    # Enqueue for background deletion
+    await enqueue_deletion(workspace_id, "workspace", workspace_id, db_session=db)
+    await db.commit()
+
+    return {"message": "Workspace deletion accepted"}
 
 
 @router.post(

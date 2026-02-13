@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import and_, bindparam, delete, select, update
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.functions import func
 
@@ -199,21 +199,8 @@ async def _sync_documents(
 
             for doc, emb in zip(docs_needing_embed, new_embeddings, strict=False):
                 freshly_embedded[doc.id] = emb
-
-            # Case 2: Write to postgres if needed
-            if store_in_postgres and freshly_embedded:
-                stmt = (
-                    update(models.Document)
-                    .where(models.Document.id == bindparam("doc_id"))
-                    .values(embedding=bindparam("emb"))
-                )
-                await db.execute(
-                    stmt,
-                    [
-                        {"doc_id": doc_id, "emb": emb}
-                        for doc_id, emb in freshly_embedded.items()
-                    ],
-                )
+                if store_in_postgres:
+                    doc.embedding = emb
         except Exception:
             logger.exception("Failed to re-embed %s documents", len(docs_needing_embed))
 
@@ -326,21 +313,8 @@ async def _sync_message_embeddings(
 
             for emb, new_emb in zip(embs_needing_embed, new_embeddings, strict=False):
                 freshly_embedded[emb.id] = new_emb
-
-            # Case 2: Write to postgres if needed
-            if store_in_postgres and freshly_embedded:
-                stmt = (
-                    update(models.MessageEmbedding)
-                    .where(models.MessageEmbedding.id == bindparam("emb_id"))
-                    .values(embedding=bindparam("emb"))
-                )
-                await db.execute(
-                    stmt,
-                    [
-                        {"emb_id": emb_id, "emb": emb}
-                        for emb_id, emb in freshly_embedded.items()
-                    ],
-                )
+                if store_in_postgres:
+                    emb.embedding = new_emb
         except Exception:
             logger.exception(
                 "Failed to re-embed %s message embeddings", len(embs_needing_embed)
