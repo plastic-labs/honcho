@@ -228,28 +228,26 @@ class MetricsCollector:
         Print a summary of collected metrics to the console.
         """
         if not self.metrics_by_type:
-            logger.info("No metrics collected")
+            print("No metrics collected")
             return
 
         stats = self.get_aggregated_stats()
 
-        logger.info("%s", "=" * 80)
-        logger.info("PERFORMANCE METRICS SUMMARY - %s", self.run_id)
-        logger.info("%s", "=" * 80)
-        logger.info("Tasks processed: %s", self.task_count)
+        print("=" * 80)
+        print(f"PERFORMANCE METRICS SUMMARY - {self.run_id}")
+        print("=" * 80)
+        print(f"Tasks processed: {self.task_count}")
 
         if self.start_time and self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
-            logger.info("Collection duration: %.2fs", duration)
+            print(f"Collection duration: {duration:.2f}s")
 
-        logger.info("Aggregated Performance Metrics:")
-        logger.info(
-            "%s",
-            f"{'Metric':<40} {'Count':<8} {'Mean':<12} {'Median':<12} {'Min':<12} {'Max':<12} {'Unit'}",
+        print("Aggregated Performance Metrics:")
+        print(
+            f"{'Metric':<40} {'Count':<8} {'Mean':<12} {'Median':<12} {'Min':<12} {'Max':<12} {'Unit'}"
         )
-        logger.info(
-            "%s",
-            f"{'-' * 40} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}",
+        print(
+            f"{'-' * 40} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}"
         )
 
         # Sort metrics by name for consistent display
@@ -274,12 +272,11 @@ class MetricsCollector:
                 min_str = f"{stat['min']:.2f}"
                 max_str = f"{stat['max']:.2f}"
 
-            logger.info(
-                "%s",
-                f"{metric_name:<40} {stat['count']:<8} {mean_str:<12} {median_str:<12} {min_str:<12} {max_str:<12} {unit_display}",
+            print(
+                f"{metric_name:<40} {stat['count']:<8} {mean_str:<12} {median_str:<12} {min_str:<12} {max_str:<12} {unit_display}"
             )
 
-        logger.info("%s", "=" * 80)
+        print("=" * 80)
 
     def cleanup_collection(self) -> None:
         """

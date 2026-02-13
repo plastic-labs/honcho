@@ -67,22 +67,18 @@ DB_URI = (
 )
 CONNECTION_URI = make_url(DB_URI)
 
-_RUNTIME_MOCK_TEST_PREFIXES = (
-    "tests/routes/",
-    "tests/crud/",
-    "tests/deriver/",
-    "tests/dreamer/",
-    "tests/integration/",
-    "tests/sdk/",
-    "tests/sdk_typescript/",
-    "tests/utils/",
-    "tests/test_advanced_filters.py",
-    "tests/test_search.py",
+_RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
+    # Benchmarks and migration tests have their own execution/runtime constraints.
+    "tests/bench/",
+    "tests/alembic/",
+    "tests/unified/",
 )
 
 
 def _requires_runtime_mocks(nodeid: str) -> bool:
-    return any(nodeid.startswith(prefix) for prefix in _RUNTIME_MOCK_TEST_PREFIXES)
+    return not any(
+        nodeid.startswith(prefix) for prefix in _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES
+    )
 
 
 def _get_nodeid(request: pytest.FixtureRequest) -> str:
