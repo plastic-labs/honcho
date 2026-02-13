@@ -187,64 +187,85 @@ async def test_get_queue_status(client_fixture: tuple[Honcho, str]):
     """
     honcho_client, client_type = client_fixture
 
+    def assert_queue_status(status: QueueStatusResponse) -> None:
+        assert status.total_work_units >= 0
+        assert status.completed_work_units >= 0
+        assert status.in_progress_work_units >= 0
+        assert status.pending_work_units >= 0
+        assert status.total_work_units == (
+            status.completed_work_units
+            + status.in_progress_work_units
+            + status.pending_work_units
+        )
+
+        if status.sessions is not None:
+            for session_status in status.sessions.values():
+                assert session_status.total_work_units == (
+                    session_status.completed_work_units
+                    + session_status.in_progress_work_units
+                    + session_status.pending_work_units
+                )
+
     if client_type == "async":
         # Test with no parameters - this should work in the SDK even though API requires at least one
         status = await honcho_client.aio.queue_status()
         assert isinstance(status, QueueStatusResponse)
-        assert hasattr(status, "total_work_units")
-        assert hasattr(status, "completed_work_units")
-        assert hasattr(status, "in_progress_work_units")
-        assert hasattr(status, "pending_work_units")
+        assert_queue_status(status)
 
         # Test with peer_id only
         peer = await honcho_client.aio.peer(id="test-peer-queue-status")
         await peer.aio.get_metadata()  # Create the peer
         status = await honcho_client.aio.queue_status(observer=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
         # Test with session_id only
         session = await honcho_client.aio.session(id="test-session-queue-status")
         await session.aio.get_metadata()  # Create the session
         status = await honcho_client.aio.queue_status(session=session.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
         # Test with both peer and session
         status = await honcho_client.aio.queue_status(
             observer=peer.id, session=session.id
         )
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
         # Test with sender
         status = await honcho_client.aio.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
     else:
         # Test with no parameters
         status = honcho_client.queue_status()
         assert isinstance(status, QueueStatusResponse)
-        assert hasattr(status, "total_work_units")
-        assert hasattr(status, "completed_work_units")
-        assert hasattr(status, "in_progress_work_units")
-        assert hasattr(status, "pending_work_units")
+        assert_queue_status(status)
 
         # Test with peer_id only
         peer = honcho_client.peer(id="test-peer-queue-status")
         peer.get_metadata()  # Create the peer
         status = honcho_client.queue_status(observer=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
         # Test with session_id only
         session = honcho_client.session(id="test-session-queue-status")
         session.get_metadata()  # Create the session
         status = honcho_client.queue_status(session=session.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
         # Test with both peer and session
         status = honcho_client.queue_status(observer=peer.id, session=session.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
         # Test with sender
         status = honcho_client.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_queue_status(status)
 
 
 @pytest.mark.asyncio

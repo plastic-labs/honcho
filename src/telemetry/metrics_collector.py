@@ -6,6 +6,7 @@ metrics from deriver and dialectic operations during benchmarking.
 """
 
 import json
+import logging
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing_extensions import TypedDict
 
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class MetricStats(TypedDict):
@@ -70,7 +73,7 @@ class MetricsCollector:
         self.metrics_by_type.clear()
         self.task_count = 0
         self.is_collecting = True
-        print(f"📊 Started metrics collection for run: {run_id}")
+        logger.info("Started metrics collection for run: %s", run_id)
 
     def collect_metrics(
         self, metrics_list: list[tuple[str, str | int | float, str]]
@@ -146,10 +149,10 @@ class MetricsCollector:
             if self.end_time and self.start_time
             else 0
         )
-        print(f"📊 Finalized metrics collection for run: {self.run_id}")
-        print(f"   Tasks processed: {self.task_count}")
-        print(f"   Collection duration: {duration:.2f}s")
-        print(f"   Metric types collected: {len(self.metrics_by_type)}")
+        logger.info("Finalized metrics collection for run: %s", self.run_id)
+        logger.info("Tasks processed: %s", self.task_count)
+        logger.info("Collection duration: %.2fs", duration)
+        logger.info("Metric types collected: %s", len(self.metrics_by_type))
 
     def get_aggregated_stats(self) -> dict[str, MetricStats]:
         """
@@ -218,33 +221,35 @@ class MetricsCollector:
         with open(filepath, "w") as f:
             json.dump(export_data, f, indent=2, default=str)
 
-        print(f"📊 Exported metrics to: {filepath}")
+        logger.info("Exported metrics to: %s", filepath)
 
     def print_summary(self) -> None:
         """
         Print a summary of collected metrics to the console.
         """
         if not self.metrics_by_type:
-            print("📊 No metrics collected")
+            logger.info("No metrics collected")
             return
 
         stats = self.get_aggregated_stats()
 
-        print(f"\n{'=' * 80}")
-        print(f"📊 PERFORMANCE METRICS SUMMARY - {self.run_id}")
-        print(f"{'=' * 80}")
-        print(f"Tasks processed: {self.task_count}")
+        logger.info("%s", "=" * 80)
+        logger.info("PERFORMANCE METRICS SUMMARY - %s", self.run_id)
+        logger.info("%s", "=" * 80)
+        logger.info("Tasks processed: %s", self.task_count)
 
         if self.start_time and self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
-            print(f"Collection duration: {duration:.2f}s")
+            logger.info("Collection duration: %.2fs", duration)
 
-        print("\nAggregated Performance Metrics:")
-        print(
-            f"{'Metric':<40} {'Count':<8} {'Mean':<12} {'Median':<12} {'Min':<12} {'Max':<12} {'Unit'}"
+        logger.info("Aggregated Performance Metrics:")
+        logger.info(
+            "%s",
+            f"{'Metric':<40} {'Count':<8} {'Mean':<12} {'Median':<12} {'Min':<12} {'Max':<12} {'Unit'}",
         )
-        print(
-            f"{'-' * 40} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}"
+        logger.info(
+            "%s",
+            f"{'-' * 40} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}",
         )
 
         # Sort metrics by name for consistent display
@@ -269,11 +274,12 @@ class MetricsCollector:
                 min_str = f"{stat['min']:.2f}"
                 max_str = f"{stat['max']:.2f}"
 
-            print(
-                f"{metric_name:<40} {stat['count']:<8} {mean_str:<12} {median_str:<12} {min_str:<12} {max_str:<12} {unit_display}"
+            logger.info(
+                "%s",
+                f"{metric_name:<40} {stat['count']:<8} {mean_str:<12} {median_str:<12} {min_str:<12} {max_str:<12} {unit_display}",
             )
 
-        print(f"{'=' * 80}")
+        logger.info("%s", "=" * 80)
 
     def cleanup_collection(self) -> None:
         """
@@ -283,7 +289,7 @@ class MetricsCollector:
         self.end_time = datetime.now()
         # delete the metrics file
         metrics_file = get_metrics_file_path()
-        if metrics_file:
+        if metrics_file and metrics_file.exists():
             metrics_file.unlink()
 
 

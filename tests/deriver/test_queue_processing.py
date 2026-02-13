@@ -19,14 +19,16 @@ class TestQueueProcessing:
 
     async def test_get_and_claim_work_units(
         self,
+        db_session: AsyncSession,
         sample_queue_items: list[models.QueueItem],
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ) -> None:
         """Test that get_and_claim_work_units correctly identifies unprocessed work"""
-        session, _peers = sample_session_with_peers  # pyright: ignore[reportUnusedVariable]
+        session, _peers = sample_session_with_peers
 
         # Verify we have queue items from our test setup
         assert len(sample_queue_items) == 9  # 6 representation + 3 summary
+        expected_work_units = {item.work_unit_key for item in sample_queue_items}
 
         # Create a queue manager instance
         queue_manager = QueueManager()
@@ -34,16 +36,24 @@ class TestQueueProcessing:
         # Get available work units
         work_units = await queue_manager.get_and_claim_work_units()
 
-        # Should have some work units available (may include items from other tests)
+        # Should return claimed work units from this test's seeded queue data
         assert len(work_units) > 0
+        assert set(work_units).issubset(expected_work_units)
 
         # Check that all work units have the expected structure
         for work_unit in work_units:
             assert isinstance(work_unit, str)
             assert work_unit.split(":")[0] in ["representation", "summary"]
+            assert f":{session.workspace_name}:" in work_unit
 
-        # The test is mainly verifying that get_and_claim_work_units works without errors
-        # and returns properly structured work unit key strings
+        tracked_keys = (
+            await db_session.execute(
+                select(models.ActiveQueueSession.work_unit_key).where(
+                    models.ActiveQueueSession.work_unit_key.in_(list(work_units.keys()))
+                )
+            )
+        ).scalars()
+        assert set(tracked_keys) == set(work_units.keys())
 
     async def test_work_unit_claiming(
         self,
