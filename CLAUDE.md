@@ -113,6 +113,7 @@ cd sdks/typescript && bun run tsc --noEmit
 - Line length: 88 chars (Black compatible)
 - Explicit error handling with appropriate exception types
 - Docstrings: Use Google style docstrings
+- **Never hold a DB session during external calls** (LLM, embedding, HTTP). If a function needs both a DB session and an external call result, compute the external result first and pass it as a parameter. This avoids tying up DB connections during slow network I/O. Use `tracked_db` for short-lived, DB-only operations; pass a shared session when multiple DB-only calls can reuse one connection.
 
 ### Agent Architecture
 

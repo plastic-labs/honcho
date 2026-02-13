@@ -377,6 +377,7 @@ class TestQueueProcessing:
         qm.worker_ownership[worker_id] = WorkerOwnership(
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
+        await db_session.commit()
 
         with patch(
             "src.deriver.queue_manager.process_representation_batch",
@@ -800,6 +801,7 @@ class TestQueueProcessing:
         qm.worker_ownership[worker_id] = WorkerOwnership(
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
+        await db_session.commit()
 
         with patch(
             "src.deriver.queue_manager.process_item",
@@ -811,6 +813,9 @@ class TestQueueProcessing:
         assert len(processed_batches) == 2
         assert all(batch["task_type"] == "summary" for batch in processed_batches)
         assert all(batch["payload_count"] == 1 for batch in processed_batches)
+
+        # Expire cached objects so we see updates made by tracked_db sessions
+        db_session.expire_all()
 
         # Query for the summary queue items that were processed
         processed_items = (
@@ -939,6 +944,7 @@ class TestQueueProcessing:
         qm.worker_ownership[worker_id] = WorkerOwnership(
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
+        await db_session.commit()
 
         with patch(
             "src.deriver.queue_manager.process_representation_batch",
@@ -1058,6 +1064,7 @@ class TestQueueProcessing:
         qm.worker_ownership[worker_id] = WorkerOwnership(
             work_unit_key=work_unit_key, aqs_id=aqs_id
         )
+        await db_session.commit()
 
         with patch(
             "src.deriver.queue_manager.process_representation_batch",
