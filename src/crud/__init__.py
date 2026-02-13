@@ -1,4 +1,8 @@
-from .collection import get_collection, get_or_create_collection
+from .collection import (
+    get_collection,
+    get_or_create_collection,
+    update_collection_internal_metadata,
+)
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
     create_documents,
@@ -71,6 +75,7 @@ __all__ = [
     # Collection
     "get_collection",
     "get_or_create_collection",
+    "update_collection_internal_metadata",
     # Deriver
     "get_deriver_status",
     "get_queue_status",

@@ -6,6 +6,8 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
+from src.cache.client import safe_cache_delete
+from src.crud.session import session_cache_key
 from src.dependencies import db, tracked_db
 from src.deriver.enqueue import enqueue_deletion
 from src.exceptions import (
@@ -264,6 +266,8 @@ async def delete_session(
         )
 
         await db.commit()
+
+        await safe_cache_delete(session_cache_key(workspace_id, session_id))
 
         logger.debug("Session %s marked as inactive, deletion enqueued", session_id)
         return {"message": "Session deleted successfully"}

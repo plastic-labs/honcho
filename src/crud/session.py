@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -231,7 +236,7 @@ async def get_or_create_session(
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
         cache_key = session_cache_key(workspace_name, session.name)
-        await cache.set(
+        await safe_cache_set(
             cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
         )
         logger.debug(
@@ -341,7 +346,7 @@ async def update_session(
 
     # Only invalidate if we actually updated
     cache_key = session_cache_key(workspace_name, session_name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Session %s updated successfully", session_name)
     return honcho_session
@@ -560,6 +565,10 @@ async def delete_session(
         # Finally, delete the session itself
         await db.delete(honcho_session)
         await db.commit()
+
+        # Invalidate session cache
+        await safe_cache_delete(session_cache_key(workspace_name, session_name))
+
         logger.debug("Session %s and all associated data deleted", session_name)
     except Exception as e:
         logger.error("Failed to delete session %s: %s", session_name, e)
