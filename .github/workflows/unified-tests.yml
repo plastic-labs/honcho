@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
