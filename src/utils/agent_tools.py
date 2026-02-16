@@ -951,14 +951,25 @@ async def extract_preferences(
 
     for query in semantic_queries:
         try:
-            snippets = await crud.search_messages(
+            from typing import cast
+
+            from src.utils.search import search
+
+            filters = {"workspace_id": workspace_name, "peer_perspective": observer}
+            if session_name:
+                filters["session_id"] = session_name
+
+            result = await search(
                 db,
-                workspace_name=workspace_name,
-                session_name=session_name,
-                query=query,
+                query,
+                filters=filters,
                 limit=10,
-                context_window=0,
-                peer_perspective=observer,
+                context_window=2,
+                semantic_only=False,
+            )
+            # context_window > 0 guarantees tuple return type
+            snippets = cast(
+                list[tuple[list[models.Message], list[models.Message]]], result
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -1225,15 +1236,29 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # automatically search the message history for relevant information.
         query = tool_input["query"]
         if ctx.agent_type == "dialectic":
+            from typing import cast
+
+            from src.utils.search import search
+
             limit = min(tool_input.get("top_k", 20), 20)
-            snippets = await crud.search_messages(
+            filters = {
+                "workspace_id": ctx.workspace_name,
+                "peer_perspective": ctx.observer or None,
+            }
+            if ctx.session_name:
+                filters["session_id"] = ctx.session_name
+
+            result = await search(
                 ctx.db,
-                workspace_name=ctx.workspace_name,
-                session_name=ctx.session_name,
-                query=query,
+                query,
+                filters=filters,
                 limit=limit,
-                context_window=0,
-                peer_perspective=ctx.observer or None,
+                context_window=2,
+                semantic_only=False,
+            )
+            # context_window > 0 guarantees tuple return type
+            snippets = cast(
+                list[tuple[list[models.Message], list[models.Message]]], result
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1290,18 +1315,35 @@ async def _handle_get_observation_context(
 
 
 async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
-    """Handle search_messages tool."""
+    """Handle search_messages tool using hybrid search with external vector store support."""
+    from typing import cast
+
+    from src.utils.search import search
+
     query = tool_input["query"]
     limit = min(tool_input.get("limit", 10), 20)  # Cap at 20
-    snippets = await crud.search_messages(
+
+    # Build filters for search
+    filters = {
+        "workspace_id": ctx.workspace_name,
+        "peer_perspective": ctx.observer or None,  # Always enforce peer visibility
+    }
+    if ctx.session_name:
+        filters["session_id"] = ctx.session_name
+
+    # Use hybrid search with context window
+    # This supports all vector store backends (pgvector, turbopuffer, lancedb)
+    result = await search(
         ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
+        query,
+        filters=filters,
         limit=limit,
         context_window=2,
-        peer_perspective=ctx.observer or None,
+        semantic_only=False,  # Use hybrid for better results
     )
+    # context_window > 0 guarantees tuple return type
+    snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
+
     if not snippets:
         return f"No messages found for query '{query}'"
 
@@ -1418,7 +1460,12 @@ async def _handle_get_messages_by_date_range(
 async def _handle_search_messages_temporal(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
-    """Handle search_messages_temporal tool."""
+    """Handle search_messages_temporal tool using hybrid search with date filtering."""
+    from typing import Any as typing_Any
+    from typing import cast
+
+    from src.utils.search import search
+
     query = tool_input.get("query", "")
     if not query:
         return "ERROR: 'query' parameter is required"
@@ -1436,24 +1483,43 @@ async def _handle_search_messages_temporal(
     if isinstance(before_date, str):
         return before_date
 
-    snippets = await crud.search_messages_temporal(
+    # Build filters for search
+    filters: dict[str, typing_Any] = {
+        "workspace_id": ctx.workspace_name,
+        "peer_perspective": ctx.observer or None,  # Always enforce peer visibility
+    }
+    if ctx.session_name:
+        filters["session_id"] = ctx.session_name
+
+    # Add date filters using filter system's built-in support
+    # The filter system supports: {"created_at": {"gte": "2024-01-01", "lte": "2024-12-31"}}
+    if after_date or before_date:
+        date_filter: dict[str, str] = {}
+        if after_date:
+            date_filter["gte"] = after_date.isoformat()
+        if before_date:
+            date_filter["lte"] = before_date.isoformat()
+        filters["created_at"] = date_filter
+
+    # Use hybrid search with context window - filter system handles date filtering
+    result = await search(
         ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
-        after_date=after_date,
-        before_date=before_date,
+        query,
+        filters=filters,
         limit=limit,
         context_window=context_window,
-        peer_perspective=ctx.observer or None,
+        semantic_only=False,
     )
+    # context_window > 0 guarantees tuple return type
+    snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
 
-    date_filter: list[str] = []
+    # Build description for user feedback
+    date_filter_desc: list[str] = []
     if after_date_str:
-        date_filter.append(f"after {after_date_str}")
+        date_filter_desc.append(f"after {after_date_str}")
     if before_date_str:
-        date_filter.append(f"before {before_date_str}")
-    filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+        date_filter_desc.append(f"before {before_date_str}")
+    filter_desc = f" ({' and '.join(date_filter_desc)})" if date_filter_desc else ""
 
     if not snippets:
         return f"No messages found for query '{query}'{filter_desc}"
@@ -1929,14 +1995,27 @@ async def _handle_search_memory_workspace(
     )
     if not documents:
         # Fallback to message search
-        snippets = await crud.search_messages(
+        from typing import cast
+
+        from src.utils.search import search
+
+        filters = {
+            "workspace_id": ctx.workspace_name,
+            "peer_perspective": observer,  # Use observer for visibility scoping
+        }
+        if ctx.session_name:
+            filters["session_id"] = ctx.session_name
+
+        result = await search(
             ctx.db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            query=tool_input["query"],
+            tool_input["query"],
+            filters=filters,
             limit=min(tool_input.get("top_k", 20), 20),
-            context_window=0,
+            context_window=2,
+            semantic_only=False,
         )
+        # context_window > 0 guarantees tuple return type
+        snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
         if snippets:
             message_output = _format_message_snippets(
                 snippets, f"for query '{tool_input['query']}'"

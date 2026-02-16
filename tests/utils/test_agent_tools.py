@@ -379,19 +379,21 @@ class TestSearchMemory:
             _ = args, kwargs
             return []
 
-        async def fake_search_messages(*args: Any, **kwargs: Any) -> list[Any]:
+        async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
             _ = args
-            captured["peer_perspective"] = kwargs.get("peer_perspective")
+            captured["filters"] = kwargs.get("filters", {})
             return []
 
+        import src.utils.search
+
         monkeypatch.setattr(crud, "query_documents", fake_query_documents)
-        monkeypatch.setattr(crud, "search_messages", fake_search_messages)
+        monkeypatch.setattr(src.utils.search, "search", fake_search)
 
         ctx = make_tool_context()
         ctx.agent_type = "dialectic"
         await _handle_search_memory(ctx, {"query": "anything"})
 
-        assert captured["peer_perspective"] == ctx.observer
+        assert captured["filters"].get("peer_perspective") == ctx.observer
 
 
 @pytest.mark.asyncio
@@ -417,17 +419,19 @@ class TestSearchMessages:
         """search_messages tool should pass observer as peer perspective."""
         captured: dict[str, Any] = {}
 
-        async def fake_search_messages(*args: Any, **kwargs: Any) -> list[Any]:
+        async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
             _ = args
-            captured["peer_perspective"] = kwargs.get("peer_perspective")
+            captured["filters"] = kwargs.get("filters", {})
             return []
 
-        monkeypatch.setattr(crud, "search_messages", fake_search_messages)
+        import src.utils.search
+
+        monkeypatch.setattr(src.utils.search, "search", fake_search)
 
         ctx = make_tool_context()
         await _handle_search_messages(ctx, {"query": "test message"})
 
-        assert captured["peer_perspective"] == ctx.observer
+        assert captured["filters"].get("peer_perspective") == ctx.observer
 
 
 @pytest.mark.asyncio
@@ -851,12 +855,15 @@ class TestExtractPreferences:
         """extract_preferences should scope semantic queries by observer visibility."""
         captured: list[str | None] = []
 
-        async def fake_search_messages(*args: Any, **kwargs: Any) -> list[Any]:
+        async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
             _ = args
-            captured.append(kwargs.get("peer_perspective"))
+            filters = kwargs.get("filters", {})
+            captured.append(filters.get("peer_perspective"))
             return []
 
-        monkeypatch.setattr(crud, "search_messages", fake_search_messages)
+        import src.utils.search
+
+        monkeypatch.setattr(src.utils.search, "search", fake_search)
 
         ctx = make_tool_context()
         await _handle_extract_preferences(ctx, {})
