@@ -7,7 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
-from src.cache.client import cache
+from src.cache.client import safe_cache_delete
 from src.crud.peer import get_or_create_peers, get_peer, peer_cache_key
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ async def set_peer_card(
 
     # Invalidate cache - read-through pattern
     cache_key = peer_cache_key(workspace_name, observer)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
 
 def construct_peer_card_label(*, observer: str, observed: str) -> str:

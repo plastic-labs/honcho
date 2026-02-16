@@ -5,7 +5,7 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.config import settings
 from src.utils.formatting import parse_datetime_iso, utc_now_iso
@@ -55,7 +55,7 @@ class JWTParams(BaseModel):
     `s`: (string) session name
     """
 
-    t: str = utc_now_iso()
+    t: str = Field(default_factory=utc_now_iso)
     exp: str | None = None
     ad: bool | None = None
     w: str | None = None

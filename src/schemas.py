@@ -1,7 +1,7 @@
 import datetime
 import ipaddress
 from enum import Enum
-from typing import Annotated, Any, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
@@ -560,6 +560,40 @@ class DocumentCreate(DocumentBase):
         default=None,
         description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
+
+
+class ObservationInput(BaseModel):
+    """Validated observation input from LLM tool calls."""
+
+    content: str = Field(min_length=1)
+    level: DocumentLevel = "explicit"
+    source_ids: list[str] | None = None
+    premises: list[str] | None = None
+    sources: list[str] | None = None
+    pattern_type: (
+        Literal["preference", "behavior", "personality", "tendency", "correlation"]
+        | None
+    ) = None
+    confidence: Literal["high", "medium", "low"] | None = None
+
+    @model_validator(mode="after")
+    def validate_level_fields(self) -> Self:
+        """Validate that level-specific fields are present when required."""
+        if self.level == "deductive" and not self.source_ids:
+            raise ValueError(
+                "deductive observations require 'source_ids' field with document IDs of premises"
+            )
+        if self.level == "inductive" and not self.source_ids:
+            raise ValueError(
+                "inductive observations require 'source_ids' field with document IDs of sources"
+            )
+        if self.level == "contradiction" and (
+            not self.source_ids or len(self.source_ids) < 2
+        ):
+            raise ValueError(
+                "contradiction observations require 'source_ids' field with at least 2 IDs of contradicting observations"
+            )
+        return self
 
 
 class ConclusionGet(BaseModel):

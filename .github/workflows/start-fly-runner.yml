@@ -94,30 +94,15 @@ jobs:
           else
             echo "📦 Need to create new machine (only $ONLINE_COUNT online machines)"
 
-            # Get available volumes
-            VOLUMES_JSON=$(flyctl volumes list -a "${FLY_RUNNER_APP}" --json)
-
-            # Find a volume with null attached_machine_id
-            AVAILABLE_VOLUME=$(echo "$VOLUMES_JSON" | jq -r '[.[] | select(.attached_machine_id == null)][0].id')
-
-            if [ -z "$AVAILABLE_VOLUME" ] || [ "$AVAILABLE_VOLUME" = "null" ]; then
-              echo "❌ No available volumes found"
-              echo "Available volumes: $(echo "$VOLUMES_JSON" | jq -r '.[] | select(.attached_machine_id == null) | .id')"
-              exit 1
-            fi
-
-            echo "📁 Using available volume: $AVAILABLE_VOLUME"
-
-            # Create new machine with the available volume
-            # Note: GH_TOKEN should be set via Fly secrets: flyctl secrets set GH_TOKEN=...
+            # Honcho unified tests only need pgvector + redis (small, fast pulls).
+            # Skip volume attachment to avoid host-pinning capacity errors.
             FULL_OUTPUT=$(flyctl machines run "${FLY_RUNNER_IMAGE}" \
               -a "${FLY_RUNNER_APP}" \
               --region "${FLY_RUNNER_REGION}" \
               --env RUN_ID=${{ github.run_id }} \
               --env TEST_TYPE="honcho-unified-runner" \
               --vm-size shared-cpu-8x \
-              --vm-memory 8192 \
-              --volume "$AVAILABLE_VOLUME":/mnt/vol )
+              --vm-memory 8192 )
 
             MACHINE_ID=$(echo "$FULL_OUTPUT" | grep "Machine ID:" | awk '{print $3}')
             echo "✅ Created new machine ID: $MACHINE_ID"
