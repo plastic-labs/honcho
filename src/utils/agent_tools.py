@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
+from src.crud.message import peer_visibility_condition
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -985,6 +986,7 @@ async def get_recent_history(
     workspace_name: str,
     session_name: str | None,
     observed: str | None = None,
+    peer_perspective: str | None = None,
     token_limit: int = 8192,
 ) -> list[models.Message]:
     """
@@ -999,6 +1001,7 @@ async def get_recent_history(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: Peer name to filter by when no session specified (optional)
+        peer_perspective: Optional peer perspective for visibility enforcement
         token_limit: Maximum tokens to retrieve (default: 8192)
 
     Returns:
@@ -1011,6 +1014,7 @@ async def get_recent_history(
             session_name=session_name,
             token_limit=token_limit,
             reverse=True,  # Get most recent first
+            peer_perspective=peer_perspective,
         )
         result = await db.execute(messages_stmt)
         messages = result.scalars().all()
@@ -1025,6 +1029,10 @@ async def get_recent_history(
             .order_by(models.Message.created_at.desc())
             .limit(50)  # Limit to recent messages
         )
+        if peer_perspective:
+            stmt = stmt.where(
+                peer_visibility_condition(workspace_name, peer_perspective)
+            )
         result = await db.execute(stmt)
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -1163,6 +1171,7 @@ async def get_observation_context(
 
 
 async def extract_preferences(
+    db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
     observed: str,
@@ -1175,11 +1184,11 @@ async def extract_preferences(
     This is language-agnostic and doesn't rely on keyword matching.
 
     Args:
+        db: Database session
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: The peer whose preferences to extract
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
+        observer: Optional peer perspective to enforce session membership visibility
 
     Returns:
         Dict with 'messages' list containing potentially relevant messages
@@ -1187,7 +1196,6 @@ async def extract_preferences(
     messages: list[str] = []
     seen_content: set[str] = set()  # Dedupe by content hash
 
-    # Semantic queries to find preference-like content
     semantic_queries = [
         "user preferences and communication style",
         "standing instructions and rules to follow",
@@ -1196,34 +1204,28 @@ async def extract_preferences(
         "things user wants or does not want",
     ]
 
-    # Batch embed all queries in a single API call (no DB needed).
-    # If batching fails, each search call will generate its own embedding.
-    query_embeddings_by_query: dict[str, list[float]] | None = None
-    try:
-        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
-        query_embeddings_by_query = dict(
-            zip(semantic_queries, query_embeddings, strict=True)
-        )
-    except Exception as e:
-        logger.warning(
-            "Batch embedding failed for extract_preferences; falling back to per-query embedding in search_messages: %s",
-            e,
-        )
-
     for query in semantic_queries:
         try:
-            snippets = await crud.search_messages(
-                workspace_name=workspace_name,
-                session_name=session_name,
-                query=query,
+            from typing import cast
+
+            from src.utils.search import search
+
+            filters: dict[str, Any] = {"workspace_id": workspace_name}
+            if observer:
+                filters["peer_perspective"] = observer
+            if session_name:
+                filters["session_id"] = session_name
+
+            result = await search(
+                query,
+                filters=filters,
                 limit=10,
-                context_window=0,
-                embedding=(
-                    query_embeddings_by_query.get(query)
-                    if query_embeddings_by_query is not None
-                    else None
-                ),
-                observer=observer,
+                context_window=2,
+                semantic_only=False,
+            )
+            # context_window > 0 guarantees tuple return type
+            snippets = cast(
+                list[tuple[list[models.Message], list[models.Message]]], result
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -1499,19 +1501,19 @@ async def _handle_get_recent_history(
 ) -> str:
     """Handle get_recent_history tool."""
     _ = tool_input
-    async with tracked_db("tool.get_recent_history") as db:
-        history: list[models.Message] = await get_recent_history(
-            db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            observed=ctx.observed,
-            token_limit=ctx.history_token_limit,
-        )
-        if not history:
-            return "No conversation history available"
-        history_text = "\n".join(
-            [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
-        )
+    history: list[models.Message] = await get_recent_history(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        observed=ctx.observed,
+        peer_perspective=ctx.observer or None,
+        token_limit=ctx.history_token_limit,
+    )
+    if not history:
+        return "No conversation history available"
+    history_text = "\n".join(
+        [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
+    )
     scope = (
         f"from session {ctx.session_name}"
         if ctx.session_name
@@ -1551,17 +1553,30 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
         if ctx.agent_type == "dialectic":
+            from typing import cast
+
+            from src.utils.search import search
+
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
-            message_output = None
-            snippets = await crud.search_messages(
-                workspace_name=ctx.workspace_name,
-                session_name=ctx.session_name,
-                query=query,
+            filters: dict[str, Any] = {"workspace_id": ctx.workspace_name}
+
+            if ctx.observer:
+                filters["peer_perspective"] = ctx.observer
+
+            if ctx.session_name:
+                filters["session_id"] = ctx.session_name
+
+            result = await search(
+                query,
+                filters=filters,
                 limit=limit,
-                context_window=0,
-                embedding=query_embedding,
-                observer=ctx.observer,
+                context_window=2,
+                semantic_only=False,
             )
+            snippets = cast(
+                list[tuple[list[models.Message], list[models.Message]]], result
+            )
+            message_output = None
             if snippets:
                 message_output = _format_message_snippets(
                     snippets, f"for query '{query}'"
@@ -1625,21 +1640,31 @@ async def _handle_get_observation_context(
 
 
 async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
-    """Handle search_messages tool."""
+    """Handle search_messages tool using hybrid search with external vector store support."""
+    from typing import cast
+
+    from src.utils.search import search
+
     query = tool_input["query"]
-    limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
-    # Pre-compute embedding outside DB session to avoid holding a connection
-    # during the external API call (same pattern as _handle_search_memory).
-    query_embedding = await embedding_client.embed(query)
-    snippets = await crud.search_messages(
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
+    limit = min(_safe_int(tool_input.get("limit"), 10), 20)
+
+    filters: dict[str, Any] = {"workspace_id": ctx.workspace_name}
+
+    if ctx.observer:
+        filters["peer_perspective"] = ctx.observer
+
+    if ctx.session_name:
+        filters["session_id"] = ctx.session_name
+
+    result = await search(
+        query,
+        filters=filters,
         limit=limit,
         context_window=2,
-        embedding=query_embedding,
-        observer=ctx.observer,
+        semantic_only=False,
     )
+    snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
+
     if not snippets:
         return f"No messages found for query '{query}'"
     formatted = _format_message_snippets(snippets, f"for query '{query}'")
@@ -1662,7 +1687,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         text=text,
         limit=limit,
         context_window=context_window,
-        observer=ctx.observer,
+        peer_perspective=ctx.observer or None,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -1717,30 +1742,29 @@ async def _handle_get_messages_by_date_range(
     if isinstance(before_date, str):
         return before_date  # Error message
 
-    async with tracked_db("tool.get_messages_by_date_range") as db:
-        messages = await crud.get_messages_by_date_range(
-            db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            after_date=after_date,
-            before_date=before_date,
-            limit=limit,
-            order=order,
-            observer=ctx.observer,
+    messages = await crud.get_messages_by_date_range(
+        ctx.db,
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        order=order,
+        peer_perspective=ctx.observer or None,
+    )
+    msg_count = len(messages)
+    messages_text = (
+        "\n".join(
+            [
+                format_new_turn_with_timestamp(
+                    _truncate_message_content(m.content), m.created_at, m.peer_name
+                )
+                for m in messages
+            ]
         )
-        msg_count = len(messages)
-        messages_text = (
-            "\n".join(
-                [
-                    format_new_turn_with_timestamp(
-                        _truncate_message_content(m.content), m.created_at, m.peer_name
-                    )
-                    for m in messages
-                ]
-            )
-            if messages
-            else ""
-        )
+        if messages
+        else ""
+    )
 
     date_range: list[str] = []
     if after_date_str:
@@ -1764,7 +1788,12 @@ async def _handle_get_messages_by_date_range(
 async def _handle_search_messages_temporal(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
-    """Handle search_messages_temporal tool."""
+    """Handle search_messages_temporal tool using hybrid search with date filtering."""
+    from typing import Any as typing_Any
+    from typing import cast
+
+    from src.utils.search import search
+
     query = tool_input.get("query", "")
     if not query:
         return "ERROR: 'query' parameter is required"
@@ -1782,26 +1811,37 @@ async def _handle_search_messages_temporal(
     if isinstance(before_date, str):
         return before_date
 
-    # Pre-compute embedding outside DB session to avoid holding a connection
-    # during the external API call.
-    query_embedding = await embedding_client.embed(query)
-    snippets = await crud.search_messages_temporal(
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
-        after_date=after_date,
-        before_date=before_date,
+    filters: dict[str, typing_Any] = {"workspace_id": ctx.workspace_name}
+
+    if ctx.observer:
+        filters["peer_perspective"] = ctx.observer
+
+    if ctx.session_name:
+        filters["session_id"] = ctx.session_name
+
+    if after_date or before_date:
+        date_filter: dict[str, str] = {}
+        if after_date:
+            date_filter["gte"] = after_date.isoformat()
+        if before_date:
+            date_filter["lte"] = before_date.isoformat()
+        filters["created_at"] = date_filter
+
+    result = await search(
+        query,
+        filters=filters,
         limit=limit,
         context_window=context_window,
-        embedding=query_embedding,
-        observer=ctx.observer,
+        semantic_only=False,
     )
-    date_filter: list[str] = []
+    snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
+
+    date_filter_desc: list[str] = []
     if after_date_str:
-        date_filter.append(f"after {after_date_str}")
+        date_filter_desc.append(f"after {after_date_str}")
     if before_date_str:
-        date_filter.append(f"before {before_date_str}")
-    filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+        date_filter_desc.append(f"before {before_date_str}")
+    filter_desc = f" ({' and '.join(date_filter_desc)})" if date_filter_desc else ""
 
     if not snippets:
         return f"No messages found for query '{query}'{filter_desc}"
@@ -1955,10 +1995,11 @@ async def _handle_extract_preferences(
     """Handle extract_preferences tool."""
     _ = tool_input
     results = await extract_preferences(
+        db=ctx.db,
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         observed=ctx.observed,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
     )
 
     messages = results.get("messages", [])
@@ -2283,14 +2324,26 @@ async def _handle_search_memory_workspace(
     )
     if not documents:
         # Fallback to message search
-        snippets = await crud.search_messages(
-            ctx.db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            query=tool_input["query"],
+        from typing import cast
+
+        from src.utils.search import search
+
+        filters = {
+            "workspace_id": ctx.workspace_name,
+            "peer_perspective": observer,  # Use observer for visibility scoping
+        }
+        if ctx.session_name:
+            filters["session_id"] = ctx.session_name
+
+        result = await search(
+            tool_input["query"],
+            filters=filters,
             limit=min(tool_input.get("top_k", 20), 20),
-            context_window=0,
+            context_window=2,
+            semantic_only=False,
         )
+        # context_window > 0 guarantees tuple return type
+        snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
         if snippets:
             message_output = _format_message_snippets(
                 snippets, f"for query '{tool_input['query']}'"

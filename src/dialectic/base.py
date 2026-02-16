@@ -24,7 +24,7 @@ from src.telemetry.logging import (
     log_token_usage_metrics,
 )
 from src.telemetry.prometheus.metrics import DialecticComponents, TokenTypes
-from src.utils.clients import (
+from src.llm import (
     HonchoLLMCallResponse,
     StreamingResponseWithMetadata,
     honcho_llm_call,

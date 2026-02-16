@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import ReasoningLevel, settings
+from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dialectic.base import BaseDialecticAgent
 from src.exceptions import ValidationException
@@ -206,6 +207,7 @@ class DialecticAgent(BaseDialecticAgent):
             session_name=self.session_name,
             token_limit=max_tokens,
             reverse=False,
+            peer_perspective=self.observer,
         )
         result = await self.db.execute(stmt)
         messages = result.scalars().all()
