@@ -1241,10 +1241,12 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
             from src.utils.search import search
 
             limit = min(tool_input.get("top_k", 20), 20)
-            filters = {
-                "workspace_id": ctx.workspace_name,
-                "peer_perspective": ctx.observer or None,
-            }
+            filters: dict[str, Any] = {"workspace_id": ctx.workspace_name}
+
+            # Only add peer_perspective if observer exists
+            if hasattr(ctx, "observer") and ctx.observer:
+                filters["peer_perspective"] = ctx.observer
+
             if ctx.session_name:
                 filters["session_id"] = ctx.session_name
 
@@ -1324,10 +1326,13 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
     limit = min(tool_input.get("limit", 10), 20)  # Cap at 20
 
     # Build filters for search
-    filters = {
-        "workspace_id": ctx.workspace_name,
-        "peer_perspective": ctx.observer or None,  # Always enforce peer visibility
-    }
+    filters: dict[str, Any] = {"workspace_id": ctx.workspace_name}
+
+    # Only add peer_perspective if observer exists (peer-scoped contexts)
+    # Workspace-level contexts can search everything
+    if hasattr(ctx, "observer") and ctx.observer:
+        filters["peer_perspective"] = ctx.observer
+
     if ctx.session_name:
         filters["session_id"] = ctx.session_name
 
@@ -1484,10 +1489,12 @@ async def _handle_search_messages_temporal(
         return before_date
 
     # Build filters for search
-    filters: dict[str, typing_Any] = {
-        "workspace_id": ctx.workspace_name,
-        "peer_perspective": ctx.observer or None,  # Always enforce peer visibility
-    }
+    filters: dict[str, typing_Any] = {"workspace_id": ctx.workspace_name}
+
+    # Only add peer_perspective if observer exists (peer-scoped contexts)
+    if hasattr(ctx, "observer") and ctx.observer:
+        filters["peer_perspective"] = ctx.observer
+
     if ctx.session_name:
         filters["session_id"] = ctx.session_name
 
