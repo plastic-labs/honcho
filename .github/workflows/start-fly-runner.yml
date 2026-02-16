@@ -63,51 +63,25 @@ jobs:
           echo "Setting GH_TOKEN in Fly secrets..."
           flyctl secrets set GH_TOKEN="${{ secrets.GH_TOKEN_ACTIONS }}" -a "${FLY_RUNNER_APP}"
 
-      - name: Fly machine management
+      - name: Create Fly machine
         id: machine-management
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
         run: |
           set -euo pipefail
 
-          # Get list of machines and their status
-          MACHINES_JSON=$(flyctl machines list -a "${FLY_RUNNER_APP}" --json)
+          # Always create a fresh ephemeral machine
+          FULL_OUTPUT=$(flyctl machines run "${FLY_RUNNER_IMAGE}" \
+            -a "${FLY_RUNNER_APP}" \
+            --region "${FLY_RUNNER_REGION}" \
+            --env RUN_ID=${{ github.run_id }} \
+            --env TEST_TYPE="honcho-unified-runner" \
+            --vm-size shared-cpu-8x \
+            --vm-memory 8192 )
 
-          # Count online machines
-          ONLINE_COUNT=$(echo "$MACHINES_JSON" | jq '[.[] | select(.state == "started")] | length')
-          echo "📊 Online machines: $ONLINE_COUNT"
-
-          if [ "$ONLINE_COUNT" -ge 2 ]; then
-            echo "✅ Found $ONLINE_COUNT online machines (>=2), will reuse existing machine"
-
-            # Pick the first online machine
-            MACHINE_ID=$(echo "$MACHINES_JSON" | jq -r '[.[] | select(.state == "started")][0].id')
-
-            if [ -z "$MACHINE_ID" ] || [ "$MACHINE_ID" = "null" ]; then
-              echo "❌ Failed to find online machine ID"
-              exit 1
-            fi
-
-            echo "🔄 Reusing machine ID: $MACHINE_ID"
-            echo "machine-id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
-
-          else
-            echo "📦 Need to create new machine (only $ONLINE_COUNT online machines)"
-
-            # Honcho unified tests only need pgvector + redis (small, fast pulls).
-            # Skip volume attachment to avoid host-pinning capacity errors.
-            FULL_OUTPUT=$(flyctl machines run "${FLY_RUNNER_IMAGE}" \
-              -a "${FLY_RUNNER_APP}" \
-              --region "${FLY_RUNNER_REGION}" \
-              --env RUN_ID=${{ github.run_id }} \
-              --env TEST_TYPE="honcho-unified-runner" \
-              --vm-size shared-cpu-8x \
-              --vm-memory 8192 )
-
-            MACHINE_ID=$(echo "$FULL_OUTPUT" | grep "Machine ID:" | awk '{print $3}')
-            echo "✅ Created new machine ID: $MACHINE_ID"
-            echo "machine-id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
-          fi
+          MACHINE_ID=$(echo "$FULL_OUTPUT" | grep "Machine ID:" | awk '{print $3}')
+          echo "Created machine: $MACHINE_ID"
+          echo "machine-id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Wait for runner to be online
         id: wait-for-runner
