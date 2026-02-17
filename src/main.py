@@ -74,6 +74,15 @@ logger = logging.getLogger(__name__)
 logging.getLogger("cashews.backends.redis.client").setLevel(logging.CRITICAL)
 
 
+class MetricsAccessFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "GET /metrics" not in msg
+
+
+logging.getLogger("uvicorn.access").addFilter(MetricsAccessFilter())
+
+
 def before_send(event: "Event", hint: "Hint | None") -> "Event | None":
     """Filter out events raised from known non-actionable exceptions before Sentry sees them."""
     if not hint:
