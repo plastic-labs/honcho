@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import cast
+from typing import Any, cast
 
 import sentry_sdk
 from cashews import cache
@@ -11,6 +11,7 @@ from redis import exceptions as redis_exc
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
+    stop_after_attempt,
     stop_after_delay,
     wait_exponential_jitter,
 )
@@ -112,35 +113,52 @@ async def init_cache() -> None:
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
 
 
+_TRANSIENT_CACHE_ERRORS = (
+    redis_exc.TimeoutError,
+    redis_exc.ConnectionError,
+    asyncio.TimeoutError,
+    TimeoutError,
+)
+
+
+async def safe_cache_set(key: str, value: Any, expire: int | float) -> None:
+    """Best-effort cache set with retries on transient errors. Failures are logged but never propagate."""
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential_jitter(initial=0.1, max=0.5),
+            retry=retry_if_exception_type(_TRANSIENT_CACHE_ERRORS),
+            reraise=True,
+        ):
+            with attempt:
+                await cache.set(key, value, expire=expire)
+    except Exception:
+        logger.warning("Cache set failed for key %s", key, exc_info=True)
+
+
+async def safe_cache_delete(key: str) -> None:
+    """Best-effort cache delete with retries on transient errors. Failures are logged but never propagate."""
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential_jitter(initial=0.1, max=0.5),
+            retry=retry_if_exception_type(_TRANSIENT_CACHE_ERRORS),
+            reraise=True,
+        ):
+            with attempt:
+                await cache.delete(key)
+    except Exception:
+        logger.warning("Cache delete failed for key %s", key, exc_info=True)
+
+
 async def close_cache() -> None:
     await cache.close()
-
-
-# Deriver flush mode - bypasses batch token threshold when enabled
-# Uses direct Redis access to avoid cashews serialization/namespace issues
-DERIVER_FLUSH_KEY = "honcho:deriver:flush_mode"
-
-
-async def is_deriver_flush_enabled() -> bool:
-    """Check if deriver flush mode is enabled (bypasses batch threshold)."""
-    if not is_cache_enabled():
-        return False
-    try:
-        import redis.asyncio as aioredis
-
-        redis_client = aioredis.from_url(settings.CACHE.URL)  # pyright: ignore[reportUnknownMemberType]
-        try:
-            result = await redis_client.get(DERIVER_FLUSH_KEY)
-            return result == b"1"
-        finally:
-            await redis_client.aclose()
-    except Exception:
-        return False
 
 
 __all__ = [
     "init_cache",
     "close_cache",
     "cache",
-    "is_deriver_flush_enabled",
+    "safe_cache_delete",
+    "safe_cache_set",
 ]

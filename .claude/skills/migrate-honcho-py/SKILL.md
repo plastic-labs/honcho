@@ -7,7 +7,7 @@ description: Migrates Honcho Python SDK code from v1.6.0 to v2.0.0. Use when upg
 
 ## Overview
 
-This skill migrates code from `honcho` Python SDK v1.6.0 to v2.0.0 (required for Honcho 3.0.0).
+This skill migrates code from `honcho` Python SDK v1.6.0 to v2.0.0 (required for Honcho 3.0.0+).
 
 **Key breaking changes:**
 
@@ -122,7 +122,7 @@ session.context()
 session.summaries()
 session.messages()
 session.peers()
-session.peer_config()
+session.get_peer_configuration()
 client.peers()
 client.sessions()
 client.workspaces()
@@ -219,11 +219,13 @@ if card:
 | `.get_summaries()` | `.summaries()` |
 | `.get_deriver_status()` | `.queue_status()` |
 | `.poll_deriver_status()` | *(removed)* |
-| `.get_peer_config()` | `.peer_config()` |
+| `.get_peer_config()` | `.get_peer_configuration()` |
+| `.set_peer_config()` | `.set_peer_configuration()` |
 | `client.update_message()` | `session.update_message()` |
 | `chat(stream=True)` | `chat_stream()` |
 | `include_most_derived=` | `include_most_frequent=` |
 | `max_observations=` | `max_conclusions=` |
+| `last_user_message=` | `search_query=` |
 | `config=` | `configuration=` |
 | `PeerContext` | `PeerContextResponse` |
 | `DeriverStatus` | `QueueStatusResponse` |

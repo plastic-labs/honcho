@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
@@ -10,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -25,6 +31,15 @@ from .peer import get_or_create_peers, get_peer
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
+
+
+@dataclass
+class SessionDeletionResult:
+    """Result of a session deletion including cascade counts."""
+
+    messages_deleted: int
+    conclusions_deleted: int
+
 
 SESSION_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:session:{session_name}"
 SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
@@ -221,7 +236,7 @@ async def get_or_create_session(
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
         cache_key = session_cache_key(workspace_name, session.name)
-        await cache.set(
+        await safe_cache_set(
             cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
         )
         logger.debug(
@@ -331,7 +346,7 @@ async def update_session(
 
     # Only invalidate if we actually updated
     cache_key = session_cache_key(workspace_name, session_name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Session %s updated successfully", session_name)
     return honcho_session
@@ -375,7 +390,7 @@ async def _batch_delete_matching(
 
 async def delete_session(
     db: AsyncSession, workspace_name: str, session_name: str
-) -> bool:
+) -> SessionDeletionResult:
     """
     Delete a session and all associated data (hard delete).
 
@@ -394,7 +409,7 @@ async def delete_session(
         session_name: Name of the session
 
     Returns:
-        True if the session was deleted successfully
+        SessionDeletionResult containing cascade counts
 
     Raises:
         ResourceNotFoundException: If the session does not exist
@@ -518,7 +533,7 @@ async def delete_session(
                     )
 
         # Delete Document entries associated with this session in batches
-        await _batch_delete_matching(
+        conclusions_deleted = await _batch_delete_matching(
             db,
             models.Document,
             [
@@ -529,7 +544,7 @@ async def delete_session(
         )
 
         # Delete Message entries in batches
-        await _batch_delete_matching(
+        messages_deleted = await _batch_delete_matching(
             db,
             models.Message,
             [
@@ -550,13 +565,20 @@ async def delete_session(
         # Finally, delete the session itself
         await db.delete(honcho_session)
         await db.commit()
+
+        # Invalidate session cache
+        await safe_cache_delete(session_cache_key(workspace_name, session_name))
+
         logger.debug("Session %s and all associated data deleted", session_name)
     except Exception as e:
         logger.error("Failed to delete session %s: %s", session_name, e)
         await db.rollback()
         raise e
 
-    return True
+    return SessionDeletionResult(
+        messages_deleted=messages_deleted,
+        conclusions_deleted=conclusions_deleted,
+    )
 
 
 async def clone_session(

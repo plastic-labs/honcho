@@ -124,7 +124,7 @@ def llm(session, prompt) -> str:
 
     You should expand this function with custom logic, prompts, etc.
     """
-    messages: list[dict[str, object]] = session.get_context().to_openai(
+    messages: list[dict[str, object]] = session.context().to_openai(
         assistant=assistant
     )
     messages.append({"role": "user", "content": prompt})
@@ -198,7 +198,7 @@ Discord bots also offer slash command functionality. Here's an example using Hon
 ```python
 @bot.slash_command(
     name="chat",
-    description="Query the peer's representation in natural language.",
+    description="Chat with Honcho about a peer.",
 )
 async def chat(ctx, query: str):
     await ctx.defer()
@@ -246,7 +246,7 @@ openai = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=MODEL_API_KEY)
 The new Honcho peer/session API makes Discord bot integration much simpler and more intuitive. Key patterns we learned:
 
 - **Peer/Session Model**: Users are represented as peers, conversations as sessions
-- **Automatic Context Management**: `session.get_context().to_openai()` automatically formats chat history
+- **Automatic Context Management**: `session.context().to_openai()` automatically formats chat history
 - **Message Storage**: `session.add_messages()` stores both user and assistant messages
 - **Representation Queries**: `peer.chat()` enables querying conversation history
 - **Helper Functions**: Clean code organization with focused helper functions

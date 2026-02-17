@@ -154,10 +154,10 @@ def chatbot(state: State):
     session.add_messages([user.message(user_message)])
 
     # Step 2: Get context in OpenAI format with token limit
-    # get_context() retrieves relevant conversation history
+    # context() retrieves relevant conversation history
     # tokens=2000 limits the context to 2000 tokens to manage costs and fit within model limits
     # to_openai() converts it to the format expected by OpenAI's API
-    messages = session.get_context(tokens=2000).to_openai(assistant=assistant)
+    messages = session.context(tokens=2000).to_openai(assistant=assistant)
 
     # Step 3: Generate response using the context
     response = llm.chat.completions.create(
@@ -186,10 +186,10 @@ async function chatbot(state: State) {
   await session.addMessages([user.message(userMessage)]);
 
   // Step 2: Get context in OpenAI format with token limit
-  // getContext() retrieves relevant conversation history
+  // context() retrieves relevant conversation history
   // tokens: 2000 limits the context to 2000 tokens to manage costs and fit within model limits
   // toOpenAI() converts it to the format expected by OpenAI's API
-  const messages = (await session.getContext({ tokens: 2000 })).toOpenAI(assistant);
+  const messages = (await session.context({ tokens: 2000 })).toOpenAI(assistant);
 
   // Step 3: Generate response using the context
   const response = await llm.chat.completions.create({
@@ -225,9 +225,9 @@ const graph = new StateGraph(StateAnnotation)
 ```
 </CodeGroup>
 
-### Understanding get_context()
+### Understanding context()
 
-The [`get_context()`](/v3/documentation/core-concepts/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
+The [`context()`](/v3/documentation/features/get-context) method retrieves comprehensive conversation context and formats it for your LLM. It automatically:
 
 - **Manages conversation history** - Tracks all messages and determines what's relevant
 - **Respects token limits** - Stays within context window constraints without manual counting
@@ -241,14 +241,14 @@ The `SessionContext` object always includes fields for messages, summaries, `pee
 - **Without `peer_perspective`**: Returns Honcho's omniscient view of `peer_target` (all conclusions and context)
 - **With `peer_perspective`**: Returns what `peer_perspective` knows about `peer_target` (perspective-based conclusions and context)
 
-That's it. Call `session.get_context().to_openai(assistant)` and you get properly formatted context tailored for your assistant.
+That's it. Call `session.context().to_openai(assistant)` and you get properly formatted context tailored for your assistant.
 
 <Tip>
-**Adding System Prompts:** Since `get_context()` returns conversation messages, you can easily prepend custom system instructions. Just add your system prompt to the beginning of the messages array before sending it to your LLM: `[{"role": "system", "content": "..."}, ...context_messages]`.
+**Adding System Prompts:** Since `context()` returns conversation messages, you can easily prepend custom system instructions. Just add your system prompt to the beginning of the messages array before sending it to your LLM: `[{"role": "system", "content": "..."}, ...context_messages]`.
 </Tip>
 
 <Note>
-For more details on all available parameters, see [`get_context() documentation`](/v3/documentation/core-concepts/features/get-context)
+For more details on all available parameters, see [`context() documentation`](/v3/documentation/features/get-context)
 </Note>
 
 ## Chat Loop
@@ -354,10 +354,10 @@ Now that you have a working LangGraph integration with Honcho, you can:
 ## Related Resources
 
 <CardGroup cols={2}>
-  <Card title="Get Context" icon="messages" href="/v3/documentation/core-concepts/features/get-context">
+  <Card title="Get Context" icon="messages" href="/v3/documentation/features/get-context">
     Learn more about retrieving and formatting conversation context
   </Card>
-  <Card title="MCP Integration" icon="star-of-life" href="/v3/integrations/mcp">
+  <Card title="MCP Integration" icon="star-of-life" href="/v3/guides/integrations/mcp">
     Use Honcho in Claude Desktop with MCP
   </Card>
 </CardGroup>

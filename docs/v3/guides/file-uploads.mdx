@@ -128,7 +128,7 @@ response = user.chat("What does the quarterly report say about revenue growth?")
 print(response)
 
 # Get context from the uploaded documents for LLM integration
-context = session.get_context(tokens=3000)
+context = session.context(tokens=3000)
 messages = context.to_openai(assistant=assistant)
 ```
 
@@ -143,7 +143,7 @@ messages = context.to_openai(assistant=assistant)
     console.log(response2);
 
     // Get context from the uploaded documents for LLM integration
-    const context = await session.getContext({ tokens: 3000 });
+    const context = await session.context({ tokens: 3000 });
     const messages = context.toOpenAI(assistant);
 })();
 ```
@@ -203,7 +203,7 @@ def upload_document(file_path, description):
 
 def analyze_documents():
     """Get AI analysis of uploaded documents"""
-    context = session.get_context(tokens=4000)
+    context = session.context(tokens=4000)
     messages = context.to_openai(assistant=assistant)
     # Add analysis request
     messages.append({
@@ -251,7 +251,7 @@ import fs from "fs";
     }
 
     async function analyzeDocuments() {
-      const context = await session.getContext({ tokens: 4000 });
+      const context = await session.context({ tokens: 4000 });
       const messages = context.toOpenAI(assistant);
       // Add analysis request
       messages.push({

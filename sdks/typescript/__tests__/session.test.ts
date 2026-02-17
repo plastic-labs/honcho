@@ -247,7 +247,7 @@ describe('Session', () => {
           ['config-peer-b', { observeMe: false }],
         ])
 
-        const configA = await session.peerConfig('config-peer-a')
+        const configA = await session.getPeerConfiguration('config-peer-a')
         expect(configA.observeMe).toBe(true)
         expect(configA.observeOthers).toBe(false)
       })
@@ -315,40 +315,40 @@ describe('Session', () => {
     })
 
     describe('GET/PUT /sessions/:id/peers/:id/config', () => {
-      test('peerConfig returns config', async () => {
+      test('getPeerConfiguration returns configuration', async () => {
         const session = await client.session('get-peer-config-session', { metadata: {} })
         await session.addPeers([
           ['peer-with-config', { observeMe: true, observeOthers: false }],
         ])
 
-        const config = await session.peerConfig('peer-with-config')
+        const config = await session.getPeerConfiguration('peer-with-config')
 
         expect(config.observeMe).toBe(true)
         expect(config.observeOthers).toBe(false)
       })
 
-      test('setPeerConfig updates config', async () => {
+      test('setPeerConfiguration updates configuration', async () => {
         const session = await client.session('set-peer-config-session', { metadata: {} })
         await session.addPeers(['peer-update-config'])
 
-        await session.setPeerConfig(
+        await session.setPeerConfiguration(
           'peer-update-config',
           { observeMe: false, observeOthers: true }
         )
 
-        const config = await session.peerConfig('peer-update-config')
+        const config = await session.getPeerConfiguration('peer-update-config')
         expect(config.observeMe).toBe(false)
         expect(config.observeOthers).toBe(true)
       })
 
-      test('setPeerConfig with Peer object', async () => {
+      test('setPeerConfiguration with Peer object', async () => {
         const session = await client.session('set-config-peer-obj', { metadata: {} })
         const peer = await client.peer('config-obj-peer')
         await session.addPeers([peer])
 
-        await session.setPeerConfig(peer, { observeMe: true })
+        await session.setPeerConfiguration(peer, { observeMe: true })
 
-        const config = await session.peerConfig(peer)
+        const config = await session.getPeerConfiguration(peer)
         expect(config.observeMe).toBe(true)
       })
     })

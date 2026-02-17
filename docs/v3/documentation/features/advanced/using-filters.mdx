@@ -22,15 +22,15 @@ from honcho import Honcho
 honcho = Honcho()
 
 # Simple peer filter
-peers = honcho.get_peers(filters={"peer_id": "alice"})
+peers = honcho.peers(filters={"peer_id": "alice"})
 
 # Simple session filter with metadata
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "metadata": {"type": "support"}
 })
 
 # Simple message filter
-messages = honcho.get_messages(filters={
+messages = honcho.messages(filters={
     "session_id": "support-chat-1",
     "peer_id": "alice"
 })
@@ -44,19 +44,19 @@ import { Honcho } from "@honcho-ai/sdk";
     const honcho = new Honcho({});
 
     // Simple peer filter
-    const peers = await honcho.getPeers({
+    const peers = await honcho.peers({
       filters: { peer_id: "alice" }
     });
 
     // Simple session filter with metadata
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         metadata: { type: "support" }
       }
     });
 
     // Simple message filter
-    const messages = await honcho.getMessages({
+    const messages = await honcho.messages({
       filters: {
         session_id: "support-chat-1",
         peer_id: "alice"
@@ -76,7 +76,7 @@ Use AND to require all conditions to be true:
 
 <CodeGroup>
 ```python Python
-messages = honcho.get_messages(filters={
+messages = honcho.messages(filters={
     "AND": [
         {"session_id": "chat-1"},
         {"created_at": {"gte": "2024-01-01"}}
@@ -86,7 +86,7 @@ messages = honcho.get_messages(filters={
 
 ```typescript TypeScript
 (async () => {
-    const messages = await honcho.getMessages({
+    const messages = await honcho.messages({
       filters: {
         AND: [
           { session_id: "chat-1" },
@@ -105,7 +105,7 @@ Use OR to match any of the specified conditions:
 <CodeGroup>
 ```python Python
 # Find messages from either alice or bob
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "OR": [
         {"peer_id": "alice"},
         {"peer_id": "bob"}
@@ -113,7 +113,7 @@ messages = session.get_messages(filters={
 })
 
 # Complex OR with metadata conditions
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "OR": [
         {"metadata": {"priority": "high"}},
         {"metadata": {"urgent": True}},
@@ -125,7 +125,7 @@ sessions = honcho.get_sessions(filters={
 ```typescript TypeScript
 (async () => {
     // Find messages from either alice or bob
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         OR: [
           { peer_id: "alice" },
@@ -135,7 +135,7 @@ sessions = honcho.get_sessions(filters={
     });
 
     // Complex OR with metadata conditions
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         OR: [
           { metadata: { priority: "high" } },
@@ -155,14 +155,14 @@ Use NOT to exclude specific conditions:
 <CodeGroup>
 ```python Python
 # Find all peers except alice
-peers = honcho.get_peers(filters={
+peers = honcho.peers(filters={
     "NOT": [
         {"peer_id": "alice"}
     ]
 })
 
 # Find sessions that are NOT completed
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "NOT": [
         {"metadata": {"status": "completed"}}
     ]
@@ -172,7 +172,7 @@ sessions = honcho.get_sessions(filters={
 ```typescript TypeScript
 (async () => {
     // Find all peers except alice
-    const peers = await honcho.getPeers({
+    const peers = await honcho.peers({
       filters: {
         NOT: [
           { peer_id: "alice" }
@@ -181,7 +181,7 @@ sessions = honcho.get_sessions(filters={
     });
 
     // Find sessions that are NOT completed
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         NOT: [
           { metadata: { status: "completed" } }
@@ -199,7 +199,7 @@ Create sophisticated queries by combining different logical operators:
 <CodeGroup>
 ```python Python
 # Find messages from alice OR bob, but NOT where message has archived set to true in metadata
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "AND": [
         {
             "OR": [
@@ -219,7 +219,7 @@ messages = session.get_messages(filters={
 ```typescript TypeScript
 (async () => {
     // Find messages from alice OR bob, but NOT where message has archived set to true in metadata
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         AND: [
           {
@@ -249,12 +249,12 @@ Use comparison operators for range queries and advanced matching:
 <CodeGroup>
 ```python Python
 # Find sessions created after a specific date
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "created_at": {"gte": "2024-01-01"}
 })
 
 # Find messages within a date range
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "created_at": {
         "gte": "2024-01-01",
         "lte": "2024-12-31"
@@ -262,7 +262,7 @@ messages = session.get_messages(filters={
 })
 
 # Metadata numeric comparisons
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "metadata": {
         "score": {"gt": 8.5},
         "duration": {"lte": 3600}
@@ -273,14 +273,14 @@ sessions = honcho.get_sessions(filters={
 ```typescript TypeScript
 (async () => {
     // Find sessions created after a specific date
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         created_at: { gte: "2024-01-01" }
       }
     });
 
     // Find messages within a date range
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         created_at: {
           gte: "2024-01-01",
@@ -290,7 +290,7 @@ sessions = honcho.get_sessions(filters={
     });
 
     // Metadata numeric comparisons
-    const filteredSessions = await honcho.getSessions({
+    const filteredSessions = await honcho.sessions({
       filters: {
         metadata: {
           score: { gt: 8.5 },
@@ -307,19 +307,19 @@ sessions = honcho.get_sessions(filters={
 <CodeGroup>
 ```python Python
 # Find messages from specific peers in a session
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "peer_id": {"in": ["alice", "bob", "charlie"]}
 })
 
 # Find sessions with specific tags
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "metadata": {
         "tag": {"in": ["important", "urgent", "follow-up"]}
     }
 })
 
 # Not equal comparisons
-peers = honcho.get_peers(filters={
+peers = honcho.peers(filters={
     "metadata": {
         "status": {"ne": "inactive"}
     }
@@ -329,14 +329,14 @@ peers = honcho.get_peers(filters={
 ```typescript TypeScript
 (async () => {
     // Find messages from specific peers in a session
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         peer_id: { in: ["alice", "bob", "charlie"] }
       }
     });
 
     // Find sessions with specific tags
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         metadata: {
           tag: { in: ["important", "urgent", "follow-up"] }
@@ -345,7 +345,7 @@ peers = honcho.get_peers(filters={
     });
 
     // Not equal comparisons
-    const peers = await honcho.getPeers({
+    const peers = await honcho.peers({
       filters: {
         metadata: {
           status: { ne: "inactive" }
@@ -365,7 +365,7 @@ Metadata filtering is particularly powerful in Honcho, supporting nested conditi
 <CodeGroup>
 ```python Python
 # Simple metadata equality
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "metadata": {
         "type": "customer_support",
         "priority": "high"
@@ -373,7 +373,7 @@ sessions = honcho.get_sessions(filters={
 })
 
 # Nested metadata objects
-peers = honcho.get_peers(filters={
+peers = honcho.peers(filters={
     "metadata": {
         "profile": {
             "role": "admin",
@@ -386,7 +386,7 @@ peers = honcho.get_peers(filters={
 ```typescript TypeScript
 (async () => {
     // Simple metadata equality
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         metadata: {
           type: "customer_support",
@@ -396,7 +396,7 @@ peers = honcho.get_peers(filters={
     });
 
     // Nested metadata objects
-    const peers = await honcho.getPeers({
+    const peers = await honcho.peers({
       filters: {
         metadata: {
           profile: {
@@ -419,7 +419,7 @@ If you want to do advanced queries like these, make sure not to create metadata 
 <CodeGroup>
 ```python Python
 # Metadata with comparison operators
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "metadata": {
         "score": {"gte": 4.0, "lte": 5.0},
         "created_by": {"ne": "system"},
@@ -428,7 +428,7 @@ sessions = honcho.get_sessions(filters={
 })
 
 # Complex metadata conditions
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "AND": [
         {"metadata": {"sentiment": {"in": ["positive", "neutral"]}}},
         {"metadata": {"confidence": {"gt": 0.8}}},
@@ -440,7 +440,7 @@ messages = session.get_messages(filters={
 ```typescript TypeScript
 (async () => {
     // Metadata with comparison operators
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         metadata: {
           score: { gte: 4.0, lte: 5.0 },
@@ -451,7 +451,7 @@ messages = session.get_messages(filters={
     });
 
     // Complex metadata conditions
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         AND: [
           { metadata: { sentiment: { in: ["positive", "neutral"] } } },
@@ -471,17 +471,17 @@ Use wildcards (*) to match any value for a field:
 <CodeGroup>
 ```python Python
 # Find all sessions with any peer_id (essentially all sessions)
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "peer_id": "*"
 })
 
 # Wildcard in lists - matches everything
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "peer_id": {"in": ["alice", "bob", "*"]}
 })
 
 # Metadata wildcards
-sessions = honcho.get_sessions(filters={
+sessions = honcho.sessions(filters={
     "metadata": {
         "type": "*",  # Any type
         "status": "active"  # But status must be active
@@ -492,21 +492,21 @@ sessions = honcho.get_sessions(filters={
 ```typescript TypeScript
 (async () => {
     // Find all sessions with any peer_id (essentially all sessions)
-    const sessions = await honcho.getSessions({
+    const sessions = await honcho.sessions({
       filters: {
         peer_id: "*"
       }
     });
 
     // Wildcard in lists - matches everything
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         peer_id: { in: ["alice", "bob", "*"] }
       }
     });
 
     // Metadata wildcards
-    const filteredSessions = await honcho.getSessions({
+    const filteredSessions = await honcho.sessions({
       filters: {
         metadata: {
           type: "*",  // Any type
@@ -525,12 +525,12 @@ sessions = honcho.get_sessions(filters={
 <CodeGroup>
 ```python Python
 # Find workspaces by name pattern
-workspaces = honcho.get_workspaces(filters={
+workspaces = honcho.workspaces(filters={
     "name": {"contains": "prod"}
 })
 
 # Filter by metadata
-workspaces = honcho.get_workspaces(filters={
+workspaces = honcho.workspaces(filters={
     "metadata": {
         "environment": "production",
         "team": {"in": ["backend", "frontend", "devops"]}
@@ -541,14 +541,14 @@ workspaces = honcho.get_workspaces(filters={
 ```typescript TypeScript
 (async () => {
     // Find workspaces by name pattern
-    const workspaces = await honcho.getWorkspaces({
+    const workspaces = await honcho.workspaces({
       filters: {
         name: { contains: "prod" }
       }
     });
 
     // Filter by metadata
-    const workspaces = await honcho.getWorkspaces({
+    const workspaces = await honcho.workspaces({
       filters: {
         metadata: {
           environment: "production",
@@ -568,7 +568,7 @@ workspaces = honcho.get_workspaces(filters={
 from datetime import datetime, timedelta
 
 week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "AND": [
         {"content": {"icontains": "error"}},
         {"created_at": {"gte": week_ago}},
@@ -577,7 +577,7 @@ messages = session.get_messages(filters={
 })
 
 # Find messages in specific sessions with sentiment analysis
-messages = session.get_messages(filters={
+messages = session.messages(filters={
     "AND": [
         {"session_id": {"in": ["support-1", "support-2", "support-3"]}},
         {"metadata": {"sentiment": "negative"}},
@@ -590,7 +590,7 @@ messages = session.get_messages(filters={
 (async () => {
     // Find error messages from the last week
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const messages = await session.getMessages({
+    const messages = await session.messages({
       filters: {
         AND: [
           { content: { icontains: "error" } },
@@ -601,7 +601,7 @@ messages = session.get_messages(filters={
     });
 
     // Find messages in specific sessions with sentiment analysis
-    const sentimentMessages = await session.getMessages({
+    const sentimentMessages = await session.messages({
       filters: {
         AND: [
           { session_id: { in: ["support-1", "support-2", "support-3"] } },
@@ -624,7 +624,7 @@ from honcho.exceptions import FilterError
 
 try:
     # Invalid filter - unsupported operator
-    messages = session.get_messages(filters={
+    messages = session.messages(filters={
         "created_at": {"invalid_operator": "2024-01-01"}
     })
 except FilterError as e:
@@ -633,7 +633,7 @@ except FilterError as e:
 
 try:
     # Invalid column name
-    sessions = honcho.get_sessions(filters={
+    sessions = honcho.sessions(filters={
         "nonexistent_field": "value"
     })
 except FilterError as e:
@@ -644,7 +644,7 @@ except FilterError as e:
 (async () => {
     try {
       // Invalid filter - unsupported operator
-      const messages = await session.getMessages({
+      const messages = await session.messages({
         filters: {
           created_at: { invalid_operator: "2024-01-01" }
         }
@@ -658,7 +658,7 @@ except FilterError as e:
 
     try {
       // Invalid column name
-      const sessions = await honcho.getSessions({
+      const sessions = await honcho.sessions({
         filters: {
           nonexistent_field: "value"
         }

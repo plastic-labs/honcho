@@ -6,6 +6,10 @@
     {
       "source": "/",
       "destination": "/v3/documentation/introduction/overview"
+    },
+    {
+      "source": "/v3/guides/integrations/claudecode",
+      "destination": "/v3/guides/integrations/claude-code"
     }
   ],
   "colors": {
@@ -25,10 +29,227 @@
   "navigation": {
     "versions": [
       {
+        "version": "v3.0.2",
+        "api": {
+          "openapi": [
+            "v3/openapi.json"
+          ]
+        },
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Introduction",
+                "pages": [
+                  "v3/documentation/introduction/overview",
+                  "v3/documentation/introduction/quickstart",
+                  "v3/documentation/introduction/vibecoding"
+                ]
+              },
+              {
+                "group": "Core Concepts",
+                "pages": [
+                  "v3/documentation/core-concepts/architecture",
+                  "v3/documentation/core-concepts/reasoning",
+                  "v3/documentation/core-concepts/representation"
+                ]
+              },
+              {
+                "group": "Features",
+                "pages": [
+                  "v3/documentation/features/get-context",
+                  "v3/documentation/features/chat",
+                  {
+                    "group": "Advanced",
+                    "pages": [
+                      "v3/documentation/features/advanced/overview",
+                      "v3/documentation/features/advanced/queue-status",
+                      "v3/documentation/features/advanced/reasoning-configuration",
+                      "v3/documentation/features/advanced/representation-scopes",
+                      "v3/documentation/features/advanced/summarizer",
+                      "v3/documentation/features/advanced/search",
+                      "v3/documentation/features/advanced/using-filters",
+                      "v3/documentation/features/advanced/streaming-response"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "Reference",
+                "pages": [
+                  "v3/documentation/reference/platform",
+                  "v3/documentation/reference/sdk"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "v3/guides/overview",
+                  "v3/guides/file-uploads",
+                  "v3/guides/storing-data"
+                ]
+              },
+              {
+                "group": "Integrations",
+                "pages": [
+                  "v3/guides/integrations/crewai",
+                  "v3/guides/integrations/langgraph",
+                  "v3/guides/integrations/mcp",
+                  "v3/guides/integrations/n8n",
+                  "v3/guides/integrations/openclaw",
+                  "v3/guides/integrations/claude-code"
+                ]
+              },
+              {
+                "group": "Migrations",
+                "pages": [
+                  "v3/guides/migrations/mem0"
+                ]
+              },
+              {
+                "group": "Chatbots",
+                "pages": [
+                  "v3/guides/discord",
+                  "v3/guides/telegram"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Open Source",
+            "groups": [
+              {
+                "group": "Self-Hosting",
+                "pages": [
+                  "v3/contributing/self-hosting",
+                  "v3/contributing/configuration"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v3/contributing/guidelines",
+                  "v3/contributing/license"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": [
+                  "v3/api-reference/introduction"
+                ]
+              },
+              {
+                "group": "workspaces",
+                "pages": [
+                  "v3/api-reference/endpoint/workspaces/get-or-create-workspace",
+                  "v3/api-reference/endpoint/workspaces/get-all-workspaces",
+                  "v3/api-reference/endpoint/workspaces/update-workspace",
+                  "v3/api-reference/endpoint/workspaces/delete-workspace",
+                  "v3/api-reference/endpoint/workspaces/search-workspace",
+                  "v3/api-reference/endpoint/workspaces/get-queue-status",
+                  "v3/api-reference/endpoint/workspaces/schedule-dream"
+                ]
+              },
+              {
+                "group": "peers",
+                "pages": [
+                  "v3/api-reference/endpoint/peers/get-peers",
+                  "v3/api-reference/endpoint/peers/get-or-create-peer",
+                  "v3/api-reference/endpoint/peers/update-peer",
+                  "v3/api-reference/endpoint/peers/get-sessions-for-peer",
+                  "v3/api-reference/endpoint/peers/chat",
+                  "v3/api-reference/endpoint/peers/get-representation",
+                  "v3/api-reference/endpoint/peers/get-peer-card",
+                  "v3/api-reference/endpoint/peers/set-peer-card",
+                  "v3/api-reference/endpoint/peers/get-peer-context",
+                  "v3/api-reference/endpoint/peers/search-peer"
+                ]
+              },
+              {
+                "group": "sessions",
+                "pages": [
+                  "v3/api-reference/endpoint/sessions/get-or-create-session",
+                  "v3/api-reference/endpoint/sessions/get-sessions",
+                  "v3/api-reference/endpoint/sessions/update-session",
+                  "v3/api-reference/endpoint/sessions/delete-session",
+                  "v3/api-reference/endpoint/sessions/clone-session",
+                  "v3/api-reference/endpoint/sessions/get-session-peers",
+                  "v3/api-reference/endpoint/sessions/set-session-peers",
+                  "v3/api-reference/endpoint/sessions/add-peers-to-session",
+                  "v3/api-reference/endpoint/sessions/remove-peers-from-session",
+                  "v3/api-reference/endpoint/sessions/get-peer-config",
+                  "v3/api-reference/endpoint/sessions/set-peer-config",
+                  "v3/api-reference/endpoint/sessions/get-session-context",
+                  "v3/api-reference/endpoint/sessions/get-session-summaries",
+                  "v3/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "messages",
+                "pages": [
+                  "v3/api-reference/endpoint/messages/create-messages-for-session",
+                  "v3/api-reference/endpoint/messages/get-messages",
+                  "v3/api-reference/endpoint/messages/get-message",
+                  "v3/api-reference/endpoint/messages/update-message",
+                  "v3/api-reference/endpoint/messages/create-messages-with-file"
+                ]
+              },
+              {
+                "group": "conclusions",
+                "pages": [
+                  "v3/api-reference/endpoint/conclusions/create-conclusions",
+                  "v3/api-reference/endpoint/conclusions/list-conclusions",
+                  "v3/api-reference/endpoint/conclusions/query-conclusions",
+                  "v3/api-reference/endpoint/conclusions/delete-conclusion"
+                ]
+              },
+              {
+                "group": "webhooks",
+                "pages": [
+                  "v3/api-reference/endpoint/webhooks/list-webhook-endpoints",
+                  "v3/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint",
+                  "v3/api-reference/endpoint/webhooks/delete-webhook-endpoint",
+                  "v3/api-reference/endpoint/webhooks/test-emit"
+                ]
+              },
+              {
+                "group": "miscellaneous",
+                "pages": [
+                  "v3/api-reference/endpoint/keys/create-key"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Changelog",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "changelog/introduction",
+                  "changelog/compatibility-guide"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
         "version": "v2.5.1",
         "api": {
           "openapi": [
-            "openapi.json"
+            "v2/openapi.json"
           ]
         },
         "tabs": [
@@ -197,18 +418,6 @@
             ]
           },
           {
-            "tab": "Changelog",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "changelog/introduction",
-                  "changelog/compatibility-guide"
-                ]
-              }
-            ]
-          },
-          {
             "tab": "Contributing",
             "groups": [
               {
@@ -218,221 +427,6 @@
                   "v2/contributing/self-hosting",
                   "v2/contributing/configuration",
                   "v2/contributing/license"
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "version": "v3.0.0",
-        "api": {
-          "openapi": [
-            "openapi.json"
-          ]
-        },
-        "tabs": [
-          {
-            "tab": "Documentation",
-            "groups": [
-              {
-                "group": "Introduction",
-                "pages": [
-                  "v3/documentation/introduction/overview",
-                  "v3/documentation/introduction/quickstart",
-                  "v3/documentation/introduction/vibecoding"
-                ]
-              },
-              {
-                "group": "Core Concepts",
-                "pages": [
-                  "v3/documentation/core-concepts/architecture",
-                  "v3/documentation/core-concepts/reasoning",
-                  "v3/documentation/core-concepts/representation"
-                ]
-              },
-              {
-                "group": "Features",
-                "pages": [
-                  "v3/documentation/features/get-context",
-                  "v3/documentation/features/chat",
-                  {
-                    "group": "Advanced",
-                    "pages": [
-                      "v3/documentation/features/advanced/overview",
-                      "v3/documentation/features/advanced/queue-status",
-                      "v3/documentation/features/advanced/reasoning-configuration",
-                      "v3/documentation/features/advanced/representation-scopes",
-                      "v3/documentation/features/advanced/summarizer",
-                      "v3/documentation/features/advanced/search",
-                      "v3/documentation/features/advanced/using-filters",
-                      "v3/documentation/features/advanced/streaming-response"
-                    ]
-                  }
-                ]
-              },
-              {
-                "group": "Reference",
-                "pages": [
-                  "v3/documentation/reference/platform",
-                  "v3/documentation/reference/sdk"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Guides",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "v3/guides/overview",
-                  "v3/guides/file-uploads",
-                  "v3/guides/storing-data"
-                ]
-              },
-              {
-                "group": "Integrations",
-                "pages": [
-                  "v3/guides/integrations/crewai",
-                  "v3/guides/integrations/langgraph",
-                  "v3/guides/integrations/mcp"
-                ]
-              },
-              {
-                "group": "Migrations",
-                "pages": [
-                  "v3/guides/migrations/mem0"
-                ]
-              },
-              {
-                "group": "Chatbots",
-                "pages": [
-                  "v3/guides/discord",
-                  "v3/guides/telegram"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Open Source",
-            "groups": [
-              {
-                "group": "Self-Hosting",
-                "pages": [
-                  "v3/contributing/self-hosting",
-                  "v3/contributing/configuration"
-                ]
-              },
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v3/contributing/guidelines",
-                  "v3/contributing/license"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "API Reference",
-            "groups": [
-              {
-                "group": "API Documentation",
-                "pages": [
-                  "v3/api-reference/introduction"
-                ]
-              },
-              {
-                "group": "workspaces",
-                "pages": [
-                  "v3/api-reference/endpoint/workspaces/get-or-create-workspace",
-                  "v3/api-reference/endpoint/workspaces/get-all-workspaces",
-                  "v3/api-reference/endpoint/workspaces/update-workspace",
-                  "v3/api-reference/endpoint/workspaces/delete-workspace",
-                  "v3/api-reference/endpoint/workspaces/search-workspace",
-                  "v3/api-reference/endpoint/workspaces/get-deriver-status",
-                  "v3/api-reference/endpoint/workspaces/trigger-dream"
-                ]
-              },
-              {
-                "group": "peers",
-                "pages": [
-                  "v3/api-reference/endpoint/peers/get-peers",
-                  "v3/api-reference/endpoint/peers/get-or-create-peer",
-                  "v3/api-reference/endpoint/peers/update-peer",
-                  "v3/api-reference/endpoint/peers/get-sessions-for-peer",
-                  "v3/api-reference/endpoint/peers/chat",
-                  "v3/api-reference/endpoint/peers/get-working-representation",
-                  "v3/api-reference/endpoint/peers/get-peer-card",
-                  "v3/api-reference/endpoint/peers/set-peer-card",
-                  "v3/api-reference/endpoint/peers/get-peer-context",
-                  "v3/api-reference/endpoint/peers/search-peer"
-                ]
-              },
-              {
-                "group": "sessions",
-                "pages": [
-                  "v3/api-reference/endpoint/sessions/get-or-create-session",
-                  "v3/api-reference/endpoint/sessions/get-sessions",
-                  "v3/api-reference/endpoint/sessions/update-session",
-                  "v3/api-reference/endpoint/sessions/delete-session",
-                  "v3/api-reference/endpoint/sessions/clone-session",
-                  "v3/api-reference/endpoint/sessions/get-session-peers",
-                  "v3/api-reference/endpoint/sessions/set-session-peers",
-                  "v3/api-reference/endpoint/sessions/add-peers-to-session",
-                  "v3/api-reference/endpoint/sessions/remove-peers-from-session",
-                  "v3/api-reference/endpoint/sessions/get-peer-config",
-                  "v3/api-reference/endpoint/sessions/set-peer-config",
-                  "v3/api-reference/endpoint/sessions/get-session-context",
-                  "v3/api-reference/endpoint/sessions/get-session-summaries",
-                  "v3/api-reference/endpoint/sessions/search-session"
-                ]
-              },
-              {
-                "group": "messages",
-                "pages": [
-                  "v3/api-reference/endpoint/messages/create-messages-for-session",
-                  "v3/api-reference/endpoint/messages/get-messages",
-                  "v3/api-reference/endpoint/messages/get-message",
-                  "v3/api-reference/endpoint/messages/update-message",
-                  "v3/api-reference/endpoint/messages/create-messages-with-file"
-                ]
-              },
-              {
-                "group": "observations",
-                "pages": [
-                  "v3/api-reference/endpoint/observations/create-observations",
-                  "v3/api-reference/endpoint/observations/list-observations",
-                  "v3/api-reference/endpoint/observations/query-observations",
-                  "v3/api-reference/endpoint/observations/delete-observation"
-                ]
-              },
-              {
-                "group": "webhooks",
-                "pages": [
-                  "v3/api-reference/endpoint/webhooks/list-webhook-endpoints",
-                  "v3/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint",
-                  "v3/api-reference/endpoint/webhooks/delete-webhook-endpoint",
-                  "v3/api-reference/endpoint/webhooks/test-emit"
-                ]
-              },
-              {
-                "group": "miscellaneous",
-                "pages": [
-                  "v3/api-reference/endpoint/keys/create-key",
-                  "v3/api-reference/endpoint/metrics"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Changelog",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "changelog/introduction",
-                  "changelog/compatibility-guide"
                 ]
               }
             ]
@@ -582,18 +576,6 @@
                   "v1/api-reference/endpoint/documents/update-document",
                   "v1/api-reference/endpoint/documents/delete-document",
                   "v1/api-reference/endpoint/documents/query-documents"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Changelog",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "changelog/introduction",
-                  "changelog/compatibility-guide"
                 ]
               }
             ]

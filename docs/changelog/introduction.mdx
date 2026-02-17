@@ -27,10 +27,59 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.0.0 (Current)">
+        <Update label="v3.0.2 (Current)">
+        ### Added
+
+        - Documentation for reasoning_level and Claude Code plugin
+
         ### Changed
 
-        - Major version release
+        - Gave dreaming sub-agents better prompting around peer card creation, tweaked overall prompts
+
+        ### Fixed
+
+        - Added message-search fallback for memory search tool, necessary in fresh sessions
+        - Made FLUSH_ENABLED a config value
+        - Removed N+1 query in search_messages
+        </Update>
+
+        <Update label="v3.0.1">
+        ### Fixed
+
+        - Token counting in Explicit Agent Loop
+        - Backwards compatibility of queue items
+        </Update>
+
+        <Update label="v3.0.0">
+        ### Added
+
+        - Agentic Dreamer for intelligent memory consolidation using LLM agents
+        - Agentic Dialectic for query answering using LLM agents with tool use
+        - Reasoning levels configuration for dialectic (`minimal`, `low`, `medium`, `high`, `max`)
+        - Prometheus token tracking for deriver and dialectic operations
+        - n8n integration
+        - Cloud Events for auditable telemetry
+        - External Vector Store support for turbopuffer and lancedb with reconciliation flow
+
+        ### Changed
+
+        - API route renaming for consistency
+        - Dreamer and dialectic now respect peer card configuration settings
+        - Observations renamed to Conclusions across API and SDKs
+        - Deriver to buffer representation tasks to normalize workloads
+        - Local Representation tasks to create singular QueueItems
+        - getContext endpoint to use `search_query` rather than force `last_user_message`
+
+        ### Fixed
+
+        - Dream scheduling bugs
+        - Summary creation when start_message_id > end_message_id
+        - Cashews upgrade to prevent NoScriptError
+        - Memory leak in `accumulate_metric` call
+
+        ### Removed
+
+        - Peer card configuration from message configuration; peer cards no longer created/updated in deriver process
         </Update>
 
         <Update label="v2.5.1">
@@ -148,7 +197,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         <Update label="v2.3.2">
         ### Added
 
-        - Get peer cards endpoint (`GET /v3/peers/{peer_id}/peer-card`) for retrieving targeted peer context information
+        - Get peer cards endpoint (`GET /v2/peers/{peer_id}/card`) for retrieving targeted peer context information
 
         ### Changed
 
@@ -412,10 +461,32 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.0.0 (Current)">
-            ### Changed
+        <Update label="v2.0.1 (Current)">
+            ### Added
 
-            - Major version release
+        - `set_peer_card` method
+
+        ### Changed
+
+        - `card` is now `get_card` with `card` kept for backwards compatibility and marked as deprecated
+        </Update>
+        <Update label="v2.0.0">
+        ### Added
+
+        - `ConclusionScope` object for CRUD operations on conclusions (renamed from observations)
+        - Representation configuration support
+
+        ### Changed
+
+        - Observations renamed to Conclusions across the SDK
+        - Major SDK refactoring and cleanup
+        - Simplified method signatures throughout
+        - Representation endpoints now return `string` instead of old Representation object
+
+        ### Removed
+
+        - Standalone types module (now uses honcho-core types)
+        - Representation object
         </Update>
         <Update label="v1.6.0">
             ### Added
@@ -504,10 +575,36 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.0.0 (Current)">
-            ### Changed
+        <Update label="v2.0.1 (Current)">
+        ### Added
 
-            - Major version release
+        - `setPeerCard` method
+
+        ### Changed
+
+        - `card` is now `getCard` with `card` kept for backwards compatibility and marked as deprecated
+        </Update>
+        <Update label="v2.0.0">
+        ### Added
+
+        - `ConclusionScope` object for CRUD operations on conclusions (renamed from observations)
+        - Representation configuration support
+
+        ### Changed
+
+        - Observations renamed to Conclusions across the SDK
+        - Major SDK refactoring and cleanup
+        - Simplified method signatures throughout
+        - Representation endpoints now return `string` instead of old Representation object
+
+        ### Fixed
+
+        - Pagination `this` binding issue
+
+        ### Removed
+
+        - Representation object
+        - Stainless "core" SDK -- this SDK is now standalone
         </Update>
         <Update label="v1.6.0">
             ### Added

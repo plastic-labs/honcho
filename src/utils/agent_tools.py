@@ -3,8 +3,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,12 +14,19 @@ from src.config import settings
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
+from src.telemetry.events import (
+    AgentToolConclusionsCreatedEvent,
+    AgentToolConclusionsDeletedEvent,
+    AgentToolPeerCardUpdatedEvent,
+    emit,
+)
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import DocumentLevel
+from src.utils.types import get_current_iteration
 
 logger = logging.getLogger(__name__)
+
 
 # Module-level lock registry for thread-safe observation creation.
 # Keyed by (workspace_name, observer, observed) to ensure all tool executors
@@ -49,6 +57,23 @@ async def get_observation_lock(
         if key not in _observation_locks:
             _observation_locks[key] = asyncio.Lock()
         return _observation_locks[key]
+
+
+@dataclass
+class ObservationFailure:
+    """Records a single observation that failed during creation."""
+
+    content_preview: str
+    error: str
+
+
+@dataclass
+class ObservationsCreatedResult:
+    """Result of a batch create_observations call."""
+
+    created_count: int
+    created_levels: list[str]
+    failed: list[ObservationFailure]
 
 
 def _truncate_tool_output(output: str, max_chars: int | None = None) -> str:
@@ -524,44 +549,50 @@ DREAMER_TOOLS: list[dict[str, Any]] = [
 
 # Tools for the deduction specialist (dreamer phase 1)
 # Creates deductive observations from explicit observations, can delete duplicates
+# Includes message access for context and self-directed exploration
+# Note: get_peer_card is not included - peer card is injected into the prompt directly
 DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
-    TOOLS["search_memory"],
+    # Discovery tools
     TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    TOOLS["search_messages"],
+    # Action tools
     TOOLS["create_observations"],
     TOOLS["delete_observations"],
-    TOOLS["get_reasoning_chain"],
     TOOLS["update_peer_card"],
-    TOOLS["get_peer_card"],
 ]
 
 # Tools for the induction specialist (dreamer phase 2)
 # Creates inductive observations from explicit and deductive observations
+# Includes message access for context and self-directed exploration
+# Note: get_peer_card is not included - peer card is injected into the prompt directly
 INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
-    TOOLS["search_memory"],
+    # Discovery tools
     TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    TOOLS["search_messages"],
+    # Action tools
     TOOLS["create_observations"],
-    TOOLS["get_reasoning_chain"],
     TOOLS["update_peer_card"],
-    TOOLS["get_peer_card"],
 ]
 
 
 async def create_observations(
     db: AsyncSession,
-    observations: list[dict[str, Any]],
+    observations: list[schemas.ObservationInput],
     observer: str,
     observed: str,
-    session_name: str,
+    session_name: str | None,
     workspace_name: str,
     message_ids: list[int],
     message_created_at: str,
-) -> None:
+) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
 
     Args:
         db: Database session
-        observations: List of observations, each with 'content', 'level', and level-specific fields
+        observations: List of validated observation inputs
         observer: The peer making the observation
         observed: The peer being observed
         session_name: Session identifier
@@ -569,13 +600,12 @@ async def create_observations(
         message_ids: List of message IDs these observations are based on
         message_created_at: Timestamp of the message that triggered these observations
 
-    Level-specific fields:
-        - deductive: 'premises' (list of strings)
-        - inductive: 'sources' (list of strings), 'pattern_type', 'confidence'
+    Returns:
+        ObservationsCreatedResult with created count and any per-observation failures
     """
     if not observations:
         logger.warning("create_observations called with empty list")
-        return
+        return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
     # Get or create collection
     await crud.get_or_create_collection(
@@ -585,58 +615,71 @@ async def create_observations(
         observed=observed,
     )
 
-    # Generate embeddings and create document objects for all observations
+    contents = [obs.content for obs in observations]
+
+    # Batch embed all observation contents.
+    # If batching fails, fall back to per-observation embedding.
+    embeddings_by_index: dict[int, list[float]] | None = None
+    try:
+        embeddings = await embedding_client.simple_batch_embed(contents)
+        embeddings_by_index = dict(
+            zip(range(len(observations)), embeddings, strict=True)
+        )
+    except Exception as e:
+        logger.warning(
+            "Batch embedding failed for create_observations; falling back to per-observation embedding: %s",
+            e,
+        )
+
+    # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    for obs in observations:
-        content = obs.get("content", "")
-        level_str = obs.get("level", "explicit")
-
-        if not content:
-            logger.warning("Skipping observation with empty content")
-            continue
-
-        # Validate and cast level
-        level: DocumentLevel
-        if level_str == "inductive":
-            level = "inductive"
-        elif level_str == "deductive":
-            level = "deductive"
-        elif level_str == "contradiction":
-            level = "contradiction"
+    failed: list[ObservationFailure] = []
+    for i, obs in enumerate(observations):
+        embedding: list[float]
+        if embeddings_by_index is not None:
+            embedding = embeddings_by_index[i]
         else:
-            level = "explicit"
-
-        # Generate embedding for the observation
-        embedding = await embedding_client.embed(content)
+            try:
+                embedding = await embedding_client.embed(obs.content)
+            except Exception as e:
+                logger.warning(
+                    "Error embedding observation content for level '%s': %s",
+                    obs.level,
+                    e,
+                )
+                failed.append(
+                    ObservationFailure(
+                        content_preview=obs.content[:50],
+                        error=f"Embedding failed: {e}",
+                    )
+                )
+                continue
 
         # Build metadata with level-specific fields
         metadata = schemas.DocumentMetadata(
             message_ids=message_ids,
             message_created_at=message_created_at,
-            source_ids=obs.get("source_ids")
-            if level in ("deductive", "inductive", "contradiction")
+            source_ids=obs.source_ids
+            if obs.level in ("deductive", "inductive", "contradiction")
             else None,
-            # Deductive-specific (human-readable premises)
-            premises=obs.get("premises") if level == "deductive" else None,
-            # Inductive/Contradiction-specific (human-readable sources)
-            sources=obs.get("sources")
-            if level in ("inductive", "contradiction")
+            premises=obs.premises if obs.level == "deductive" else None,
+            sources=obs.sources
+            if obs.level in ("inductive", "contradiction")
             else None,
-            pattern_type=obs.get("pattern_type") if level == "inductive" else None,
-            confidence=obs.get("confidence", "medium")
-            if level == "inductive"
+            pattern_type=obs.pattern_type if obs.level == "inductive" else None,
+            confidence=(obs.confidence or "medium")
+            if obs.level == "inductive"
             else None,
         )
 
-        # Create document with tree linkage at top level
         doc = schemas.DocumentCreate(
-            content=content,
+            content=obs.content,
             session_name=session_name,
-            level=level,
+            level=obs.level,
             metadata=metadata,
             embedding=embedding,
-            source_ids=obs.get("source_ids")
-            if level in ("deductive", "inductive", "contradiction")
+            source_ids=obs.source_ids
+            if obs.level in ("deductive", "inductive", "contradiction")
             else None,
         )
         documents.append(doc)
@@ -652,8 +695,18 @@ async def create_observations(
             deduplicate=True,
         )
         logger.info(
-            f"Created {len(documents)} observations in {workspace_name}/{observer}/{observed}"
+            "Created %d observations in %s/%s/%s",
+            len(documents),
+            workspace_name,
+            observer,
+            observed,
         )
+
+    return ObservationsCreatedResult(
+        created_count=len(documents),
+        created_levels=[doc.level for doc in documents],
+        failed=failed,
+    )
 
 
 async def get_recent_history(
@@ -718,6 +771,7 @@ async def search_memory(
     query: str,
     limit: int,
     levels: list[str] | None = None,
+    embedding: list[float] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -731,6 +785,7 @@ async def search_memory(
         limit: Maximum number of results
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
+        embedding: Optional pre-computed embedding to avoid redundant API calls
 
     Returns:
         Representation object containing relevant observations
@@ -748,6 +803,7 @@ async def search_memory(
         query=query,
         top_k=limit,
         filters=filters,
+        embedding=embedding,
     )
 
     return Representation.from_documents(documents)
@@ -849,6 +905,20 @@ async def extract_preferences(
         "things user wants or does not want",
     ]
 
+    # Batch embed all queries in a single API call.
+    # If batching fails, each search call will generate its own embedding.
+    query_embeddings_by_query: dict[str, list[float]] | None = None
+    try:
+        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
+        query_embeddings_by_query = dict(
+            zip(semantic_queries, query_embeddings, strict=True)
+        )
+    except Exception as e:
+        logger.warning(
+            "Batch embedding failed for extract_preferences; falling back to per-query embedding in search_messages: %s",
+            e,
+        )
+
     for query in semantic_queries:
         try:
             snippets = await crud.search_messages(
@@ -858,6 +928,11 @@ async def extract_preferences(
                 query=query,
                 limit=10,
                 context_window=0,
+                embedding=(
+                    query_embeddings_by_query.get(query)
+                    if query_embeddings_by_query is not None
+                    else None
+                ),
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -867,7 +942,7 @@ async def extract_preferences(
                             seen_content.add(content_key)
                             messages.append(f"'{msg.content.strip()}'")
         except Exception as e:
-            logger.warning(f"Error in semantic search for '{query}': {e}")
+            logger.warning("Error in semantic search for '%s': %s", query, e)
 
     return {
         "instructions": [],  # Deprecated - LLM will categorize
@@ -894,116 +969,117 @@ class ToolContext:
     db_lock: asyncio.Lock
     # Optional resolved configuration for checking feature flags
     configuration: ResolvedConfiguration | None = None
+    # Telemetry context fields
+    run_id: str | None = None
+    agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
+    parent_category: str | None = None  # Parent category for CloudEvents
 
 
 async def _handle_create_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle create_observations tool."""
-    observations = tool_input.get("observations", [])
+    raw_observations = tool_input.get("observations", [])
 
-    if not observations:
+    if not raw_observations:
         return "ERROR: observations list is empty"
 
-    valid_levels = ["explicit", "deductive", "inductive", "contradiction"]
-    valid_pattern_types = [
-        "preference",
-        "behavior",
-        "personality",
-        "tendency",
-        "correlation",
-    ]
-    valid_confidence = ["high", "medium", "low"]
+    # Set context-specific default level before Pydantic validation
+    default_level = "explicit" if ctx.current_messages else "deductive"
+    for obs in raw_observations:
+        obs.setdefault("level", default_level)
 
-    # Determine message context based on whether we have current_messages
+    # Validate observations individually so valid ones are still processed
+    observations: list[schemas.ObservationInput] = []
+    validation_failures: list[ObservationFailure] = []
+    for obs in raw_observations:
+        try:
+            validated = schemas.ObservationInput.model_validate(obs)
+        except ValidationError as e:
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=str(obs.get("content", ""))[:50],
+                    error=f"Validation failed: {e}",
+                )
+            )
+            continue
+        # Deriver can only create explicit observations
+        if ctx.current_messages and validated.level != "explicit":
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=validated.content[:50],
+                    error=f"Deriver can only create 'explicit' observations, got '{validated.level}'",
+                )
+            )
+            continue
+        observations.append(validated)
+
+    if not observations:
+        failure_details = "; ".join(
+            f"'{f.content_preview}': {f.error}" for f in validation_failures
+        )
+        return f"ERROR: All observations failed validation: {failure_details}"
+
+    # Determine message context
     if ctx.current_messages:
-        # Deriver agent: uses simplified schema, default all to explicit
-        for i, obs in enumerate(observations):
-            if "content" not in obs:
-                return f"ERROR: observation {i} missing 'content' field"
-            # Default to explicit - the simplified deriver schema doesn't include level
-            if "level" not in obs:
-                obs["level"] = "explicit"
-            # Enforce explicit-only for deriver
-            if obs["level"] != "explicit":
-                return f"ERROR: Deriver can only create 'explicit' observations, got '{obs['level']}' at index {i}"
-
         message_ids = [msg.id for msg in ctx.current_messages]
         message_created_at = str(ctx.current_messages[-1].created_at)
-        obs_session_name = ctx.session_name or ctx.current_messages[0].session_name
     else:
-        # Dreamer/Dialectic agent: allow deductive and inductive, no source messages
-        if not ctx.session_name:
-            return "ERROR: Cannot create observations without a session context"
-
-        for i, obs in enumerate(observations):
-            if "content" not in obs:
-                return f"ERROR: observation {i} missing 'content' field"
-            # Default to deductive for backwards compatibility
-            if "level" not in obs:
-                obs["level"] = "deductive"
-            if obs["level"] not in valid_levels:
-                return f"ERROR: observation {i} has invalid level '{obs['level']}'"
-
-            # Validate deductive-specific fields (tree linkage required)
-            if obs["level"] == "deductive":
-                if not obs.get("source_ids"):
-                    return f"ERROR: deductive observation {i} requires 'source_ids' field with document IDs of premises"
-                # Validate source_ids are strings
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-
-            # Validate inductive-specific fields (tree linkage required)
-            if obs["level"] == "inductive":
-                if not obs.get("source_ids"):
-                    return f"ERROR: inductive observation {i} requires 'source_ids' field with document IDs of sources"
-                # Validate source_ids are strings
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-                if (
-                    obs.get("pattern_type")
-                    and obs["pattern_type"] not in valid_pattern_types
-                ):
-                    return f"ERROR: observation {i} has invalid pattern_type '{obs['pattern_type']}'"
-                if obs.get("confidence") and obs["confidence"] not in valid_confidence:
-                    return f"ERROR: observation {i} has invalid confidence '{obs['confidence']}'"
-
-            # Validate contradiction-specific fields (need source_ids for the two contradicting obs)
-            if obs["level"] == "contradiction":
-                if not obs.get("source_ids"):
-                    return f"ERROR: contradiction observation {i} requires 'source_ids' field with IDs of contradicting observations"
-                if len(obs.get("source_ids", [])) < 2:
-                    return f"ERROR: contradiction observation {i} requires at least 2 source_ids (the contradicting observations)"
-                for sid in obs.get("source_ids", []):
-                    if not isinstance(sid, str):
-                        return f"ERROR: observation {i} source_ids must be strings, got {type(sid)}"
-
         message_ids = []
         message_created_at = utc_now_iso()
-        obs_session_name = ctx.session_name
 
     # Use lock to serialize database writes (prevents concurrent commit issues)
     async with ctx.db_lock:
-        await create_observations(
+        result = await create_observations(
             ctx.db,
             observations=observations,
             observer=ctx.observer,
             observed=ctx.observed,
-            session_name=obs_session_name,
+            session_name=ctx.session_name,
             workspace_name=ctx.workspace_name,
             message_ids=message_ids,
             message_created_at=message_created_at,
         )
 
-    explicit_count = sum(1 for o in observations if o.get("level") == "explicit")
-    deductive_count = sum(1 for o in observations if o.get("level") == "deductive")
-    inductive_count = sum(1 for o in observations if o.get("level") == "inductive")
-    contradiction_count = sum(
-        1 for o in observations if o.get("level") == "contradiction"
+    # Merge validation and embedding failures
+    all_failures = validation_failures + result.failed
+
+    # Count levels from actually-created observations
+    levels = result.created_levels
+    explicit_count = levels.count("explicit")
+    deductive_count = levels.count("deductive")
+    inductive_count = levels.count("inductive")
+    contradiction_count = levels.count("contradiction")
+
+    # Emit telemetry event if context is available
+    if ctx.run_id and ctx.agent_type and ctx.parent_category:
+        emit(
+            AgentToolConclusionsCreatedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                conclusion_count=result.created_count,
+                levels=levels,
+            )
+        )
+
+    response = (
+        f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer} "
+        f"({explicit_count} explicit, {deductive_count} deductive, "
+        f"{inductive_count} inductive, {contradiction_count} contradiction)"
     )
-    return f"Created {len(observations)} observations for {ctx.observed} by {ctx.observer} ({explicit_count} explicit, {deductive_count} deductive, {inductive_count} inductive, {contradiction_count} contradiction)"
+
+    if all_failures:
+        failure_details = "; ".join(
+            f"'{f.content_preview}': {f.error}" for f in all_failures
+        )
+        response += f"\nFailed {len(all_failures)}: {failure_details}"
+
+    return response
 
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
@@ -1011,23 +1087,51 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
     # Check if peer card creation is disabled via configuration
     if ctx.configuration is not None and not ctx.configuration.peer_card.create:
         logger.info(
-            f"Peer card creation disabled for {ctx.workspace_name}, skipping update"
+            "Peer card creation disabled for %s, skipping update",
+            ctx.workspace_name,
         )
         return (
             "Peer card creation is disabled for this workspace/session configuration."
         )
 
+    peer_card_content = tool_input["content"]
     async with ctx.db_lock:
         await crud.set_peer_card(
             ctx.db,
             workspace_name=ctx.workspace_name,
-            peer_card=tool_input["content"],
+            peer_card=peer_card_content,
             observer=ctx.observer,
             observed=ctx.observed,
         )
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
     )
+
+    # Emit telemetry event if context is available
+    if ctx.run_id and ctx.agent_type and ctx.parent_category:
+        # Count facts in peer card (content is a list of strings per tool schema)
+        facts_count: int
+        if isinstance(peer_card_content, list):
+            content_list = cast(list[str], peer_card_content)
+            facts_count = len([line for line in content_list if line.strip()])
+        else:
+            # Fallback for string (defensive)
+            facts_count = len(
+                [line for line in str(peer_card_content).split("\n") if line.strip()]
+            )
+        emit(
+            AgentToolPeerCardUpdatedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                facts_count=facts_count,
+            )
+        )
+
     return f"Updated peer card for {ctx.observed} by {ctx.observer}"
 
 
@@ -1060,20 +1164,54 @@ async def _handle_get_recent_history(
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
     top_k = min(tool_input.get("top_k", 20), 40)
+    query = tool_input["query"]
+    try:
+        query_embedding = await embedding_client.embed(query)
+    except ValueError:
+        return f"ERROR: Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}. Please use a shorter query."
+
     documents = await crud.query_documents(
         db=ctx.db,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        query=tool_input["query"],
+        query=query,
         top_k=top_k,
+        embedding=query_embedding,
     )
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
-        return f"No observations found for query '{tool_input['query']}'"
+        # fallback behavior: if the memory is *empty*, that means we're quite
+        # early in a workspace/peer/session -- in order to give good answers in
+        # this stage, and be efficient with tool calls, and make sure the model
+        # doesn't short-circuit and think there's nothing here, we
+        # automatically search the message history for relevant information.
+        if ctx.agent_type == "dialectic":
+            limit = min(tool_input.get("top_k", 20), 20)
+            snippets = await crud.search_messages(
+                ctx.db,
+                workspace_name=ctx.workspace_name,
+                session_name=ctx.session_name,
+                query=query,
+                limit=limit,
+                context_window=0,
+                embedding=query_embedding,
+            )
+            if snippets:
+                message_output = _format_message_snippets(
+                    snippets, f"for query '{query}'"
+                )
+                return (
+                    f"No observations yet. Message search results:\n\n{message_output}"
+                )
+            return (
+                f"No observations found for query '{query}', and no messages found in "
+                "history. Try a different phrasing or use grep_messages for exact text."
+            )
+        return f"No observations found for query '{query}'"
     mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
-    return f"Found {total_count} observations for query '{tool_input['query']}':\n\n{mem_str}"
+    return f"Found {total_count} observations for query '{query}':\n\n{mem_str}"
 
 
 async def _handle_get_observation_context(
@@ -1376,7 +1514,23 @@ async def _handle_delete_observations(
                 )
                 deleted_count += 1
             except Exception as e:
-                logger.warning(f"Failed to delete observation {obs_id}: {e}")
+                logger.warning("Failed to delete observation %s: %s", obs_id, e)
+
+    # Emit telemetry event if context is available
+    if deleted_count > 0 and ctx.run_id and ctx.agent_type and ctx.parent_category:
+        emit(
+            AgentToolConclusionsDeletedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                conclusion_count=deleted_count,
+            )
+        )
+
     return f"Deleted {deleted_count} observations"
 
 
@@ -1564,6 +1718,9 @@ async def create_tool_executor(
     include_observation_ids: bool = False,
     history_token_limit: int = 8192,
     configuration: ResolvedConfiguration | None = None,
+    run_id: str | None = None,
+    agent_type: str | None = None,
+    parent_category: str | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -1581,6 +1738,9 @@ async def create_tool_executor(
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
         history_token_limit: Maximum tokens for get_recent_history (default: 8192)
         configuration: Resolved configuration for checking feature flags (optional)
+        run_id: Optional run ID for telemetry correlation
+        agent_type: Optional agent type for telemetry (dialectic, deriver, dreamer)
+        parent_category: Optional parent category for CloudEvents
 
     Returns:
         An async callable that executes tools with the captured context
@@ -1600,6 +1760,9 @@ async def create_tool_executor(
         history_token_limit=history_token_limit,
         db_lock=shared_lock,
         configuration=configuration,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -1613,12 +1776,14 @@ async def create_tool_executor(
         Returns:
             String result describing what was done
         """
-        logger.info(f"[tool call] {tool_name}")
+        logger.info("[tool call] %s %s", tool_name, tool_input)
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
-                return await handler(ctx, tool_input)
+                result = await handler(ctx, tool_input)
+                logger.info("[tool result] %s %s", tool_name, result)
+                return result
             return f"Unknown tool: {tool_name}"
 
         except ValueError as e:

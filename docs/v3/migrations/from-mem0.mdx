@@ -251,22 +251,22 @@ Reference the [API Comparison](#api-comparison) to replace your Mem0 API calls w
 | **Add messages** | `client.add(messages, user_id=...)` | `session.add_messages([peer.message(...)])` | Session-scoped, triggers reasoning |
 | **Add conclusions** |  | `peer.conclusions.create([...])` | Direct conclusion or "memory" import, no processing |
 | **Search** | `client.search(query, filters={"user_id": ...})` | `peer.search(query)` or `peer.conclusions.query(...)` | Scoped to peer or session |
-| **List all** | `client.get_all(filters={"user_id": ...})` | `session.get_messages()` or `peer.conclusions.list()` | Messages or conclusions |
+| **List all** | `client.get_all(filters={"user_id": ...})` | `session.messages()` or `peer.conclusions.list()` | Messages or conclusions |
 | **Update** | `client.update(memory_id, data=...)` | `honcho.update_message(message, metadata=...)` | Metadata updates only |
 | **Delete** | `client.delete(memory_id)` | `peer.conclusions.delete(id)` or `session.delete()` | Conclusion or session-level |
 
 ### Honcho-Only Capabilities
 
-Mem0 requires manual assembly of context from `search()` results. Honcho's `session.get_context()` returns a ready-to-use `SessionContext` object with built-in token limits, auto-included summaries, and format helpers (`.to_openai()`, `.to_anthropic()`).
+Mem0 requires manual assembly of context from `search()` results. Honcho's `session.context()` returns a ready-to-use `SessionContext` object with built-in token limits, auto-included summaries, and format helpers (`.to_openai()`, `.to_anthropic()`).
 
-<Card title="Get Context" icon="window-restore" href="../../documentation/core-concepts/features/get-context">
+<Card title="Get Context" icon="window-restore" href="../../documentation/features/get-context">
   Learn more about token-optimized context retrieval
 </Card>
 
 
 Mem0's `search()` returns basic vector, semantic, or raw memory matches. Honcho's `peer.chat()` enables your agent to *reason* about what it knows—returning synthesized natural language insights with streaming support and scoped queries.
 
-<Card title="Dialectic Endpoint" icon="brain" href="../../documentation/core-concepts/features/dialectic-endpoint">
+<Card title="Chat Endpoint" icon="brain" href="../../documentation/features/chat">
   Learn more about inference-powered queries
 </Card>
 
@@ -274,9 +274,9 @@ Additional features with **no Mem0 equivalent**:
 
 | Honcho Method | Description | Use Case |
 |---------------|-------------|----------|
-| `peer.card()` | Stable biographical facts (name, preferences, background) | User profiles, personalization |
-| `session.get_representation(peer)` | Cached psychological analysis (mental state, intentions) | Real-time adaptation |
-| `session.get_summaries()` | Auto-generated short/long session summaries | Conversation continuity |
+| `peer.get_card()` / `peer.set_card()` | Stable biographical facts (name, preferences, background) | User profiles, personalization |
+| `session.representation(peer)` | Cached psychological analysis (mental state, intentions) | Real-time adaptation |
+| `session.summaries()` | Auto-generated short/long session summaries | Conversation continuity |
 | `SessionPeerConfig` | Configure observation settings (who learns about whom) | Privacy controls, role-based learning |
 
 ## Next Steps
@@ -285,7 +285,7 @@ Additional features with **no Mem0 equivalent**:
   <Card title="Architecture" icon="rocket" href="../../documentation/core-concepts/architecture">
     Understand peers and sessions
   </Card>
-  <Card title="Dialectic API" icon="brain" href="../../documentation/core-concepts/features/dialectic-endpoint">
+  <Card title="Chat API" icon="brain" href="../../documentation/features/chat">
     Inference responses
   </Card>
   <Card title="Guides" icon="book" href="../../guides/overview">

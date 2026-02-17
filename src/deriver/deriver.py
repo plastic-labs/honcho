@@ -1,19 +1,26 @@
 import logging
 import time
 
-from src import crud, prometheus
+from src import crud
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.schemas import ResolvedConfiguration
+from src.telemetry import prometheus_metrics
+from src.telemetry.events import RepresentationCompletedEvent, emit
+from src.telemetry.logging import accumulate_metric, log_performance_metrics
+from src.telemetry.prometheus.metrics import (
+    DeriverComponents,
+    DeriverTaskTypes,
+    TokenTypes,
+)
+from src.telemetry.sentry import with_sentry_transaction
 from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
-from src.utils.logging import accumulate_metric, log_performance_metrics
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
-from src.utils.tracing import with_sentry_transaction
+from src.utils.tokens import track_deriver_input_tokens
 
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
 
@@ -27,6 +34,7 @@ async def process_representation_tasks_batch(
     *,
     observers: list[str],
     observed: str,
+    queue_item_message_ids: list[int],
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -36,6 +44,7 @@ async def process_representation_tasks_batch(
         message_level_configuration: Optional configuration override.
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
+        queue_item_message_ids: Message IDs from queue items being processed
     """
     if not messages:
         return
@@ -84,14 +93,17 @@ async def process_representation_tasks_batch(
         for msg in messages
     )
 
-    # Track token usage
+    # Track token usage - count only tokens from messages being processed
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
-    messages_tokens = estimate_tokens(formatted_messages)
+    queue_item_message_ids_set = set(queue_item_message_ids)
+    messages_tokens = sum(
+        msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
+    )
     track_deriver_input_tokens(
-        task_type=prometheus.DeriverTaskTypes.INGESTION,
+        task_type=DeriverTaskTypes.INGESTION,
         components={
-            prometheus.DeriverComponents.PROMPT: prompt_tokens,
-            prometheus.DeriverComponents.MESSAGES: messages_tokens,
+            DeriverComponents.PROMPT: prompt_tokens,
+            DeriverComponents.MESSAGES: messages_tokens,
         },
     )
 
@@ -136,11 +148,14 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    prometheus.DERIVER_TOKENS_PROCESSED.labels(
-        task_type=prometheus.DeriverTaskTypes.INGESTION.value,
-        token_type=prometheus.TokenTypes.OUTPUT.value,
-        component=prometheus.DeriverComponents.OUTPUT_TOTAL.value,
-    ).inc(response.output_tokens)
+    # Prometheus metrics
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_deriver_tokens(
+            count=response.output_tokens,
+            task_type=DeriverTaskTypes.INGESTION.value,
+            token_type=TokenTypes.OUTPUT.value,
+            component=DeriverComponents.OUTPUT_TOTAL.value,
+        )
 
     message_ids = [m.id for m in messages if m.peer_name == observed]
 
@@ -216,3 +231,22 @@ async def process_representation_tasks_batch(
         )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observed}")
+
+    # Emit telemetry event
+    emit(
+        RepresentationCompletedEvent(
+            workspace_name=latest_message.workspace_name,
+            session_name=latest_message.session_name,
+            observed=observed,
+            queue_items_processed=len(queue_item_message_ids),
+            earliest_message_id=earliest_message.public_id,
+            latest_message_id=latest_message.public_id,
+            message_count=len(messages),
+            explicit_conclusion_count=len(observations.explicit),
+            context_preparation_ms=context_prep_duration,
+            llm_call_ms=llm_duration,
+            total_duration_ms=overall_duration,
+            input_tokens=messages_tokens,
+            output_tokens=response.output_tokens,
+        )
+    )

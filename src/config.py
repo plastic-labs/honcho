@@ -68,6 +68,8 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "WEBHOOK": "webhook",
         "DREAM": "dream",
         "VECTOR_STORE": "vector_store",
+        "METRICS": "metrics",
+        "TELEMETRY": "telemetry",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -271,6 +273,9 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
 
+    # When enabled, bypasses the batch token threshold and processes work immediately
+    FLUSH_ENABLED: bool = False
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
@@ -445,8 +450,40 @@ class WebhookSettings(HonchoSettings):
 
 class MetricsSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
-
     ENABLED: bool = False
+    NAMESPACE: str | None = None
+
+
+class TelemetrySettings(HonchoSettings):
+    """CloudEvents telemetry settings for analytics.
+
+    These settings configure the CloudEvents emitter for pushing
+    structured events to an analytics backend.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")  # pyright: ignore
+
+    # Master toggle for CloudEvents emission
+    ENABLED: bool = False
+
+    # CloudEvents HTTP endpoint (e.g., "https://telemetry.honcho.dev/v1/events")
+    ENDPOINT: str | None = None
+
+    # Optional headers for authentication
+    HEADERS: dict[str, str] | None = None
+
+    # Batching configuration
+    BATCH_SIZE: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
+    FLUSH_INTERVAL_SECONDS: Annotated[float, Field(default=1.0, gt=0.0, le=60.0)] = 1.0
+    FLUSH_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
+
+    # Retry configuration
+    MAX_RETRIES: Annotated[int, Field(default=3, gt=0, le=10)] = 3
+
+    # Buffer configuration
+    MAX_BUFFER_SIZE: Annotated[int, Field(default=10000, gt=0, le=100000)] = 10000
+
+    # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
 
@@ -620,6 +657,7 @@ class AppSettings(HonchoSettings):
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
@@ -633,18 +671,15 @@ class AppSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":
-        """Propagate top-level NAMESPACE to nested settings if not explicitly set.
-
-        After this validator runs, CACHE.NAMESPACE, METRICS.NAMESPACE, and
-        VECTOR_STORE.NAMESPACE are guaranteed to exist. Explicitly provided
-        nested namespaces are preserved.
-        """
+        """Propagate top-level NAMESPACE to nested settings if not explicitly set."""
         if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
-        if "NAMESPACE" not in self.METRICS.model_fields_set:
-            self.METRICS.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
+            self.TELEMETRY.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.METRICS.model_fields_set:
+            self.METRICS.NAMESPACE = self.NAMESPACE
 
         return self
 

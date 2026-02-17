@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from sqlalchemy import exists, insert, select, update
+from sqlalchemy import exists, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -399,7 +399,7 @@ def create_dream_record(
     observer: str,
     observed: str,
     dream_type: schemas.DreamType,
-    session_name: str,
+    session_name: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -409,7 +409,7 @@ def create_dream_record(
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        session_name: Name of the session to scope the dream to
+        session_name: Name of the session to scope the dream to if specified
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -437,7 +437,7 @@ async def enqueue_dream(
     observed: str,
     dream_type: schemas.DreamType,
     document_count: int,
-    session_name: str,
+    session_name: str | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -452,7 +452,7 @@ async def enqueue_dream(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         document_count: Current document count for metadata update
-        session_name: Name of the session to scope the dream to
+        session_name: Name of the session to scope the dream to if specified
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:
@@ -516,28 +516,21 @@ async def enqueue_dream(
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, [dream_record])
 
-            # Update collection metadata
+            # Update collection metadata (CRUD handles cache invalidation)
             now_iso = datetime.now(timezone.utc).isoformat()
-            update_stmt = (
-                update(models.Collection)
-                .where(
-                    models.Collection.workspace_name == workspace_name,
-                    models.Collection.observer == observer,
-                    models.Collection.observed == observed,
-                )
-                .values(
-                    internal_metadata=models.Collection.internal_metadata.op("||")(
-                        {
-                            "dream": {
-                                "last_dream_document_count": document_count,
-                                "last_dream_at": now_iso,
-                            }
-                        }
-                    )
-                )
+            await crud.update_collection_internal_metadata(
+                db_session,
+                workspace_name,
+                observer,
+                observed,
+                update_data={
+                    "dream": {
+                        "last_dream_document_count": document_count,
+                        "last_dream_at": now_iso,
+                    }
+                },
             )
-            await db_session.execute(update_stmt)
-            await db_session.commit()
+            # update_collection_internal_metadata commits already
 
             logger.info(
                 "Enqueued dream task for %s/%s/%s (type: %s)",
@@ -558,7 +551,7 @@ async def enqueue_dream(
 
 def create_deletion_record(
     workspace_name: str,
-    deletion_type: Literal["session", "observation"],
+    deletion_type: Literal["session", "observation", "workspace"],
     resource_id: str,
 ) -> dict[str, Any]:
     """
@@ -589,7 +582,7 @@ def create_deletion_record(
 
 async def enqueue_deletion(
     workspace_name: str,
-    deletion_type: Literal["session", "observation"],
+    deletion_type: Literal["session", "observation", "workspace"],
     resource_id: str,
     db_session: AsyncSession | None = None,
 ) -> None:

@@ -610,7 +610,8 @@ async def create_observations(
     collection_pairs: set[tuple[str, str]] = set()
 
     for obs in observations:
-        sessions_to_validate.add(obs.session_id)
+        if obs.session_id is not None:
+            sessions_to_validate.add(obs.session_id)
         peers_to_validate.add(obs.observer_id)
         peers_to_validate.add(obs.observed_id)
         collection_pairs.add((obs.observer_id, obs.observed_id))

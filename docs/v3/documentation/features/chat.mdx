@@ -43,6 +43,32 @@ console.log(answer);
 
 The chat endpoint searches through the peer's representation--all the conclusions Honcho has reasoned about them--and synthesizes a natural language answer.
 
+## Reasoning Level
+
+Use `reasoning_level` to trade off speed against depth for a specific chat request. It is optional and defaults to `low`. Accepted values are `minimal`, `low`, `medium`, `high`, and `max`.
+
+The reasoning level controls which model the request is routed to, the tools used by the agent, the thinking budget, the maximum tool-iteration count, and output token limits.
+
+| Level | When to use | Notes |
+|-------|-------------|-------|
+| `minimal` | Fast factual lookups | Smallest prefetch window and minimal tools for lower cost. |
+| `low` | Default balance | Standard tool set and budgets. |
+| `medium` | Multi-step or ambiguous questions | Calls fewer tools than `low`, but thinks harder and longer. |
+| `high` | Complex synthesis across sources | Thinks like `medium`, but uses more tools. |
+| `max` | Deep research, most complex queries | Highest thinking budget, max iterations. |
+
+<CodeGroup>
+```python Python
+query = "Summarize the user's long-term goals."
+answer = peer.chat(query, reasoning_level="high")
+```
+
+```typescript TypeScript
+const query = "Summarize the user's long-term goals.";
+const answer = await peer.chat(query, { reasoningLevel: "high" });
+```
+</CodeGroup>
+
 ## Streaming Responses
 
 For longer answers, use streaming to get incremental responses:
@@ -185,7 +211,7 @@ The chat endpoint shines when your LLM decides what it needs to know. This creat
 ### Use for runtime decisions
 Don't just use chat for LLM prompts - use it to drive application logic, routing, and feature flags based on user behavior.
 
-### Combine with get_context()
-Use `get_context()` for conversation context and `peer.chat()` for specific insights. They complement each other.
+### Combine with context()
+Use `context()` for conversation context and `peer.chat()` for specific insights. They complement each other.
 
 For more ideas on using the chat endpoint, see our [guides](/v3/guides/overview).

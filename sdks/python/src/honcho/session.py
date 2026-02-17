@@ -329,7 +329,7 @@ class Session(SessionBase, MetadataConfigMixin):
             for peer in peers_data
         ]
 
-    def peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
+    def get_peer_configuration(self, peer: str | PeerBase) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
@@ -343,17 +343,19 @@ class Session(SessionBase, MetadataConfigMixin):
             observe_me=data.get("observe_me"),
         )
 
-    def set_peer_config(self, peer: str | PeerBase, config: SessionPeerConfig) -> None:
+    def set_peer_configuration(
+        self, peer: str | PeerBase, configuration: SessionPeerConfig
+    ) -> None:
         """
         Set the configuration for a peer in this session.
         """
         self._honcho._ensure_workspace()
         peer_id = peer if isinstance(peer, str) else peer.id
         body: dict[str, Any] = {}
-        if config.observe_others is not None:
-            body["observe_others"] = config.observe_others
-        if config.observe_me is not None:
-            body["observe_me"] = config.observe_me
+        if configuration.observe_others is not None:
+            body["observe_others"] = configuration.observe_others
+        if configuration.observe_me is not None:
+            body["observe_me"] = configuration.observe_me
 
         self._honcho._http.put(
             routes.session_peer_config(self.workspace_id, self.id, peer_id),
@@ -515,9 +517,9 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.",
         ),
-        last_user_message: str | Message | None = Field(
+        search_query: str | Message | None = Field(
             None,
-            description="The most recent message (string or Message object), used to fetch semantically relevant conclusions and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
+            description="A query string (or Message object) used to fetch semantically relevant conclusions. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
         ),
         peer_perspective: str | None = Field(
             None,
@@ -531,13 +533,13 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             ge=1,
             le=100,
-            description="Number of semantically relevant facts to return when searching with `last_user_message`.",
+            description="Number of semantically relevant facts to return when searching with `search_query`.",
         ),
         search_max_distance: float | None = Field(
             None,
             ge=0.0,
             le=1.0,
-            description="Maximum semantic distance for search results (0.0-1.0) when searching with `last_user_message`.",
+            description="Maximum semantic distance for search results (0.0-1.0) when searching with `search_query`.",
         ),
         include_most_frequent: bool | None = Field(
             None,
@@ -563,7 +565,7 @@ class Session(SessionBase, MetadataConfigMixin):
             tokens: Maximum number of tokens to include in the context. Will default
             to Honcho server configuration if not provided.
             peer_target: A peer ID to get context for.
-            last_user_message: The most recent message for semantic search.
+            search_query: A query string for semantic search.
             peer_perspective: A peer ID to get context from the perspective of.
             limit_to_session: Whether to limit the representation to this session only.
             search_top_k: Number of semantically relevant facts to return.
@@ -587,15 +589,13 @@ class Session(SessionBase, MetadataConfigMixin):
                 "You must provide a `peer_target` when `peer_perspective` is provided"
             )
 
-        if peer_target is None and last_user_message is not None:
+        if peer_target is None and search_query is not None:
             raise ValueError(
-                "You must provide a `peer_target` when `last_user_message` is provided"
+                "You must provide a `peer_target` when `search_query` is provided"
             )
 
-        last_user_message_id = (
-            last_user_message.id
-            if isinstance(last_user_message, Message)
-            else last_user_message
+        search_query_text = (
+            search_query.content if isinstance(search_query, Message) else search_query
         )
 
         query: dict[str, Any] = {
@@ -604,8 +604,8 @@ class Session(SessionBase, MetadataConfigMixin):
         }
         if tokens is not None:
             query["tokens"] = tokens
-        if last_user_message_id is not None:
-            query["last_message"] = last_user_message_id
+        if search_query_text is not None:
+            query["search_query"] = search_query_text
         if peer_target is not None:
             query["peer_target"] = peer_target
         if peer_perspective is not None:

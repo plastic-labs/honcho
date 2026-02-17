@@ -36,7 +36,7 @@ def chatbot(state: State):
 
     # Get context in OpenAI format with token limit
     # tokens=2000 limits the context to 2000 tokens to manage costs and fit within model limits
-    messages = session.get_context(tokens=2000).to_openai(assistant=assistant)
+    messages = session.context(tokens=2000).to_openai(assistant=assistant)
 
     # Generate response
     response = llm.chat.completions.create(

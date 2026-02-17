@@ -3,7 +3,6 @@ import logging
 from io import BytesIO
 from typing import Any, Protocol
 
-import pdfplumber
 from fastapi import UploadFile
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Integer, select
@@ -27,6 +26,8 @@ class PDFProcessor:
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes) -> str:
+        import pdfplumber
+
         with pdfplumber.open(BytesIO(content)) as pdf_reader:
             text_parts: list[str] = []
             for page_num, page in enumerate(pdf_reader.pages):

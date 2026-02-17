@@ -1,0 +1,239 @@
+---
+title: "Claude Code"
+icon: 'terminal'
+description: "Add AI-native memory to Claude Code"
+sidebarTitle: 'Claude Code'
+---
+
+Give Claude Code long-term memory that survives context wipes, session restarts, and `ctrl+c`. Claude remembers what you're working on, your preferences, and what it was doing across all your projects.
+
+
+## Quick Start
+
+### Step 1: Get Your Honcho API Key
+
+1. Go to **[app.honcho.dev](https://app.honcho.dev)**
+2. Sign up or log in
+3. Copy your API key (starts with `hch-`)
+
+### Step 2: Set Environment Variables
+
+Add these to your shell config (`~/.zshrc`, `~/.bashrc`, or `~/.profile`):
+
+```bash
+# Required
+export HONCHO_API_KEY="hch-your-api-key-here"
+
+# Optional (defaults shown)
+export HONCHO_PEER_NAME="$USER"           # Your name/identity
+export HONCHO_WORKSPACE="claude_code"     # Workspace name
+```
+
+Then reload your shell:
+
+```bash
+source ~/.zshrc  # or ~/.bashrc
+```
+
+### Step 3: Install the Plugin
+
+<Note>
+This plugin requires [Bun](https://bun.sh). If you don't have it: `curl -fsSL https://bun.sh/install | bash`
+</Note>
+
+Open Claude Code and run:
+
+```
+/plugin marketplace add plastic-labs/claude-honcho
+```
+
+Then install:
+
+```
+/plugin install honcho@honcho
+```
+
+### Step 4: Restart Claude Code
+
+```bash
+# Exit Claude Code (ctrl+c or /exit)
+# Start it again
+claude
+```
+
+**That's it!** You should see the Honcho pixel art and memory loading on startup.
+
+### Step 5: (Optional) Kickstart with an Interview
+
+```
+/honcho:interview
+```
+
+Claude will interview you about your personal preferences to kickstart a representation of you. What it learns will be saved in Honcho and remembered forever. The interview is specific to the peer name you chose — it carries across different projects!
+
+## What You Get
+
+- **Persistent Memory** — Claude remembers your preferences, projects, and context across sessions
+- **Survives Context Wipes** — Even when Claude's context window resets, memory persists
+- **Git Awareness** — Detects branch switches, commits, and changes made outside Claude
+- **Per-Project Sessions** — Each directory has its own conversation history
+- **AI Self-Awareness** — Claude knows what it was working on, even after restarts
+- **MCP Tools** — Search memory, query knowledge about you, and save insights
+
+## Building with Teammates
+
+Honcho works naturally for teams. Every team member contributes to and retrieves from a shared workspace, while Honcho models each person individually. Your sessions within a repo are scoped to your peer name (`HONCHO_PEER_NAME`), so your memory stays yours even though the workspace is shared.
+
+- **Session naming** is automatic — set to `{user}-{repo}` by default so each team member gets their own session per project
+- **Workspace** (`HONCHO_WORKSPACE`) groups all your team's sessions together. Set it to a shared value across the team
+- **Peer name** (`HONCHO_PEER_NAME`) identifies you individually within the workspace
+
+This means Claude builds a distinct understanding of each team member's preferences and context while everyone operates in the same workspace.
+
+## Logging
+
+The plugin logs activity to `~/.honcho/` and to Claude Code's verbose mode, so you can see exactly how Honcho is being used — what context is loaded at session start, what messages are saved, and what context is injected into Claude's prompts. Set `HONCHO_LOGGING` to `false` to disable file logging.
+
+## MCP Tools
+
+The plugin provides these tools via MCP:
+
+| Tool | Description |
+|------|-------------|
+| `search` | Semantic search across session messages |
+| `chat` | Query Honcho's knowledge about the user |
+| `create_conclusion` | Save insights about the user to memory |
+
+## Environment Variables Reference
+
+| Variable | Required | Default | Description |
+| -------- | -------- | ------- | ----------- |
+| `HONCHO_API_KEY` | **Yes** | — | Your Honcho API key from [app.honcho.dev](https://app.honcho.dev) |
+| `HONCHO_PEER_NAME` | No | `$USER` | Your identity in the memory system |
+| `HONCHO_WORKSPACE` | No | `claude_code` | Workspace name (groups your sessions) |
+| `HONCHO_CLAUDE_PEER` | No | `claude` | How the AI is identified |
+| `HONCHO_ENDPOINT` | No | `production` | `production`, `local`, or a custom URL |
+| `HONCHO_ENABLED` | No | `true` | Set to `false` to disable |
+| `HONCHO_SAVE_MESSAGES` | No | `true` | Set to `false` to stop saving messages |
+| `HONCHO_LOGGING` | No | `true` | Set to `false` to disable file logging to `~/.honcho/` |
+
+## Skills (Slash Commands)
+
+| Command | Description |
+| ------- | ----------- |
+| `/honcho:status` | Show current memory status and configuration |
+| `/honcho:interview` | Interview to capture stable, cross-project user preferences |
+
+### The Interview
+
+The `/honcho:interview` skill conducts a short interview to learn stable, cross-project aspects about you:
+
+- **Communication style** — Concise answers, detailed explanations, or a mix
+- **Tone** — Direct and professional or conversational
+- **Structure** — Bullet points, step-by-step, or narrative
+- **Technical depth** — Beginner, intermediate, or expert
+- **Code quality focus** — Clarity, performance, tests, or minimal changes
+- **Collaboration style** — Make changes directly, propose options, or ask first
+
+Each answer is saved as a conclusion in Honcho memory and persists across all your projects.
+
+### Using a local Honcho instance
+
+```bash
+export HONCHO_ENDPOINT="local"  # Uses http://localhost:8000/v3
+```
+
+
+---
+
+## Using Honcho with Claude Desktop
+
+You can also use Honcho with the Claude Desktop app via MCP. This lets Claude manage its own memory in the native desktop experience.
+
+### Step 1: Get Your API Key
+
+Get an API key from [app.honcho.dev](https://app.honcho.dev).
+
+### Step 2: Configure Claude Desktop
+
+<Note>
+This requires [Node.js](https://nodejs.org). Claude Desktop or Claude Code can help you install it!
+</Note>
+
+Navigate to Claude Desktop's custom MCP servers settings and add Honcho:
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>"
+      }
+    }
+  }
+}
+```
+
+**Optional customization** — You can also set a custom assistant name and workspace ID:
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}",
+        "--header",
+        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
+        "--header",
+        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>",
+        "ASSISTANT_NAME": "<your-assistant-name>",
+        "WORKSPACE_ID": "<your-custom-workspace-id>"
+      }
+    }
+  }
+}
+```
+
+### Step 3: Restart Claude Desktop
+
+Upon relaunch, Honcho should start and the tools will be available.
+
+### Step 4: Add Instructions
+
+The Desktop app doesn't allow system prompts directly, but you can create a project and paste [these instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into the "Project Instructions" field.
+
+Claude will then query for insights before responding and write your messages to storage!
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/claude-honcho">
+    Source code, issues, and README.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="/documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>

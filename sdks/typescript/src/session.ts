@@ -186,7 +186,7 @@ export class Session {
   private async _getContext(params: {
     tokens?: number
     summary?: boolean
-    last_message?: string
+    search_query?: string
     peer_target?: string
     peer_perspective?: string
     limit_to_session?: boolean
@@ -262,7 +262,7 @@ export class Session {
     )
   }
 
-  private async _getPeerConfig(
+  private async _getPeerConfiguration(
     peerId: string
   ): Promise<{ observe_me?: boolean | null; observe_others?: boolean | null }> {
     await this._ensureWorkspace()
@@ -274,7 +274,7 @@ export class Session {
     )
   }
 
-  private async _setPeerConfig(
+  private async _setPeerConfiguration(
     peerId: string,
     config: { observe_me?: boolean | null; observe_others?: boolean | null }
   ): Promise<void> {
@@ -463,12 +463,12 @@ export class Session {
    * Makes an API call to retrieve the observation settings for a specific peer
    * within this session.
    *
-   * @param peer - The peer to get config for (ID string or Peer object)
-   * @returns Promise resolving to the peer's session config with observation settings
+   * @param peer - The peer to get configuration for (ID string or Peer object)
+   * @returns Promise resolving to the peer's session configuration with observation settings
    */
-  async peerConfig(peer: string | Peer): Promise<SessionPeerConfig> {
+  async getPeerConfiguration(peer: string | Peer): Promise<SessionPeerConfig> {
     const peerId = typeof peer === 'string' ? peer : peer.id
-    const response = await this._getPeerConfig(peerId)
+    const response = await this._getPeerConfiguration(peerId)
     return {
       observeMe: response.observe_me,
       observeOthers: response.observe_others,
@@ -482,17 +482,17 @@ export class Session {
    * within this session.
    *
    * @param peer - The peer to configure (ID string or Peer object)
-   * @param config - Configuration with observation settings
-   * @param config.observeMe - Whether this peer's messages generate observations about them
-   * @param config.observeOthers - Whether this peer observes other peers in the session
+   * @param configuration - Configuration with observation settings
+   * @param configuration.observeMe - Whether this peer's messages generate observations about them
+   * @param configuration.observeOthers - Whether this peer observes other peers in the session
    */
-  async setPeerConfig(
+  async setPeerConfiguration(
     peer: string | Peer,
-    config: SessionPeerConfig
+    configuration: SessionPeerConfig
   ): Promise<void> {
     const peerId = typeof peer === 'string' ? peer : peer.id
-    const validatedConfig = SessionPeerConfigSchema.parse(config)
-    await this._setPeerConfig(peerId, {
+    const validatedConfig = SessionPeerConfigSchema.parse(configuration)
+    await this._setPeerConfiguration(peerId, {
       observe_others: validatedConfig.observeOthers,
       observe_me: validatedConfig.observeMe,
     })
@@ -677,7 +677,7 @@ export class Session {
    * @param options.summary - Whether to include a summary of earlier messages
    * @param options.tokens - Target token count for the context window
    * @param options.peerTarget - The peer to get representation for
-   * @param options.lastUserMessage - Message ID or Message object to use as cutoff
+   * @param options.lastUserMessage - Message text (string) or Message object whose content will be used for semantic search
    * @param options.peerPerspective - The peer whose perspective to use for representation
    * @param options.limitToSession - Whether to limit representation to this session only
    * @param options.representationOptions - Options for representation retrieval
@@ -699,7 +699,7 @@ export class Session {
     summary?: boolean
     tokens?: number
     peerTarget?: string | Peer
-    lastUserMessage?: string | Message
+    searchQuery?: string | Message
     peerPerspective?: string | Peer
     limitToSession?: boolean
     representationOptions?: RepresentationOptions
@@ -713,30 +713,30 @@ export class Session {
       typeof opts.peerPerspective === 'object'
         ? opts.peerPerspective.id
         : opts.peerPerspective
-    const lastUserMessageId =
-      typeof opts.lastUserMessage === 'string'
-        ? opts.lastUserMessage
-        : opts.lastUserMessage?.id
+    const searchQueryText =
+      typeof opts.searchQuery === 'string'
+        ? opts.searchQuery
+        : opts.searchQuery?.content
 
     const contextParams = ContextParamsSchema.parse({
       summary: opts.summary,
       tokens: opts.tokens,
       peerTarget: peerTargetId,
-      lastUserMessage: lastUserMessageId,
+      searchQuery: searchQueryText,
       peerPerspective: peerPerspectiveId,
       limitToSession: opts.limitToSession,
       representationOptions: opts.representationOptions,
     })
 
-    const lastMessageId =
-      typeof contextParams.lastUserMessage === 'string'
-        ? contextParams.lastUserMessage
-        : contextParams.lastUserMessage?.id
+    const searchQueryParsed =
+      typeof contextParams.searchQuery === 'string'
+        ? contextParams.searchQuery
+        : contextParams.searchQuery?.content
 
     const context = await this._getContext({
       tokens: contextParams.tokens,
       summary: contextParams.summary,
-      last_message: lastMessageId,
+      search_query: searchQueryParsed,
       peer_target: contextParams.peerTarget,
       peer_perspective: contextParams.peerPerspective,
       limit_to_session: contextParams.limitToSession,
@@ -847,7 +847,7 @@ export class Session {
    * @param options - Upload options
    * @param options.metadata - Optional metadata to associate with the message(s)
    * @param options.configuration - Optional configuration for processing
-   * @param options.created_at - Optional timestamp for the message (string or Date)
+   * @param options.createdAt - Optional timestamp for the message (string or Date)
    * @returns Promise resolving to an array of Message objects created from the file
    *
    * @example
@@ -876,13 +876,13 @@ export class Session {
     options?: {
       metadata?: Record<string, unknown>
       configuration?: Record<string, unknown>
-      created_at?: string | Date
+      createdAt?: string | Date
     }
   ): Promise<Message[]> {
     const createdAt =
-      options?.created_at instanceof Date
-        ? options.created_at.toISOString()
-        : options?.created_at
+      options?.createdAt instanceof Date
+        ? options.createdAt.toISOString()
+        : options?.createdAt
 
     const resolvedPeerId = typeof peer === 'string' ? peer : peer.id
 
@@ -891,7 +891,7 @@ export class Session {
       peer: resolvedPeerId,
       metadata: options?.metadata,
       configuration: options?.configuration,
-      created_at: createdAt,
+      createdAt: createdAt,
     })
 
     const formData = new FormData()
@@ -919,10 +919,10 @@ export class Session {
       )
     }
     if (
-      uploadParams.created_at !== undefined &&
-      uploadParams.created_at !== null
+      uploadParams.createdAt !== undefined &&
+      uploadParams.createdAt !== null
     ) {
-      formData.append('created_at', uploadParams.created_at)
+      formData.append('created_at', uploadParams.createdAt)
     }
 
     const response = await this._uploadFile(formData)

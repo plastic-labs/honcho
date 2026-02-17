@@ -1,4 +1,8 @@
-from .collection import get_collection, get_or_create_collection
+from .collection import (
+    get_collection,
+    get_or_create_collection,
+    update_collection_internal_metadata,
+)
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
     create_documents,
@@ -38,6 +42,7 @@ from .representation import (
     get_working_representation,
 )
 from .session import (
+    SessionDeletionResult,
     clone_session,
     delete_session,
     get_or_create_session,
@@ -57,6 +62,8 @@ from .webhook import (
     list_webhook_endpoints,
 )
 from .workspace import (
+    WorkspaceDeletionResult,
+    check_no_active_sessions,
     delete_workspace,
     get_all_workspaces,
     get_or_create_workspace,
@@ -68,6 +75,7 @@ __all__ = [
     # Collection
     "get_collection",
     "get_or_create_collection",
+    "update_collection_internal_metadata",
     # Deriver
     "get_deriver_status",
     "get_queue_status",
@@ -107,6 +115,7 @@ __all__ = [
     # Representation
     "get_working_representation",
     # Session
+    "SessionDeletionResult",
     "get_sessions",
     "get_or_create_session",
     "get_session",
@@ -124,6 +133,8 @@ __all__ = [
     "delete_webhook_endpoint",
     "list_webhook_endpoints",
     # Workspace
+    "WorkspaceDeletionResult",
+    "check_no_active_sessions",
     "delete_workspace",
     "get_or_create_workspace",
     "get_workspace",

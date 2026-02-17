@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import time
+from contextlib import suppress
 from typing import Any
 
 from sqlalchemy import select
@@ -14,8 +15,8 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.schemas import ResolvedConfiguration
+from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
-from src.utils.logging import accumulate_metric
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -181,8 +182,10 @@ class RepresentationManager:
     async def get_working_representation(
         self,
         *,
+        db: AsyncSession | None = None,
         session_name: str | None = None,
         include_semantic_query: str | None = None,
+        embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
         semantic_search_max_distance: float | None = None,
         include_most_derived: bool = False,
@@ -192,8 +195,11 @@ class RepresentationManager:
         Get working representation with flexible query options.
 
         Args:
+            db: Optional database session. If provided, uses it directly;
+                otherwise creates a new session via tracked_db.
             session_name: Optional session to filter by
             include_semantic_query: Query for semantic search
+            embedding: Pre-computed embedding for the semantic query.
             semantic_search_top_k: Number of semantic results
             semantic_search_max_distance: Maximum distance for semantic search
             include_most_derived: Include most derived observations
@@ -202,13 +208,31 @@ class RepresentationManager:
         Returns:
             Representation combining various query strategies
         """
-        async with tracked_db(
-            "representation_manager.get_working_representation"
-        ) as db:
+        if include_semantic_query and embedding is None:
+            with suppress(Exception):
+                # Best-effort precompute
+                embedding = await embedding_client.embed(include_semantic_query)
+
+        if db is not None:
             return await self._get_working_representation_internal(
                 db,
                 session_name=session_name,
                 include_semantic_query=include_semantic_query,
+                embedding=embedding,
+                semantic_search_top_k=semantic_search_top_k,
+                semantic_search_max_distance=semantic_search_max_distance,
+                include_most_derived=include_most_derived,
+                max_observations=max_observations,
+            )
+
+        async with tracked_db(
+            "representation_manager.get_working_representation"
+        ) as new_db:
+            return await self._get_working_representation_internal(
+                new_db,
+                session_name=session_name,
+                include_semantic_query=include_semantic_query,
+                embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
                 semantic_search_max_distance=semantic_search_max_distance,
                 include_most_derived=include_most_derived,
@@ -223,6 +247,7 @@ class RepresentationManager:
         *,
         session_name: str | None = None,
         include_semantic_query: str | None = None,
+        embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
         semantic_search_max_distance: float | None = None,
         include_most_derived: bool = False,
@@ -268,6 +293,7 @@ class RepresentationManager:
                 query=include_semantic_query,
                 top_k=semantic_observations,
                 max_distance=semantic_search_max_distance,
+                embedding=embedding,
             )
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
@@ -298,6 +324,7 @@ class RepresentationManager:
         top_k: int,
         max_distance: float | None = None,
         level: str | None = None,
+        embedding: list[float] | None = None,
     ) -> list[models.Document]:
         """Query documents by semantic similarity."""
         try:
@@ -308,6 +335,7 @@ class RepresentationManager:
                     level,
                     top_k,
                     max_distance,
+                    embedding=embedding,
                 )
             else:
                 documents = await crud.query_documents(
@@ -318,6 +346,7 @@ class RepresentationManager:
                     query=query,
                     max_distance=max_distance,
                     top_k=top_k,
+                    embedding=embedding,
                 )
                 db.expunge_all()
                 return list(documents)
@@ -391,6 +420,7 @@ class RepresentationManager:
         level: str,
         count: int,
         max_distance: float | None = None,
+        embedding: list[float] | None = None,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
         documents = await crud.query_documents(
@@ -402,6 +432,7 @@ class RepresentationManager:
             max_distance=max_distance,
             top_k=count,
             filters=self._build_filter_conditions(level),
+            embedding=embedding,
         )
 
         # Sort by creation time
@@ -433,10 +464,12 @@ class RepresentationManager:
 async def get_working_representation(
     workspace_name: str,
     *,
+    db: AsyncSession | None = None,
     observer: str,
     observed: str,
     session_name: str | None = None,
     include_semantic_query: str | None = None,
+    embedding: list[float] | None = None,
     semantic_search_top_k: int | None = None,
     semantic_search_max_distance: float | None = None,
     include_most_derived: bool = False,
@@ -447,6 +480,11 @@ async def get_working_representation(
 
     This is a convenience function that creates a RepresentationManager and calls
     get_working_representation on it.
+
+    Args:
+        db: Optional database session. If provided, uses it directly;
+            otherwise creates a new session via tracked_db.
+        embedding: Pre-computed embedding for the semantic query.
     """
     manager = RepresentationManager(
         workspace_name=workspace_name,
@@ -454,8 +492,10 @@ async def get_working_representation(
         observed=observed,
     )
     return await manager.get_working_representation(
+        db=db,
         session_name=session_name,
         include_semantic_query=include_semantic_query,
+        embedding=embedding,
         semantic_search_top_k=semantic_search_top_k,
         semantic_search_max_distance=semantic_search_max_distance,
         include_most_derived=include_most_derived,

@@ -11,6 +11,7 @@ services:
       - 8000:8000
     volumes:
       - .:/app
+      - venv:/app/.venv
     env_file:
       - .env
   deriver:
@@ -23,6 +24,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+      - venv:/app/.venv
     env_file:
       - .env
   database:
@@ -38,8 +40,8 @@ services:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./data:/var/lib/postgresql/data/
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data/
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U testuser -d honcho"]
       interval: 5s
@@ -57,3 +59,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports:
+      - 3000:3000
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana-data:/var/lib/grafana
+volumes:
+  pgdata:
+  venv:

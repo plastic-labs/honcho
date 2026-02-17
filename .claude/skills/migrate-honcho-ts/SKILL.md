@@ -7,7 +7,7 @@ description: Migrates Honcho TypeScript SDK code from v1.6.0 to v2.0.0. Use when
 
 ## Overview
 
-This skill migrates code from `@honcho-ai/sdk` v1.6.0 to v2.0.0 (required for Honcho 3.0.0).
+This skill migrates code from `@honcho-ai/sdk` v1.6.0 to v2.0.0 (required for Honcho 3.0.0+).
 
 **Key breaking changes:**
 
@@ -170,9 +170,12 @@ await session.updateMessage(message, metadata)
 | `session.getSummaries()` | `session.summaries()` |
 | `session.getContext()` | `session.context()` |
 | `session.workingRep()` | `session.representation()` |
+| `session.peerConfig()` | `session.getPeerConfiguration()` |
+| `session.setPeerConfig()` | `session.setPeerConfiguration()` |
 | `{ timeoutMs: 60000 }` | `{ timeout: 60 }` |
 | `{ maxObservations: 50 }` | `{ maxConclusions: 50 }` |
 | `{ includeMostDerived }` | `{ includeMostFrequent }` |
+| `{ lastUserMessage }` | `{ searchQuery }` |
 | `{ config: ... }` | `{ configuration: ... }` |
 | `message.peer_id` | `message.peerId` |
 | `message.created_at` | `message.createdAt` |

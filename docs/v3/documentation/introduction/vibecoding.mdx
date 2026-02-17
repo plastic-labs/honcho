@@ -1,7 +1,7 @@
 ---
 title: "AI-Powered Honcho Setup"
 icon: "wand-magic-sparkles"
-description: "Universal starter prompt and Claude Code skill for building with Honcho"
+description: "Agent skills and starter prompt for building with Honcho"
 sidebarTitle: 'Vibecoding Setup'
 ---
 
@@ -14,38 +14,61 @@ We follow the llms.txt standard. There are both an llms.txt and llms-full.txt av
 
 ---
 
-## Claude Code Skill
+## Claude Code Plugin
 
-If you're using [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), you can install the Honcho integration skill for a guided, interactive setup experience. The skill will explore your codebase, ask targeted questions about your integration needs, and implement Honcho step by step.
 
-### Installation
+Use Honcho to build with Honcho! The [plugin](/v3/guides/integrations/claudecode) provides claude code persistent memory that survives context wipes and session restarts.
 
-<CodeGroup>
-```bash Global Installation (all projects)
-# Add to your global skills directory
-curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+```bash
+/plugin marketplace add plastic-labs/claude-honcho
+/plugin install honcho@honcho # Tools for Claude to use Honcho to manage it's own context
+/plugin install honcho-dev@honcho # Skills to teach claude how to integrate Honcho
 ```
 
-```bash Project-specific Installation
-# Add to your project's .claude directory
-mkdir -p .claude/skills
-curl -o .claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+The markeplace also includes all the agent skills below, so you can use `/honcho-dev:integrate` directly after installing.
+
+See the [full Claude Code integration guide](/v3/guides/integrations/claudecode) for setup details.
+
+---
+
+## Agent Skills
+
+We provide agent skills for coding assistants like Claude Code, Cursor, Windsurf, and others.
+
+<CodeGroup>
+```bash Install via npx (Recommended)
+npx skills add plastic-labs/honcho
+```
+
+```bash Install as Claude Skill Manually
+curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
 ```
 </CodeGroup>
 
-### Usage
+### Available Skills
 
-Once installed, invoke the skill in Claude Code:
+#### honcho-integration
 
-```
-/honcho-integration
-```
+**For new integrations.** This skill helps you add Honcho to an existing Python or TypeScript codebase. It provides a guided, interactive experience:
 
-The skill will:
-1. **Explore your codebase** to understand your language, framework, and existing AI/LLM integrations
-2. **Interview you** about which entities should be peers, your preferred integration pattern, and session structure
-3. **Implement the integration** based on your answers
-4. **Verify the setup** to ensure everything is configured correctly
+1. **Explores your codebase** to understand your language, framework, and existing AI/LLM integrations
+2. **Interviews you** about which entities should be peers, your preferred integration pattern, and session structure
+3. **Implements the integration** based on your answers—installing the SDK, creating peers, configuring sessions, and wiring up the chat endpoint
+4. **Verifies the setup** to ensure everything is configured correctly
+
+Invoke with `/honcho-integration` in your coding agent.
+
+#### migrate-honcho-py / migrate-honcho-ts
+
+**For SDK upgrades.** Migrates code from v1.6.0 to v2.0.0 (required for Honcho 3.0.0+). Use when upgrading the SDK or seeing errors about removed APIs like `observations`, `Representation`, `.core`, or `get_config`.
+
+Both skills handle: terminology changes (`Observation` → `Conclusion`), `Representation` class removal, method renames, and streaming API updates.
+
+| Python | TypeScript |
+|--------|------------|
+| `/migrate-honcho-py` | `/migrate-honcho-ts` |
+| `AsyncHoncho` → `.aio` accessor | `@honcho-ai/core` removal |
+| | `snake_case` → `camelCase` |
 
 ---
 

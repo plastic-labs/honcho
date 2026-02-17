@@ -25,7 +25,7 @@ Unlike basic message retrieval, memory-enhanced context:
 Automatically manages context to fit within your specified token budget:
 
 ```python
-context = session.get_context(tokens=2000)
+context = session.context(tokens=2000)
 ```
 
 ### Multi-Layered Context
@@ -42,7 +42,7 @@ Combines multiple information sources:
 Fine-tune what context is included:
 
 ```python
-context = session.get_context(
+context = session.context(
     tokens=2000,
     include_summaries=True,
     include_representation=True,
@@ -58,7 +58,7 @@ Provide your agent with rich context for personalized responses:
 
 ```python
 # Get optimized context
-context = session.get_context(tokens=1500)
+context = session.context(tokens=1500)
 
 # Use in your LLM prompt
 response = llm.generate(
@@ -75,10 +75,10 @@ Get context tailored to specific participants:
 
 ```python
 # Get Alice's perspective
-alice_context = session.get_context(peer_id=alice.id)
+alice_context = session.context(peer_id=alice.id)
 
 # Get Bob's perspective
-bob_context = session.get_context(peer_id=bob.id)
+bob_context = session.context(peer_id=bob.id)
 ```
 
 ### Dynamic Context Windows
@@ -87,10 +87,10 @@ Adjust context size based on task complexity:
 
 ```python
 # More context for complex tasks
-detailed_context = session.get_context(tokens=4000)
+detailed_context = session.context(tokens=4000)
 
 # Minimal context for simple queries
-quick_context = session.get_context(tokens=500)
+quick_context = session.context(tokens=500)
 ```
 
 ## How It Works
@@ -111,7 +111,7 @@ Leave room in your model's context window:
 
 ```python
 # For a 8K context model
-context = session.get_context(tokens=2000)  # Leaves room for prompt + response
+context = session.context(tokens=2000)  # Leaves room for prompt + response
 ```
 
 ### Representation Updates
@@ -132,7 +132,7 @@ Context can be cached for repeated queries:
 
 ```python
 # Cache context for multiple agent calls
-cached_context = session.get_context(tokens=2000)
+cached_context = session.context(tokens=2000)
 
 # Reuse for multiple related queries
 for query in user_queries:

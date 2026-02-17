@@ -271,9 +271,9 @@ export const ContextParamsSchema = z
   .object({
     summary: z.boolean().optional(),
     tokens: z.int('Token limit must be an integer').optional(),
-    lastUserMessage: z
+    searchQuery: z
       .union([
-        z.string().min(1, 'Last user message must be a non-empty string'),
+        z.string().min(1, 'Search query must be a non-empty string'),
         MessageResponseSchema,
       ])
       .optional(),
@@ -283,11 +283,11 @@ export const ContextParamsSchema = z
     representationOptions: RepresentationOptionsSchema.optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.lastUserMessage && !data.peerTarget) {
+    if (data.searchQuery && !data.peerTarget) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'peerTarget is required when lastUserMessage is provided',
-        path: ['lastUserMessage'],
+        message: 'peerTarget is required when searchQuery is provided',
+        path: ['searchQuery'],
       })
     }
 
@@ -343,7 +343,7 @@ export const FileUploadSchema = z.object({
   peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
   metadata: MessageMetadataSchema,
   configuration: z.record(z.string(), z.unknown()).optional(),
-  created_at: z.string().nullable().optional(),
+  createdAt: z.string().nullable().optional(),
 })
 
 /**
@@ -375,6 +375,11 @@ export const CardTargetSchema = z
   .transform((val) =>
     val ? (typeof val === 'string' ? val : val.id) : undefined
   )
+
+/**
+ * Schema for peer card content (array of strings).
+ */
+export const PeerCardContentSchema = z.array(z.string())
 
 /**
  * Schema for peer addition to session.

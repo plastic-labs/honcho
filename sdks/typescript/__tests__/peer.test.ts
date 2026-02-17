@@ -389,6 +389,9 @@ describe('Peer', () => {
   describe('POST /peers/:id/card', () => {
     test('card returns string array or null', async () => {
       const peer = await client.peer('card-peer')
+      const session = await client.session('card-session')
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('hello')])
 
       const card = await peer.card()
 
@@ -399,6 +402,9 @@ describe('Peer', () => {
     test('card with target peer', async () => {
       const observer = await client.peer('card-observer')
       const observed = await client.peer('card-observed')
+      const session = await client.session('card-target-session')
+      await session.addPeers([observer.id, observed.id])
+      await session.addMessages([observer.message('hello'), observed.message('hi')])
 
       const card = await observer.card(observed)
 
@@ -408,6 +414,10 @@ describe('Peer', () => {
 
     test('card with target ID string', async () => {
       const peer = await client.peer('card-string-peer')
+      const target = await client.peer('some-target-id')
+      const session = await client.session('card-string-session')
+      await session.addPeers([peer.id, target.id])
+      await session.addMessages([peer.message('hello'), target.message('hi')])
 
       const card = await peer.card('some-target-id')
 
@@ -431,12 +441,57 @@ describe('Peer', () => {
   })
 
   // ===========================================================================
+  // Set Peer Card (PUT /peers/:id/card)
+  // ===========================================================================
+
+  describe('PUT /peers/:id/card', () => {
+    test('setCard sets and returns peer card', async () => {
+      const peer = await client.peer('setcard-peer')
+
+      const cardData = ['fact one', 'fact two']
+      const result = await peer.setCard(cardData)
+
+      expect(result).toEqual(cardData)
+
+      // Verify with get
+      const card = await peer.getCard()
+      expect(card).toEqual(cardData)
+    })
+
+    test('setCard with target peer', async () => {
+      const observer = await client.peer('setcard-observer')
+      const observed = await client.peer('setcard-observed')
+
+      const cardData = ['target likes TypeScript', 'target is clever']
+      const result = await observer.setCard(cardData, observed)
+
+      expect(result).toEqual(cardData)
+
+      // Verify with get
+      const card = await observer.getCard(observed)
+      expect(card).toEqual(cardData)
+    })
+
+    test('setCard with target ID string', async () => {
+      const peer = await client.peer('setcard-string-peer')
+
+      const cardData = ['some fact']
+      const result = await peer.setCard(cardData, 'setcard-string-target')
+
+      expect(result).toEqual(cardData)
+    })
+  })
+
+  // ===========================================================================
   // Peer Context (POST /peers/:id/context)
   // ===========================================================================
 
   describe('POST /peers/:id/context', () => {
     test('context returns representation and card', async () => {
       const peer = await client.peer('context-peer')
+      const session = await client.session('context-session')
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('hello')])
 
       const context = await peer.context()
 
@@ -450,6 +505,9 @@ describe('Peer', () => {
     test('context with target peer', async () => {
       const observer = await client.peer('context-observer')
       const observed = await client.peer('context-observed')
+      const session = await client.session('context-target-session')
+      await session.addPeers([observer.id, observed.id])
+      await session.addMessages([observer.message('hello'), observed.message('hi')])
 
       const context = await observer.context({ target: observed })
 
@@ -459,6 +517,9 @@ describe('Peer', () => {
 
     test('context with options', async () => {
       const peer = await client.peer('context-options-peer')
+      const session = await client.session('context-options-session')
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('hello')])
 
       const context = await peer.context({
         searchQuery: 'interests',

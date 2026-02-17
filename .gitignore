@@ -190,3 +190,4 @@ CRUSH.md
 metrics.jsonl
 AGENTS.md
 lancedb_data/
+grafana-data/

@@ -42,7 +42,7 @@ async function chatbot(state: State) {
 
   // Get context in OpenAI format with token limit
   // tokens: 2000 limits the context to 2000 tokens to manage costs and fit within model limits
-  const messages = (await session.getContext({ tokens: 2000 })).toOpenAI(assistant);
+  const messages = (await session.context({ tokens: 2000 })).toOpenAI(assistant);
 
   // Generate response
   const response = await llm.chat.completions.create({

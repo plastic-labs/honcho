@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -372,7 +373,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
     async def schedule_dream(
         self,
         observer: str | PeerBase,
-        session: str | SessionBase,
+        session: str | SessionBase | None = None,
         observed: str | PeerBase | None = None,
     ) -> None:
         """
@@ -385,7 +386,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         Args:
             observer: The observer peer (ID string or Peer object) whose perspective
                 to use for the dream.
-            session: The session (ID string or Session object) to scope the dream to.
+            session: Optional session (ID string or Session object) to scope the dream to.
             observed: Optional observed peer (ID string or Peer object). If not provided,
                 defaults to the observer (self-reflection).
         """
@@ -588,7 +589,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         ]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def card(
+    async def get_card(
         self,
         target: str | PeerBase | None = None,
     ) -> list[str] | None:
@@ -599,6 +600,51 @@ class PeerAio(AsyncMetadataConfigMixin):
         query = {"target": target_id} if target_id else None
         data = await self._peer._honcho._async_http_client.get(
             routes.peer_card(self._peer.workspace_id, self._peer.id),
+            query=query,
+        )
+        response = PeerCardResponse.model_validate(data)
+        return response.peer_card
+
+    async def card(
+        self,
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """Deprecated: use get_card() instead."""
+
+        warnings.warn(
+            "card() is deprecated, use get_card() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.get_card(target=target)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def set_card(
+        self,
+        peer_card: list[str],
+        target: str | PeerBase | None = None,
+    ) -> list[str] | None:
+        """
+        Set the peer card for this peer.
+
+        Makes an API call to set the peer card. If a target is provided, sets this
+        peer's local card of the target peer.
+
+        Args:
+            peer_card: A list of strings to set as the peer card.
+            target: Optional target peer for local card. If provided, sets this
+                    peer's card of the target peer. Can be a Peer object or peer ID string.
+
+        Returns:
+            A list of strings representing the updated peer card, or None if none is available
+        """
+        await self._peer._honcho._ensure_workspace_async()
+        target_id = resolve_id(target)
+
+        query = {"target": target_id} if target_id else None
+        data = await self._peer._honcho._async_http_client.put(
+            routes.peer_card(self._peer.workspace_id, self._peer.id),
+            body={"peer_card": peer_card},
             query=query,
         )
         response = PeerCardResponse.model_validate(data)
@@ -813,7 +859,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             for peer in peers_data
         ]
 
-    async def peer_config(self, peer: str | PeerBase) -> SessionPeerConfig:
+    async def get_peer_configuration(self, peer: str | PeerBase) -> SessionPeerConfig:
         """Get the configuration for a peer in this session asynchronously."""
         await self._session._honcho._ensure_workspace_async()
         peer_id = peer if isinstance(peer, str) else peer.id
@@ -827,17 +873,17 @@ class SessionAio(AsyncMetadataConfigMixin):
             observe_me=data.get("observe_me"),
         )
 
-    async def set_peer_config(
-        self, peer: str | PeerBase, config: SessionPeerConfig
+    async def set_peer_configuration(
+        self, peer: str | PeerBase, configuration: SessionPeerConfig
     ) -> None:
         """Set the configuration for a peer in this session asynchronously."""
         await self._session._honcho._ensure_workspace_async()
         peer_id = peer if isinstance(peer, str) else peer.id
         body: dict[str, Any] = {}
-        if config.observe_others is not None:
-            body["observe_others"] = config.observe_others
-        if config.observe_me is not None:
-            body["observe_me"] = config.observe_me
+        if configuration.observe_others is not None:
+            body["observe_others"] = configuration.observe_others
+        if configuration.observe_me is not None:
+            body["observe_me"] = configuration.observe_me
 
         await self._session._honcho._async_http_client.put(
             routes.session_peer_config(
@@ -934,9 +980,9 @@ class SessionAio(AsyncMetadataConfigMixin):
             None,
             description="A peer ID to get context for.",
         ),
-        last_user_message: str | Message | None = Field(
+        search_query: str | Message | None = Field(
             None,
-            description="The most recent message (string or Message object), used to fetch semantically relevant conclusions.",
+            description="A query string (or Message object) used to fetch semantically relevant conclusions.",
         ),
         peer_perspective: str | None = Field(
             None,
@@ -976,15 +1022,13 @@ class SessionAio(AsyncMetadataConfigMixin):
                 "You must provide a `peer_target` when `peer_perspective` is provided"
             )
 
-        if peer_target is None and last_user_message is not None:
+        if peer_target is None and search_query is not None:
             raise ValueError(
-                "You must provide a `peer_target` when `last_user_message` is provided"
+                "You must provide a `peer_target` when `search_query` is provided"
             )
 
-        last_user_message_id = (
-            last_user_message.id
-            if isinstance(last_user_message, Message)
-            else last_user_message
+        search_query_text = (
+            search_query.content if isinstance(search_query, Message) else search_query
         )
 
         query: dict[str, Any] = {
@@ -993,8 +1037,8 @@ class SessionAio(AsyncMetadataConfigMixin):
         }
         if tokens is not None:
             query["tokens"] = tokens
-        if last_user_message_id is not None:
-            query["last_message"] = last_user_message_id
+        if search_query_text is not None:
+            query["search_query"] = search_query_text
         if peer_target is not None:
             query["peer_target"] = peer_target
         if peer_perspective is not None:
@@ -1319,19 +1363,28 @@ class ConclusionScopeAio:
     ) -> list[Conclusion]:
         """Create conclusions in this scope asynchronously."""
         await self._scope._honcho._ensure_workspace_async()
-        conclusion_params = [
-            {
-                "content": c.content
-                if isinstance(c, ConclusionCreateParams)
-                else c["content"],
-                "session_id": c.session_id
-                if isinstance(c, ConclusionCreateParams)
-                else c["session_id"],
+
+        def build_conclusion_payload(
+            item: ConclusionCreateParams | dict[str, Any],
+        ) -> dict[str, Any]:
+            """Build a single conclusion create payload."""
+            payload: dict[str, Any] = {
                 "observer_id": self._scope.observer,
                 "observed_id": self._scope.observed,
             }
-            for c in conclusions
-        ]
+            if isinstance(item, ConclusionCreateParams):
+                payload["content"] = item.content
+                if item.session_id is not None:
+                    payload["session_id"] = item.session_id
+                return payload
+
+            payload["content"] = item["content"]
+            session_id = item.get("session_id")
+            if session_id is not None:
+                payload["session_id"] = session_id
+            return payload
+
+        conclusion_params = [build_conclusion_payload(c) for c in conclusions]
 
         data = await self._scope._honcho._async_http_client.post(
             routes.conclusions(self._scope.workspace_id),

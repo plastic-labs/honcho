@@ -1,4 +1,5 @@
 import logging
+import time
 
 import sentry_sdk
 from pydantic import ValidationError
@@ -7,14 +8,20 @@ from sqlalchemy import select
 from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
-from src.dreamer.dreamer import process_dream
+from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException
 from src.models import Message
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
+from src.telemetry.events import (
+    CleanupStaleItemsCompletedEvent,
+    DeletionCompletedEvent,
+    SyncVectorsCompletedEvent,
+    emit,
+)
+from src.telemetry.logging import log_performance_metrics
 from src.utils import summarizer
-from src.utils.logging import log_performance_metrics
 from src.utils.queue_payload import (
     DeletionPayload,
     DreamPayload,
@@ -151,6 +158,7 @@ async def process_representation_batch(
     *,
     observers: list[str] | None,
     observed: str | None,
+    queue_item_message_ids: list[int],
 ) -> None:
     """
     Prepares and processes a batch of messages for representation tasks.
@@ -160,6 +168,7 @@ async def process_representation_batch(
         message_level_configuration: Resolved configuration for this batch
         observers: List of observers for the messages
         observed: The observed of the messages
+        queue_item_message_ids: Message IDs from queue items
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")
@@ -173,6 +182,7 @@ async def process_representation_batch(
         message_level_configuration,
         observers=observers,
         observed=observed,
+        queue_item_message_ids=queue_item_message_ids,
     )
 
 
@@ -195,6 +205,12 @@ async def process_deletion(
     """
     deletion_type = payload.deletion_type
     resource_id = payload.resource_id
+    success = True
+    error_message: str | None = None
+    peers_deleted = 0
+    sessions_deleted = 0
+    messages_deleted = 0
+    conclusions_deleted = 0
 
     logger.info(
         "Processing deletion task: type=%s, resource_id=%s, workspace=%s",
@@ -206,13 +222,18 @@ async def process_deletion(
     async with tracked_db("process_deletion") as db:
         if deletion_type == "session":
             try:
-                await crud.delete_session(
+                result = await crud.delete_session(
                     db, workspace_name=workspace_name, session_name=resource_id
                 )
+                messages_deleted = result.messages_deleted
+                conclusions_deleted = result.conclusions_deleted
                 logger.info(
-                    "Successfully deleted session %s in workspace %s",
+                    "Successfully deleted session %s in workspace %s "
+                    + "(messages=%d, conclusions=%d)",
                     resource_id,
                     workspace_name,
+                    messages_deleted,
+                    conclusions_deleted,
                 )
             except ResourceNotFoundException as e:
                 # Session not found - may have already been deleted, treat as success
@@ -227,6 +248,7 @@ async def process_deletion(
                 await crud.delete_document_by_id(
                     db, workspace_name=workspace_name, document_id=resource_id
                 )
+                conclusions_deleted = 1  # Single observation deleted
                 logger.info(
                     "Successfully deleted observation %s in workspace %s",
                     resource_id,
@@ -240,8 +262,49 @@ async def process_deletion(
                     str(e),
                 )
 
+        elif deletion_type == "workspace":
+            try:
+                result = await crud.delete_workspace(db, workspace_name=workspace_name)
+                peers_deleted = result.peers_deleted
+                sessions_deleted = result.sessions_deleted
+                messages_deleted = result.messages_deleted
+                conclusions_deleted = result.conclusions_deleted
+                logger.info(
+                    "Successfully deleted workspace %s "
+                    + "(peers=%d, sessions=%d, messages=%d, conclusions=%d)",
+                    workspace_name,
+                    peers_deleted,
+                    sessions_deleted,
+                    messages_deleted,
+                    conclusions_deleted,
+                )
+            except ResourceNotFoundException as e:
+                # Workspace not found - may have already been deleted, treat as success
+                logger.warning(
+                    "Workspace %s not found during deletion (may already be deleted): %s",
+                    workspace_name,
+                    str(e),
+                )
+
         else:
-            raise ValueError(f"Unsupported deletion type: {deletion_type}")
+            success = False
+            error_message = f"Unsupported deletion type: {deletion_type}"
+            raise ValueError(error_message)
+
+    # Emit telemetry event
+    emit(
+        DeletionCompletedEvent(
+            workspace_name=workspace_name,
+            deletion_type=deletion_type,
+            resource_id=resource_id,
+            success=success,
+            peers_deleted=peers_deleted,
+            sessions_deleted=sessions_deleted,
+            messages_deleted=messages_deleted,
+            conclusions_deleted=conclusions_deleted,
+            error_message=error_message,
+        )
+    )
 
 
 async def process_reconciler(payload: ReconcilerPayload) -> None:
@@ -257,10 +320,13 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
         payload: The reconciler payload containing the reconciler type
     """
     reconciler_type = payload.reconciler_type
+    start_time = time.perf_counter()
 
     if reconciler_type == ReconcilerType.SYNC_VECTORS:
         logger.debug("Processing sync_vectors task")
         metrics = await run_vector_reconciliation_cycle()
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
 
         if (
             metrics.total_synced > 0
@@ -276,9 +342,30 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                 metrics.documents_cleaned,
             )
 
+            # Emit telemetry event
+            emit(
+                SyncVectorsCompletedEvent(
+                    documents_synced=metrics.documents_synced,
+                    documents_failed=metrics.documents_failed,
+                    documents_cleaned=metrics.documents_cleaned,
+                    message_embeddings_synced=metrics.message_embeddings_synced,
+                    message_embeddings_failed=metrics.message_embeddings_failed,
+                    total_duration_ms=duration_ms,
+                )
+            )
+
     elif reconciler_type == ReconcilerType.CLEANUP_QUEUE:
         logger.debug("Processing cleanup_queue task")
         await cleanup_queue_items()
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Emit telemetry event for cleanup stale items
+        emit(
+            CleanupStaleItemsCompletedEvent(
+                total_duration_ms=duration_ms,
+            )
+        )
 
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")
