@@ -711,6 +711,8 @@ async def _execute_tool_loop(
     effective_tool_choice = tool_choice
 
     while iteration < max_tool_iterations:
+        # Reset attempt counter so each iteration starts with the primary provider
+        _current_attempt.set(1)
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
 
         # Truncate BEFORE making the API call to avoid context length errors
@@ -961,8 +963,10 @@ async def _execute_tool_loop(
     _current_attempt.set(1)  # Reset attempt counter
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
-        provider = llm_settings.PROVIDER
-        model = llm_settings.MODEL
+        # Use shared provider selection helper for backup failover support
+        provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
+            get_provider_and_model()
+        )
 
         client = CLIENTS.get(provider)
         if not client:
@@ -978,9 +982,9 @@ async def _execute_tool_loop(
             json_mode,
             _get_effective_temperature(temperature),
             stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
+            gpt5_reasoning_effort,
+            gpt5_verbosity,
+            thinking_budget,
             False,
             None,  # No tools
             None,  # No tool_choice

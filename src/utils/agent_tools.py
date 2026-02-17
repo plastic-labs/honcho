@@ -28,6 +28,18 @@ from src.utils.types import get_current_iteration
 logger = logging.getLogger(__name__)
 
 
+def _safe_int(value: Any, default: int) -> int:
+    """Coerce a tool input value to int, returning default on failure.
+
+    LLMs sometimes pass non-numeric strings (e.g. 'Infinity') for integer
+    parameters which would crash ``min()`` comparisons.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 # Module-level lock registry for thread-safe observation creation.
 # Keyed by (workspace_name, observer, observed) to ensure all tool executors
 # operating on the same data share the same lock.
@@ -1163,7 +1175,7 @@ async def _handle_get_recent_history(
 
 async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_memory tool."""
-    top_k = min(tool_input.get("top_k", 20), 40)
+    top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
     query = tool_input["query"]
     try:
         query_embedding = await embedding_client.embed(query)
@@ -1188,7 +1200,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
         if ctx.agent_type == "dialectic":
-            limit = min(tool_input.get("top_k", 20), 20)
+            limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
             snippets = await crud.search_messages(
                 ctx.db,
                 workspace_name=ctx.workspace_name,
@@ -1243,7 +1255,7 @@ async def _handle_get_observation_context(
 async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle search_messages tool."""
     query = tool_input["query"]
-    limit = min(tool_input.get("limit", 10), 20)  # Cap at 20
+    limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
     snippets = await crud.search_messages(
         ctx.db,
         workspace_name=ctx.workspace_name,
@@ -1263,8 +1275,10 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
     text = tool_input.get("text", "")
     if not text:
         return "ERROR: 'text' parameter is required"
-    limit = min(tool_input.get("limit", 10), 30)  # Cap at 30
-    context_window = min(tool_input.get("context_window", 2), 2)  # Cap context
+    limit = min(_safe_int(tool_input.get("limit"), 10), 30)  # Cap at 30
+    context_window = min(
+        _safe_int(tool_input.get("context_window"), 2), 2
+    )  # Cap context
 
     snippets = await crud.grep_messages(
         ctx.db,
@@ -1316,7 +1330,7 @@ async def _handle_get_messages_by_date_range(
     """Handle get_messages_by_date_range tool."""
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
-    limit = min(tool_input.get("limit", 20), 20)
+    limit = min(_safe_int(tool_input.get("limit"), 20), 20)
     order = tool_input.get("order", "desc")
 
     after_date = _parse_date(after_date_str, "after_date")
@@ -1373,8 +1387,8 @@ async def _handle_search_messages_temporal(
 
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
-    limit = min(tool_input.get("limit", 10), 10)
-    context_window = min(tool_input.get("context_window", 2), 2)
+    limit = min(_safe_int(tool_input.get("limit"), 10), 10)
+    context_window = min(_safe_int(tool_input.get("context_window"), 2), 2)
 
     after_date = _parse_date(after_date_str, "after_date")
     if isinstance(after_date, str):
@@ -1418,7 +1432,7 @@ async def _handle_get_recent_observations(
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        limit=tool_input.get("limit", 10),
+        limit=_safe_int(tool_input.get("limit"), 10),
         session_name=ctx.session_name if session_only else None,
     )
     representation = Representation.from_documents(documents)
@@ -1443,7 +1457,7 @@ async def _handle_get_most_derived_observations(
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        limit=tool_input.get("limit", 10),
+        limit=_safe_int(tool_input.get("limit"), 10),
     )
     representation = Representation.from_documents(documents)
     total_count = representation.len()
