@@ -1432,7 +1432,7 @@ async def _handle_get_recent_observations(
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        limit=_safe_int(tool_input.get("limit"), 10),
+        limit=min(_safe_int(tool_input.get("limit"), 10), 100),
         session_name=ctx.session_name if session_only else None,
     )
     representation = Representation.from_documents(documents)
@@ -1457,7 +1457,7 @@ async def _handle_get_most_derived_observations(
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
-        limit=_safe_int(tool_input.get("limit"), 10),
+        limit=min(_safe_int(tool_input.get("limit"), 10), 100),
     )
     representation = Representation.from_documents(documents)
     total_count = representation.len()
