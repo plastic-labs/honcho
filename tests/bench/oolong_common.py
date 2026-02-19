@@ -10,7 +10,7 @@ import ast
 import json
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -46,7 +46,7 @@ class SimpleDataset:
         """Get example by index."""
         return self.data[idx]
 
-    def filter(self, function: Any) -> "SimpleDataset":
+    def filter(self, function: Callable[[dict[str, Any]], bool]) -> "SimpleDataset":
         """Filter dataset using a function.
 
         Args:
@@ -163,6 +163,10 @@ def load_oolong_synth_dataset(
         )
 
     dataset_path = Path(data_dir) / "data"
+    if not dataset_path.exists():
+        raise FileNotFoundError(
+            f"Expected synth dataset directory at {dataset_path} (layout: data/*.parquet)"
+        )
 
     # Find all parquet files for the given split
     parquet_files = sorted(dataset_path.glob(f"{split}-*.parquet"))
@@ -173,9 +177,8 @@ def load_oolong_synth_dataset(
     # Load and combine all parquet files
     all_data: list[dict[str, Any]] = []
     for parquet_file in parquet_files:
-        table = pq.read_table(parquet_file)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-        df = table.to_pandas()  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-        all_data.extend(df.to_dict("records"))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        table = pq.read_table(parquet_file)  # pyright: ignore[reportUnknownVariableType]
+        all_data.extend(table.to_pylist())  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
     return SimpleDataset(all_data)
 
@@ -202,6 +205,10 @@ def load_oolong_real_dataset(
         )
 
     dataset_path = Path(data_dir) / "dnd"
+    if not dataset_path.exists():
+        raise FileNotFoundError(
+            f"Expected real dataset directory at {dataset_path} (layout: dnd/*.jsonl)"
+        )
     jsonl_file = dataset_path / f"{split}.jsonl"
 
     if not jsonl_file.exists():
@@ -254,12 +261,8 @@ def parse_synth_context_messages(context_text: str) -> list[dict[str, Any]]:
                 label_part = parts[3].replace("Label: ", "").strip()
                 label = label_part if label_part else None
 
-            # Include label in content so deriver can observe it
-            # Format: "Content text [Label: label_value]"
-            if label:
-                content = f"{instance_part} [Label: {label}]"
-            else:
-                content = instance_part
+            # Include label in content so deriver can observe it.
+            content = f"{instance_part} [Label: {label}]" if label else instance_part
 
             msg: dict[str, Any] = {
                 "content": content,
@@ -303,7 +306,7 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
 
         # Check if this is a new speaker turn (must start with speaker label)
         # Speaker labels are typically single words or use underscores/hyphens (no spaces)
-        speaker_match = re.match(r'^\s*([A-Za-z0-9_-]+):', line)
+        speaker_match = re.match(r"^\s*([A-Za-z0-9_-]+):", line)
         if speaker_match:
             # Save previous message if exists
             if current_speaker and current_content:
@@ -321,7 +324,7 @@ def parse_real_context_messages(context_text: str) -> list[dict[str, Any]]:
             # Parse new speaker from regex match
             current_speaker = speaker_match.group(1).strip()
             # Extract content after the colon
-            content_after_colon = line[speaker_match.end():].strip()
+            content_after_colon = line[speaker_match.end() :].strip()
             current_content = [content_after_colon] if content_after_colon else []
         else:
             # Continuation of current speaker's dialogue
@@ -408,7 +411,9 @@ def parse_real_answer(answer_str: str) -> int | str | list[str]:
     return answer_str
 
 
-def score_synth_response(gold_answer: Any, model_answer_str: str, answer_type: str) -> float:
+def score_synth_response(
+    gold_answer: Any, model_answer_str: str, answer_type: str
+) -> float:
     """Score a response for OOLONG-synth following the paper's scoring rubric.
 
     Scoring:
@@ -432,11 +437,11 @@ def score_synth_response(gold_answer: Any, model_answer_str: str, answer_type: s
     # Look for patterns at the start of a line (final answer format)
     for pattern in [
         r"^[Aa]nswer:\s*(.+)$",  # "Answer: X" on its own line
-        r"^[Ll]abel:\s*(.+)$",   # "Label: X" on its own line
+        r"^[Ll]abel:\s*(.+)$",  # "Label: X" on its own line
         r"\n[Ll]abel:\s*(.+)$",  # "Label: X" after a newline (final answer)
-        r"[Aa]nswer:\s*(.+)$",   # "Answer: X" at end of response
-        r"[Uu]ser:\s*(.+)$",     # "User: X" at end
-        r"[Dd]ate:\s*(.+)$",     # "Date: X" at end
+        r"[Aa]nswer:\s*(.+)$",  # "Answer: X" at end of response
+        r"[Uu]ser:\s*(.+)$",  # "User: X" at end
+        r"[Dd]ate:\s*(.+)$",  # "Date: X" at end
     ]:
         match = re.search(pattern, model_answer, re.MULTILINE)
         if match:
@@ -455,11 +460,20 @@ def score_synth_response(gold_answer: Any, model_answer_str: str, answer_type: s
         return 1.0
 
     # Check for comparison answers
-    if "more common" in model_answer.lower() and "more common" in str(gold_answer).lower():
+    if (
+        "more common" in model_answer.lower()
+        and "more common" in str(gold_answer).lower()
+    ):
         return 1.0
-    if "less common" in model_answer.lower() and "less common" in str(gold_answer).lower():
+    if (
+        "less common" in model_answer.lower()
+        and "less common" in str(gold_answer).lower()
+    ):
         return 1.0
-    if "same frequency" in model_answer.lower() and "same frequency" in str(gold_answer).lower():
+    if (
+        "same frequency" in model_answer.lower()
+        and "same frequency" in str(gold_answer).lower()
+    ):
         return 1.0
 
     # Numeric partial credit
@@ -486,7 +500,9 @@ def score_synth_response(gold_answer: Any, model_answer_str: str, answer_type: s
     return 0.0
 
 
-def score_real_response(gold_answer: int | str | list[str], model_answer_str: str) -> float:
+def score_real_response(
+    gold_answer: int | str | list[str], model_answer_str: str
+) -> float:
     """Score a response for OOLONG-real following the paper's scoring rubric.
 
     Scoring:
@@ -514,7 +530,9 @@ def score_real_response(gold_answer: int | str | list[str], model_answer_str: st
         model_answer: int | str | list[str] = int(model_answer_str)
     except ValueError:
         if "," in model_answer_str:
-            model_answer = [item.strip() for item in model_answer_str.split(",") if item.strip()]
+            model_answer = [
+                item.strip() for item in model_answer_str.split(",") if item.strip()
+            ]
         else:
             model_answer = model_answer_str.strip()
 
@@ -531,12 +549,12 @@ def score_real_response(gold_answer: int | str | list[str], model_answer_str: st
 
 
 def filter_dataset(
-    dataset: Any,
+    dataset: SimpleDataset,
     max_context_len: int | None = None,
     min_context_len: int | None = None,
     max_examples: int | None = None,
     context_window_id: str | None = None,
-) -> Any:
+) -> SimpleDataset:
     """Filter dataset by context length and example count.
 
     Args:
@@ -550,13 +568,25 @@ def filter_dataset(
         Filtered dataset
     """
     if context_window_id is not None:
-        dataset = dataset.filter(lambda x: x["context_window_id"] == context_window_id)  # pyright: ignore[reportUnknownLambdaType]
+        dataset = dataset.filter(lambda x: x["context_window_id"] == context_window_id)
 
-    if max_context_len is not None and "context_len" in dataset.column_names:
-        dataset = dataset.filter(lambda x: x.get("context_len", float('inf')) <= max_context_len)  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
+    if max_context_len is not None:
+        dataset = dataset.filter(
+            lambda x: x.get(
+                "context_len",
+                calculate_context_length(str(x.get("context_window_text", ""))),
+            )
+            <= max_context_len
+        )
 
-    if min_context_len is not None and "context_len" in dataset.column_names:
-        dataset = dataset.filter(lambda x: x.get("context_len", 0) >= min_context_len)  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
+    if min_context_len is not None:
+        dataset = dataset.filter(
+            lambda x: x.get(
+                "context_len",
+                calculate_context_length(str(x.get("context_window_text", ""))),
+            )
+            > min_context_len
+        )
 
     if max_examples is not None and max_examples > 0:
         # Get a slice of the dataset

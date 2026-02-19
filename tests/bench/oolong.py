@@ -1,97 +1,24 @@
 """
-Honcho OOLONG Benchmark Test Runner
+Honcho OOLONG benchmark runner.
 
-A script that executes OOLONG benchmark tests against a running Honcho instance.
-
-OOLONG tests long-context reasoning and aggregation by requiring models to:
-1. Identify relevant segments of input
-2. Classify or categorize those segments
-3. Aggregate results to answer distributional questions
-
-Two variants:
-- OOLONG-synth: Questions over ICL datasets (counting, user, temporal tasks)
-- OOLONG-real: Questions over D&D transcripts (dice rolls, spells, character actions)
-
-## To use
-
-0. Set up env:
-```
-uv sync
-source .venv/bin/activate
-```
-
-1. Run the test harness:
-```
-python -m tests.bench.harness
-```
-
-2. Run this file with dataset selection:
-```
-# For OOLONG-synth (default)
-python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth
-
-# For OOLONG-real (D&D transcripts)
-python -m tests.bench.oolong --variant real --data-dir /path/to/oolong-real
-```
-
-Required arguments:
-```
---data-dir: Path to the dataset directory (e.g., /path/to/oolong-synth or /path/to/oolong-real)
-```
-
-Optional arguments:
-```
---variant: Which OOLONG variant to run ("synth" or "real", default: "synth")
---split: Dataset split to use ("test" or "validation", default: "test")
---max-examples: Maximum number of examples to run (default: all)
---context-size: Discrete context size (e.g., "8K", "16K", "32K", or exact like "16384")
-              Overrides --min-context-len and --max-context-len
-              Available: 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M, 2M, 4M
---max-context-len: Maximum context length in tokens (default: no limit)
---min-context-len: Minimum context length in tokens (default: 0)
---context-window-id: Run only examples with this context_window_id
---timeout: Timeout for deriver queue in seconds (default: 600)
---base-api-port: Base port for Honcho API instances (default: 8000)
---pool-size: Number of Honcho instances in the pool (default: 1)
---batch-size: Number of questions to run concurrently (default: 5)
---json-output: Path to write JSON summary results (auto-generated if not provided)
---no-merge-sessions: Disable merging of contexts into a single session (default: enabled)
---cleanup-workspace: Delete workspace after each question (default: False)
---use-dialectic-agentic: Use agentic dialectic mode for answering (default: False)
-
-Examples:
-```bash
-# Test at exact 16K context length
-python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth --context-size 16K
-
-# Test at exact 128K context length
-python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth --context-size 128K
-
-# Test with exact token count
-python -m tests.bench.oolong --variant synth --data-dir /path/to/oolong-synth --context-size 16384
-```
+Evaluates long-context reasoning and aggregation on:
+- OOLONG-synth: synthetic ICL aggregation tasks
+- OOLONG-real: D&D transcript aggregation tasks
 """
 
 import argparse
-import asyncio
-import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from dotenv import load_dotenv
-from honcho import AsyncHoncho
-from honcho.async_client.session import SessionPeerConfig
-from honcho_core.types.workspaces.sessions.message_create_param import (
-    MessageCreateParam,
-)
-from typing_extensions import TypedDict
+from honcho.api_types import MessageCreateParams
+from honcho.session import Session, SessionPeerConfig
 
-from src.utils.metrics_collector import MetricsCollector
+from src.config import settings
 
 from .oolong_common import (
-    BaseTestResult,
     calculate_context_length,
     calculate_task_statistics,
     calculate_timing_statistics,
@@ -107,529 +34,401 @@ from .oolong_common import (
     score_synth_response,
     write_json_summary,
 )
+from .runner_common import (
+    BaseRunner,
+    ItemContext,
+    RunnerConfig,
+    add_common_arguments,
+    validate_common_arguments,
+)
 
 load_dotenv()
 
+CONTEXT_SIZE_MAP: dict[str, int] = {
+    "1K": 1024,
+    "2K": 2 * 1024,
+    "4K": 4 * 1024,
+    "8K": 8 * 1024,
+    "16K": 16 * 1024,
+    "32K": 32 * 1024,
+    "64K": 64 * 1024,
+    "128K": 128 * 1024,
+    "256K": 256 * 1024,
+    "512K": 512 * 1024,
+    "1M": 1024 * 1024,
+    "2M": 2 * 1024 * 1024,
+    "4M": 4 * 1024 * 1024,
+}
+
 
 def parse_context_size(size_str: str) -> int:
-    """Parse a context size string to exact token count.
+    """Parse a context-size string into an exact token count."""
+    normalized = size_str.strip().upper()
 
-    Args:
-        size_str: Context size string (e.g., "8K", "16K", "1M") or numeric string ("16384")
+    if normalized.isdigit():
+        value = int(normalized)
+        if value <= 0:
+            raise ValueError("Context size must be positive")
+        return value
 
-    Returns:
-        Exact token count (power of 2)
+    if normalized in CONTEXT_SIZE_MAP:
+        return CONTEXT_SIZE_MAP[normalized]
 
-    Raises:
-        ValueError: If the size string is invalid
-    """
-    size_str = size_str.strip().upper()
-
-    # Check if it's a plain number
-    if size_str.isdigit():
-        return int(size_str)
-
-    # Parse suffix-based sizes (e.g., "8K", "16K", "1M")
-    multipliers = {
-        "K": 1024,
-        "M": 1024 * 1024,
-    }
-
-    for suffix, multiplier in multipliers.items():
-        if size_str.endswith(suffix):
-            try:
-                base = int(size_str[:-1])
-                return base * multiplier
-            except ValueError:
-                raise ValueError(f"Invalid context size format: {size_str}")
-
-    raise ValueError(f"Invalid context size format: {size_str}. Use formats like '8K', '16K', '1M', or exact numbers like '16384'.")
+    valid_sizes = ", ".join(CONTEXT_SIZE_MAP)
+    raise ValueError(
+        f"Invalid context size '{size_str}'. Use one of [{valid_sizes}] or a positive integer token count."
+    )
 
 
 class QueryResult(TypedDict):
-    """Type definition for query execution results."""
+    """Query execution result for one OOLONG example."""
 
     question: str
-    expected_answer: Any
+    expected_answer: str
     actual_response: str
     score: float
     context_length_tokens: int
 
 
-class TestResult(BaseTestResult):
-    """Type definition for OOLONG test execution results."""
+class TestResult(TypedDict):
+    """Single OOLONG example result."""
 
+    question_id: str
     context_window_id: str
+    task_group: str
+    dataset: str
     answer_type: str
+    passed: bool
+    score: float
+    error: str | None
+    start_time: float
+    end_time: float
+    duration_seconds: float
     query_executed: QueryResult | None
+    output_lines: list[str]
 
 
-class OolongBenchmarkRunner:
-    """
-    Executes OOLONG benchmark tests against a Honcho instance.
-    """
+class OolongRunner(BaseRunner[TestResult]):
+    """Execute OOLONG benchmark examples through the shared runner framework."""
+
+    variant: str
+    data_dir: Path
+    split: str
+    merge_sessions: bool
+    max_examples: int | None
+    min_context_len: int | None
+    max_context_len: int | None
+    context_window_id: str | None
+    use_labels: bool
 
     def __init__(
         self,
-        variant: str = "synth",
-        data_dir: str | Path | None = None,
-        base_api_port: int = 8000,
-        pool_size: int = 1,
-        timeout_seconds: int = 600,
-        merge_sessions: bool = True,
-        cleanup_workspace: bool = False,
-        use_dialectic_agentic: bool = False,
+        config: RunnerConfig,
+        variant: str,
+        data_dir: Path,
+        split: str,
+        merge_sessions: bool,
+        max_examples: int | None = None,
+        min_context_len: int | None = None,
+        max_context_len: int | None = None,
+        context_window_id: str | None = None,
+        use_labels: bool = False,
     ):
-        """
-        Initialize the benchmark runner.
+        self.variant = variant
+        self.data_dir = data_dir
+        self.split = split
+        self.merge_sessions = merge_sessions
+        self.max_examples = max_examples
+        self.min_context_len = min_context_len
+        self.max_context_len = max_context_len
+        self.context_window_id = context_window_id
+        self.use_labels = use_labels
+        super().__init__(config)
 
-        Args:
-            variant: Which OOLONG variant to run ("synth" or "real")
-            data_dir: Path to the dataset directory (required)
-            base_api_port: Base port for Honcho API instances
-            pool_size: Number of Honcho instances in the pool
-            timeout_seconds: Timeout for deriver queue in seconds
-            merge_sessions: If True, merge all context into one session
-            cleanup_workspace: If True, delete workspace after executing question
-            use_dialectic_agentic: If True, use agentic=true mode for dialectic
-        """
-        self.variant: str = variant
-        self.data_dir: str | Path | None = data_dir
-        self.base_api_port: int = base_api_port
-        self.pool_size: int = pool_size
-        self.timeout_seconds: int = timeout_seconds
-        self.merge_sessions: bool = merge_sessions
-        self.cleanup_workspace: bool = cleanup_workspace
-        self.use_dialectic_agentic: bool = use_dialectic_agentic
+    def get_metrics_prefix(self) -> str:
+        return "oolong"
 
-        # Initialize metrics collector
-        self.metrics_collector: MetricsCollector = MetricsCollector()
-        self.metrics_collector.start_collection(
-            f"oolong_{variant}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-
-        # Configure logging
-        logging.basicConfig(
-            level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-        self.logger: logging.Logger = logging.getLogger(__name__)
-
-        # Suppress HTTP request logs
-        logging.getLogger("httpx").setLevel(logging.ERROR)
-        logging.getLogger("httpcore").setLevel(logging.ERROR)
-
-    def get_honcho_url_for_index(self, question_index: int) -> str:
-        """
-        Get the Honcho URL for a given question index using round-robin distribution.
-
-        Args:
-            question_index: Index of the question
-
-        Returns:
-            URL of the Honcho instance to use
-        """
-        instance_id = question_index % self.pool_size
-        port = self.base_api_port + instance_id
-        return f"http://localhost:{port}"
-
-    async def create_honcho_client(
-        self, workspace_id: str, honcho_url: str
-    ) -> AsyncHoncho:
-        """
-        Create a Honcho client for a specific workspace.
-
-        Args:
-            workspace_id: Workspace ID
-            honcho_url: URL of the Honcho instance
-
-        Returns:
-            AsyncHoncho client instance
-        """
-        return AsyncHoncho(
-            environment="local",
-            workspace_id=workspace_id,
-            base_url=honcho_url,
-        )
-
-    async def wait_for_deriver_queue_empty(
-        self, honcho_client: AsyncHoncho, session_id: str | None = None
-    ) -> bool:
-        """Wait for deriver queue to be empty."""
-        start_time = time.time()
-        while True:
-            try:
-                status = await honcho_client.get_queue_status(session=session_id)
-            except Exception:
-                await asyncio.sleep(1)
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= self.timeout_seconds:
-                    return False
-                continue
-
-            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
-                return True
-
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= self.timeout_seconds:
-                return False
-            await asyncio.sleep(1)
-
-    async def execute_question(
-        self, example_data: dict[str, Any], _question_index: int, honcho_url: str
-    ) -> TestResult:
-        """
-        Execute a single OOLONG benchmark question.
-
-        Args:
-            example_data: Dictionary containing example from dataset
-            _question_index: Index of this question (unused, URL already computed)
-            honcho_url: URL of the Honcho instance to use
-
-        Returns:
-            Test execution results
-        """
-        # Extract fields based on variant
-        example_id = example_data["id"]
-        context_window_id = example_data["context_window_id"]
-        question = example_data["question"]
-        answer_str = example_data["answer"]
-
-        # Variant-specific fields
+    def load_items(self) -> list[Any]:
         if self.variant == "synth":
-            # Use context with labels for synth variant
-            context_text = example_data.get("context_window_text_with_labels", example_data["context_window_text"])
-            task_group = example_data.get("task_group", "unknown")
-            dataset_name = example_data.get("dataset", "unknown")
-            answer_type = example_data.get("answer_type", "unknown")
+            dataset = load_oolong_synth_dataset(
+                split=self.split, data_dir=self.data_dir
+            )
+        else:
+            dataset = load_oolong_real_dataset(split=self.split, data_dir=self.data_dir)
+
+        dataset = filter_dataset(
+            dataset=dataset,
+            max_context_len=self.max_context_len,
+            min_context_len=self.min_context_len,
+            max_examples=self.max_examples,
+            context_window_id=self.context_window_id,
+        )
+        return [dataset[i] for i in range(len(dataset))]
+
+    def get_workspace_id(self, item: Any) -> str:
+        return f"oolong_{self.variant}_{item['id']}"
+
+    def get_session_id(self, item: Any, workspace_id: str) -> str:
+        return f"{workspace_id}_session"
+
+    async def setup_peers(self, ctx: ItemContext, item: Any) -> None:
+        ctx.peers["user"] = await ctx.honcho_client.aio.peer(id="user")
+
+    async def setup_session(self, ctx: ItemContext, item: Any) -> None:
+        if not self.merge_sessions:
+            ctx.session = None
+            return
+
+        user_peer = ctx.peers["user"]
+        ctx.session = await ctx.honcho_client.aio.session(
+            id=ctx.session_id, configuration=self._get_session_configuration()
+        )
+        await ctx.session.aio.add_peers(
+            [(user_peer, SessionPeerConfig(observe_me=True, observe_others=False))]
+        )
+
+    async def _add_messages_to_session(
+        self, session: Session, user_peer: Any, messages: list[dict[str, Any]]
+    ) -> None:
+        honcho_messages: list[MessageCreateParams] = []
+        for msg in messages:
+            honcho_messages.append(
+                user_peer.message(
+                    content=msg["content"],
+                    metadata=msg.get("metadata"),
+                )
+            )
+
+        for i in range(0, len(honcho_messages), 100):
+            batch = honcho_messages[i : i + 100]
+            await session.aio.add_messages(batch)
+
+    async def ingest_messages(self, ctx: ItemContext, item: Any) -> int:
+        context_text = item["context_window_text"]
+        if self.variant == "synth":
+            if self.use_labels:
+                context_text = item.get("context_window_text_with_labels", context_text)
+            messages = parse_synth_context_messages(context_text)
+        else:
+            messages = parse_real_context_messages(context_text)
+
+        user_peer = ctx.peers["user"]
+
+        if self.merge_sessions:
+            if ctx.session is None:
+                raise ValueError("Merged mode requires a configured session")
+            await self._add_messages_to_session(ctx.session, user_peer, messages)
+            return len(messages)
+
+        chunk_size = 200
+        session_ids: list[str] = []
+        for idx, start in enumerate(range(0, len(messages), chunk_size)):
+            chunk = messages[start : start + chunk_size]
+            session_id = f"{ctx.workspace_id}_session_{idx + 1}"
+            session = await ctx.honcho_client.aio.session(
+                id=session_id, configuration=self._get_session_configuration()
+            )
+            await session.aio.add_peers(
+                [(user_peer, SessionPeerConfig(observe_me=True, observe_others=False))]
+            )
+            await self._add_messages_to_session(session, user_peer, chunk)
+            session_ids.append(session_id)
+
+        ctx.peers["_session_ids"] = session_ids
+        return len(messages)
+
+    def get_dream_observers(self, item: Any) -> list[str]:
+        return ["user"]
+
+    async def execute_questions(self, ctx: ItemContext, item: Any) -> TestResult:
+        start_time = time.time()
+        question_id = item["id"]
+        context_window_id = item["context_window_id"]
+        question = item["question"]
+        answer_str = item["answer"]
+
+        if self.variant == "synth":
+            task_group = item.get("task_group", "unknown")
+            dataset_name = item.get("dataset", "oolong-synth")
+            answer_type = item.get("answer_type", "unknown")
             gold_answer = parse_synth_answer(answer_str)
-        else:  # real
-            context_text = example_data["context_window_text"]
-            task_group = example_data.get("question_type", "unknown")
+        else:
+            task_group = item.get("question_type", "unknown")
             dataset_name = "oolong-real"
             answer_type = "varied"
             gold_answer = parse_real_answer(answer_str)
 
-        output_lines: list[str] = []
-        output_lines.append(
-            f"\033[1mExecuting {self.variant} question {example_id}\033[0m"
-        )
-        output_lines.append(f"Task: {task_group} | Dataset: {dataset_name}")
-        output_lines.append(f"Question: {question}")
-        output_lines.append(f"Expected: {gold_answer}")
-
-        # Create workspace for this question
-        workspace_id = f"oolong_{self.variant}_{example_id}"
-        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
-
-        # Calculate context length
+        context_text = item["context_window_text"]
+        if self.variant == "synth" and self.use_labels:
+            context_text = item.get("context_window_text_with_labels", context_text)
         context_length = calculate_context_length(context_text)
 
-        results: TestResult = {
-            "question_id": example_id,
+        result: TestResult = {
+            "question_id": question_id,
             "context_window_id": context_window_id,
             "task_group": task_group,
             "dataset": dataset_name,
             "answer_type": answer_type,
-            "query_executed": None,
             "passed": False,
             "score": 0.0,
             "error": None,
-            "start_time": time.time(),
+            "start_time": start_time,
             "end_time": 0.0,
             "duration_seconds": 0.0,
-            "output_lines": output_lines,
+            "query_executed": None,
+            "output_lines": [],
         }
 
+        user_peer = ctx.peers["user"]
         try:
-            # Create peers
-            user_peer = await honcho_client.peer(id="user")
+            chat_kwargs: dict[str, Any] = {}
+            if self.config.reasoning_level:
+                chat_kwargs["reasoning_level"] = self.config.reasoning_level
+            if self.merge_sessions and ctx.session is not None:
+                chat_kwargs["session"] = ctx.session
 
-            # Parse context into messages
+            response = await user_peer.aio.chat(question, **chat_kwargs)
+            actual_response = response if isinstance(response, str) else ""
+
             if self.variant == "synth":
-                messages = parse_synth_context_messages(context_text)
-            else:  # real
-                messages = parse_real_context_messages(context_text)
+                score = score_synth_response(gold_answer, actual_response, answer_type)
+            else:
+                score = score_real_response(gold_answer, actual_response)
 
-            output_lines.append(
-                f"Ingesting {len(messages)} messages ({context_length} tokens)..."
+            result["query_executed"] = QueryResult(
+                question=question,
+                expected_answer=str(gold_answer),
+                actual_response=actual_response,
+                score=score,
+                context_length_tokens=context_length,
             )
-
-            # Create session and add messages
-            session_id = f"{workspace_id}_session"
-            session = await honcho_client.session(id=session_id)
-
-            # Configure peer to observe itself
-            await session.add_peers(
-                [
-                    (
-                        user_peer,
-                        SessionPeerConfig(observe_me=True, observe_others=False),
-                    ),
-                ]
-            )
-
-            # Convert messages to Honcho format and batch them
-            honcho_messages: list[MessageCreateParam] = []
-            for msg in messages:
-                content = msg["content"]
-                metadata = msg.get("metadata", {})
-
-                # Create message with metadata
-                honcho_messages.append(
-                    user_peer.message(
-                        content=content,
-                        metadata=metadata,
-                    )
-                )
-
-            # Add messages in batches of 100
-            for i in range(0, len(honcho_messages), 100):
-                batch = honcho_messages[i : i + 100]
-                await session.add_messages(batch)
-
-            output_lines.append("Messages ingested. Waiting for deriver...")
-            await asyncio.sleep(1)  # Give time for tasks to be queued
-
-            # Wait for deriver to process
-            queue_empty = await self.wait_for_deriver_queue_empty(
-                honcho_client, session_id
-            )
-            if not queue_empty:
-                output_lines.append("ERROR: Deriver queue timeout!")
-                results["error"] = "Deriver queue timeout"
-                return results
-
-            output_lines.append("Deriver complete. Executing question...")
-
-            # Query via dialectic (scoped to session for better message access)
-            try:
-                actual_response = await user_peer.chat(question, session=session)
-
-                # Clean up workspace if requested
-                if self.cleanup_workspace:
-                    try:
-                        await honcho_client.delete_workspace(workspace_id)
-                        output_lines.append("Workspace cleaned up")
-                    except Exception as e:
-                        output_lines.append(f"Warning: Failed to delete workspace: {e}")
-
-                actual_response = (
-                    actual_response if isinstance(actual_response, str) else ""
-                )
-
-                # Score the response
-                if self.variant == "synth":
-                    score = score_synth_response(
-                        gold_answer, actual_response, answer_type
-                    )
-                else:  # real
-                    score = score_real_response(gold_answer, actual_response)
-
-                query_result: QueryResult = {
-                    "question": question,
-                    "expected_answer": str(gold_answer),
-                    "actual_response": actual_response,
-                    "score": score,
-                    "context_length_tokens": context_length,
-                }
-
-                results["query_executed"] = query_result
-                results["score"] = score
-                results["passed"] = score >= 0.99  # Consider 99%+ as pass
-
-                output_lines.append(
-                    f"  score: \033[1m{score:.3f}\033[0m"
-                    + (
-                        " \033[32m✓\033[0m"
-                        if score >= 0.99
-                        else (" \033[33m~\033[0m" if score > 0 else " \033[31m✗\033[0m")
-                    )
-                )
-                if score < 0.99:
-                    output_lines.append(f"  response: \033[3m{actual_response}\033[0m")
-                    output_lines.append(f"  expected: {gold_answer}")
-
-            except Exception as e:
-                self.logger.error(f"Error executing question: {e}")
-                query_result = QueryResult(
-                    question=question,
-                    expected_answer=str(gold_answer),
-                    actual_response=f"ERROR: {e}",
-                    score=0.0,
-                    context_length_tokens=context_length,
-                )
-                results["query_executed"] = query_result
-                results["score"] = 0.0
-                results["passed"] = False
-                output_lines.append(f"ERROR: {e}")
-
-            results["end_time"] = time.time()
-            results["duration_seconds"] = results["end_time"] - results["start_time"]
-
+            result["score"] = score
+            result["passed"] = score >= 0.99
+            result["output_lines"] = [
+                f"Question: {question}",
+                f"Expected: {gold_answer}",
+                f"Score: {score:.3f}",
+            ]
         except Exception as e:
-            self.logger.error(f"Error in execute_question: {e}")
-            results["error"] = str(e)
-            results["end_time"] = time.time()
-            results["duration_seconds"] = results["end_time"] - results["start_time"]
+            result["error"] = str(e)
+            result["query_executed"] = QueryResult(
+                question=question,
+                expected_answer=str(gold_answer),
+                actual_response=f"ERROR: {e}",
+                score=0.0,
+                context_length_tokens=context_length,
+            )
 
-        return results
+        result["end_time"] = time.time()
+        result["duration_seconds"] = result["end_time"] - result["start_time"]
+        return result
 
-    async def run_benchmark(
-        self,
-        split: str = "test",
-        max_examples: int | None = None,
-        max_context_len: int | None = None,
-        min_context_len: int | None = None,
-        context_window_id: str | None = None,
-        batch_size: int = 5,
-        json_output: Path | None = None,
-    ) -> dict[str, Any]:
-        """
-        Run the OOLONG benchmark.
-
-        Args:
-            split: Dataset split to use
-            max_examples: Maximum number of examples to run
-            max_context_len: Maximum context length filter
-            min_context_len: Minimum context length filter
-            context_window_id: Filter to specific context window
-            batch_size: Number of questions to run concurrently
-            json_output: Path to write JSON results
-
-        Returns:
-            Summary dictionary
-        """
-        print(f"\n{'=' * 80}")
-        print(f"OOLONG-{self.variant} Benchmark")
-        print(f"{'=' * 80}\n")
-
-        # Load dataset
-        print(f"Loading OOLONG-{self.variant} dataset (split: {split})...")
-        if self.variant == "synth":
-            dataset = load_oolong_synth_dataset(split, data_dir=self.data_dir)
-        else:
-            dataset = load_oolong_real_dataset(split, data_dir=self.data_dir)
-
-        # Filter dataset
-        dataset = filter_dataset(
-            dataset,
-            max_context_len=max_context_len,
-            min_context_len=min_context_len,
-            max_examples=max_examples,
-            context_window_id=context_window_id,
+    def print_summary(self, results: list[TestResult], total_duration: float) -> None:
+        total_examples = len(results)
+        perfect_scores = sum(1 for r in results if r["score"] >= 0.99)
+        average_score = (
+            sum(result["score"] for result in results) / total_examples
+            if total_examples
+            else 0.0
         )
 
-        print(f"Running {len(dataset)} examples...")
-        print(f"Using {self.pool_size} Honcho instance(s)")
-        print(f"Batch size: {batch_size}\n")
-
-        start_time = time.time()
-        results: list[TestResult] = []
-
-        # Process in batches
-        for batch_start in range(0, len(dataset), batch_size):
-            batch_end = min(batch_start + batch_size, len(dataset))
-            # Convert HuggingFace dataset slice to list of dicts
-            batch = [dataset[i] for i in range(batch_start, batch_end)]
-
-            print(
-                f"\n--- Batch {batch_start // batch_size + 1}/{(len(dataset) + batch_size - 1) // batch_size} ---"
-            )
-
-            # Run batch concurrently
-            tasks = [
-                self.execute_question(
-                    example,
-                    batch_start + i,
-                    self.get_honcho_url_for_index(batch_start + i),
-                )
-                for i, example in enumerate(batch)
-            ]
-
-            batch_results = await asyncio.gather(*tasks)
-            results.extend(batch_results)
-
-            # Print batch results
-            for result in batch_results:
-                for line in result["output_lines"]:
-                    print(line)
-                print()
-
-        end_time = time.time()
-        total_elapsed = end_time - start_time
-
-        # Calculate statistics
-        total_score = sum(r["score"] for r in results)
-        avg_score = total_score / len(results) if results else 0.0
-        perfect_scores = sum(1 for r in results if r["score"] >= 0.99)
+        print(f"\n{'=' * 80}")
+        print(f"OOLONG-{self.variant.upper()} BENCHMARK SUMMARY")
+        print(f"{'=' * 80}")
+        print(f"Total examples: {total_examples}")
+        print(f"Average score: {average_score:.3f}")
+        perfect_rate = (
+            (perfect_scores / total_examples) * 100 if total_examples else 0.0
+        )
+        print(f"Perfect scores (>=0.99): {perfect_scores} ({perfect_rate:.1f}%)")
+        print(f"Total test time: {format_duration(total_duration)}")
 
         task_stats = calculate_task_statistics(results)
-        timing_stats = calculate_timing_statistics(results, total_elapsed)
-
-        # Print summary
-        print(f"\n{'=' * 80}")
-        print(f"OOLONG-{self.variant} Results Summary")
-        print(f"{'=' * 80}\n")
-        print(f"Total examples: {len(results)}")
-        print(f"Average score: {avg_score:.3f}")
-        perfect_rate = (perfect_scores/len(results)*100) if len(results) > 0 else 0.0
-        print(f"Perfect scores (≥0.99): {perfect_scores} ({perfect_rate:.1f}%)")
-        print(f"Total time: {format_duration(total_elapsed)}")
-
-        if len(results) > 0:
-            print(f"\nTask Group Statistics:")
-            for task_name, stats in task_stats.items():
+        if task_stats:
+            print("\nTask group statistics:")
+            for task_name, stats in sorted(task_stats.items()):
                 print(
-                    f"  {task_name}: avg={stats['average_score']:.3f}, " +
-                    f"perfect={stats['perfect_score_rate']:.1f}%"
+                    f"  {task_name}: avg={stats['average_score']:.3f}, perfect={stats['perfect_score_rate']:.1f}% ({stats['total']})"
                 )
-        else:
-            print("\nNo examples were processed. Check dataset loading or filters.")
+        print(f"{'=' * 80}")
 
-        # Write JSON summary
-        summary = {
-            "variant": self.variant,
-            "split": split,
-            "total_examples": len(results),
-            "average_score": avg_score,
-            "perfect_scores": perfect_scores,
-            "perfect_score_rate": perfect_scores / len(results) if results else 0.0,
-            "task_statistics": task_stats,
-            "timing_statistics": timing_stats,
-            "results": [
+    def generate_output(self, results: list[TestResult], total_duration: float) -> None:
+        total_examples = len(results)
+        perfect_scores = sum(1 for r in results if r["score"] >= 0.99)
+        average_score = (
+            sum(result["score"] for result in results) / total_examples
+            if total_examples
+            else 0.0
+        )
+        task_stats = calculate_task_statistics(results)
+        timing_stats = calculate_timing_statistics(results, total_duration)
+
+        summary: dict[str, Any] = {
+            "metadata": {
+                "benchmark": "oolong",
+                "variant": self.variant,
+                "split": self.split,
+                "data_dir": str(self.data_dir),
+                "execution_timestamp": datetime.now().isoformat(),
+                "runner_version": "2.0.0",
+                "base_api_port": self.config.base_api_port,
+                "pool_size": self.config.pool_size,
+                "timeout_seconds": self.config.timeout_seconds,
+                "merge_sessions": self.merge_sessions,
+                "labels": self.use_labels,
+                "reasoning_level": self.config.reasoning_level,
+                "deriver_settings": settings.DERIVER.model_dump(),
+                "dialectic_settings": settings.DIALECTIC.model_dump(),
+                "dream_settings": settings.DREAM.model_dump(),
+            },
+            "summary_statistics": {
+                "total_examples": total_examples,
+                "perfect_scores": perfect_scores,
+                "perfect_score_rate": perfect_scores / total_examples
+                if total_examples
+                else 0.0,
+                "average_score": average_score,
+                "statistics_by_task_group": task_stats,
+            },
+            "timing": timing_stats,
+            "detailed_results": [
                 {
-                    "question_id": r["question_id"],
-                    "context_window_id": r["context_window_id"],
-                    "task_group": r["task_group"],
-                    "dataset": r["dataset"],
-                    "score": r["score"],
-                    "passed": r["passed"],
-                    "error": r["error"],
-                    "duration_seconds": r["duration_seconds"],
-                    "query": r["query_executed"],
+                    "question_id": result["question_id"],
+                    "context_window_id": result["context_window_id"],
+                    "task_group": result["task_group"],
+                    "dataset": result["dataset"],
+                    "answer_type": result["answer_type"],
+                    "score": result["score"],
+                    "passed": result["passed"],
+                    "error": result["error"],
+                    "duration_seconds": result["duration_seconds"],
+                    "query_executed": result["query_executed"],
                 }
-                for r in results
+                for result in results
             ],
         }
 
-        if json_output is None:
-            # Auto-generate filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            json_output = (
-                Path("tests/bench/eval_results")
-                / f"oolong_{self.variant}_{timestamp}.json"
+        if self.config.json_output:
+            output_file = self.config.json_output
+        else:
+            output_file = Path(
+                f"tests/bench/eval_results/oolong_{self.variant}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
-        write_json_summary(summary, json_output)
-
-        return summary
+        write_json_summary(summary, output_file)
 
 
-async def main():
-    """Main entry point for the OOLONG benchmark runner."""
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run OOLONG benchmark tests against Honcho",
+        description="Run OOLONG benchmark tests against a Honcho instance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --variant synth --data-dir /datasets/oolong-synth
+  %(prog)s --variant real --data-dir /datasets/oolong-real --split validation
+  %(prog)s --variant synth --data-dir /datasets/oolong-synth --context-size 16K
+  %(prog)s --variant synth --data-dir /datasets/oolong-synth --no-merge-sessions
+        """,
     )
 
     parser.add_argument(
@@ -641,9 +440,9 @@ async def main():
     )
     parser.add_argument(
         "--data-dir",
-        type=str,
+        type=Path,
         required=True,
-        help="Path to the dataset directory (e.g., /path/to/oolong-synth or /path/to/oolong-real)",
+        help="Path to the dataset directory",
     )
     parser.add_argument(
         "--split",
@@ -663,22 +462,27 @@ async def main():
         type=str,
         default=None,
         help=(
-            "Discrete context size (e.g., '8K', '16K', '32K', or exact token count like '16384'). "
-            "Overrides --min-context-len and --max-context-len. "
-            "Available sizes: 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M, 2M, 4M"
+            "Discrete context size, e.g. 8K, 16K, 1M, or exact token count like 16384. "
+            "Overrides --min-context-len and --max-context-len."
         ),
     )
     parser.add_argument(
         "--max-context-len",
         type=int,
         default=None,
-        help="Maximum context length in tokens (default: no limit). Ignored if --context-size is set.",
+        help="Maximum context length in tokens",
+    )
+    parser.add_argument(
+        "--labels",
+        action="store_true",
+        default=False,
+        help="Use context_window_text_with_labels for synth examples",
     )
     parser.add_argument(
         "--min-context-len",
         type=int,
-        default=0,
-        help="Minimum context length in tokens (default: 0). Ignored if --context-size is set.",
+        default=1024,
+        help="Minimum context length in tokens (default: 1024, upstream behavior)",
     )
     parser.add_argument(
         "--context-window-id",
@@ -687,91 +491,76 @@ async def main():
         help="Run only examples with this context_window_id",
     )
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=600,
-        help="Timeout for deriver queue in seconds (default: 600)",
-    )
-    parser.add_argument(
-        "--base-api-port",
-        type=int,
-        default=8000,
-        help="Base port for Honcho API (default: 8000)",
-    )
-    parser.add_argument(
-        "--pool-size",
-        type=int,
-        default=1,
-        help="Number of Honcho instances in the pool (default: 1)",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=5,
-        help="Number of questions to run concurrently (default: 5)",
-    )
-    parser.add_argument(
-        "--json-output",
-        type=Path,
-        default=None,
-        help="Path to write JSON summary (auto-generated if not provided)",
-    )
-    parser.add_argument(
         "--no-merge-sessions",
         action="store_false",
         dest="merge_sessions",
         default=True,
-        help="Disable merging of contexts into a single session (default: enabled)",
-    )
-    parser.add_argument(
-        "--cleanup-workspace",
-        action="store_true",
-        default=False,
-        help="Delete workspace after each question (default: False)",
-    )
-    parser.add_argument(
-        "--use-dialectic-agentic",
-        action="store_true",
-        default=False,
-        help="Use agentic=true mode for dialectic (default: False)",
+        help="Store context across multiple sessions instead of a merged session",
     )
 
+    add_common_arguments(parser)
     args = parser.parse_args()
 
-    # Handle --context-size parameter (overrides min/max context len)
+    error = validate_common_arguments(args)
+    if error:
+        print(error)
+        return 1
+
+    if args.use_get_context:
+        print("Error: --use-get-context is not supported by the OOLONG runner")
+        return 1
+
+    if not args.data_dir.exists():
+        print(f"Error: data directory does not exist: {args.data_dir}")
+        return 1
+
+    if args.max_examples is not None and args.max_examples <= 0:
+        print(f"Error: max examples must be positive, got {args.max_examples}")
+        return 1
+
+    if args.min_context_len is not None and args.min_context_len < 0:
+        print(f"Error: min context len must be >= 0, got {args.min_context_len}")
+        return 1
+
+    if args.max_context_len is not None and args.max_context_len <= 0:
+        print(f"Error: max context len must be positive, got {args.max_context_len}")
+        return 1
+
+    if (
+        args.max_context_len is not None
+        and args.min_context_len is not None
+        and args.max_context_len < args.min_context_len
+    ):
+        print(
+            f"Error: max context len must be >= min context len ({args.max_context_len} < {args.min_context_len})"
+        )
+        return 1
+
     if args.context_size:
         try:
             exact_size = parse_context_size(args.context_size)
-            args.min_context_len = exact_size
-            args.max_context_len = exact_size
-            print(f"Using discrete context size: {args.context_size} ({exact_size} tokens)")
         except ValueError as e:
             print(f"Error: {e}")
-            return
+            return 1
+        args.min_context_len = exact_size
+        args.max_context_len = exact_size
+        print(f"Using discrete context size: {args.context_size} ({exact_size} tokens)")
 
-    # Create runner
-    runner = OolongBenchmarkRunner(
+    config = RunnerConfig.from_args(args, default_timeout=600)
+    runner = OolongRunner(
+        config=config,
         variant=args.variant,
         data_dir=args.data_dir,
-        base_api_port=args.base_api_port,
-        pool_size=args.pool_size,
-        timeout_seconds=args.timeout,
-        merge_sessions=args.merge_sessions,
-        cleanup_workspace=args.cleanup_workspace,
-        use_dialectic_agentic=args.use_dialectic_agentic,
-    )
-
-    # Run benchmark
-    await runner.run_benchmark(
         split=args.split,
+        merge_sessions=args.merge_sessions,
         max_examples=args.max_examples,
-        max_context_len=args.max_context_len,
         min_context_len=args.min_context_len,
+        max_context_len=args.max_context_len,
         context_window_id=args.context_window_id,
-        batch_size=args.batch_size,
-        json_output=args.json_output,
+        use_labels=args.labels,
     )
+    return runner.run_and_summarize()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    exit(main())
