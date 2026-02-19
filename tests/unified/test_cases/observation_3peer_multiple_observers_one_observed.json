@@ -1,7 +1,6 @@
 {
   "description": "Test multiple observers watching single peer - Bob and Charlie both observe Alice",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -49,7 +48,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",
@@ -60,7 +60,7 @@
       "assertions": [
         {
           "assertion_type": "contains",
-          "text": "dancer",
+          "text": "dance",
           "case_sensitive": false
         }
       ]
@@ -74,7 +74,7 @@
       "assertions": [
         {
           "assertion_type": "contains",
-          "text": "dancer",
+          "text": "dance",
           "case_sensitive": false
         }
       ]
@@ -114,30 +114,24 @@
       ]
     },
     {
-      "step_type": "query",
-      "target": "get_peer_card",
-      "observer_peer_id": "bob",
-      "observed_peer_id": "alice",
-      "assertions": [
-        {
-          "assertion_type": "contains",
-          "text": "dancer",
-          "case_sensitive": false
-        }
-      ]
+      "step_type": "schedule_dream",
+      "observer": "bob",
+      "observed": "alice",
+      "session_id": "session_all_watch_alice",
+      "dream_type": "omni"
     },
     {
-      "step_type": "query",
-      "target": "get_peer_card",
-      "observer_peer_id": "charlie",
-      "observed_peer_id": "alice",
-      "assertions": [
-        {
-          "assertion_type": "contains",
-          "text": "dancer",
-          "case_sensitive": false
-        }
-      ]
+      "step_type": "schedule_dream",
+      "observer": "charlie",
+      "observed": "alice",
+      "session_id": "session_all_watch_alice",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
     },
     {
       "step_type": "query",

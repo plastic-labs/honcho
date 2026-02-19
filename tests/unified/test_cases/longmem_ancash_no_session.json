@@ -1,95 +1,95 @@
 {
-    "description": "LongMemEval test: single-session-assistant question",
-    "workspace_config": {
-    },
-    "steps": [
-      {
-        "step_type": "create_session",
-        "session_id": "answer_ultrachat_294807",
-        "peer_configs": {
-          "user": {
-            "observe_me": false,
-            "observe_others": false
-          },
-          "assistant": {
-            "observe_me": true,
-            "observe_others": false
-          }
+  "description": "LongMemEval test: single-session-assistant question",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "answer_ultrachat_294807",
+      "peer_configs": {
+        "user": {
+          "observe_me": false,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": true,
+          "observe_others": false
         }
-      },
-      {
-        "step_type": "add_messages",
-        "session_id": "answer_ultrachat_294807",
-        "messages": [
-          {
-            "peer_id": "user",
-            "content": "Could you suggest a recipe for a classic dish from Ancash?",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "assistant",
-            "content": "Sure! How about \"Seco de Cordero\" (Lamb Stew) from Ancash:\n\nIngredients:\n- 2 lbs. lamb, cut into small pieces\n- 1 onion, chopped\n- 3 garlic cloves, minced\n- 1 tsp. cumin\n- 1 tsp. dried oregano\n- 2 tbsp. vegetable oil\n- 2 tbsp. ají amarillo paste\n- 1 cup beer\n- 2 cups water\n- 4 potatoes, peeled and cut into wedges\n- Salt and pepper, to taste\n- 1/4 cup chopped cilantro\n\nInstructions:\n1. In a large pot, heat the oil over medium-high heat. Add the lamb pieces and cook until browned on all sides, about 8-10 minutes.\n2. Remove the lamb from the pot and set it aside on a plate.\n3. In the same pot, add the chopped onion and garlic. Cook until translucent, about 5-7 minutes.\n4. Add the cumin, oregano, and ají amarillo paste to the pot. Stir to combine and cook for another minute or two.\n5. Add the beer, water, and lamb back to the pot. Bring the mixture to a boil and then reduce the heat to low. Cover and let simmer for about 1 hour, or until the lamb is tender.\n6. Add the potatoes to the pot and season with salt and pepper to taste. Cook until the potatoes are soft and the stew has thickened, about 30-45 minutes.\n7. To finish, stir in the chopped cilantro and serve hot with a side of rice.\n\nEnjoy your Seco de Cordero, a delicious and hearty dish from Ancash!",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "user",
-            "content": "That sounds amazing! I've never tried a lamb stew before. Do you have any recommendations for a good type of beer to use in the recipe?",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "assistant",
-            "content": "I don't have personal preferences, but in general, it's recommended to use a light or medium-bodied beer for this recipe to avoid overpowering the flavors of the lamb and spices. a pilsner or lager would work well, but you can also use a local beer from ancash to give the dish a more authentic touch. ultimately, it comes down to your personal preference, so you can choose a beer that you enjoy drinking and experiment with different types to find your favorite one. enjoy your delicious seco de cordero!",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "user",
-            "content": "I'll definitely try this recipe with a Pilsner. Is there anything else I should know before I start cooking?",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "assistant",
-            "content": "Here are a few more tips to keep in mind as you prepare your Seco de Cordero:\n\n1. It's best to use a tough cut of lamb for this recipe, such as shoulder or leg, as the long cooking time will help to tenderize the meat. 2. When browning the lamb, make sure not to overcrowd the pot or the meat will steam instead of searing. To ensure a nice crust, work in batches if necessary. 3. If you can't find fresh ají amarillo peppers or paste, you can substitute with other chili paste or powder that has a similar heat level and flavor profile. 4. You can adjust the amount of liquid in the recipe to your preference. If you like your stew to be thicker, use less water or beer. 5. Once the potatoes are added, it's important to stir them gently to avoid breaking them apart. You can also add them halfway through the cooking process if you prefer firmer potatoes. 6. Don't forget to taste and adjust the seasoning at the end of the cooking process to make sure the stew is well-seasoned to your liking. I hope these tips are helpful, and I wish you a great cooking experience and a delicious meal!",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "user",
-            "content": "I'm really excited to try this recipe this weekend. Do you have any dessert suggestions that would pair well with the Seco de Cordero?",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "assistant",
-            "content": "Absolutely! How about a classic Peruvian dessert - \"Arroz con Leche\" (Rice Pudding)? It's a creamy and comforting dessert that would complement the rich flavors of the lamb stew. Here's a simple recipe you can try:\n\nIngredients:\n- 1 cup white rice\n- 4 cups whole milk\n- 1 can (14 oz.) sweetened condensed milk\n- 1 cinnamon stick\n- 1 tsp. vanilla extract\n- 1/4 cup raisins (optional)\n- Ground cinnamon for dusting\n\nInstructions:\n1. Rinse the rice in cold water and drain. 2. In a large saucepan, combine the rice, milk, sweetened condensed milk, and cinnamon stick. Bring the mixture to a simmer over medium heat. 3. Reduce the heat to low and cook, stirring frequently, for about 30-40 minutes, or until the rice is tender and the mixture has thickened to a pudding-like consistency. 4. Remove the cinnamon stick and stir in the vanilla extract and raisins (if using). Let the rice pudding cool to room temperature, then chill in the fridge for at least an hour. 5. To serve, spoon the rice pudding into bowls and dust with some ground cinnamon. Enjoy your delicious Seco de Cordero followed by a comforting bowl of Arroz con Leche for dessert!",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "user",
-            "content": "Yum, that sounds like the perfect way to end my Seco de Cordero dinner. Do you have any other classic Peruvian recipes you would recommend trying?",
-            "created_at": "2023-05-20T00:37:00"
-          },
-          {
-            "peer_id": "assistant",
-            "content": "Yes, there are many delicious Peruvian dishes you can try! Here are some classic Peruvian dishes that you might want to add to your recipe collection:\n\n1. Ceviche - a refreshing dish made with fresh raw fish or seafood marinated in citrus juice and spices, served with sweet potato and corn. 2. Lomo Saltado - a popular stir-fry dish made with beef, onions, tomatoes, and spices, served with rice and french fries. 3. Ají de Gallina - a creamy chicken stew made with shredded chicken, bread, walnuts and aji amarillo pepper, served with boiled potatoes and rice. 4. Pollo a la Brasa - a succulent rotisserie chicken marinated in spices, served with fries, salad, and aji sauce. 5. Papa a la Huancaína - boiled potatoes served with a spicy creamy sauce made with cheese, ají amarillo pepper and evaporated milk, garnished with hard-boiled eggs and olives. 6. Anticuchos - skewers of marinated beef heart or chicken, grilled and served with boiled potatoes and aji sauce. All of these dishes are delicious and unique, and can give you an authentic taste of Peruvian cuisine. You can also explore other Peruvian dishes and find the ones that suit your taste buds. Enjoy!",
-            "created_at": "2023-05-20T00:37:00"
-          }
-        ]
-      },
-      {
-        "step_type": "wait",
-        "target": "queue_empty"
-      },
-      {
-        "step_type": "query",
-        "target": "chat",
-        "observer_peer_id": "assistant",
-        "observed_peer_id": "assistant",
-        "input": "[2023/05/23 (Tue) 07:05] I'm looking back at our previous conversation about the Seco de Cordero recipe from Ancash. You mentioned using a light or medium-bodied beer, but I was wondering if you could remind me what type of beer you specifically recommended?",
-        "assertions": [
-          {
-            "assertion_type": "llm_judge",
-            "prompt": "Does the response indicate that a Pilsner or Lager was recommended for the beer in the recipe? The expected answer is 'I recommended using a Pilsner or Lager for the recipe.' Accept responses that convey this information even if worded differently.",
-            "pass_if": true
-          }
-        ]
       }
-    ]
-  }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "answer_ultrachat_294807",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "Could you suggest a recipe for a classic dish from Ancash?",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Sure! How about \"Seco de Cordero\" (Lamb Stew) from Ancash:\n\nIngredients:\n- 2 lbs. lamb, cut into small pieces\n- 1 onion, chopped\n- 3 garlic cloves, minced\n- 1 tsp. cumin\n- 1 tsp. dried oregano\n- 2 tbsp. vegetable oil\n- 2 tbsp. aj\u00ed amarillo paste\n- 1 cup beer\n- 2 cups water\n- 4 potatoes, peeled and cut into wedges\n- Salt and pepper, to taste\n- 1/4 cup chopped cilantro\n\nInstructions:\n1. In a large pot, heat the oil over medium-high heat. Add the lamb pieces and cook until browned on all sides, about 8-10 minutes.\n2. Remove the lamb from the pot and set it aside on a plate.\n3. In the same pot, add the chopped onion and garlic. Cook until translucent, about 5-7 minutes.\n4. Add the cumin, oregano, and aj\u00ed amarillo paste to the pot. Stir to combine and cook for another minute or two.\n5. Add the beer, water, and lamb back to the pot. Bring the mixture to a boil and then reduce the heat to low. Cover and let simmer for about 1 hour, or until the lamb is tender.\n6. Add the potatoes to the pot and season with salt and pepper to taste. Cook until the potatoes are soft and the stew has thickened, about 30-45 minutes.\n7. To finish, stir in the chopped cilantro and serve hot with a side of rice.\n\nEnjoy your Seco de Cordero, a delicious and hearty dish from Ancash!",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "That sounds amazing! I've never tried a lamb stew before. Do you have any recommendations for a good type of beer to use in the recipe?",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "I don't have personal preferences, but in general, it's recommended to use a light or medium-bodied beer for this recipe to avoid overpowering the flavors of the lamb and spices. a pilsner or lager would work well, but you can also use a local beer from ancash to give the dish a more authentic touch. ultimately, it comes down to your personal preference, so you can choose a beer that you enjoy drinking and experiment with different types to find your favorite one. enjoy your delicious seco de cordero!",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'll definitely try this recipe with a Pilsner. Is there anything else I should know before I start cooking?",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Here are a few more tips to keep in mind as you prepare your Seco de Cordero:\n\n1. It's best to use a tough cut of lamb for this recipe, such as shoulder or leg, as the long cooking time will help to tenderize the meat. 2. When browning the lamb, make sure not to overcrowd the pot or the meat will steam instead of searing. To ensure a nice crust, work in batches if necessary. 3. If you can't find fresh aj\u00ed amarillo peppers or paste, you can substitute with other chili paste or powder that has a similar heat level and flavor profile. 4. You can adjust the amount of liquid in the recipe to your preference. If you like your stew to be thicker, use less water or beer. 5. Once the potatoes are added, it's important to stir them gently to avoid breaking them apart. You can also add them halfway through the cooking process if you prefer firmer potatoes. 6. Don't forget to taste and adjust the seasoning at the end of the cooking process to make sure the stew is well-seasoned to your liking. I hope these tips are helpful, and I wish you a great cooking experience and a delicious meal!",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "I'm really excited to try this recipe this weekend. Do you have any dessert suggestions that would pair well with the Seco de Cordero?",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Absolutely! How about a classic Peruvian dessert - \"Arroz con Leche\" (Rice Pudding)? It's a creamy and comforting dessert that would complement the rich flavors of the lamb stew. Here's a simple recipe you can try:\n\nIngredients:\n- 1 cup white rice\n- 4 cups whole milk\n- 1 can (14 oz.) sweetened condensed milk\n- 1 cinnamon stick\n- 1 tsp. vanilla extract\n- 1/4 cup raisins (optional)\n- Ground cinnamon for dusting\n\nInstructions:\n1. Rinse the rice in cold water and drain. 2. In a large saucepan, combine the rice, milk, sweetened condensed milk, and cinnamon stick. Bring the mixture to a simmer over medium heat. 3. Reduce the heat to low and cook, stirring frequently, for about 30-40 minutes, or until the rice is tender and the mixture has thickened to a pudding-like consistency. 4. Remove the cinnamon stick and stir in the vanilla extract and raisins (if using). Let the rice pudding cool to room temperature, then chill in the fridge for at least an hour. 5. To serve, spoon the rice pudding into bowls and dust with some ground cinnamon. Enjoy your delicious Seco de Cordero followed by a comforting bowl of Arroz con Leche for dessert!",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "Yum, that sounds like the perfect way to end my Seco de Cordero dinner. Do you have any other classic Peruvian recipes you would recommend trying?",
+          "created_at": "2023-05-20T00:37:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Yes, there are many delicious Peruvian dishes you can try! Here are some classic Peruvian dishes that you might want to add to your recipe collection:\n\n1. Ceviche - a refreshing dish made with fresh raw fish or seafood marinated in citrus juice and spices, served with sweet potato and corn. 2. Lomo Saltado - a popular stir-fry dish made with beef, onions, tomatoes, and spices, served with rice and french fries. 3. Aj\u00ed de Gallina - a creamy chicken stew made with shredded chicken, bread, walnuts and aji amarillo pepper, served with boiled potatoes and rice. 4. Pollo a la Brasa - a succulent rotisserie chicken marinated in spices, served with fries, salad, and aji sauce. 5. Papa a la Huanca\u00edna - boiled potatoes served with a spicy creamy sauce made with cheese, aj\u00ed amarillo pepper and evaporated milk, garnished with hard-boiled eggs and olives. 6. Anticuchos - skewers of marinated beef heart or chicken, grilled and served with boiled potatoes and aji sauce. All of these dishes are delicious and unique, and can give you an authentic taste of Peruvian cuisine. You can also explore other Peruvian dishes and find the ones that suit your taste buds. Enjoy!",
+          "created_at": "2023-05-20T00:37:00"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "assistant",
+      "input": "[2023/05/23 (Tue) 07:05] I'm looking back at our previous conversation about the Seco de Cordero recipe from Ancash. You mentioned using a light or medium-bodied beer, but I was wondering if you could remind me what type of beer you specifically recommended?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response indicate that a Pilsner or Lager was recommended for the beer in the recipe? The expected answer is 'I recommended using a Pilsner or Lager for the recipe.' Accept responses that convey this information even if worded differently.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

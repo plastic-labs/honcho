@@ -21,12 +21,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.orm.properties import MappedColumn
+from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
-from src.utils.types import DocumentLevel, TaskType
+from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
 
@@ -279,7 +278,7 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -290,6 +289,16 @@ class MessageEmbedding(Base):
     peer_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    # Vector sync state tracking
+    sync_state: Mapped[VectorSyncState] = mapped_column(
+        TEXT, nullable=False, server_default="pending", index=True
+    )
+    last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
     )
 
     __table_args__ = (
@@ -309,6 +318,12 @@ class MessageEmbedding(Base):
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        # Composite index for efficient reconciliation queries
+        Index(
+            "ix_message_embeddings_sync_state_last_sync_at",
+            "sync_state",
+            "last_sync_at",
         ),
     )
 
@@ -371,10 +386,10 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -384,7 +399,22 @@ class Document(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
-    session_name: Mapped[str] = mapped_column(TEXT, index=True)
+    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True, default=None
+    )
+
+    # Vector sync state tracking
+    sync_state: Mapped[VectorSyncState] = mapped_column(
+        TEXT, nullable=False, server_default="pending", index=True
+    )
+    last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
@@ -431,6 +461,12 @@ class Document(Base):
             "source_ids",
             postgresql_using="gin",
         ),
+        # Composite index for efficient reconciliation queries
+        Index(
+            "ix_documents_sync_state_last_sync_at",
+            "sync_state",
+            "last_sync_at",
+        ),
     )
 
 
@@ -454,8 +490,8 @@ class QueueItem(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
+    workspace_name: Mapped[str | None] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=True, index=True
     )
     message_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("messages.id"), nullable=True
@@ -472,6 +508,20 @@ class QueueItem(Base):
             "work_unit_key",
             "processed",
             "id",
+        ),
+        # Partial unique index for reconciler task deduplication
+        Index(
+            "uq_queue_reconciler_pending_work_unit_key",
+            "work_unit_key",
+            unique=True,
+            postgresql_where=text("task_type = 'reconciler' AND processed = false"),
+        ),
+        # Partial unique index for dream task deduplication
+        Index(
+            "uq_queue_dream_pending_work_unit_key",
+            "work_unit_key",
+            unique=True,
+            postgresql_where=text("task_type = 'dream' AND processed = false"),
         ),
     )
 

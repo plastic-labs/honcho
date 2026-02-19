@@ -34,7 +34,7 @@ def test_peer_operations(honcho_test_client: Honcho):
     """
     Tests creation and metadata operations for peers.
     """
-    peers_page = honcho_test_client.get_peers()
+    peers_page = honcho_test_client.peers()
     assert len(list(peers_page)) == 0
 
     peer = honcho_test_client.peer(id="test-peer-1")
@@ -44,7 +44,7 @@ def test_peer_operations(honcho_test_client: Honcho):
     metadata = peer.get_metadata()
     assert metadata == {}
 
-    peers_page = honcho_test_client.get_peers()
+    peers_page = honcho_test_client.peers()
     assert len(list(peers_page)) == 1
 
     peer.set_metadata({"foo": "bar"})
@@ -56,7 +56,7 @@ def test_session_operations(honcho_test_client: Honcho):
     """
     Tests creation, peer management, and metadata for sessions.
     """
-    sessions_page = honcho_test_client.get_sessions()
+    sessions_page = honcho_test_client.sessions()
     assert len(list(sessions_page)) == 0
 
     session = honcho_test_client.session(id="test-session-1")
@@ -66,7 +66,7 @@ def test_session_operations(honcho_test_client: Honcho):
     metadata = session.get_metadata()
     assert metadata == {}
 
-    sessions_page = honcho_test_client.get_sessions()
+    sessions_page = honcho_test_client.sessions()
     assert len(list(sessions_page)) == 1
 
     session.set_metadata({"bar": "baz"})
@@ -80,7 +80,7 @@ def test_session_operations(honcho_test_client: Honcho):
         [assistant, (user, SessionPeerConfig(observe_others=False, observe_me=False))]
     )
 
-    session_peers = session.get_peers()
+    session_peers = session.peers()
     assert len(session_peers) == 2
 
 
@@ -99,8 +99,46 @@ def test_message_and_chat_operations(honcho_test_client: Honcho):
         ]
     )
 
-    messages = session.get_messages()
+    messages = session.messages()
     assert len(list(messages)) == 2
 
     # This is a mock response from the agent
     _response = user.chat("What did I ask about?")
+
+
+def test_peer_card_operations(honcho_test_client: Honcho):
+    """
+    Tests setting and getting peer cards.
+    """
+    peer = honcho_test_client.peer(id="card-test-peer")
+    target = honcho_test_client.peer(id="card-test-target")
+
+    # Create the peers on the server by adding a message
+    session = honcho_test_client.session(id="card-test-session")
+    session.add_messages([peer.message("hello"), target.message("hi")])
+
+    # Initially card should be None
+    card = peer.get_card()
+    assert card is None
+
+    # Set own card
+    own_card = ["I am a helpful assistant", "I enjoy learning"]
+    result = peer.set_card(own_card)
+    assert result == own_card
+
+    # Verify with get
+    card = peer.get_card()
+    assert card == own_card
+
+    # Set card for target
+    target_card = ["Target likes Python", "Target is friendly"]
+    result = peer.set_card(target_card, target=target)
+    assert result == target_card
+
+    # Verify with get
+    card = peer.get_card(target=target)
+    assert card == target_card
+
+    # Own card should still be unchanged
+    card = peer.get_card()
+    assert card == own_card

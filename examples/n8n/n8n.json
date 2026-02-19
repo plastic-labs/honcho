@@ -18,7 +18,7 @@
       },
       {
         "parameters": {
-          "content": "## AI Chat With Honcho get_context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
+          "content": "## AI Chat With Honcho context()\nQuery your email data using natural language.\n\n**Run after data ingestion** to chat with the agent.",
           "height": 480,
           "width": 752
         },
@@ -54,7 +54,7 @@
       {
         "parameters": {
           "options": {
-            "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Get_Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
+            "systemMessage": "You are a helpful assistant that retrieves context about email conversations.\n\nUse the Context tool to retrieve session context.\n\nToday's date: {{ $now }}"
           }
         },
         "id": "049c3c19-756c-4755-88d9-94312857d9bb",
@@ -83,7 +83,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/peers",
+          "url": "=https://api.honcho.dev/v3/workspaces/{{ $('Get or Create Workspace').item.json.id }}/peers",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "httpBearerAuth",
           "sendBody": true,
@@ -136,7 +136,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions",
+          "url": "=https://api.honcho.dev/v3/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "httpBearerAuth",
           "sendBody": true,
@@ -179,7 +179,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://api.honcho.dev/v2/workspaces",
+          "url": "https://api.honcho.dev/v3/workspaces",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "httpBearerAuth",
           "sendBody": true,
@@ -265,7 +265,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/",
+          "url": "=https://api.honcho.dev/v3/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/messages/",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "httpBearerAuth",
           "sendBody": true,
@@ -291,7 +291,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "=https://api.honcho.dev/v2/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/peers",
+          "url": "=https://api.honcho.dev/v3/workspaces/{{ $('Get or Create Workspace').item.json.id }}/sessions/{{ $('Get or Create Session').item.json.id }}/peers",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "httpBearerAuth",
           "sendBody": true,
@@ -327,7 +327,7 @@
       },
       {
         "parameters": {
-          "url": "https://api.honcho.dev/v2/workspaces/email-test/sessions/new_session/context",
+          "url": "https://api.honcho.dev/v3/workspaces/email-test/sessions/new_session/context",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "httpBearerAuth",
           "options": {}
@@ -339,7 +339,7 @@
           784
         ],
         "id": "095e62d6-aae3-4eb8-9b9c-c473bfe2716d",
-        "name": "Get_Context",
+        "name": "Context",
         "credentials": {
           "httpBearerAuth": {
             "id": "NbrkGo1GdYWQY3OX",
@@ -482,7 +482,7 @@
           ]
         ]
       },
-      "Get_Context": {
+      "Context": {
         "ai_tool": [
           [
             {

@@ -84,6 +84,27 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - Typechecking: `uv run basedpyright`
 - Format code: `uv run ruff format src/`
 
+### SDK Testing
+
+#### TypeScript SDK
+
+**🚨 DO NOT RUN `bun test` DIRECTLY. IT WILL NOT WORK. 🚨**
+
+The TypeScript SDK tests require a running Honcho server with database and Redis. Running `bun test` alone will fail immediately because there's no server. The tests are orchestrated via pytest which handles all the infrastructure setup.
+
+**The ONLY way to run TypeScript SDK tests:**
+
+```bash
+# From the monorepo root (not from sdks/typescript/)
+uv run pytest tests/ -k typescript
+```
+
+**To type-check the TypeScript SDK (this is fine to run directly):**
+
+```bash
+cd sdks/typescript && bun run tsc --noEmit
+```
+
 ### Code Style
 
 - Follow isort conventions with absolute imports preferred
@@ -92,6 +113,7 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - Line length: 88 chars (Black compatible)
 - Explicit error handling with appropriate exception types
 - Docstrings: Use Google style docstrings
+- **Never hold a DB session during external calls** (LLM, embedding, HTTP). If a function needs both a DB session and an external call result, compute the external result first and pass it as a parameter. This avoids tying up DB connections during slow network I/O. Use `tracked_db` for short-lived, DB-only operations; pass a shared session when multiple DB-only calls can reuse one connection.
 
 ### Agent Architecture
 

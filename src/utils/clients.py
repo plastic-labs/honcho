@@ -2,6 +2,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
@@ -22,14 +23,36 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
+from src.telemetry.logging import conditional_observe
+from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.json_parser import validate_and_repair_json
-from src.utils.logging import conditional_observe
-from src.utils.reasoning_traces import log_reasoning_trace
 from src.utils.representation import PromptRepresentation
 from src.utils.tokens import estimate_tokens
-from src.utils.types import SupportedProviders
+from src.utils.types import SupportedProviders, set_current_iteration
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IterationData:
+    """Data passed to iteration callbacks after each tool execution loop iteration."""
+
+    iteration: int
+    """1-indexed iteration number."""
+    tool_calls: list[str]
+    """List of tool names called in this iteration."""
+    input_tokens: int
+    """Input tokens used in this iteration's LLM call."""
+    output_tokens: int
+    """Output tokens generated in this iteration's LLM call."""
+    cache_read_tokens: int = 0
+    """Tokens read from cache in this iteration."""
+    cache_creation_tokens: int = 0
+    """Tokens written to cache in this iteration."""
+
+
+# Type alias for iteration callback
+IterationCallback = Callable[[IterationData], None]
 
 T = TypeVar("T")
 
@@ -467,6 +490,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     cache_read_input_tokens: int = 0
     finish_reasons: list[str]
     tool_calls_made: list[dict[str, Any]] = Field(default_factory=list)
+    iterations: int = 0
+    """Number of LLM calls made in the tool execution loop (1 = single response, 2+ = tool use iterations plus final synthesis)."""
     thinking_content: str | None = None
     # Full thinking blocks with signatures for multi-turn conversation replay (Anthropic only)
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
@@ -506,6 +531,7 @@ class StreamingResponseWithMetadata:
     cache_creation_input_tokens: int
     cache_read_input_tokens: int
     thinking_content: str | None
+    iterations: int
 
     def __init__(
         self,
@@ -516,6 +542,7 @@ class StreamingResponseWithMetadata:
         cache_creation_input_tokens: int,
         cache_read_input_tokens: int,
         thinking_content: str | None = None,
+        iterations: int = 0,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -524,6 +551,7 @@ class StreamingResponseWithMetadata:
         self.cache_creation_input_tokens = cache_creation_input_tokens
         self.cache_read_input_tokens = cache_read_input_tokens
         self.thinking_content = thinking_content
+        self.iterations = iterations
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         return self._stream.__aiter__()
@@ -628,6 +656,7 @@ async def _execute_tool_loop(
     ],
     before_retry_callback: Callable[[Any], None],
     stream_final: bool = False,
+    iteration_callback: IterationCallback | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """
     Execute the tool calling loop for agentic LLM interactions.
@@ -660,6 +689,7 @@ async def _execute_tool_loop(
         get_provider_and_model: Function to get current provider/model based on attempt
         before_retry_callback: Callback for retry events
         stream_final: If True, stream the final response instead of returning it synchronously
+        iteration_callback: Optional callback invoked after each iteration with IterationData
 
     Returns:
         Final HonchoLLMCallResponse with accumulated token counts and tool call history,
@@ -676,10 +706,13 @@ async def _execute_tool_loop(
     total_output_tokens = 0
     total_cache_creation_tokens = 0
     total_cache_read_tokens = 0
+    empty_response_retries = 0
     # Track effective tool_choice - switches from "required" to "auto" after first iteration
     effective_tool_choice = tool_choice
 
     while iteration < max_tool_iterations:
+        # Reset attempt counter so each iteration starts with the primary provider
+        _current_attempt.set(1)
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
 
         # Truncate BEFORE making the API call to avoid context length errors
@@ -748,6 +781,25 @@ async def _execute_tool_loop(
             # No tool calls, return final response
             logger.debug("No tool calls in response, finishing")
 
+            if (
+                isinstance(response.content, str)
+                and not response.content.strip()
+                and empty_response_retries < 1
+                and iteration < max_tool_iterations - 1
+            ):
+                empty_response_retries += 1
+                conversation_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your last response was empty. Provide a concise answer "
+                            "to the original query using the available context."
+                        ),
+                    }
+                )
+                iteration += 1
+                continue
+
             if stream_final:
                 # Stream the final response with metadata from tool execution
                 stream = _stream_final_response(
@@ -771,6 +823,7 @@ async def _execute_tool_loop(
                     cache_creation_input_tokens=total_cache_creation_tokens,
                     cache_read_input_tokens=total_cache_read_tokens,
                     thinking_content=response.thinking_content,
+                    iterations=iteration + 1,
                 )
 
             response.tool_calls_made = all_tool_calls
@@ -778,6 +831,7 @@ async def _execute_tool_loop(
             response.output_tokens = total_output_tokens
             response.cache_creation_input_tokens = total_cache_creation_tokens
             response.cache_read_input_tokens = total_cache_read_tokens
+            response.iterations = iteration + 1
             return response
 
         # Determine which provider we're using (reuse the helper)
@@ -792,6 +846,9 @@ async def _execute_tool_loop(
             response.reasoning_details,
         )
         conversation_messages.append(assistant_message)
+
+        # Set current iteration for telemetry context (1-indexed)
+        set_current_iteration(iteration + 1)
 
         # Execute tools and add results
         tool_results: list[dict[str, Any]] = []
@@ -837,6 +894,21 @@ async def _execute_tool_loop(
         # Add tool result message in provider-specific format
         _append_tool_results(current_provider, tool_results, conversation_messages)
 
+        # Call iteration callback if provided
+        if iteration_callback is not None:
+            try:
+                iteration_data = IterationData(
+                    iteration=iteration + 1,  # 1-indexed
+                    tool_calls=[tc["name"] for tc in response.tool_calls_made],
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    cache_read_tokens=response.cache_read_input_tokens or 0,
+                    cache_creation_tokens=response.cache_creation_input_tokens or 0,
+                )
+                iteration_callback(iteration_data)
+            except Exception:
+                logger.warning("iteration_callback failed", exc_info=True)
+
         # After first iteration, switch from "required" to "auto" to allow model to stop
         if iteration == 0 and effective_tool_choice in ("required", "any"):
             effective_tool_choice = "auto"
@@ -850,6 +922,16 @@ async def _execute_tool_loop(
     logger.warning(
         f"Tool execution loop reached max iterations ({max_tool_iterations})"
     )
+
+    # Add a synthesis prompt to help the model generate a response
+    # without tool calls - the conversation currently ends with tool results
+    # and the model may not know to produce text output
+    synthesis_prompt = (
+        "You have reached the maximum number of tool calls. "
+        "Based on all the information you have gathered, provide your final response now. "
+        "Do not attempt to call any more tools."
+    )
+    conversation_messages.append({"role": "user", "content": synthesis_prompt})
 
     # If streaming the final response, use the streaming helper with metadata
     if stream_final:
@@ -874,14 +956,17 @@ async def _execute_tool_loop(
             cache_creation_input_tokens=total_cache_creation_tokens,
             cache_read_input_tokens=total_cache_read_tokens,
             thinking_content=None,  # No thinking content at max iterations
+            iterations=iteration + 1,  # +1 for the synthesis call
         )
 
     # Make one final call to get a text response
     _current_attempt.set(1)  # Reset attempt counter
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
-        provider = llm_settings.PROVIDER
-        model = llm_settings.MODEL
+        # Use shared provider selection helper for backup failover support
+        provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
+            get_provider_and_model()
+        )
 
         client = CLIENTS.get(provider)
         if not client:
@@ -897,9 +982,9 @@ async def _execute_tool_loop(
             json_mode,
             _get_effective_temperature(temperature),
             stop_seqs,
-            reasoning_effort,
-            verbosity,
-            thinking_budget_tokens,
+            gpt5_reasoning_effort,
+            gpt5_verbosity,
+            thinking_budget,
             False,
             None,  # No tools
             None,  # No tool_choice
@@ -917,6 +1002,7 @@ async def _execute_tool_loop(
 
     final_response = await final_call_func()
     final_response.tool_calls_made = all_tool_calls
+    final_response.iterations = iteration + 1  # +1 for the synthesis call
     # Include accumulated tokens from all iterations plus the final call
     final_response.input_tokens = total_input_tokens + final_response.input_tokens
     final_response.output_tokens = total_output_tokens + final_response.output_tokens
@@ -1116,6 +1202,7 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    iteration_callback: IterationCallback | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -1144,6 +1231,7 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    iteration_callback: IterationCallback | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -1172,6 +1260,7 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    iteration_callback: IterationCallback | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
@@ -1200,6 +1289,7 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    iteration_callback: IterationCallback | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -1231,6 +1321,7 @@ async def honcho_llm_call(
         tool_executor: Async callable to execute tools, receives (tool_name, tool_input)
         max_tool_iterations: Maximum number of tool execution loops
         messages: Optional message list for multi-turn conversations (overrides prompt)
+        iteration_callback: Optional callback invoked after each tool iteration with IterationData
 
     Returns:
         HonchoLLMCallResponse or AsyncIterator depending on stream parameter
@@ -1445,6 +1536,7 @@ async def honcho_llm_call(
         get_provider_and_model=_get_provider_and_model,
         before_retry_callback=before_retry_callback,
         stream_final=stream_final_only,
+        iteration_callback=iteration_callback,
     )
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(

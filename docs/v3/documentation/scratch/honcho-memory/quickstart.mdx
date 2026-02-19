@@ -1,0 +1,288 @@
+---
+title: 'Quickstart - Honcho Memory'
+icon: 'bolt'
+sidebarTitle: 'Quickstart'
+---
+
+Implement Honcho Memory in just a few steps. No signup required.
+
+<Note>
+By default, the SDK uses the demo server hosted at demo.honcho.dev. The demo server is meant for quick experimentation and the data is cleared on a regular basis. Do not use for production applications.
+</Note>
+
+## 1. Install the SDK
+
+<CodeGroup>
+```bash Python (uv)
+uv add honcho-ai
+```
+
+```bash Python (pip)
+pip install honcho-ai
+```
+
+```bash TypeScript (npm)
+npm install @honcho-ai/sdk
+```
+
+```bash TypeScript (yarn)
+yarn add @honcho-ai/sdk
+```
+
+```bash TypeScript (pnpm)
+pnpm add @honcho-ai/sdk
+```
+</CodeGroup>
+
+## 2. Initialize the Client
+
+The Honcho client is the main entry point for interacting with Honcho's API. By default, it uses the demo environment and a default workspace.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client (uses demo environment and default workspace)
+honcho = Honcho()
+
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Initialize client (uses demo environment and default workspace)
+const honcho = new Honcho({});
+
+```
+</CodeGroup>
+
+## 3. Create Peers
+
+Peers represent individual users, AI agents, or any conversational entity in your system:
+
+<CodeGroup>
+```python Python
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
+```
+
+```typescript TypeScript
+const alice = await honcho.peer("alice")
+const bob = await honcho.peer("bob")
+```
+</CodeGroup>
+
+## 4. Create a Session
+
+Sessions are independent conversations that can include multiple peers:
+
+<CodeGroup>
+```python Python
+session = honcho.session("session_1")
+session.add_peers([alice, bob])
+```
+
+```typescript TypeScript
+const session = await honcho.session("session_1")
+await session.addPeers([alice, bob])
+```
+</CodeGroup>
+
+## 5. Add Messages
+
+Add some conversation messages. Honcho automatically learns from these interactions:
+
+<CodeGroup>
+```python Python
+session.add_messages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
+```
+
+```typescript TypeScript
+await session.addMessages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
+```
+</CodeGroup>
+
+## 6. Query for Insights
+
+Now ask Honcho what it's learned - this is where the magic happens:
+
+<CodeGroup>
+```python Python
+# Ask what Bob is like
+response = bob.chat("Tell me about Bob's interests and habits")
+print(response)
+
+# Returns rich context like:
+# "Bob is health-conscious and has been working on getting back in shape.
+# He regularly goes to the gym, particularly in the evenings, and finds
+# exercise helps him relax. He's encouraging about fitness and willing
+# to share advice about workout routines."
+```
+
+```typescript TypeScript
+bob.chat("Tell me about Bob's interests and habits").then((response) => {
+  console.log(response);
+  // Returns rich context like:
+  // "Bob is health-conscious and has been working on getting back in shape.
+  // He regularly goes to the gym, particularly in the evenings, and finds
+  // exercise helps him relax. He's encouraging about fitness and willing
+  // to share advice about workout routines."
+})
+```
+</CodeGroup>
+
+<Note>
+Writing messages to Honcho triggers reasoning by default...
+</Note>
+
+## 7. Putting it all together
+
+    <CodeGroup>
+```python Python
+import os
+from honcho import Honcho
+
+# Create your client
+honcho = Honcho()
+
+# Get your Peers
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
+
+# Make a Session and add your Peers
+session = honcho.session("session_1")
+session.add_peers([alice, bob])
+
+# Add messages sent by your Peers
+session.add_messages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
+
+# Get insights about your Peers
+response = bob.chat("Tell me about Bob's interests and habits")
+print(response)
+
+# Returns rich context like:
+# "Bob is health-conscious and has been working on getting back in shape.
+# He regularly goes to the gym, particularly in the evenings, and finds
+# exercise helps him relax. He's encouraging about fitness and willing
+# to share advice about workout routines."
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Create your client
+const honcho = new Honcho({});
+
+// Get your Peers
+const alice = await honcho.peer("alice")
+const bob = await honcho.peer("bob")
+
+// Make a Session and add your peers
+const session = await honcho.session("session_1")
+await session.addPeers([alice, bob])
+
+// Add messages sent by your Peers
+await session.addMessages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
+
+// Get insights about your peers
+bob.chat("Tell me about Bob's interests and habits").then((response) => {
+  console.log(response);
+  // Returns rich context like:
+  // "Bob is health-conscious and has been working on getting back in shape.
+  // He regularly goes to the gym, particularly in the evenings, and finds
+  // exercise helps him relax. He's encouraging about fitness and willing
+  // to share advice about workout routines."
+})
+```
+</CodeGroup>
+
+## Recap
+
+Honcho just reasoned about a conversation between two people--Alice
+and Bob. We:
+
+1. Set up our connection to Honcho.
+2. Setup the participants of our conversation--these are called `Peers`.
+3. Made a `Session` and added our `Peers`.
+4. Sent messages from our `Peers`.
+5. Queried Honcho to get insights about one of the `Peers` in the conversation.
+
+As soon as you save a message in Honcho, it will start to reason about it to
+pull out insights and develop a profile of the user. This is the default
+behavior and can be toggled off via [the configuration](/v3/documentation/features/advanced/reasoning-configuration).
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Architecture" icon="rocket"
+    href="/v3/documentation/core-concepts/architecture">
+    Learn about the data primitives in Honcho and how they work together
+  </Card>
+  <Card title="Start Building" icon="brain" href="https://app.honcho.dev">
+    Sign up for Managed Honcho and get started building agents now.
+  </Card>
+  <Card title="Guides" icon="book" href="/v3/guides/overview">
+    Check out spellbooks to see different examples apps built with Honcho
+    </Card>
+</CardGroup>
+
+---
+
+# SCRATCH
+
+### Production Environment
+
+<CodeGroup>
+```python Python
+import os
+from honcho import Honcho
+
+# Production environment with API key
+honcho = Honcho(
+    api_key=os.environ["HONCHO_API_KEY"],
+    environment="production",
+    # Create a workspace, otherwise set to "default"
+    # workspaceId="your-workspace-id"
+)
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Production environment with API key
+const honcho = new Honcho({
+    apiKey: process.env.HONCHO_API_KEY!,
+    environment: "production",
+    // Create a workspace, otherwise set to "default"
+    // workspace: "your-workspace-id"
+});
+```
+</CodeGroup>

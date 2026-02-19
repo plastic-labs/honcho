@@ -53,7 +53,7 @@ class ObservationMetadata(BaseModel):
     id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
     message_ids: list[int]
-    session_name: str
+    session_name: str | None = None
 
 
 class ExplicitObservationBase(BaseModel):

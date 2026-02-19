@@ -65,7 +65,7 @@ repos:
       # Run main application tests
       - id: pytest-main
         name: pytest (main app)
-        entry: uv run pytest tests/ --ignore=tests/alembic/
+        entry: uv run pytest -x tests/ --ignore=tests/alembic/
         language: system
         files: ^(src/|tests/).*\.py$
         stages: [pre-push]
@@ -99,10 +99,10 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
-      # # TypeScript build/test with bun
+      # TypeScript build with bun (tests run via pytest)
       - id: typescript-check
-        name: TypeScript build and test
-        entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run build && bun run test; fi'
+        name: TypeScript build
+        entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run build; fi'
         language: system
         files: ^sdks/typescript/.*\.(js|ts|jsx|tsx|json)$
         stages: [pre-push]

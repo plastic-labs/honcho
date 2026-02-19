@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.1] - 2026-02-09
+
+### Added
+
+- `setPeerCard` method
+
+### Changed
+
+- `card` is now `getCard` with `card` kept for backwards compatibility and marked as deprecated
+
+## [2.0.0] - 2026-01-13
+
+### Added
+
+- `ConclusionScope` object for CRUD operations on conclusions (renamed from observations)
+- Representation configuration support
+
+### Changed
+
+- Observations renamed to Conclusions across the SDK
+- Major SDK refactoring and cleanup
+- Simplified method signatures throughout
+- Representation endpoints now return `string` instead of old Representation object
+
+### Fixed
+
+- Pagination `this` binding issue
+
+### Removed
+
+- Representation object
+- Stainless "core" SDK -- this SDK is now standalone
+
 ## [1.6.0] - 2025-12-03
 
 ### Added

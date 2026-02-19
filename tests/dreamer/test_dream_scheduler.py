@@ -17,7 +17,9 @@ def dream_scheduler():
     DreamScheduler.reset_singleton()
     scheduler = DreamScheduler()
     set_dream_scheduler(scheduler)
-    yield scheduler
+    # Patch DREAM.ENABLED to True so tests work regardless of local config
+    with patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True):
+        yield scheduler
     # Cleanup
     DreamScheduler.reset_singleton()
 

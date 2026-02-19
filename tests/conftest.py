@@ -66,8 +66,33 @@ DB_URI = (
     or "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 )
 CONNECTION_URI = make_url(DB_URI)
-TEST_DB_URL = CONNECTION_URI.set(database="test_db")
-DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
+
+_RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
+    # Benchmarks and migration tests have their own execution/runtime constraints.
+    "tests/bench/",
+    "tests/alembic/",
+    "tests/unified/",
+)
+
+
+def _requires_runtime_mocks(nodeid: str) -> bool:
+    return not any(
+        nodeid.startswith(prefix) for prefix in _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES
+    )
+
+
+def _get_nodeid(request: pytest.FixtureRequest) -> str:
+    node = getattr(request, "node", None)
+    nodeid = getattr(node, "nodeid", "")
+    return nodeid if isinstance(nodeid, str) else ""
+
+
+def _get_test_db_url(worker_id: str) -> URL:
+    """Get a worker-specific test database URL for pytest-xdist parallelism."""
+
+    db_name = "test_db" if worker_id == "master" else f"test_db_{worker_id}"
+    return CONNECTION_URI.set(database=db_name)
+
 
 # Test API authorization - no longer needed as module-level constants
 # We'll use settings.AUTH directly where needed
@@ -104,7 +129,7 @@ async def setup_test_database(db_url: URL):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url), echo=True)
+    engine = create_async_engine(str(db_url), echo=False)
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -127,10 +152,29 @@ async def setup_test_database(db_url: URL):
     return engine
 
 
+async def _truncate_all_tables(engine: AsyncEngine) -> None:
+    """Remove all data from every mapped table while resetting identities."""
+
+    table_names: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if table.schema:
+            table_names.append(f'"{table.schema}"."{table.name}"')
+        else:
+            table_names.append(f'"{table.name}"')
+
+    if not table_names:
+        return
+
+    joined_names = ", ".join(table_names)
+    async with engine.begin() as conn:
+        await conn.execute(text(f"TRUNCATE {joined_names} RESTART IDENTITY CASCADE"))
+
+
 @pytest_asyncio.fixture(scope="session")
-async def db_engine():
-    create_test_database(TEST_DB_URL)
-    engine = await setup_test_database(TEST_DB_URL)
+async def db_engine(worker_id: str):
+    test_db_url = _get_test_db_url(worker_id)
+    create_test_database(test_db_url)
+    engine = await setup_test_database(test_db_url)
 
     # Force the schema to 'public' for tests
     # Save the original schema to restore later
@@ -147,25 +191,31 @@ async def db_engine():
         # Then create all tables with current models
         await conn.run_sync(Base.metadata.create_all)
 
-    yield engine
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
 
-    await engine.dispose()
+        # Restore original schema
+        Base.metadata.schema = original_schema
+        for table in Base.metadata.tables.values():
+            table.schema = original_schema
 
-    # Restore original schema
-    Base.metadata.schema = original_schema
-    for table in Base.metadata.tables.values():
-        table.schema = original_schema
-
-    drop_database(TEST_DB_URL)
+        drop_database(test_db_url)
 
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session(db_engine: AsyncEngine):
     """Create a database session for the scope of a single test function"""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-    async with Session() as session:
-        yield session
-        await session.rollback()
+    try:
+        async with Session() as session:
+            try:
+                yield session
+            finally:
+                await session.rollback()
+    finally:
+        await _truncate_all_tables(db_engine)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -314,18 +364,18 @@ async def sample_data(
     # Create test app
     test_workspace = models.Workspace(name=str(generate_nanoid()))
     db_session.add(test_workspace)
-    await db_session.flush()
 
     # Create test user
     test_peer = models.Peer(
         name=str(generate_nanoid()), workspace_name=test_workspace.name
     )
     db_session.add(test_peer)
-    await db_session.flush()
+
+    # Commit so data is visible to independent tracked_db sessions.
+    # _truncate_all_tables handles cleanup between tests.
+    await db_session.commit()
 
     yield test_workspace, test_peer
-
-    await db_session.rollback()
 
 
 @pytest.fixture(autouse=True)
@@ -373,8 +423,12 @@ def _content_to_embedding(content: str) -> list[float]:
 
 
 @pytest.fixture(autouse=True)
-def mock_openai_embeddings():
+def mock_openai_embeddings(request: pytest.FixtureRequest):
     """Mock OpenAI embeddings API calls for testing"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     with (
         patch("src.embedding_client.embedding_client.embed") as mock_embed,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
@@ -400,8 +454,122 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_llm_call_functions():
+def mock_vector_store(request: pytest.FixtureRequest):
+    """Mock vector store operations for testing"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.vector_store import (
+        VectorQueryResult,
+        VectorRecord,
+        VectorUpsertResult,
+        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    # Create a mock vector store that stores vectors in memory
+    vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
+
+    async def mock_upsert_many(
+        namespace: str, vectors: list[VectorRecord]
+    ) -> VectorUpsertResult:
+        if namespace not in vector_storage:
+            vector_storage[namespace] = {}
+        for vector in vectors:
+            vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
+        return VectorUpsertResult(ok=True)
+
+    async def mock_query(
+        namespace: str, embedding: list[float], **kwargs: Any
+    ) -> list[VectorQueryResult]:
+        _ = embedding  # unused in mock
+        if namespace not in vector_storage:
+            return []
+
+        # Simple mock: return all vectors in the namespace as results
+        results: list[VectorQueryResult] = []
+        for vec_id, (_vec_embedding, metadata) in vector_storage[namespace].items():
+            results.append(
+                VectorQueryResult(
+                    id=vec_id,
+                    score=0.1,  # Mock score
+                    metadata=metadata,
+                )
+            )
+        top_k: int = kwargs.get("top_k", 10)
+        return results[:top_k]
+
+    async def mock_delete_many(namespace: str, ids: list[str]) -> None:
+        if namespace in vector_storage:
+            for vec_id in ids:
+                vector_storage[namespace].pop(vec_id, None)
+
+    async def mock_delete_namespace(namespace: str) -> None:
+        vector_storage.pop(namespace, None)
+
+    # Clear the cache on get_external_vector_store before patching
+    from src.vector_store import get_external_vector_store
+
+    get_external_vector_store.cache_clear()  # type: ignore
+
+    # Create the mock vector store
+    mock_vs = MagicMock()
+    mock_vs.upsert_many = AsyncMock(side_effect=mock_upsert_many)
+    mock_vs.query = AsyncMock(side_effect=mock_query)
+    mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
+    mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
+
+    def mock_get_vector_namespace(
+        namespace_type: str,
+        workspace_name: str,
+        observer: str | None = None,
+        observed: str | None = None,
+    ) -> str:
+        # Uses real hash function for consistency with production
+        if namespace_type == "document":
+            if observer is None or observed is None:
+                raise ValueError(
+                    "observer and observed are required for document namespaces"
+                )
+            return f"honcho2345.doc.{_hash_namespace_components(workspace_name, observer, observed)}"
+        if namespace_type == "message":
+            return f"honcho2345.msg.{_hash_namespace_components(workspace_name)}"
+        raise ValueError(f"Unknown namespace type: {namespace_type}")
+
+    mock_vs.get_vector_namespace = mock_get_vector_namespace
+
+    with (
+        patch("src.crud.document.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.workspace.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.session.get_external_vector_store", return_value=mock_vs),
+        patch("src.crud.message.get_external_vector_store", return_value=mock_vs),
+        patch(
+            "src.reconciler.sync_vectors.get_external_vector_store",
+            return_value=mock_vs,
+        ),
+        patch("src.utils.search.get_external_vector_store", return_value=mock_vs),
+    ):
+        yield mock_vs
+
+        # Clear cache after test as well for cleanliness
+        get_external_vector_store.cache_clear()  # type: ignore
+
+
+@pytest.fixture(autouse=True)
+def mock_llm_call_functions(request: pytest.FixtureRequest):
     """Mock LLM functions to avoid needing API keys during tests"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
+    # Create an async generator for streaming responses
+    async def mock_stream(*args, **kwargs):  # pyright: ignore[reportUnusedParameter, reportMissingParameterType, reportUnknownParameterType]
+        """Mock streaming response that yields chunks"""
+        chunks = ["Test ", "streaming ", "response"]
+        for chunk in chunks:
+            yield chunk
 
     # Create mock responses for different function types
     # Note: critical_analysis_call was removed as the deriver now uses agentic approach
@@ -416,6 +584,9 @@ def mock_llm_call_functions():
         patch(
             "src.routers.peers.agentic_chat", new_callable=AsyncMock
         ) as mock_agentic_chat,
+        patch(
+            "src.routers.peers.agentic_chat_stream", side_effect=mock_stream
+        ) as mock_agentic_chat_stream,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
@@ -428,12 +599,17 @@ def mock_llm_call_functions():
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "agentic_chat": mock_agentic_chat,
+            "agentic_chat_stream": mock_agentic_chat_stream,
         }
 
 
 @pytest.fixture(autouse=True)
-def mock_honcho_llm_call():
+def mock_honcho_llm_call(request: pytest.FixtureRequest):
     """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from unittest.mock import AsyncMock
 
     from src.utils.representation import (
@@ -545,23 +721,33 @@ def mock_honcho_llm_call():
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_session: AsyncSession):
-    """Mock tracked_db to use the test database session"""
+def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
+    """Mock tracked_db to create fresh sessions per call.
+
+    Using a session factory instead of a shared session avoids asyncio lock
+    errors when multiple tracked_db calls run concurrently via asyncio.gather.
+    """
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from contextlib import asynccontextmanager
+
+    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
     async def mock_tracked_db_context(_: str | None = None):
-        yield db_session
+        async with session_factory() as session:
+            yield session
 
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
         patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
         patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
-        patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dreamer.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.orchestrator.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
@@ -571,8 +757,12 @@ def mock_tracked_db(db_session: AsyncSession):
 
 
 @pytest.fixture(autouse=True)
-def enable_deriver_for_tests():
+def enable_deriver_for_tests(request: pytest.FixtureRequest):
     """Enable deriver globally for tests that need queue processing"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from src.config import settings
 
     original_value = settings.DERIVER.ENABLED
@@ -582,8 +772,12 @@ def enable_deriver_for_tests():
 
 
 @pytest.fixture(autouse=True)
-def mock_crud_collection_operations():
+def mock_crud_collection_operations(request: pytest.FixtureRequest):
     """Mock CRUD operations that try to commit to database during tests"""
+    if not _requires_runtime_mocks(_get_nodeid(request)):
+        yield
+        return
+
     from nanoid import generate as generate_nanoid
 
     from src import models

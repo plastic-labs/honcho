@@ -1,20 +1,21 @@
-"""Integration tests for prometheus token metrics tracking.
+# pyright: reportPrivateUsage=false, reportUnknownVariableType=false
+"""Integration tests for Prometheus token metrics tracking.
 
-These tests verify that DERIVER_TOKENS_PROCESSED and DIALECTIC_TOKENS_PROCESSED
-metrics are correctly emitted with accurate token counts when processing messages
-and dialectic queries.
+These tests verify that deriver and dialectic token metrics are correctly
+emitted with accurate token counts when processing messages and dialectic queries.
 
-The approach uses delta-based verification:
+The approach uses delta-based verification by directly accessing Prometheus counters:
 1. Capture counter values before test execution
 2. Run the code under test (with mocked LLM)
 3. Verify deltas match expected values
 """
 
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from prometheus_client import REGISTRY
+from prometheus_client import Counter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -26,11 +27,15 @@ from src.schemas import (
     ResolvedReasoningConfiguration,
     ResolvedSummaryConfiguration,
 )
+from src.telemetry.prometheus.metrics import (
+    deriver_tokens_processed_counter,
+    dialectic_tokens_processed_counter,
+)
 from src.utils.clients import HonchoLLMCallResponse
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.summarizer import (
     SummaryType,
-    _create_and_save_summary,  # pyright: ignore[reportPrivateUsage]
+    _create_and_save_summary,
     estimate_short_summary_prompt_tokens,
 )
 
@@ -39,51 +44,70 @@ from src.utils.summarizer import (
 # =============================================================================
 
 
-class MetricDeltaChecker:
-    """Utility class to capture and verify prometheus counter deltas."""
+class PrometheusMetricChecker:
+    """Utility class to capture and verify Prometheus counter deltas."""
 
-    def capture(self, metric_name: str, labels: dict[str, str]) -> float:
+    def _get_counter_value(self, counter: Counter, labels: dict[str, str]) -> float:
+        """Get current value of a counter with specific labels.
+
+        Note: For prometheus_client counters, we access the internal _value
+        of the labeled metric. This is implementation-specific but works for testing.
+        """
+        try:
+            labeled_counter = counter.labels(**labels)
+            return labeled_counter._value.get()
+        except Exception:
+            return 0.0
+
+    def capture(self, counter: Counter, labels: dict[str, str]) -> float:
         """Capture current value of a counter with specific labels."""
-        # Counters have _total suffix in prometheus
-        full_name = (
-            metric_name if metric_name.endswith("_total") else f"{metric_name}_total"
-        )
-        value = REGISTRY.get_sample_value(full_name, labels=labels)
-        return value or 0.0
+        return self._get_counter_value(counter, labels)
 
     def get_delta(
-        self, metric_name: str, labels: dict[str, str], before: float
+        self, counter: Counter, labels: dict[str, str], before: float
     ) -> float:
         """Get the delta between a before value and current."""
-        return self.capture(metric_name, labels) - before
+        return self.capture(counter, labels) - before
 
     def assert_delta(
         self,
-        metric_name: str,
+        counter: Counter,
         labels: dict[str, str],
         before: float,
         expected: int | float,
         message: str = "",
     ) -> None:
         """Assert that the delta matches expected value."""
-        delta = self.get_delta(metric_name, labels, before)
+        delta = self.get_delta(counter, labels, before)
         assert (
             delta == expected
         ), f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
 
 
 @pytest.fixture
-def metric_checker() -> MetricDeltaChecker:
-    """Fixture providing a metric delta checker instance."""
-    return MetricDeltaChecker()
+def prometheus_test_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[PrometheusMetricChecker]:
+    """Set up Prometheus metrics for testing.
+
+    Yields:
+        A PrometheusMetricChecker for verifying metrics
+    """
+    # Enable METRICS in settings and set namespace for test assertions
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
+    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
+
+    checker = PrometheusMetricChecker()
+
+    yield checker
 
 
 @pytest.fixture
-def enable_metrics(monkeypatch: pytest.MonkeyPatch):
-    """Enable prometheus metrics with a test namespace."""
-    monkeypatch.setattr("src.prometheus.METRICS_ENABLED", True)
-    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
-    yield
+def metric_checker(
+    prometheus_test_setup: PrometheusMetricChecker,
+) -> PrometheusMetricChecker:
+    """Fixture providing a metric checker instance."""
+    return prometheus_test_setup
 
 
 # =============================================================================
@@ -188,7 +212,6 @@ def create_mock_dialectic_response(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_metrics")
 class TestDeriverIngestionMetrics:
     """Test token metrics for deriver INGESTION task type."""
 
@@ -196,11 +219,12 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify OUTPUT_TOTAL tokens match response.output_tokens from LLM."""
         from src.deriver.deriver import process_representation_tasks_batch
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -219,7 +243,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "output",
             "component": "output_total",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         # Mock the LLM call and save_representation (we're testing metrics, not DB writes)
         with (
@@ -235,13 +259,14 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observer=peer.name,
+                observers=[peer.name],
                 observed=peer.name,
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         # Verify output tokens metric
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_output_tokens,
@@ -252,12 +277,13 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify PROMPT component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
         from src.deriver.prompts import estimate_minimal_deriver_prompt_tokens
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -275,7 +301,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "input",
             "component": "prompt",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -290,12 +316,13 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observer=peer.name,
+                observers=[peer.name],
                 observed=peer.name,
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_prompt_tokens,
@@ -306,11 +333,12 @@ class TestDeriverIngestionMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify MESSAGES component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -330,7 +358,7 @@ class TestDeriverIngestionMetrics:
             "token_type": "input",
             "component": "messages",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
@@ -345,12 +373,15 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observer=peer.name,
+                observers=[peer.name],
                 observed=peer.name,
+                queue_item_message_ids=[m.id for m in messages],
             )
 
         # Verify messages tokens were tracked (should be > 0)
-        delta = metric_checker.get_delta("deriver_tokens_processed", labels, before)
+        delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, labels, before
+        )
         assert delta > 0, f"Expected messages input tokens > 0, got {delta}"
 
 
@@ -360,7 +391,6 @@ class TestDeriverIngestionMetrics:
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_metrics")
 class TestDeriverSummaryMetrics:
     """Test token metrics for deriver SUMMARY task type."""
 
@@ -368,10 +398,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify OUTPUT_TOTAL tokens are tracked for summary."""
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -396,12 +427,14 @@ class TestDeriverSummaryMetrics:
             "token_type": "output",
             "component": "output_total",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),  # is_fallback=False
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, expected_output_tokens)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -409,7 +442,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -421,7 +453,7 @@ class TestDeriverSummaryMetrics:
 
         # Verify output tokens match the summary token_count
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_output_tokens,
@@ -432,10 +464,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify PROMPT component is tracked for summary input."""
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -458,12 +491,14 @@ class TestDeriverSummaryMetrics:
             "token_type": "input",
             "component": "prompt",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -471,7 +506,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -482,7 +516,7 @@ class TestDeriverSummaryMetrics:
             )
 
         metric_checker.assert_delta(
-            "deriver_tokens_processed",
+            deriver_tokens_processed_counter,
             labels,
             before,
             expected_prompt_tokens,
@@ -493,10 +527,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify MESSAGES component is tracked for summary input."""
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -528,12 +563,14 @@ class TestDeriverSummaryMetrics:
             "token_type": "input",
             "component": "messages",
         }
-        before = metric_checker.capture("deriver_tokens_processed", labels)
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
 
         with (
             patch(
                 "src.utils.summarizer._create_summary",
-                new=AsyncMock(return_value=(mock_summary, False)),
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
             ),
             patch(
                 "src.utils.summarizer._save_summary",
@@ -541,7 +578,6 @@ class TestDeriverSummaryMetrics:
             ),
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -552,7 +588,9 @@ class TestDeriverSummaryMetrics:
             )
 
         # Verify messages tokens match what summarizer actually computed
-        delta = metric_checker.get_delta("deriver_tokens_processed", labels, before)
+        delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, labels, before
+        )
         assert (
             delta == expected_messages_tokens
         ), f"Expected messages input tokens {expected_messages_tokens}, got {delta}"
@@ -562,10 +600,11 @@ class TestDeriverSummaryMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify metrics are NOT emitted when _create_summary returns is_fallback=True."""
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
         messages = await create_test_messages(
@@ -594,18 +633,19 @@ class TestDeriverSummaryMetrics:
             "component": "prompt",
         }
         before_output = metric_checker.capture(
-            "deriver_tokens_processed", output_labels
+            deriver_tokens_processed_counter, output_labels
         )
         before_prompt = metric_checker.capture(
-            "deriver_tokens_processed", prompt_labels
+            deriver_tokens_processed_counter, prompt_labels
         )
 
         with patch(
             "src.utils.summarizer._create_summary",
-            new=AsyncMock(return_value=(mock_summary, True)),  # is_fallback=True
+            new=AsyncMock(
+                return_value=(mock_summary, True, 0, 0)
+            ),  # (summary, is_fallback=True, llm_input_tokens, llm_output_tokens)
         ):
             await _create_and_save_summary(
-                db=db_session,
                 workspace_name=workspace.name,
                 session_name=session.name,
                 message_id=last_message.id,
@@ -617,10 +657,10 @@ class TestDeriverSummaryMetrics:
 
         # Verify NO change in metrics when fallback
         output_delta = metric_checker.get_delta(
-            "deriver_tokens_processed", output_labels, before_output
+            deriver_tokens_processed_counter, output_labels, before_output
         )
         prompt_delta = metric_checker.get_delta(
-            "deriver_tokens_processed", prompt_labels, before_prompt
+            deriver_tokens_processed_counter, prompt_labels, before_prompt
         )
 
         assert (
@@ -637,7 +677,6 @@ class TestDeriverSummaryMetrics:
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_metrics")
 class TestDialecticTokenMetrics:
     """Test token metrics for dialectic calls."""
 
@@ -645,11 +684,12 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify INPUT tokens are tracked from LLM response."""
         from src.dialectic.core import DialecticAgent
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -664,7 +704,7 @@ class TestDialecticTokenMetrics:
             "component": "total",
             "reasoning_level": "low",
         }
-        before = metric_checker.capture("dialectic_tokens_processed", labels)
+        before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
             db=db_session,
@@ -681,7 +721,7 @@ class TestDialecticTokenMetrics:
             await agent.answer("What do you know about this user?")
 
         metric_checker.assert_delta(
-            "dialectic_tokens_processed",
+            dialectic_tokens_processed_counter,
             labels,
             before,
             expected_input_tokens,
@@ -692,11 +732,12 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify OUTPUT tokens are tracked from LLM response."""
         from src.dialectic.core import DialecticAgent
 
+        metric_checker = prometheus_test_setup
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
 
@@ -711,7 +752,7 @@ class TestDialecticTokenMetrics:
             "component": "total",
             "reasoning_level": "low",
         }
-        before = metric_checker.capture("dialectic_tokens_processed", labels)
+        before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
             db=db_session,
@@ -728,7 +769,7 @@ class TestDialecticTokenMetrics:
             await agent.answer("What do you know about this user?")
 
         metric_checker.assert_delta(
-            "dialectic_tokens_processed",
+            dialectic_tokens_processed_counter,
             labels,
             before,
             expected_output_tokens,
@@ -739,15 +780,16 @@ class TestDialecticTokenMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
-        metric_checker: MetricDeltaChecker,
+        prometheus_test_setup: PrometheusMetricChecker,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """Verify metrics are NOT emitted when METRICS_ENABLED=False."""
+        """Verify metrics are NOT emitted when PROMETHEUS.ENABLED=False."""
         from src.dialectic.core import DialecticAgent
 
-        # Explicitly disable metrics
-        monkeypatch.setattr("src.prometheus.METRICS_ENABLED", False)
-        monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
+        metric_checker = prometheus_test_setup
+
+        # Explicitly disable Prometheus metrics
+        monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
 
         workspace, peer = sample_data
         session = await create_test_session_with_peer(db_session, workspace, peer)
@@ -761,17 +803,19 @@ class TestDialecticTokenMetrics:
             "namespace": "test",
             "token_type": "input",
             "component": "total",
+            "reasoning_level": "low",
         }
         output_labels = {
             "namespace": "test",
             "token_type": "output",
             "component": "total",
+            "reasoning_level": "low",
         }
         before_input = metric_checker.capture(
-            "dialectic_tokens_processed", input_labels
+            dialectic_tokens_processed_counter, input_labels
         )
         before_output = metric_checker.capture(
-            "dialectic_tokens_processed", output_labels
+            dialectic_tokens_processed_counter, output_labels
         )
 
         agent = DialecticAgent(
@@ -790,10 +834,10 @@ class TestDialecticTokenMetrics:
 
         # Verify NO change in metrics
         input_delta = metric_checker.get_delta(
-            "dialectic_tokens_processed", input_labels, before_input
+            dialectic_tokens_processed_counter, input_labels, before_input
         )
         output_delta = metric_checker.get_delta(
-            "dialectic_tokens_processed", output_labels, before_output
+            dialectic_tokens_processed_counter, output_labels, before_output
         )
 
         assert (

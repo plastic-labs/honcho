@@ -3,7 +3,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, select, text
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
@@ -11,6 +11,7 @@ from src.config import settings
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.vector_store import VectorRecord, get_external_vector_store, upsert_with_retry
 
 from .session import get_or_create_session
 
@@ -108,18 +109,31 @@ async def _build_merged_snippets(
             else:
                 merged_ranges.append((start, end, [match]))
 
+        # Batch all ranges into a single query using OR conditions.
+        # NOTE: If callers ever pass a very high limit (many disjoint ranges),
+        # consider chunking to avoid oversized SQL / planner issues.
+        range_conditions = [
+            models.Message.seq_in_session.between(start_seq, end_seq)
+            for start_seq, end_seq, _ in merged_ranges
+        ]
+        context_stmt = (
+            select(models.Message)
+            .where(models.Message.workspace_name == workspace_name)
+            .where(models.Message.session_name == sess_name)
+            .where(or_(*range_conditions))
+            .order_by(models.Message.seq_in_session.asc())
+        )
+
+        context_result = await db.execute(context_stmt)
+        all_context_messages = list(context_result.scalars().all())
+
+        # Partition results back into their respective ranges
         for start_seq, end_seq, range_matches in merged_ranges:
-            context_stmt = (
-                select(models.Message)
-                .where(models.Message.workspace_name == workspace_name)
-                .where(models.Message.session_name == sess_name)
-                .where(models.Message.seq_in_session.between(start_seq, end_seq))
-                .order_by(models.Message.seq_in_session.asc())
-            )
-
-            context_result = await db.execute(context_stmt)
-            context_messages = list(context_result.scalars().all())
-
+            context_messages = [
+                msg
+                for msg in all_context_messages
+                if start_seq <= msg.seq_in_session <= end_seq
+            ]
             snippets.append((range_matches, context_messages))
 
     return snippets
@@ -209,25 +223,117 @@ async def create_messages(
             }
             embedding_dict = await embedding_client.batch_embed(id_resource_dict)
 
-            # Create MessageEmbedding entries for each embedded message
+            external_vector_store = get_external_vector_store()
+
+            # Determine if we need to persist embeddings to postgres
+            # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
+            store_embeddings_in_postgres = (
+                settings.VECTOR_STORE.TYPE == "pgvector"
+                or not settings.VECTOR_STORE.MIGRATED
+            )
+
+            # Create MessageEmbedding entries
             embedding_objects: list[models.MessageEmbedding] = []
+            # Maps emb index -> (chunk_position, embedding vector)
+            pending_embedding_data: dict[int, tuple[int, list[float]]] = {}
             for message_obj in message_objects:
                 embeddings = embedding_dict.get(message_obj.public_id, [])
-                for embedding in embeddings:
+                for chunk_position, embedding in enumerate(embeddings):
                     embedding_obj = models.MessageEmbedding(
                         content=message_obj.content,
-                        embedding=embedding,
                         message_id=message_obj.public_id,
                         workspace_name=workspace_name,
                         session_name=session_name,
                         peer_name=message_obj.peer_name,
+                        sync_state="pending",
+                        embedding=embedding if store_embeddings_in_postgres else None,
                     )
+                    emb_idx = len(embedding_objects)
+                    pending_embedding_data[emb_idx] = (chunk_position, embedding)
                     embedding_objects.append(embedding_obj)
 
-            # Add all embedding objects to the session
+            # Always create MessageEmbedding rows so reconciliation can track sync state
+            # even when embeddings aren't stored in postgres
+            embedding_ids: list[int] = []
             if embedding_objects:
                 db.add_all(embedding_objects)
-                await db.commit()
+                await db.flush()
+                embedding_ids = [emb.id for emb in embedding_objects]
+
+            await db.commit()
+
+            # If no external vector store (pgvector-only mode), mark as synced immediately
+            if external_vector_store is None:
+                if embedding_ids:
+                    await db.execute(
+                        update(models.MessageEmbedding)
+                        .where(models.MessageEmbedding.id.in_(embedding_ids))
+                        .values(
+                            sync_state="synced",
+                            last_sync_at=func.now(),
+                            sync_attempts=0,
+                        )
+                    )
+                    await db.commit()
+            else:
+                # External vector store - build and upsert vector records
+                namespace = external_vector_store.get_vector_namespace(
+                    "message", workspace_name
+                )
+
+                # Build vector records with {message_id}_{chunk_position} as vector ID
+                vector_records: list[VectorRecord] = []
+                for emb_idx, emb in enumerate(embedding_objects):
+                    chunk_position, embedding = pending_embedding_data[emb_idx]
+                    vector_id = f"{emb.message_id}_{chunk_position}"
+                    vector_records.append(
+                        VectorRecord(
+                            id=vector_id,
+                            embedding=list(embedding),
+                            metadata={
+                                "message_id": emb.message_id,
+                                "session_name": emb.session_name,
+                                "peer_name": emb.peer_name,
+                            },
+                        )
+                    )
+
+                # Upsert to external vector store with retry and update sync state
+                if vector_records:
+                    try:
+                        await upsert_with_retry(
+                            external_vector_store, namespace, vector_records
+                        )
+                        # Success: mark as synced if we have DB rows
+                        if embedding_ids:
+                            await db.execute(
+                                update(models.MessageEmbedding)
+                                .where(models.MessageEmbedding.id.in_(embedding_ids))
+                                .values(
+                                    sync_state="synced",
+                                    last_sync_at=func.now(),
+                                    sync_attempts=0,
+                                )
+                            )
+                            await db.commit()
+
+                    except Exception:
+                        # Failed after retries - increment sync_attempts for reconciliation
+                        logger.exception(
+                            "Failed to upsert message vectors after retries"
+                        )
+                        if embedding_ids:
+                            await db.execute(
+                                update(models.MessageEmbedding)
+                                .where(models.MessageEmbedding.id.in_(embedding_ids))
+                                .values(
+                                    sync_attempts=models.MessageEmbedding.sync_attempts
+                                    + 1,
+                                    last_sync_at=func.now(),
+                                )
+                            )
+                            await db.commit()
+
     except Exception:
         logger.exception(
             "Failed to generate message embeddings for %s messages in workspace %s and session %s.",
@@ -479,6 +585,7 @@ async def search_messages(
     query: str,
     limit: int = 10,
     context_window: int = 2,
+    embedding: list[float] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -493,14 +600,17 @@ async def search_messages(
         query: Search query text
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
+        embedding: Optional pre-computed embedding
 
     Returns:
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
         Context messages are ordered chronologically and include the matched messages.
     """
-    # Generate embedding for the search query
-    query_embedding = await embedding_client.embed(query)
+    # Use provided embedding or generate one
+    query_embedding = (
+        embedding if embedding is not None else await embedding_client.embed(query)
+    )
 
     # First, find the top matching messages
     match_stmt = (

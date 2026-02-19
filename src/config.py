@@ -67,6 +67,9 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
         "DREAM": "dream",
+        "VECTOR_STORE": "vector_store",
+        "METRICS": "metrics",
+        "TELEMETRY": "telemetry",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -216,10 +219,10 @@ class LLMSettings(HonchoSettings):
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
     # Maximum characters for tool output to prevent token explosion.
-    # Set to 30,000 chars (~7,500 tokens at 4 chars/token) to stay well under
+    # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under
     # typical context limits while providing substantial tool output.
-    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=30000, gt=0, le=100_000)] = (
-        30000
+    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=10000, gt=0, le=100_000)] = (
+        10000
     )
 
     # Maximum characters for individual message content in tool results.
@@ -267,8 +270,11 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
-        Field(default=4096, ge=128, le=16_384),
-    ] = 4096
+        Field(default=1024, ge=128, le=16_384),
+    ] = 1024
+
+    # When enabled, bypasses the batch token threshold and processes work immediately
+    FLUSH_ENABLED: bool = False
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -286,13 +292,13 @@ class PeerCardSettings(HonchoSettings):
 
 
 # Reasoning levels for dialectic - defined here to avoid circular imports with schemas
-ReasoningLevel = Literal["minimal", "low", "medium", "high", "extra-high"]
+ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 REASONING_LEVELS: list[ReasoningLevel] = [
     "minimal",
     "low",
     "medium",
     "high",
-    "extra-high",
+    "max",
 ]
 
 
@@ -313,6 +319,12 @@ class DialecticLevelSettings(BaseModel):
     MAX_TOOL_ITERATIONS: Annotated[
         int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
     ]
+    MAX_OUTPUT_TOKENS: Annotated[
+        int | None, Field(ge=1, le=100_000, validation_alias="max_output_tokens")
+    ] = None  # None means use global DIALECTIC.MAX_OUTPUT_TOKENS
+    TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
+        None  # None/auto lets model decide, "any"/"required" forces tool use
+    )
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self) -> "DialecticLevelSettings":
@@ -350,29 +362,32 @@ class DialecticSettings(HonchoSettings):
                 PROVIDER="google",
                 MODEL="gemini-2.5-flash-lite",
                 THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=2,
+                MAX_TOOL_ITERATIONS=1,
+                MAX_OUTPUT_TOKENS=250,
+                TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
                 PROVIDER="google",
-                MODEL="gemini-3-flash-preview",
+                MODEL="gemini-2.5-flash-lite",
                 THINKING_BUDGET_TOKENS=0,
                 MAX_TOOL_ITERATIONS=5,
+                TOOL_CHOICE="any",
             ),
             "medium": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-haiku-4-5",
                 THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=4,
+                MAX_TOOL_ITERATIONS=2,
             ),
             "high": DialecticLevelSettings(
                 PROVIDER="anthropic",
-                MODEL="claude-opus-4-5",
-                THINKING_BUDGET_TOKENS=0,
+                MODEL="claude-haiku-4-5",
+                THINKING_BUDGET_TOKENS=1024,
                 MAX_TOOL_ITERATIONS=4,
             ),
-            "extra-high": DialecticLevelSettings(
+            "max": DialecticLevelSettings(
                 PROVIDER="anthropic",
-                MODEL="claude-opus-4-5",
+                MODEL="claude-haiku-4-5",
                 THINKING_BUDGET_TOKENS=2048,
                 MAX_TOOL_ITERATIONS=10,
             ),
@@ -388,8 +403,8 @@ class DialecticSettings(HonchoSettings):
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
     SESSION_HISTORY_MAX_TOKENS: Annotated[
-        int, Field(default=16_384, ge=0, le=100_000)
-    ] = 16_384
+        int, Field(default=4_096, ge=0, le=16_384)
+    ] = 4_096
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
@@ -435,8 +450,40 @@ class WebhookSettings(HonchoSettings):
 
 class MetricsSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
-
     ENABLED: bool = False
+    NAMESPACE: str | None = None
+
+
+class TelemetrySettings(HonchoSettings):
+    """CloudEvents telemetry settings for analytics.
+
+    These settings configure the CloudEvents emitter for pushing
+    structured events to an analytics backend.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")  # pyright: ignore
+
+    # Master toggle for CloudEvents emission
+    ENABLED: bool = False
+
+    # CloudEvents HTTP endpoint (e.g., "https://telemetry.honcho.dev/v1/events")
+    ENDPOINT: str | None = None
+
+    # Optional headers for authentication
+    HEADERS: dict[str, str] | None = None
+
+    # Batching configuration
+    BATCH_SIZE: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
+    FLUSH_INTERVAL_SECONDS: Annotated[float, Field(default=1.0, gt=0.0, le=60.0)] = 1.0
+    FLUSH_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
+
+    # Retry configuration
+    MAX_RETRIES: Annotated[int, Field(default=3, gt=0, le=10)] = 3
+
+    # Buffer configuration
+    MAX_BUFFER_SIZE: Annotated[int, Field(default=10000, gt=0, le=100000)] = 10000
+
+    # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
 
@@ -525,6 +572,51 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         return self
 
 
+class VectorStoreSettings(HonchoSettings):
+    """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
+
+    model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
+
+    # Vector store type to use
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+
+    MIGRATED: bool = False
+
+    # Global namespace prefix for all vector namespaces
+    # Namespaces follow the pattern: {NAMESPACE}.{type}.{hash}
+    # where hash is a base64url-encoded SHA-256 of the workspace/peer names
+    # - Documents: {NAMESPACE}.doc.{hash(workspace, observer, observed)}
+    # - Messages: {NAMESPACE}.msg.{hash(workspace)}
+    NAMESPACE: str = "honcho"
+
+    DIMENSIONS: Annotated[
+        int,
+        Field(
+            default=1536,
+            gt=0,
+        ),
+    ] = 1536
+
+    # Turbopuffer-specific settings
+    TURBOPUFFER_API_KEY: str | None = None
+    TURBOPUFFER_REGION: str | None = None
+
+    # LanceDB-specific settings (local embedded mode)
+    LANCEDB_PATH: str = "./lancedb_data"
+
+    RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
+        300  # 5 minutes
+    )
+
+    @model_validator(mode="after")
+    def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
+        if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
+            raise ValueError(
+                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
+            )
+        return self
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -565,8 +657,10 @@ class AppSettings(HonchoSettings):
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
+    VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
@@ -577,15 +671,16 @@ class AppSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":
-        """Propagate top-level NAMESPACE to nested settings if not explicitly set.
-
-        After this validator runs, CACHE.NAMESPACE and METRICS.NAMESPACE are guaranteed
-        to exist.
-        """
-        if self.CACHE.NAMESPACE is None:
+        """Propagate top-level NAMESPACE to nested settings if not explicitly set."""
+        if "NAMESPACE" not in self.CACHE.model_fields_set:
             self.CACHE.NAMESPACE = self.NAMESPACE
-        if self.METRICS.NAMESPACE is None:
+        if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
+            self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
+            self.TELEMETRY.NAMESPACE = self.NAMESPACE
+        if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
+
         return self
 
 

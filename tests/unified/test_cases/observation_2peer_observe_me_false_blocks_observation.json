@@ -1,7 +1,6 @@
 {
   "description": "Test that observe_me=false prevents local representation creation even when other peer has observe_others=true",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -41,7 +40,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",

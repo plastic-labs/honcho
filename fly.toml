@@ -24,17 +24,17 @@ kill_timeout = '5s'
     soft_limit = 20
 
 [[vm]]
-  memory = '512mb'
+  memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
   processes = ['api', 'deriver']
 
 [[metrics]]
-port = 8000
-path = "/metrics"
-processes = ["api"]
+  port = 8000
+  path = "/metrics"
+  processes = ["api"]
 
 [[metrics]]
-port = 9090
-path = "/metrics"
-processes = ["deriver"]
+  port = 9090
+  path = "/metrics"
+  processes = ["deriver"]

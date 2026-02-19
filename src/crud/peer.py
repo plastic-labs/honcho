@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import cache, get_cache_namespace, safe_cache_delete
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
@@ -125,7 +125,7 @@ async def get_or_create_peers(
     # Only invalidate cache for changed/new peers - read-through pattern
     for peer_obj in changed_peers + new_peers:
         cache_key = peer_cache_key(workspace_name, peer_obj.name)
-        await cache.delete(cache_key)
+        await safe_cache_delete(cache_key)
         logger.debug(
             "Peer %s cache invalidated in workspace %s (changed or new)",
             peer_obj.name,
@@ -254,7 +254,7 @@ async def update_peer(
     await db.refresh(honcho_peer)
 
     cache_key = peer_cache_key(workspace_name, honcho_peer.name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Peer %s updated successfully", peer_name)
     return honcho_peer

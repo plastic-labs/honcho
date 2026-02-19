@@ -62,7 +62,6 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="User prefers dark mode",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -70,7 +69,6 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="User works late at night",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -78,7 +76,7 @@ class TestConclusionRoutes:
 
         # List conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -120,7 +118,7 @@ class TestConclusionRoutes:
 
         # List conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -170,7 +168,6 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Peer1 observes Peer2",
-            embedding=[0.1] * 1536,
             session_name=test_session.name,
         )
         doc2 = models.Document(
@@ -178,7 +175,6 @@ class TestConclusionRoutes:
             observer=test_peer2.name,
             observed=test_peer3.name,
             content="Peer2 observes Peer3",
-            embedding=[0.2] * 1536,
             session_name=test_session.name,
         )
         db_session.add_all([doc1, doc2])
@@ -186,7 +182,7 @@ class TestConclusionRoutes:
 
         # List conclusions filtered by observer
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={
                 "filters": {"observer": test_peer.name, "session_id": test_session.name}
             },
@@ -252,7 +248,7 @@ class TestConclusionRoutes:
 
         # List conclusions in reverse (oldest first)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list?reverse=true",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?reverse=true",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -306,7 +302,7 @@ class TestConclusionRoutes:
 
         # Get first page (default size)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list?page=1&size=10",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?page=1&size=10",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -317,7 +313,7 @@ class TestConclusionRoutes:
 
         # Get second page
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list?page=2&size=10",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?page=2&size=10",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -350,34 +346,31 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create test conclusions via API (ensures proper vector store integration)
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "User loves pizza and pasta",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "User dislikes vegetables",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
         )
-
-        # Create test conclusions
-        doc1 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User loves pizza and pasta",
-            embedding=[0.9] * 1536,
-            session_name=test_session.name,
-        )
-        doc2 = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="User dislikes vegetables",
-            embedding=[0.5] * 1536,
-            session_name=test_session.name,
-        )
-        db_session.add_all([doc1, doc2])
-        await db_session.commit()
+        assert create_response.status_code == 201
 
         # Query conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "food preferences",
                 "filters": {
@@ -424,27 +417,25 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create multiple conclusions via API (ensures proper vector store integration)
+        conclusions = [
+            {
+                "content": f"Conclusion about topic {i}",
+                "observer_id": test_peer.name,
+                "observed_id": test_peer2.name,
+                "session_id": test_session.name,
+            }
+            for i in range(5)
+        ]
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={"conclusions": conclusions},
         )
-
-        # Create multiple conclusions
-        for i in range(5):
-            doc = models.Document(
-                workspace_name=test_workspace.name,
-                observer=test_peer.name,
-                observed=test_peer2.name,
-                content=f"Conclusion about topic {i}",
-                embedding=[0.1 * i] * 1536,
-                session_name=test_session.name,
-            )
-            db_session.add(doc)
-        await db_session.commit()
+        assert create_response.status_code == 201
 
         # Query with top_k=2
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "relevant topic",
                 "top_k": 2,
@@ -485,26 +476,25 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create collection
-        await self._create_collection(
-            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        # Create test conclusion via API (ensures proper vector store integration)
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Test conclusion",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    }
+                ]
+            },
         )
-
-        # Create test conclusion
-        doc = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="Test conclusion",
-            embedding=[0.5] * 1536,
-            session_name=test_session.name,
-        )
-        db_session.add(doc)
-        await db_session.commit()
+        assert create_response.status_code == 201
 
         # Query with distance threshold
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "test",
                 "distance": 0.8,
@@ -539,7 +529,7 @@ class TestConclusionRoutes:
 
         # Query without observer/observed filters should fail
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={"query": "test"},
         )
 
@@ -571,7 +561,7 @@ class TestConclusionRoutes:
 
         # Query with invalid top_k (too high)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/query",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
                 "query": "test",
                 "top_k": 101,  # Max is 100
@@ -630,7 +620,7 @@ class TestConclusionRoutes:
 
         # Delete conclusion
         response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/{conclusion_id}"
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{conclusion_id}"
         )
 
         assert response.status_code == 204
@@ -640,7 +630,9 @@ class TestConclusionRoutes:
 
         stmt = select(models.Document).where(models.Document.id == conclusion_id)
         result = await db_session.execute(stmt)
-        assert result.scalar_one_or_none() is None
+        doc = result.scalar_one_or_none()
+        assert doc is not None
+        assert doc.deleted_at is not None
 
     @pytest.mark.asyncio
     async def test_delete_conclusion_not_found(
@@ -661,7 +653,7 @@ class TestConclusionRoutes:
 
         # Try to delete non-existent conclusion
         response = client.delete(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
+            f"/v3/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
         )
 
         assert response.status_code == 404
@@ -679,7 +671,7 @@ class TestConclusionRoutes:
 
         # Try to list conclusions for non-existent session
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": "nonexistent_session"}},
         )
 
@@ -731,7 +723,7 @@ class TestConclusionRoutes:
 
         # List conclusions
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={"filters": {"session_id": test_session.name}},
         )
 
@@ -778,7 +770,7 @@ class TestConclusionRoutes:
 
         # Create conclusion via API
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -829,7 +821,7 @@ class TestConclusionRoutes:
 
         # Create multiple conclusions via API
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -882,7 +874,7 @@ class TestConclusionRoutes:
 
         # Try to create conclusion with non-existent session
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -916,7 +908,7 @@ class TestConclusionRoutes:
 
         # Try to create conclusion with non-existent observer
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -957,7 +949,7 @@ class TestConclusionRoutes:
 
         # Try to create conclusion with empty content
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -983,7 +975,7 @@ class TestConclusionRoutes:
 
         # Try to create with empty conclusions list
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={"conclusions": []},
         )
 
@@ -1015,7 +1007,7 @@ class TestConclusionRoutes:
 
         # Create conclusion via API (this should auto-create collection)
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -1067,7 +1059,7 @@ class TestConclusionRoutes:
 
         # Create conclusions with different observer/observed pairs
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -1125,7 +1117,7 @@ class TestConclusionRoutes:
 
         # Create conclusion via API
         create_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions",
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
@@ -1143,7 +1135,7 @@ class TestConclusionRoutes:
 
         # List conclusions and verify the created one is there
         list_response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/conclusions/list",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             json={
                 "filters": {
                     "observer": test_peer.name,
@@ -1157,3 +1149,160 @@ class TestConclusionRoutes:
         data = list_response.json()
         ids = [obs["id"] for obs in data["items"]]
         assert created_id in ids
+
+    @pytest.mark.asyncio
+    async def test_create_conclusion_without_session_id(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating a conclusion without session_id (sessionless/global conclusion)"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.commit()
+
+        # Create conclusion without session_id
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "User prefers dark mode (global)",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        # No session_id - this is the key test
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data) == 1
+
+        conclusion = data[0]
+        assert conclusion["content"] == "User prefers dark mode (global)"
+        assert conclusion["observer_id"] == test_peer.name
+        assert conclusion["observed_id"] == test_peer2.name
+        assert conclusion["session_id"] is None  # Should be null
+        assert "id" in conclusion
+        assert "created_at" in conclusion
+
+    @pytest.mark.asyncio
+    async def test_create_conclusions_mixed_session_and_sessionless(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test creating a batch with both session-scoped and sessionless conclusions"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create a session
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        # Create mixed batch: one with session, one without
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Session-scoped conclusion",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "Global conclusion without session",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        # No session_id
+                    },
+                ]
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data) == 2
+
+        # Find conclusions by content
+        session_conclusion = next(
+            c for c in data if c["content"] == "Session-scoped conclusion"
+        )
+        global_conclusion = next(
+            c for c in data if c["content"] == "Global conclusion without session"
+        )
+
+        assert session_conclusion["session_id"] == test_session.name
+        assert global_conclusion["session_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_sessionless_conclusions(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that sessionless conclusions can be listed without session filter"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.commit()
+
+        # Create sessionless conclusion
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Sessionless conclusion for list test",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                    }
+                ]
+            },
+        )
+        assert create_response.status_code == 201
+        created_id = create_response.json()[0]["id"]
+
+        # List all conclusions (no session filter)
+        list_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {
+                    "observer_id": test_peer.name,
+                    "observed_id": test_peer2.name,
+                }
+            },
+        )
+
+        assert list_response.status_code == 200
+        data = list_response.json()
+        ids = [obs["id"] for obs in data["items"]]
+        assert created_id in ids
+
+        # Verify the conclusion has null session_id
+        conclusion = next(c for c in data["items"] if c["id"] == created_id)
+        assert conclusion["session_id"] is None

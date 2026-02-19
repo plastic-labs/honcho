@@ -1,17 +1,34 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import datetime, timezone
 from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.utils.queue_payload import create_payload
 from src.utils.work_unit import construct_work_unit_key
+
+
+@pytest.fixture(autouse=True)
+async def clean_queue_tables(db_session: AsyncSession) -> AsyncGenerator[None, None]:
+    """Clean up queue-related tables before each test to ensure isolation.
+
+    This prevents webhook queue items and active queue sessions from previous tests
+    from polluting subsequent tests, which can cause issues when tests have a limit
+    on how many work units can be claimed (e.g., WORKERS=1).
+    """
+    # Clean up before the test
+    await db_session.execute(delete(models.ActiveQueueSession))
+    await db_session.execute(delete(models.QueueItem))
+    await db_session.commit()
+
+    yield
+
 
 QueuePayload: TypeAlias = dict[str, Any]
 QueuePayloadEntry: TypeAlias = QueuePayload | tuple[QueuePayload, int | None]
@@ -141,7 +158,7 @@ def create_queue_payload() -> Callable[..., Any]:
             configuration=configuration,
             task_type=task_type,
             message_seq_in_session=message_seq_in_session,
-            observer=observer,
+            observers=[observer] if observer else None,
             observed=observed,
         )
 

@@ -1,0 +1,293 @@
+---
+title: 'File Uploads'
+description: 'Upload PDFs, text files, and JSON documents to create messages in Honcho'
+icon: 'upload'
+---
+
+Honcho's file upload feature allows you to convert documents into messages automatically. Upload PDFs, text files, or JSON documents, and Honcho will extract the text content, split it into appropriately sized chunks, and create messages that become part of your peer's representation or session context.
+
+This feature is perfect for ingesting documents, reports, research papers, or any text-based content that you want your AI agents to understand and reference.
+
+## How It Works
+
+When you upload a file, Honcho:
+
+1. **Extracts text** from the file using specialized processors based on file type
+2. **Creates messages** with the extracted content split into chunks that fit within message limits (messages are limited to 50,000 characters)
+3. **Queues processing** for background analysis and insight derivation like any other message
+
+The file content becomes part of the peer's representation, making it available for natural language queries and context retrieval.
+
+## Supported File Types
+
+Honcho currently supports the following file types with more to come:
+
+- **PDF files** (`application/pdf`) - Text extraction with page numbers
+- **Text files** (`text/*`) - Plain text, markdown, code files, etc.
+- **JSON files** (`application/json`) - Structured data converted to readable format
+
+<Note>
+Files are processed in memory and not stored on disk. Only the extracted text content is preserved in Honcho's message system.
+</Note>
+
+## Basic Usage
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Create session and peer
+session = honcho.session("research-session")
+user = honcho.peer("researcher")
+
+# Upload a PDF to a session
+with open("research_paper.pdf", "rb") as file:
+    messages = session.upload_file(
+        file=file,
+        peer_id=user.id,
+    )
+
+print(f"Created {len(messages)} messages from the PDF")
+```
+
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+import fs from "fs";
+
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
+
+    // Create session and peer
+    const session = await honcho.session("research-session");
+    const user = await honcho.peer("researcher");
+
+    // Upload a PDF to a session
+    const fileStream = fs.createReadStream("research_paper.pdf");
+    const messages = await session.uploadFile(fileStream, user.id);
+
+    console.log(`Created ${messages.length} messages from the PDF`);
+})();
+```
+</CodeGroup>
+
+## Upload Parameters
+
+The upload methods accept the following parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file` | File | Yes | File to upload |
+| `peer_id` | String | Yes | ID of the peer creating the messages |
+
+## File Processing Details
+
+### Text Extraction
+
+**PDF Files**: Text is extracted page by page with page numbers preserved:
+```
+[Page 1]
+Introduction
+This document provides...
+
+[Page 2]
+Methodology
+Our approach involves...
+```
+
+**Text Files**: Content is decoded using UTF-8, UTF-16, or Latin-1 encoding as needed.
+
+**JSON Files**: Structured data is converted to string format.
+
+### Chunking Strategy
+
+Large files are automatically split into chunks of ~49,500 characters. The system seeks to break at natural boundaries if present:
+
+1. Paragraph breaks (`\n\n`)
+2. Line breaks (`\n`)
+3. Sentence endings (`. `)
+4. Word boundaries (` `)
+
+Each chunk becomes a separate message, maintaining the original document structure.
+
+## Querying Uploaded Content
+
+Once files are uploaded, you can query the content using Honcho's natural language interface:
+
+<CodeGroup>
+```python Python
+# Query what was learned from the uploaded documents
+response = user.chat("What are the key findings from the research papers I uploaded?")
+print(response)
+
+# Ask about specific documents
+response = user.chat("What does the quarterly report say about revenue growth?")
+print(response)
+
+# Get context from the uploaded documents for LLM integration
+context = session.context(tokens=3000)
+messages = context.to_openai(assistant=assistant)
+```
+
+```typescript TypeScript
+(async () => {
+    // Query what was learned from the uploaded documents
+    const response = await user.chat("What are the key findings from the research papers I uploaded?");
+    console.log(response);
+
+    // Ask about specific documents
+    const response2 = await user.chat("What does the quarterly report say about revenue growth?");
+    console.log(response2);
+
+    // Get context from the uploaded documents for LLM integration
+    const context = await session.context({ tokens: 3000 });
+    const messages = context.toOpenAI(assistant);
+})();
+```
+</CodeGroup>
+
+## Error Handling
+
+### Unsupported File Types
+
+Files with unsupported content types will raise an exception:
+
+```python
+try:
+    messages = session.upload_file(
+        file=open("image.jpg", "rb"),
+        peer_id=user.id
+    )
+except Exception as e:
+    print(f"Upload failed: {e}")
+    # Error: "Could not process file image.jpg: Unsupported file type: image/jpeg"
+```
+
+### Missing Required Fields
+
+Session uploads require a `peer_id` parameter:
+
+```python
+# This will fail for session uploads
+try:
+    messages = session.upload_file(file=file)  # Missing peer_id
+except ValueError as e:
+    print(f"Validation error: {e}")
+```
+
+## Complete Example: Document Analysis Assistant
+
+Here's a complete example of building a document analysis assistant:
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize
+honcho = Honcho()
+session = honcho.session("document-analysis")
+user = honcho.peer("analyst")
+assistant = honcho.peer("analysis-bot")
+
+def upload_document(file_path, description):
+    """Upload a document and add it to the session"""
+    with open(file_path, "rb") as file:
+        messages = session.upload_file(
+            file=file,
+            peer_id=user.id,
+        )
+    return messages
+
+def analyze_documents():
+    """Get AI analysis of uploaded documents"""
+    context = session.context(tokens=4000)
+    messages = context.to_openai(assistant=assistant)
+    # Add analysis request
+    messages.append({
+        "role": "user",
+        "content": "Please analyze all the documents I've uploaded and provide a comprehensive summary of the key findings, trends, and recommendations."
+    })
+
+    # Call OpenAI (or your preferred LLM)
+    # response = openai.chat.completions.create(model="gpt-4", messages=messages)
+    # return response.choices[0].message.content
+
+    return "Analysis would be generated here"
+
+# Upload multiple documents
+documents = [
+    ("quarterly_report.pdf", "Q3 2024 Quarterly Financial Report"),
+    ("market_research.pdf", "Market Analysis and Competitive Landscape"),
+    ("product_roadmap.pdf", "Product Development Roadmap 2024-2025")
+]
+
+for file_path, description in documents:
+    messages = upload_document(file_path, description)
+    print(f"Uploaded {file_path}: {len(messages)} messages created")
+
+# Get AI analysis
+analysis = analyze_documents()
+print("Document Analysis:", analysis)
+```
+
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+import fs from "fs";
+
+(async () => {
+    // Initialize
+    const honcho = new Honcho({});
+    const session = await honcho.session("document-analysis");
+    const user = await honcho.peer("analyst");
+    const assistant = await honcho.peer("analysis-bot");
+
+    async function uploadDocument(filePath: string, description: string) {
+      const fileStream = fs.createReadStream(filePath);
+      const messages = await session.uploadFile(fileStream, user.id);
+      return messages;
+    }
+
+    async function analyzeDocuments() {
+      const context = await session.context({ tokens: 4000 });
+      const messages = context.toOpenAI(assistant);
+      // Add analysis request
+      messages.push({
+        role: "user",
+        content: "Please analyze all the documents I've uploaded and provide a comprehensive summary of the key findings, trends, and recommendations."
+      });
+
+      // Call OpenAI (or your preferred LLM)
+      // const response = await openai.chat.completions.create({ model: "gpt-4", messages });
+      // return response.choices[0].message.content;
+
+      return "Analysis would be generated here";
+    }
+
+    // Upload multiple documents
+    const documents = [
+      ["quarterly_report.pdf", "Q3 2024 Quarterly Financial Report"],
+      ["market_research.pdf", "Market Analysis and Competitive Landscape"],
+      ["product_roadmap.pdf", "Product Development Roadmap 2024-2025"]
+    ];
+
+    for (const [filePath, description] of documents) {
+      const messages = await uploadDocument(filePath, description);
+      console.log(`Uploaded ${filePath}: ${messages.length} messages created`);
+    }
+
+    // Get AI analysis
+    const analysis = await analyzeDocuments();
+    console.log("Document Analysis:", analysis);
+})();
+```
+</CodeGroup>
+
+## Error Handling
+
+- **Always wrap uploads in try-catch blocks** for robust error handling
+- **Validate file types** before upload to avoid processing errors
+- **Handle large files gracefully** with progress indicators
+- **Implement retry logic** for network failures

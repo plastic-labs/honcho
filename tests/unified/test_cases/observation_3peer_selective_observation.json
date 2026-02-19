@@ -1,7 +1,6 @@
 {
   "description": "Test selective observation - Alice observes Bob (observe_me=true) but not Charlie (observe_me=false)",
-  "workspace_config": {
-  },
+  "workspace_config": {},
   "steps": [
     {
       "step_type": "create_session",
@@ -49,7 +48,8 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty"
+      "target": "queue_empty",
+      "flush": true
     },
     {
       "step_type": "query",

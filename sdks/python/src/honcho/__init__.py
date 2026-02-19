@@ -27,49 +27,88 @@ Usage:
         bob.message("Hi Alice, how are you?")
     ])
 
-    # Wait for deriver to process all messages (only necessary if very recent messages are critical to query)
-    client.poll_deriver_status()
-
     # Query conversation context
-    response = alice.chat("What did Bob say to me?")
+    response = alice.chat("What did Bob say to me?", session=session)
+
+    # Async operations via .aio accessor
+    peer = await client.aio.peer("user-123")
+    await peer.aio.chat("query", session=session)
+    async for p in client.aio.peers():
+        print(p.id)
 """
 
-from .async_client import (
-    AsyncHoncho,
-    AsyncPage,
-    AsyncPeer,
-    AsyncSession,
-)
+from .aio import ConclusionScopeAio, HonchoAio, PeerAio, SessionAio
+from .api_types import MessageCreateParams
 from .base import PeerBase, SessionBase
 from .client import Honcho
-from .conclusions import AsyncConclusionScope, ConclusionScope
-from .pagination import SyncPage
+from .conclusions import Conclusion, ConclusionScope
+from .http.exceptions import (
+    APIError,
+    AuthenticationError,
+    BadRequestError,
+    ConflictError,
+    ConnectionError,
+    HonchoError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+    ServerError,
+    TimeoutError,
+    UnprocessableEntityError,
+)
+from .message import Message
+from .pagination import AsyncPage, SyncPage
 from .peer import Peer
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
+    AsyncDialecticStreamResponse,
     DialecticStreamResponse,
 )
 
-__version__ = "1.6.0"
+__version__ = "2.0.1"
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
 __all__ = [
-    "AsyncHoncho",
-    "AsyncConclusionScope",
-    "AsyncPeer",
-    "AsyncSession",
-    "AsyncPage",
+    # Client
     "Honcho",
+    # Domain classes
+    "Conclusion",
     "ConclusionScope",
+    "Message",
+    "MessageCreateParams",
     "Peer",
-    "PeerBase",
     "Session",
+    # Aio views (for type hints)
+    "ConclusionScopeAio",
+    "HonchoAio",
+    "PeerAio",
+    "SessionAio",
+    # Base classes
+    "PeerBase",
     "SessionBase",
+    # Response types
     "SessionContext",
     "SessionSummaries",
     "Summary",
+    # Pagination
+    "AsyncPage",
     "SyncPage",
+    # Streaming
+    "AsyncDialecticStreamResponse",
     "DialecticStreamResponse",
+    # Exceptions
+    "APIError",
+    "AuthenticationError",
+    "BadRequestError",
+    "ConflictError",
+    "ConnectionError",
+    "HonchoError",
+    "NotFoundError",
+    "PermissionDeniedError",
+    "RateLimitError",
+    "ServerError",
+    "TimeoutError",
+    "UnprocessableEntityError",
 ]

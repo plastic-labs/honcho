@@ -18,7 +18,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@honcho-ai/sdk": "^1.5.0",
+    "@honcho-ai/sdk": "^2.0.0",
     "@langchain/langgraph": "^1.0.2",
     "dotenv": "^17.2.3",
     "openai": "^6.9.1",

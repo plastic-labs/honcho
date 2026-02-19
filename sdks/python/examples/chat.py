@@ -1,7 +1,7 @@
 import random
 import uuid
 
-from honcho import Honcho
+from honcho import Honcho, MessageCreateParams
 
 # Create a Honcho client with the default workspace
 honcho = Honcho(environment="local")
@@ -16,7 +16,7 @@ peers = [
 session = honcho.session("chat_test_" + str(uuid.uuid4()))
 
 # Generate some random messages from alice, bob, and charlie and add them to the session
-messages = []
+messages: list[MessageCreateParams] = []
 for i in range(10):
     random_peer = random.choice(peers)
     messages.append(
@@ -25,15 +25,13 @@ for i in range(10):
 
 session.add_messages(messages)
 
-honcho.poll_deriver_status()
-
 # Chat with alice
 alice = peers[0]
 response = alice.chat("what did alice have for breakfast today?")
 print("response returned:", response)
 
 # Chat with alice in the session
-response = alice.chat("what did alice have for breakfast today?", session=session.id)
+response = alice.chat("what did alice have for breakfast today?", session=session)
 print("response returned:", response)
 
 # Chat with alice in the session with a target

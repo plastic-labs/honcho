@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ConflictException, ResourceNotFoundException
 
 
 class TestWorkspaceCRUD:
@@ -49,12 +49,12 @@ class TestWorkspaceCRUD:
         assert len(peers) == 0
 
     @pytest.mark.asyncio
-    async def test_delete_workspace_cascade_sessions(
+    async def test_check_no_active_sessions_raises(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Test that deleting a workspace cascades to delete sessions"""
+        """Test that check_no_active_sessions raises ConflictException when active sessions exist"""
         test_workspace, _test_peer = sample_data
 
         # Create sessions
@@ -67,21 +67,33 @@ class TestWorkspaceCRUD:
         db_session.add_all([session1, session2])
         await db_session.flush()
 
-        # Verify sessions exist
-        stmt = select(models.Session).where(
-            models.Session.workspace_name == test_workspace.name
+        # check_no_active_sessions should raise ConflictException
+        with pytest.raises(ConflictException, match="active session"):
+            await crud.check_no_active_sessions(db_session, test_workspace.name)
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_succeeds_with_active_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that delete_workspace cascade-deletes active sessions (no guard in crud)"""
+        test_workspace, _test_peer = sample_data
+
+        # Create active sessions
+        session1 = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
         )
-        result = await db_session.execute(stmt)
-        sessions = result.scalars().all()
-        assert len(sessions) == 2
+        session2 = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([session1, session2])
+        await db_session.flush()
 
-        # Delete workspace
-        await crud.delete_workspace(db_session, test_workspace.name)
-
-        # Verify sessions are deleted
-        result = await db_session.execute(stmt)
-        sessions = result.scalars().all()
-        assert len(sessions) == 0
+        # crud.delete_workspace should succeed — the guard lives in the router
+        result = await crud.delete_workspace(db_session, test_workspace.name)
+        assert result.workspace.name == test_workspace.name
+        assert result.sessions_deleted == 2
 
     @pytest.mark.asyncio
     async def test_delete_workspace_cascade_messages(
@@ -124,6 +136,10 @@ class TestWorkspaceCRUD:
         result = await db_session.execute(stmt)
         messages = result.scalars().all()
         assert len(messages) == 2
+
+        # Mark session inactive so workspace deletion is allowed
+        session.is_active = False
+        await db_session.flush()
 
         # Delete workspace
         await crud.delete_workspace(db_session, test_workspace.name)
@@ -199,7 +215,6 @@ class TestWorkspaceCRUD:
             observed=test_peer.name,
             session_name=session.name,
             content="Test document content",
-            embedding=[0.1] * 1536,  # Mock embedding vector
         )
         db_session.add(document)
         await db_session.flush()
@@ -211,6 +226,10 @@ class TestWorkspaceCRUD:
         result = await db_session.execute(stmt)
         documents = result.scalars().all()
         assert len(documents) == 1
+
+        # Mark session inactive so workspace deletion is allowed
+        session.is_active = False
+        await db_session.flush()
 
         # Delete workspace
         await crud.delete_workspace(db_session, test_workspace.name)
@@ -254,6 +273,10 @@ class TestWorkspaceCRUD:
         result = await db_session.execute(stmt)
         session_peers = result.all()
         assert len(session_peers) == 1
+
+        # Mark session inactive so workspace deletion is allowed
+        session.is_active = False
+        await db_session.flush()
 
         # Delete workspace
         await crud.delete_workspace(db_session, test_workspace.name)
@@ -329,6 +352,10 @@ class TestWorkspaceCRUD:
         queue_items = result.scalars().all()
         assert len(queue_items) == 1
 
+        # Mark session inactive so workspace deletion is allowed
+        session.is_active = False
+        await db_session.flush()
+
         # Delete workspace
         await crud.delete_workspace(db_session, test_workspace.name)
 
@@ -367,6 +394,10 @@ class TestWorkspaceCRUD:
         active_queues = result.scalars().all()
         assert len(active_queues) == 1
 
+        # Mark session inactive so workspace deletion is allowed
+        session.is_active = False
+        await db_session.flush()
+
         # Delete workspace
         await crud.delete_workspace(db_session, test_workspace.name)
 
@@ -381,18 +412,25 @@ class TestWorkspaceCRUD:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Test that delete_workspace returns the deleted workspace object"""
+        """Test that delete_workspace returns WorkspaceDeletionResult with cascade counts"""
         test_workspace, _test_peer = sample_data
 
         # Store workspace details before deletion
         workspace_name = test_workspace.name
 
         # Delete workspace
-        deleted_workspace = await crud.delete_workspace(db_session, test_workspace.name)
+        result = await crud.delete_workspace(db_session, test_workspace.name)
 
-        # Verify returned workspace matches the deleted workspace
-        assert deleted_workspace.name == workspace_name
-        assert isinstance(deleted_workspace, schemas.Workspace)
+        # Verify returned result is WorkspaceDeletionResult with correct workspace
+        assert isinstance(result, crud.WorkspaceDeletionResult)
+        assert result.workspace.name == workspace_name
+        assert isinstance(result.workspace, schemas.Workspace)
+
+        # Verify cascade counts are present (should have 1 peer from sample_data)
+        assert result.peers_deleted == 1
+        assert result.sessions_deleted >= 0
+        assert result.messages_deleted >= 0
+        assert result.conclusions_deleted >= 0
 
     @pytest.mark.asyncio
     async def test_delete_workspace_complex_cascade(
@@ -451,7 +489,6 @@ class TestWorkspaceCRUD:
             observed=peer2.name,
             session_name=session1.name,
             content="Test document",
-            embedding=[0.1] * 1536,  # Mock embedding vector
         )
         db_session.add(document)
 
@@ -491,6 +528,11 @@ class TestWorkspaceCRUD:
         assert len((await db_session.execute(document_stmt)).scalars().all()) == 1
         assert len((await db_session.execute(webhook_stmt)).scalars().all()) == 1
 
+        # Mark sessions inactive so workspace deletion is allowed
+        session1.is_active = False
+        session2.is_active = False
+        await db_session.flush()
+
         # Delete workspace
         await crud.delete_workspace(db_session, test_workspace.name)
 
@@ -501,3 +543,72 @@ class TestWorkspaceCRUD:
         assert len((await db_session.execute(collection_stmt)).scalars().all()) == 0
         assert len((await db_session.execute(document_stmt)).scalars().all()) == 0
         assert len((await db_session.execute(webhook_stmt)).scalars().all()) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_allows_inactive_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that workspace deletion succeeds when all sessions are inactive"""
+        test_workspace, _test_peer = sample_data
+
+        # Create sessions and mark them inactive
+        session1 = models.Session(
+            name=str(generate_nanoid()),
+            workspace_name=test_workspace.name,
+            is_active=False,
+        )
+        session2 = models.Session(
+            name=str(generate_nanoid()),
+            workspace_name=test_workspace.name,
+            is_active=False,
+        )
+        db_session.add_all([session1, session2])
+        await db_session.flush()
+
+        # Delete workspace should succeed
+        result = await crud.delete_workspace(db_session, test_workspace.name)
+        assert result.workspace.name == test_workspace.name
+
+        # Verify sessions are cleaned up
+        stmt = select(models.Session).where(
+            models.Session.workspace_name == test_workspace.name
+        )
+        remaining = await db_session.execute(stmt)
+        assert len(remaining.scalars().all()) == 0
+
+    @pytest.mark.asyncio
+    async def test_check_no_active_sessions_passes_after_deletion(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that check_no_active_sessions passes after sessions are deleted"""
+        test_workspace, _test_peer = sample_data
+
+        # Create active sessions
+        session1 = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session2 = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([session1, session2])
+        await db_session.flush()
+
+        # check_no_active_sessions should fail with active sessions
+        with pytest.raises(ConflictException):
+            await crud.check_no_active_sessions(db_session, test_workspace.name)
+
+        # Delete the sessions
+        await db_session.delete(session1)
+        await db_session.delete(session2)
+        await db_session.flush()
+
+        # Now check_no_active_sessions should pass (no exception)
+        await crud.check_no_active_sessions(db_session, test_workspace.name)
+
+        # And workspace deletion should succeed
+        result = await crud.delete_workspace(db_session, test_workspace.name)
+        assert result.workspace.name == test_workspace.name

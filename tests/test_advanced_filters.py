@@ -85,7 +85,7 @@ async def test_logical_operators_and_filters(
 
     # Create all peers
     for peer_config in peer_configs:
-        client.post(f"/v2/workspaces/{test_workspace.name}/peers", json=peer_config)
+        client.post(f"/v3/workspaces/{test_workspace.name}/peers", json=peer_config)
 
         # Test the filter configuration, but only consider the peers we created
     combined_filter = {
@@ -96,7 +96,7 @@ async def test_logical_operators_and_filters(
     }
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": combined_filter},
     )
     assert response.status_code == 200, f"Failed testing {description}"
@@ -171,7 +171,7 @@ async def test_comparison_operators_filters(
     # Create session with messages containing different metadata
     session_id = str(generate_nanoid())
     session_response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 201
@@ -200,14 +200,14 @@ async def test_comparison_operators_filters(
     ]
 
     messages_response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={"messages": message_configs},
     )
     assert messages_response.status_code == 201
 
     # Test the filter configuration
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": filter_config},
     )
     assert response.status_code == 200, f"Failed testing {description}"
@@ -247,17 +247,17 @@ async def test_wildcard_filters(
     peer2_name = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer1_name, "metadata": {"type": "bot"}},
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {"type": "human"}},
     )
 
     # Test wildcard for peer_id field
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "AND": [
@@ -275,7 +275,7 @@ async def test_wildcard_filters(
 
     # Test wildcard in comparison operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "id": {"in": ["*"]}  # Wildcard in comparison should also match all
@@ -298,13 +298,13 @@ async def test_complex_nested_filters(
     # Create session and messages for complex filtering
     session_id = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Create messages with various metadata combinations
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -349,7 +349,7 @@ async def test_complex_nested_filters(
 
     # Complex filters: (urgent OR normal priority) AND open status AND NOT assigned to charlie
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={
             "filters": {
                 "AND": [
@@ -387,7 +387,7 @@ async def test_filters_across_different_models(
     # Test workspace filters
     workspace_name = str(generate_nanoid())
     client.post(
-        "/v2/workspaces",
+        "/v3/workspaces",
         json={
             "name": workspace_name,
             "metadata": {"environment": "production", "version": "2.0"},
@@ -395,7 +395,7 @@ async def test_filters_across_different_models(
     )
 
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={
             "filters": {
                 "AND": [
@@ -415,7 +415,7 @@ async def test_filters_across_different_models(
     session2_id = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session1_id,
             "peer_names": {test_peer.name: {}},
@@ -423,7 +423,7 @@ async def test_filters_across_different_models(
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session2_id,
             "peer_names": {test_peer.name: {}},
@@ -432,7 +432,7 @@ async def test_filters_across_different_models(
     )
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={
             "filters": {
                 "OR": [
@@ -458,7 +458,7 @@ async def test_filter_edge_cases(
 
     # Test empty logical operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "AND": []  # Empty AND should not crash
@@ -469,21 +469,21 @@ async def test_filter_edge_cases(
 
     # Test nested empty operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"OR": [{"AND": []}, {"id": test_peer.name}]}},
     )
     assert response.status_code == 200
 
     # Test filter with non-existent columns (should be ignored gracefully)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"non_existent_column": "value"}},
     )
     assert response.status_code == 422
 
     # Test mixed wildcards and regular values
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "AND": [
@@ -510,7 +510,7 @@ async def test_backward_compatibility(
     # Create peer with metadata
     peer_name = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer_name,
             "metadata": {"role": "admin", "department": "engineering"},
@@ -519,7 +519,7 @@ async def test_backward_compatibility(
 
     # Test old-style simple equality filter
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"role": "admin"}}},
     )
     assert response.status_code == 200
@@ -529,7 +529,7 @@ async def test_backward_compatibility(
 
     # Test multiple field simple filter (implicit AND)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"role": "admin"}, "id": peer_name}},
     )
     assert response.status_code == 200
@@ -551,7 +551,7 @@ async def test_range_queries_with_dates(
     session3_id = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session1_id,
             "peer_names": {test_peer.name: {}},
@@ -559,7 +559,7 @@ async def test_range_queries_with_dates(
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session2_id,
             "peer_names": {test_peer.name: {}},
@@ -567,7 +567,7 @@ async def test_range_queries_with_dates(
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session3_id,
             "peer_names": {test_peer.name: {}},
@@ -577,7 +577,7 @@ async def test_range_queries_with_dates(
 
     # Test date range query
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={
             "filters": {
                 "metadata": {"created_date": {"gte": "2024-02-01", "lte": "2024-02-28"}}
@@ -593,7 +593,7 @@ async def test_range_queries_with_dates(
 
     # Test combining date and numeric filters
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={
             "filters": {
                 "AND": [
@@ -619,7 +619,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
     workspace2_name = str(generate_nanoid())
 
     client.post(
-        "/v2/workspaces",
+        "/v3/workspaces",
         json={
             "name": workspace1_name,
             "metadata": {"env": "dev", "version": "1.0", "active": True},
@@ -627,7 +627,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
         },
     )
     client.post(
-        "/v2/workspaces",
+        "/v3/workspaces",
         json={
             "name": workspace2_name,
             "metadata": {"env": "prod", "version": "2.0", "active": False},
@@ -637,7 +637,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
 
     # Test filtering by id (maps to name internally)
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"id": workspace1_name}},
     )
     assert response.status_code == 200
@@ -647,7 +647,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
 
     # Test filtering by id with comparison operators
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"id": {"in": [workspace1_name, workspace2_name]}}},
     )
     assert response.status_code == 200
@@ -658,7 +658,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
 
     # Test filtering by metadata (maps to h_metadata internally)
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"metadata": {"env": "dev"}}},
     )
     assert response.status_code == 200
@@ -669,7 +669,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
 
     # Test filtering by metadata with comparison operators
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"metadata": {"version": {"gte": "2.0"}}}},
     )
     assert response.status_code == 200
@@ -680,7 +680,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
 
     # Test filtering by created_at (datetime field)
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"created_at": {"gte": "2020-01-01"}}},
     )
     assert response.status_code == 200
@@ -699,7 +699,7 @@ async def test_all_peer_columns_filtering(
     peer2_name = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer1_name,
             "metadata": {"role": "user", "level": 1, "active": True},
@@ -707,7 +707,7 @@ async def test_all_peer_columns_filtering(
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer2_name,
             "metadata": {"role": "admin", "level": 5, "active": False},
@@ -717,7 +717,7 @@ async def test_all_peer_columns_filtering(
 
     # Test filtering by id (maps to name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"id": peer1_name}},
     )
     assert response.status_code == 200
@@ -727,7 +727,7 @@ async def test_all_peer_columns_filtering(
 
     # Test filtering by workspace_id (maps to workspace_name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"workspace_id": test_workspace.name}},
     )
     assert response.status_code == 200
@@ -737,7 +737,7 @@ async def test_all_peer_columns_filtering(
 
     # Test filtering by metadata
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"role": "admin"}}},
     )
     assert response.status_code == 200
@@ -748,7 +748,7 @@ async def test_all_peer_columns_filtering(
 
     # Test filtering by metadata with comparison operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"level": {"gte": 3}}}},
     )
     assert response.status_code == 200
@@ -759,7 +759,7 @@ async def test_all_peer_columns_filtering(
 
     # Test filtering by created_at
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"created_at": {"gte": "2020-01-01"}}},
     )
     assert response.status_code == 200
@@ -778,7 +778,7 @@ async def test_all_session_columns_filtering(
     session2_id = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session1_id,
             "peer_names": {test_peer.name: {}},
@@ -787,7 +787,7 @@ async def test_all_session_columns_filtering(
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session2_id,
             "peer_names": {test_peer.name: {}},
@@ -798,7 +798,7 @@ async def test_all_session_columns_filtering(
 
     # Test filtering by id (maps to name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"id": session1_id}},
     )
     assert response.status_code == 200
@@ -808,7 +808,7 @@ async def test_all_session_columns_filtering(
 
     # Test filtering by workspace_id (maps to workspace_name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"workspace_id": test_workspace.name}},
     )
     assert response.status_code == 200
@@ -818,7 +818,7 @@ async def test_all_session_columns_filtering(
 
     # Test filtering by is_active (boolean field)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"is_active": True}},
     )
     assert response.status_code == 200
@@ -829,7 +829,7 @@ async def test_all_session_columns_filtering(
 
     # Test filtering by metadata
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"metadata": {"type": "chat"}}},
     )
     assert response.status_code == 200
@@ -839,7 +839,7 @@ async def test_all_session_columns_filtering(
 
     # Test filtering by metadata with comparison operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"metadata": {"priority": {"gte": 3}}}},
     )
     assert response.status_code == 200
@@ -850,7 +850,7 @@ async def test_all_session_columns_filtering(
 
     # Test filtering by created_at
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"created_at": {"gte": "2020-01-01"}}},
     )
     assert response.status_code == 200
@@ -867,14 +867,14 @@ async def test_all_message_columns_filtering(
     # Create session and messages for testing
     session_id = str(generate_nanoid())
     session_response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 201
 
     # Create messages with various data
     messages_response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -899,7 +899,7 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by session_id (maps to session_name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"session_id": session_id}},
     )
     assert response.status_code == 200
@@ -908,7 +908,7 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by peer_id (maps to peer_name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"peer_id": test_peer.name}},
     )
     assert response.status_code == 200
@@ -917,7 +917,7 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by workspace_id (maps to workspace_name internally)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"workspace_id": test_workspace.name}},
     )
     assert response.status_code == 200
@@ -926,21 +926,21 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by content (text field) (not allowed)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"content": "Hello world message"}},
     )
     assert response.status_code == 422
 
     # Test filtering by content with contains operator (not allowed)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"content": {"contains": "support"}}},
     )
     assert response.status_code == 422
 
     # Test filtering by metadata
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"type": "greeting"}}},
     )
     assert response.status_code == 200
@@ -949,7 +949,7 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by metadata with comparison operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"priority": {"gte": 3}}}},
     )
     assert response.status_code == 200
@@ -958,7 +958,7 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by token_count (integer field) - this should exist after message creation
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"token_count": {"gte": 0}}},
     )
     assert response.status_code == 200
@@ -967,7 +967,7 @@ async def test_all_message_columns_filtering(
 
     # Test filtering by created_at
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"created_at": {"gte": "2020-01-01"}}},
     )
     assert response.status_code == 200
@@ -985,19 +985,19 @@ async def test_id_field_interpolation_consistency(client: TestClient):
 
     # Create workspace
     client.post(
-        "/v2/workspaces",
+        "/v3/workspaces",
         json={"name": workspace_name, "metadata": {"test": "value"}},
     )
 
     # Create peer
     client.post(
-        f"/v2/workspaces/{workspace_name}/peers",
+        f"/v3/workspaces/{workspace_name}/peers",
         json={"name": peer_name, "metadata": {"test": "value"}},
     )
 
     # Create session
     client.post(
-        f"/v2/workspaces/{workspace_name}/sessions",
+        f"/v3/workspaces/{workspace_name}/sessions",
         json={
             "id": session_id,
             "peer_names": {peer_name: {}},
@@ -1007,7 +1007,7 @@ async def test_id_field_interpolation_consistency(client: TestClient):
 
     # Create message
     messages_response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{workspace_name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1024,7 +1024,7 @@ async def test_id_field_interpolation_consistency(client: TestClient):
 
     # Workspace: id should map to name
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"id": workspace_name}},
     )
     assert response.status_code == 200
@@ -1034,7 +1034,7 @@ async def test_id_field_interpolation_consistency(client: TestClient):
 
     # Peer: id should map to name
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/list",
+        f"/v3/workspaces/{workspace_name}/peers/list",
         json={"filters": {"id": peer_name}},
     )
     assert response.status_code == 200
@@ -1044,7 +1044,7 @@ async def test_id_field_interpolation_consistency(client: TestClient):
 
     # Session: id should map to name
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/list",
+        f"/v3/workspaces/{workspace_name}/sessions/list",
         json={"filters": {"id": session_id}},
     )
     assert response.status_code == 200
@@ -1054,7 +1054,7 @@ async def test_id_field_interpolation_consistency(client: TestClient):
 
     # Message: id is not allowed to be filtered on
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
         json={"filters": {"id": message_id}},
     )
     assert response.status_code == 422
@@ -1072,12 +1072,12 @@ async def test_foreign_key_field_interpolation(
     session_id = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer_name, "metadata": {"role": "test"}},
     )
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
             "peer_names": {peer_name: {}},
@@ -1087,7 +1087,7 @@ async def test_foreign_key_field_interpolation(
 
     # Create message
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1101,7 +1101,7 @@ async def test_foreign_key_field_interpolation(
 
     # Test workspace_id filtering for peers (maps to workspace_name)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"workspace_id": test_workspace.name}},
     )
     assert response.status_code == 200
@@ -1112,7 +1112,7 @@ async def test_foreign_key_field_interpolation(
 
     # Test workspace_id filtering for sessions (maps to workspace_name)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
         json={"filters": {"workspace_id": test_workspace.name}},
     )
     assert response.status_code == 200
@@ -1122,7 +1122,7 @@ async def test_foreign_key_field_interpolation(
 
     # Test session_id filtering for messages (maps to session_name)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"session_id": session_id}},
     )
     assert response.status_code == 200
@@ -1131,7 +1131,7 @@ async def test_foreign_key_field_interpolation(
 
     # Test peer_id filtering for messages (maps to peer_name)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"peer_id": peer_name}},
     )
     assert response.status_code == 200
@@ -1140,7 +1140,7 @@ async def test_foreign_key_field_interpolation(
 
     # Test workspace_id filtering for messages (maps to workspace_name)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"workspace_id": test_workspace.name}},
     )
     assert response.status_code == 200
@@ -1157,7 +1157,7 @@ async def test_metadata_field_interpolation(client: TestClient):
     session_id = str(generate_nanoid())
 
     client.post(
-        "/v2/workspaces",
+        "/v3/workspaces",
         json={
             "name": workspace_name,
             "metadata": {"env": "test", "version": "1.0", "active": True},
@@ -1165,7 +1165,7 @@ async def test_metadata_field_interpolation(client: TestClient):
     )
 
     client.post(
-        f"/v2/workspaces/{workspace_name}/peers",
+        f"/v3/workspaces/{workspace_name}/peers",
         json={
             "name": peer_name,
             "metadata": {"role": "user", "level": 5, "premium": True},
@@ -1173,7 +1173,7 @@ async def test_metadata_field_interpolation(client: TestClient):
     )
 
     client.post(
-        f"/v2/workspaces/{workspace_name}/sessions",
+        f"/v3/workspaces/{workspace_name}/sessions",
         json={
             "id": session_id,
             "peer_names": {peer_name: {}},
@@ -1182,7 +1182,7 @@ async def test_metadata_field_interpolation(client: TestClient):
     )
 
     client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{workspace_name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1202,7 +1202,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Workspace metadata
     response = client.post(
-        "/v2/workspaces/list",
+        "/v3/workspaces/list",
         json={"filters": {"metadata": {"env": "test"}}},
     )
     assert response.status_code == 200
@@ -1212,7 +1212,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Peer metadata
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/list",
+        f"/v3/workspaces/{workspace_name}/peers/list",
         json={"filters": {"metadata": {"role": "user"}}},
     )
     assert response.status_code == 200
@@ -1222,7 +1222,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Session metadata
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/list",
+        f"/v3/workspaces/{workspace_name}/sessions/list",
         json={"filters": {"metadata": {"type": "chat"}}},
     )
     assert response.status_code == 200
@@ -1232,7 +1232,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Message metadata
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"sentiment": "positive"}}},
     )
     assert response.status_code == 200
@@ -1243,7 +1243,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Numeric metadata comparison
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/list",
+        f"/v3/workspaces/{workspace_name}/peers/list",
         json={"filters": {"metadata": {"level": {"gte": 3}}}},
     )
     assert response.status_code == 200
@@ -1253,7 +1253,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Boolean metadata comparison
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/list",
+        f"/v3/workspaces/{workspace_name}/sessions/list",
         json={"filters": {"metadata": {"archived": {"ne": True}}}},
     )
     assert response.status_code == 200
@@ -1263,7 +1263,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
     # Float metadata comparison
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"confidence": {"gte": 0.9}}}},
     )
     assert response.status_code == 200
@@ -1281,20 +1281,20 @@ async def test_nonexistent_columns_ignored_gracefully(
     # Create test data
     peer_name = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer_name, "metadata": {"role": "test"}},
     )
 
     # Test filtering by non-existent columns
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"nonexistent_column": "value"}},
     )
     assert response.status_code == 422
 
     # Test combining real and non-existent columns
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "AND": [
@@ -1308,7 +1308,7 @@ async def test_nonexistent_columns_ignored_gracefully(
 
     # Test with complex nested filters containing non-existent columns
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "OR": [
@@ -1334,21 +1334,21 @@ async def test_not_logic_correctness(
     peer3_name = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer1_name,
             "metadata": {"role": "admin", "department": "engineering"},
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer2_name,
             "metadata": {"role": "user", "department": "engineering"},
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer3_name, "metadata": {"role": "admin", "department": "sales"}},
     )
 
@@ -1356,7 +1356,7 @@ async def test_not_logic_correctness(
     # User expectation: NOT admin AND NOT engineering = exclude admin users AND exclude engineering users
     # Current broken code: NOT(admin AND engineering) = exclude users who are BOTH admin AND engineering
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "NOT": [
@@ -1390,13 +1390,13 @@ async def test_jsonb_type_casting_edge_cases(
 
     session_id = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Create messages with various data types in metadata
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1425,7 +1425,7 @@ async def test_jsonb_type_casting_edge_cases(
 
     # Test boolean comparisons - PostgreSQL stores booleans as "true"/"false" strings
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"active": {"ne": False}}}},
     )
     assert response.status_code == 200
@@ -1435,7 +1435,7 @@ async def test_jsonb_type_casting_edge_cases(
 
     # Test string vs numeric comparison
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"score": {"gt": 10}}}},
     )
     assert response.status_code == 200
@@ -1446,7 +1446,7 @@ async def test_jsonb_type_casting_edge_cases(
 
     # Test large number handling
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"score": {"gte": 999999999}}}},
     )
     assert response.status_code == 200
@@ -1467,7 +1467,7 @@ async def test_real_datetime_column_filtering(
     peer2_name = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer1_name, "metadata": {"created": "early"}},
     )
 
@@ -1477,7 +1477,7 @@ async def test_real_datetime_column_filtering(
     time.sleep(0.1)
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer2_name, "metadata": {"created": "late"}},
     )
 
@@ -1487,7 +1487,7 @@ async def test_real_datetime_column_filtering(
 
     # Test ISO format
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"created_at": {"gte": one_minute_ago.isoformat()}}},
     )
     assert response.status_code == 200
@@ -1499,7 +1499,7 @@ async def test_real_datetime_column_filtering(
     # Test date-only format
     today = datetime.now(timezone.utc).date().isoformat()
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"created_at": {"gte": today}}},
     )
     assert response.status_code == 200
@@ -1522,7 +1522,7 @@ async def test_invalid_datetime_handling(
 
     for malicious_dt in malicious_datetimes:
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/peers/list",
+            f"/v3/workspaces/{test_workspace.name}/peers/list",
             json={"filters": {"created_at": {"gte": malicious_dt}}},
         )
         assert response.status_code == 422
@@ -1537,13 +1537,13 @@ async def test_nested_jsonb_filtering(
 
     session_id = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Create messages with deeply nested metadata
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1572,7 +1572,7 @@ async def test_nested_jsonb_filtering(
 
     # Test nested object filtering - this might not work as expected
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"user": {"profile": {"premium": True}}}}},
     )
     assert response.status_code == 200
@@ -1590,13 +1590,13 @@ async def test_multiple_operators_same_field(
 
     session_id = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Create messages with scores for range testing
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1625,7 +1625,7 @@ async def test_multiple_operators_same_field(
 
     # Test range query: score >= 3 AND score <= 8
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"score": {"gte": 3, "lte": 8}}}},
     )
     assert response.status_code == 200
@@ -1643,7 +1643,7 @@ async def test_empty_and_null_filter_handling(
 
     # Test completely empty filter
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filters": {}}
+        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"filters": {}}
     )
     assert response.status_code == 200
     data = response.json()
@@ -1652,13 +1652,13 @@ async def test_empty_and_null_filter_handling(
 
     # Test null filter
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filters": None}
+        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"filters": None}
     )
     assert response.status_code == 200
 
     # Test empty comparison dict
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"role": {}}}},
     )
     assert response.status_code == 200
@@ -1674,7 +1674,7 @@ async def test_unicode_and_special_characters(
     # Create peer with unicode metadata
     # NOTE: peer names are validated to only contain alphanumerics
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": test_peer.name,
             "metadata": {
@@ -1686,7 +1686,7 @@ async def test_unicode_and_special_characters(
 
     # Test unicode in metadata contains
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"description": {"icontains": "wörld"}}}},
     )
     assert response.status_code == 200
@@ -1707,14 +1707,14 @@ async def test_case_sensitivity_edge_cases(
     peer2_name = str(generate_nanoid())
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer1_name,
             "metadata": {"Role": "Admin", "Department": "ENGINEERING"},
         },
     )
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={
             "name": peer2_name,
             "metadata": {"role": "admin", "department": "engineering"},
@@ -1723,7 +1723,7 @@ async def test_case_sensitivity_edge_cases(
 
     # Test exact case matching (should be case sensitive for JSONB)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"Role": "Admin"}}},
     )
     assert response.status_code == 200
@@ -1734,7 +1734,7 @@ async def test_case_sensitivity_edge_cases(
 
     # Test icontains for case insensitive search
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"metadata": {"Department": {"icontains": "engineering"}}}},
     )
     assert response.status_code == 200
@@ -1763,7 +1763,7 @@ async def test_malformed_filter_structures(
 
     for malformed_filter in malformed_filters:
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/peers/list",
+            f"/v3/workspaces/{test_workspace.name}/peers/list",
             json={"filters": malformed_filter},
         )
         assert response.status_code == 422
@@ -1812,7 +1812,7 @@ async def test_performance_with_complex_filters(
 
     # This should complete without timeout
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": complex_filter},
     )
     assert response.status_code == 200
@@ -1847,12 +1847,12 @@ async def test_filter_precedence_and_grouping(
     ]
 
     for peer_data in peers_data:
-        client.post(f"/v2/workspaces/{test_workspace.name}/peers", json=peer_data)
+        client.post(f"/v3/workspaces/{test_workspace.name}/peers", json=peer_data)
 
     # Test: (admin OR user) AND (eng OR high level)
     # This should test that grouping works correctly
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "AND": [
@@ -1894,13 +1894,13 @@ async def test_jsonb_contains_vs_equality_semantics(
 
     session_id = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Create messages with different JSONB structures
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -1927,7 +1927,7 @@ async def test_jsonb_contains_vs_equality_semantics(
 
     # Test JSONB contains behavior - should match both exact and superset
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"role": "admin"}}},
     )
     assert response.status_code == 200
@@ -1947,13 +1947,13 @@ async def test_wildcard_edge_cases_comprehensive(
 
     peer_name = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
+        f"/v3/workspaces/{test_workspace.name}/peers",
         json={"name": peer_name, "metadata": {"role": "admin", "level": 5}},
     )
 
     # Test wildcard with comparison operators
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {"metadata": {"level": {"gte": "*"}}}  # Wildcard in comparison
         },
@@ -1965,7 +1965,7 @@ async def test_wildcard_edge_cases_comprehensive(
 
     # Test wildcard in array (in operator)
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "metadata": {"role": {"in": ["*", "admin"]}}
@@ -1979,7 +1979,7 @@ async def test_wildcard_edge_cases_comprehensive(
 
     # Test multiple wildcards
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={
             "filters": {
                 "AND": [
@@ -2012,7 +2012,7 @@ async def test_error_logging_and_debugging(
 
     for filter_dict in problematic_filters:
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/peers/list",
+            f"/v3/workspaces/{test_workspace.name}/peers/list",
             json={"filters": filter_dict},
         )
         assert response.status_code == 422
@@ -2027,7 +2027,7 @@ async def test_boundary_conditions_numeric(
 
     session_id = str(generate_nanoid())
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
+        f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
@@ -2045,7 +2045,7 @@ async def test_boundary_conditions_numeric(
     ]
 
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
                 {
@@ -2060,7 +2060,7 @@ async def test_boundary_conditions_numeric(
 
     # Test boundary conditions
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"score": {"gte": 0}}}},
     )
     assert response.status_code == 200
@@ -2072,7 +2072,7 @@ async def test_boundary_conditions_numeric(
 
     # Test floating point precision
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filters": {"metadata": {"score": {"gt": 3.14}}}},
     )
     assert response.status_code == 200
@@ -2089,18 +2089,18 @@ async def test_float_precision_edge_cases(client: TestClient):
     peer_name = str(generate_nanoid())
 
     # Create workspace
-    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    response = client.post("/v3/workspaces", json={"name": workspace_name})
     assert response.status_code == 201
 
     # Create peer
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+        f"/v3/workspaces/{workspace_name}/peers", json={"name": peer_name}
     )
     assert response.status_code == 201
 
     # Create messages with problematic floating point values using correct endpoint
     messages_response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages",
         json={
             "messages": [
                 {
@@ -2164,7 +2164,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test exact equality
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"value": 0.3}}},
     )
     assert response.status_code == 200
@@ -2177,7 +2177,7 @@ async def test_float_precision_edge_cases(client: TestClient):
     # Test near-equality using range queries (proper way to handle float precision)
     epsilon = 1e-10
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={
             "filters": {
                 "AND": [
@@ -2196,7 +2196,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test greater than with floating point precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"value": {"gt": 0.3}}}},
     )
     assert response.status_code == 200
@@ -2207,7 +2207,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test very small numbers and scientific notation
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"value": {"lt": 1e-9}}}},
     )
     assert response.status_code == 200
@@ -2217,7 +2217,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test large number precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"value": {"gte": 999999.0}}}},
     )
     assert response.status_code == 200
@@ -2227,7 +2227,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test repeating decimal precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"value": {"gte": 0.333}}}},
     )
     assert response.status_code == 200
@@ -2237,7 +2237,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test floating point comparison with string representation
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filters": {"metadata": {"calculation": "0.1 + 0.2"}}},
     )
     assert response.status_code == 200
@@ -2254,18 +2254,18 @@ async def test_mixed_type_comparisons(client: TestClient):
     peer_name = str(generate_nanoid())
 
     # Create workspace
-    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    response = client.post("/v3/workspaces", json={"name": workspace_name})
     assert response.status_code == 201
 
     # Create peer
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+        f"/v3/workspaces/{workspace_name}/peers", json={"name": peer_name}
     )
     assert response.status_code == 201
 
     # Create messages with mixed data types for the same logical field
     messages_response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages",
         json={
             "messages": [
                 {
@@ -2335,7 +2335,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test string vs numeric equality
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"priority": 5}}},
     )
     assert response.status_code == 200
@@ -2347,7 +2347,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test string number comparison with numeric operator
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"priority": {"gte": 5}}}},
     )
     assert response.status_code == 200
@@ -2358,7 +2358,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test string boolean vs actual boolean
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"active": True}}},
     )
     assert response.status_code == 200
@@ -2369,7 +2369,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test explicit string matching
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"priority": "5"}}},
     )
     assert response.status_code == 200
@@ -2379,7 +2379,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test numeric comparison with string numbers
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"score": {"gt": 10}}}},
     )
     assert response.status_code == 200
@@ -2389,7 +2389,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test zero comparisons (string "0" vs integer 0)
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"count": 0}}},
     )
     assert response.status_code == 200
@@ -2399,7 +2399,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test null vs string "null"
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"count": None}}},
     )
     assert response.status_code == 200
@@ -2409,7 +2409,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test leading zeros handling
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"priority": "05"}}},
     )
     assert response.status_code == 200
@@ -2419,7 +2419,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test case sensitivity for string booleans
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"active": "TRUE"}}},
     )
     assert response.status_code == 200
@@ -2429,7 +2429,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test empty string vs other falsy values
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"priority": ""}}},
     )
     assert response.status_code == 200
@@ -2439,7 +2439,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test special string values
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"score": "NaN"}}},
     )
     assert response.status_code == 200
@@ -2449,7 +2449,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test mixed type in operator
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
+        f"/v3/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filters": {"metadata": {"priority": {"in": [5, "5", 5.0]}}}},
     )
     assert response.status_code == 200

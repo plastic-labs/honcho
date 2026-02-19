@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,6 +8,7 @@ from src.schemas import (
     DocumentMetadata,
     MessageCreate,
     PeerCreate,
+    ResolvedConfiguration,
     SessionCreate,
     WorkspaceCreate,
 )
@@ -140,3 +143,63 @@ class TestDocumentValidations:
             )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
+
+
+class TestResolvedConfigurationMigration:
+    """Test backward compatibility for queue items created before v3.0.0.
+
+    In v3.0.0, the 'deriver' field was renamed to 'reasoning'. Old queue items
+    may still have the 'deriver' field and need to be migrated at validation time.
+    """
+
+    def _make_config(self, **overrides: dict[str, Any]):
+        """Helper to create a valid config dict with overrides."""
+        base = {
+            "reasoning": {"enabled": True},
+            "peer_card": {"use": True, "create": True},
+            "summary": {
+                "enabled": True,
+                "messages_per_short_summary": 20,
+                "messages_per_long_summary": 60,
+            },
+            "dream": {"enabled": False},
+        }
+        base.update(overrides)
+        return base
+
+    def test_old_queue_item_with_deriver_field(self):
+        """Old queue items with 'deriver' should be migrated to 'reasoning'."""
+        old_payload = self._make_config()
+        del old_payload["reasoning"]
+        old_payload["deriver"] = {"enabled": True}
+
+        config = ResolvedConfiguration.model_validate(old_payload)
+
+        assert config.reasoning.enabled is True
+
+    def test_new_queue_item_with_reasoning_field(self):
+        """New queue items with 'reasoning' should work normally."""
+        new_payload = self._make_config(reasoning={"enabled": False})
+
+        config = ResolvedConfiguration.model_validate(new_payload)
+
+        assert config.reasoning.enabled is False
+
+    def test_migration_does_not_override_reasoning(self):
+        """If both 'deriver' and 'reasoning' exist, 'reasoning' takes precedence."""
+        payload = self._make_config(reasoning={"enabled": False})
+        payload["deriver"] = {"enabled": True}
+
+        config = ResolvedConfiguration.model_validate(payload)
+
+        assert config.reasoning.enabled is False
+
+    def test_missing_reasoning_and_deriver_fails(self):
+        """Payload missing both 'reasoning' and 'deriver' should fail validation."""
+        payload = self._make_config()
+        del payload["reasoning"]
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResolvedConfiguration.model_validate(payload)
+
+        assert any(e["loc"] == ("reasoning",) for e in exc_info.value.errors())
