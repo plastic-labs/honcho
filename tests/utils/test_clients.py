@@ -566,6 +566,11 @@ class TestGoogleClient:
             assert response.output_tokens == 5
             assert response.finish_reasons == ["STOP"]
 
+            # Verify max output token cap is passed through
+            mock_aio.models.generate_content.assert_called_once()
+            call_args = mock_aio.models.generate_content.call_args
+            assert call_args.kwargs["config"]["max_output_tokens"] == 100
+
     async def test_google_json_mode(self):
         """Test Google/Gemini with JSON mode"""
         from google import genai
@@ -606,9 +611,9 @@ class TestGoogleClient:
             # Verify JSON mode was set in config
             mock_aio.models.generate_content.assert_called_once()
             call_args = mock_aio.models.generate_content.call_args
-            assert (
-                call_args.kwargs["config"]["response_mime_type"] == "application/json"
-            )
+            config = call_args.kwargs["config"]
+            assert config["response_mime_type"] == "application/json"
+            assert config["max_output_tokens"] == 100
 
     async def test_google_response_model(self):
         """Test Google/Gemini with structured output"""
@@ -651,6 +656,7 @@ class TestGoogleClient:
             config = call_args.kwargs["config"]
             assert config["response_mime_type"] == "application/json"
             assert config["response_schema"] == SampleTestModel
+            assert config["max_output_tokens"] == 100
 
     async def test_google_streaming(self):
         """Test Google/Gemini streaming response"""
@@ -704,6 +710,11 @@ class TestGoogleClient:
             assert chunks[2].content == ""
             assert chunks[2].is_done is True
             assert chunks[2].finish_reasons == ["STOP"]
+
+            # Verify streaming call includes max output token cap
+            mock_aio.models.generate_content_stream.assert_called_once()
+            call_args = mock_aio.models.generate_content_stream.call_args
+            assert call_args.kwargs["config"]["max_output_tokens"] == 100
 
     async def test_google_no_candidates_fallback(self):
         """Test Google/Gemini fallback when no candidates"""

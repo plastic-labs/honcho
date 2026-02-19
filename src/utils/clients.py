@@ -2062,6 +2062,9 @@ async def honcho_llm_call_inner(
             # Build config for Gemini
             gemini_config: dict[str, Any] = {}
 
+            # Gemini uses max_output_tokens, not max_tokens.
+            gemini_config["max_output_tokens"] = params["max_tokens"]
+
             if temperature is not None:
                 gemini_config["temperature"] = temperature
 
@@ -2449,23 +2452,25 @@ async def handle_streaming_response(
 
         case genai.Client():
             prompt_text = params["messages"][0]["content"] if params["messages"] else ""
+            stream_config: GenerateContentConfigDict = {
+                "max_output_tokens": cast(int, params["max_tokens"]),
+            }
 
             if response_model is not None:
+                stream_config["response_mime_type"] = "application/json"
+                stream_config["response_schema"] = response_model
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
-                    config={
-                        "response_mime_type": "application/json",
-                        "response_schema": response_model,
-                    },
+                    config=stream_config,
                 )
             else:
+                if json_mode:
+                    stream_config["response_mime_type"] = "application/json"
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
-                    config={
-                        "response_mime_type": "application/json" if json_mode else None,
-                    },
+                    config=stream_config,
                 )
 
             final_chunk = None

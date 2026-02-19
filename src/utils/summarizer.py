@@ -119,7 +119,7 @@ Return only the summary without any explanation or meta-commentary.
 {formatted_messages}
 </conversation>
 
-Produce as thorough a summary as possible in {output_words} words or less.
+Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
 """)
 
 
@@ -153,7 +153,7 @@ Return only the summary without any explanation or meta-commentary.
 {formatted_messages}
 </conversation>
 
-Produce as thorough a summary as possible in {output_words} words or less.
+Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
 """)
 
 
