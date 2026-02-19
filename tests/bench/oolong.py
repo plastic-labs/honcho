@@ -7,10 +7,11 @@ Evaluates long-context reasoning and aggregation on:
 """
 
 import argparse
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from dotenv import load_dotenv
 from honcho.api_types import MessageCreateParams
@@ -240,6 +241,27 @@ class OolongRunner(BaseRunner[TestResult]):
     def get_dream_observers(self, item: Any) -> list[str]:
         return ["user"]
 
+    def get_dream_session_ids(self, ctx: ItemContext, _item: Any) -> list[str]:
+        if self.merge_sessions:
+            return [ctx.session_id]
+
+        session_ids = ctx.peers.get("_session_ids")
+        if not isinstance(session_ids, list) or not session_ids:
+            raise ValueError(
+                "Non-merged OOLONG mode requires at least one chunk session ID for dreams"
+            )
+
+        session_ids_typed = cast(list[object], session_ids)
+        cleaned_session_ids: list[str] = []
+        for maybe_session_id in session_ids_typed:
+            if isinstance(maybe_session_id, str) and maybe_session_id:
+                cleaned_session_ids.append(maybe_session_id)
+        if not cleaned_session_ids:
+            raise ValueError(
+                "Non-merged OOLONG mode has no valid chunk session IDs for dreams"
+            )
+        return cleaned_session_ids
+
     async def execute_questions(self, ctx: ItemContext, item: Any) -> TestResult:
         start_time = time.time()
         question_id = item["id"]
@@ -462,8 +484,8 @@ Examples:
         type=str,
         default=None,
         help=(
-            "Discrete context size, e.g. 8K, 16K, 1M, or exact token count like 16384. "
-            "Overrides --min-context-len and --max-context-len."
+            "Context-size bucket cap, e.g. 8K, 16K, 1M, or exact token count like 16384. "
+            "Sets --max-context-len; --min-context-len is only kept when explicitly passed."
         ),
     )
     parser.add_argument(
@@ -500,6 +522,7 @@ Examples:
 
     add_common_arguments(parser)
     args = parser.parse_args()
+    min_context_len_explicit = "--min-context-len" in sys.argv
 
     error = validate_common_arguments(args)
     if error:
@@ -518,6 +541,27 @@ Examples:
         print(f"Error: max examples must be positive, got {args.max_examples}")
         return 1
 
+    if args.context_size:
+        try:
+            exact_size = parse_context_size(args.context_size)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+
+        # OOLONG-style behavior: context-size is a bucket cap. Preserve
+        # an explicit lower bound only when the user provides one.
+        args.max_context_len = exact_size
+        if not min_context_len_explicit:
+            args.min_context_len = None
+        print(
+            f"Using context-size cap: <= {exact_size} tokens"
+            + (
+                f" (min: {args.min_context_len})"
+                if args.min_context_len is not None
+                else ""
+            )
+        )
+
     if args.min_context_len is not None and args.min_context_len < 0:
         print(f"Error: min context len must be >= 0, got {args.min_context_len}")
         return 1
@@ -535,16 +579,6 @@ Examples:
             f"Error: max context len must be >= min context len ({args.max_context_len} < {args.min_context_len})"
         )
         return 1
-
-    if args.context_size:
-        try:
-            exact_size = parse_context_size(args.context_size)
-        except ValueError as e:
-            print(f"Error: {e}")
-            return 1
-        args.min_context_len = exact_size
-        args.max_context_len = exact_size
-        print(f"Using discrete context size: {args.context_size} ({exact_size} tokens)")
 
     config = RunnerConfig.from_args(args, default_timeout=600)
     runner = OolongRunner(
