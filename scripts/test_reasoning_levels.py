@@ -36,7 +36,9 @@ def parse_datetime(dt_string: str) -> datetime:
     )
 
 
-def load_locomo(client: httpx.Client, filepath: str, workspace_id: str) -> tuple[str, str]:
+def load_locomo(
+    client: httpx.Client, filepath: str, workspace_id: str
+) -> tuple[str, str]:
     """Load locomo dataset into Honcho. Returns (speaker_a, speaker_b)."""
     with open(filepath) as f:
         data = json.load(f)
@@ -55,11 +57,15 @@ def load_locomo(client: httpx.Client, filepath: str, workspace_id: str) -> tuple
     print(f"Created workspace: {workspace_id}")
 
     # Create peers
-    resp = client.post(f"{BASE_URL}/workspaces/{workspace_id}/peers", json={"id": speaker_a})
+    resp = client.post(
+        f"{BASE_URL}/workspaces/{workspace_id}/peers", json={"id": speaker_a}
+    )
     if resp.status_code >= 400:
         print(f"Failed to create peer {speaker_a}: {resp.status_code} {resp.text}")
         return "", ""
-    resp = client.post(f"{BASE_URL}/workspaces/{workspace_id}/peers", json={"id": speaker_b})
+    resp = client.post(
+        f"{BASE_URL}/workspaces/{workspace_id}/peers", json={"id": speaker_b}
+    )
     if resp.status_code >= 400:
         print(f"Failed to create peer {speaker_b}: {resp.status_code} {resp.text}")
         return "", ""
@@ -84,7 +90,9 @@ def load_locomo(client: httpx.Client, filepath: str, workspace_id: str) -> tuple
             json={"id": session_id},
         )
         if resp.status_code >= 400:
-            print(f"Failed to create session {session_id}: {resp.status_code} {resp.text}")
+            print(
+                f"Failed to create session {session_id}: {resp.status_code} {resp.text}"
+            )
             return "", ""
 
         # Add peers to session
@@ -101,11 +109,13 @@ def load_locomo(client: httpx.Client, filepath: str, workspace_id: str) -> tuple
         msg_batch = []
         for i, msg in enumerate(messages):
             msg_time = base_time + timedelta(seconds=i * 2)
-            msg_batch.append({
-                "peer_id": msg["speaker"],
-                "content": msg["text"],
-                "created_at": msg_time.isoformat(),
-            })
+            msg_batch.append(
+                {
+                    "peer_id": msg["speaker"],
+                    "content": msg["text"],
+                    "created_at": msg_time.isoformat(),
+                }
+            )
 
         # Create messages
         resp = client.post(
@@ -122,7 +132,9 @@ def load_locomo(client: httpx.Client, filepath: str, workspace_id: str) -> tuple
     return speaker_a, speaker_b
 
 
-def chat(client: httpx.Client, workspace_id: str, peer_id: str, query: str, level: str) -> dict:
+def chat(
+    client: httpx.Client, workspace_id: str, peer_id: str, query: str, level: str
+) -> dict:
     """Call the chat endpoint with a specific reasoning level."""
     resp = client.post(
         f"{BASE_URL}/workspaces/{workspace_id}/peers/{peer_id}/chat",
@@ -181,52 +193,59 @@ def main():
     )
     args = parser.parse_args()
 
+    if not BASE_URL:
+        print(
+            "Error: HONCHO_BASE_URL is not set. Please set it in your environment or .env."
+        )
+        return
+
     # Generate workspace ID if not provided
-    workspace_id = args.workspace or f"locomo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    workspace_id = (
+        args.workspace or f"locomo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
 
-    client = httpx.Client(headers=HEADERS, timeout=None)
+    with httpx.Client(timeout=None) as client:
+        if args.skip_load:
+            if not args.workspace or not args.peer:
+                print(
+                    "Error: --skip-load requires --workspace and --peer to be specified"
+                )
+                return
+            speaker_a = args.peer
+        else:
+            # Load the dataset
+            speaker_a, speaker_b = load_locomo(client, args.filepath, workspace_id)
+            if not speaker_a:
+                return
 
-    if args.skip_load:
-        if not args.workspace or not args.peer:
-            print("Error: --skip-load requires --workspace and --peer to be specified")
-            return
-        speaker_a = args.peer
-    else:
-        # Load the dataset
-        speaker_a, speaker_b = load_locomo(client, args.filepath, workspace_id)
-        if not speaker_a:
-            return
+            print(f"\nPeers available: {speaker_a}, {speaker_b}")
 
-        print(f"\nPeers available: {speaker_a}, {speaker_b}")
+        # Determine which peer to query
+        peer_id = args.peer or speaker_a
 
-    # Determine which peer to query
-    peer_id = args.peer or speaker_a
+        print("\n" + "=" * 60)
+        print("Testing chat endpoint")
+        print("=" * 60)
+        print(f"Workspace: {workspace_id}")
+        print(f"Peer: {peer_id}")
+        print(f"Query: {args.query}")
+        print(f"Level: {args.level}")
+        print("=" * 60)
 
-    print("\n" + "=" * 60)
-    print(f"Testing chat endpoint")
-    print(f"=" * 60)
-    print(f"Workspace: {workspace_id}")
-    print(f"Peer: {peer_id}")
-    print(f"Query: {args.query}")
-    print(f"Level: {args.level}")
-    print("=" * 60)
+        start_time = time.time()
+        result = chat(client, workspace_id, peer_id, args.query, args.level)
+        elapsed = time.time() - start_time
 
-    start_time = time.time()
-    result = chat(client, workspace_id, peer_id, args.query, args.level)
-    elapsed = time.time() - start_time
+        print(f"\nTime: {elapsed:.2f}s")
 
-    print(f"\nTime: {elapsed:.2f}s")
-
-    if "error" in result:
-        print(f"Error: {result['error']}")
-    else:
-        content = result.get("content", "")
-        print(f"\nResponse ({len(content)} chars):")
-        print("-" * 60)
-        print(content)
-        print("-" * 60)
-
-    client.close()
+        if "error" in result:
+            print(f"Error: {result['error']}")
+        else:
+            content = result.get("content", "")
+            print(f"\nResponse ({len(content)} chars):")
+            print("-" * 60)
+            print(content)
+            print("-" * 60)
 
 
 if __name__ == "__main__":
