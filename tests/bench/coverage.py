@@ -49,6 +49,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+import anthropic
+import openai
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -459,9 +461,18 @@ class CoverageJudge:
                     if func.arguments:
                         return cast(dict[str, Any], json.loads(func.arguments))
                 return {}
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+        except TimeoutError:
+            logger.exception("LLM call timed out after 300s")
             return {}
+        except (anthropic.APIError, openai.APIError):
+            logger.exception("LLM API error")
+            return {}
+        except json.JSONDecodeError:
+            logger.exception("LLM returned invalid JSON")
+            return {}
+        except Exception:
+            logger.exception("Unexpected error in LLM call")
+            raise
 
     async def extract_gold_facts(self, source_messages: list[dict[str, Any]]) -> list[GoldFact]:
         """
@@ -603,7 +614,7 @@ class CoverageJudge:
             (
                 f"GOLD FACTS (what should be extracted):\n{gold_text}\n\n"
                 + f"EXTRACTED FACTS (what was actually extracted):\n{extracted_text}\n\n"
-                + f"For each gold fact, determine its coverage status."
+                + "For each gold fact, determine its coverage status."
             ),
             tool_def
         )
@@ -742,7 +753,7 @@ class CoverageJudge:
             (
                 f"QUESTIONS:\n{questions_text}\n\n"
                 + f"EXTRACTED FACTS:\n{extracted_text}\n\n"
-                + f"For each question, determine if it can be answered from the extracted facts alone."
+                + "For each question, determine if it can be answered from the extracted facts alone."
             ),
             tool_def
         )
@@ -807,7 +818,7 @@ class CoverageJudge:
             (
                 f"SOURCE MESSAGES:\n{messages_text}\n\n"
                 + f"EXTRACTED FACTS:\n{extracted_text}\n\n"
-                + f"Analyze each extracted fact."
+                + "Analyze each extracted fact."
             ),
             tool_def
         )
@@ -904,8 +915,20 @@ class CoverageJudge:
         source_messages: list[dict[str, Any]],
         conversation_id: str = "",
     ) -> CoverageReport:
-        """
-        Run full coverage evaluation pipeline.
+        """Run full coverage evaluation pipeline.
+
+        Args:
+            extracted_facts: Propositions produced by the deriver to evaluate
+                for recall against gold-standard facts.
+            source_messages: Raw conversation messages used to derive gold facts.
+                Each dict should contain ``speaker`` and ``text`` keys.
+            conversation_id: Optional identifier for the conversation trace.
+                Defaults to an empty string.
+
+        Returns:
+            A ``CoverageReport`` containing recall, precision, F1, density
+            metrics, per-category/importance breakdowns, and optional QA
+            coverage results.
         """
         
         # Estimate token count
@@ -1040,8 +1063,8 @@ def compute_combined_score(
         decontextuality=decontextuality,
         minimality=minimality,
         coverage=coverage,
-        weighted_coverage=weighted_coverage or coverage,
-        qa_coverage=qa_coverage or 0.0,
+        weighted_coverage=weighted_coverage if weighted_coverage is not None else coverage,
+        qa_coverage=qa_coverage if qa_coverage is not None else 0.0,
     )
     
     score.compute_combined()
@@ -1109,7 +1132,7 @@ def print_report(report: CoverageReport) -> None:
     
     # Missing critical
     if report.missing_critical:
-        print(f"\n⚠️ MISSING CRITICAL FACTS:")
+        print("\n⚠️ MISSING CRITICAL FACTS:")
         for fact in report.missing_critical[:5]:
             print(f"  • {fact[:60]}...")
     
@@ -1179,7 +1202,7 @@ async def main():
     # Semaphore to limit concurrent API calls
     semaphore = asyncio.Semaphore(args.concurrency)
 
-    async def evaluate_trace(idx: int, trace: dict[str, Any], _source: str) -> tuple[int, CoverageReport | None]:
+    async def evaluate_trace(idx: int, trace: dict[str, Any], source: str) -> tuple[int, CoverageReport | None]:
         """Evaluate a single trace with concurrency control."""
         async with semaphore:
             props = extract_propositions(trace)
@@ -1189,9 +1212,18 @@ async def main():
             try:
                 report = await judge.evaluate(props, msgs, conv_id)
                 return idx, report
-            except Exception as e:
-                logger.error(f"Failed {conv_id}: {e}")
+            except TimeoutError:
+                logger.exception("Timed out evaluating %s (source=%s)", conv_id, source)
                 return idx, None
+            except (anthropic.APIError, openai.APIError):
+                logger.exception("API error evaluating %s (source=%s)", conv_id, source)
+                return idx, None
+            except json.JSONDecodeError:
+                logger.exception("JSON parse error evaluating %s (source=%s)", conv_id, source)
+                return idx, None
+            except Exception:
+                logger.exception("Unexpected error evaluating %s (source=%s)", conv_id, source)
+                raise
 
     # Process all traces concurrently with progress bar
     tasks = [evaluate_trace(idx, trace, source) for idx, (trace, source) in enumerate(all_traces)]

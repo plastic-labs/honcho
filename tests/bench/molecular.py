@@ -40,7 +40,7 @@ Does the proposition avoid unnecessary elaboration?
 
 - Decontextuality ∈ [0, 1]: Higher = more standalone
 - Minimality ∈ [0, 1]: Higher = more concise
-- Molecular Score = √(Decontextuality × Minimality): Geometric mean captures balance
+- Molecular Score = √(Decontextuality * Minimality): Geometric mean captures balance
 
 ## Usage
 
@@ -59,6 +59,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+import anthropic
+import openai
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlock
 from dotenv import load_dotenv
@@ -512,9 +514,30 @@ class MolecularJudge:
                 if resp.choices and resp.choices[0].message.content:
                     return json.loads(resp.choices[0].message.content)
                 return {}
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+        except TimeoutError:
+            logger.exception(
+                "LLM call timed out (model=%s, provider=%s)",
+                self.model, self.provider,
+            )
             return {}
+        except (anthropic.APIError, openai.APIError):
+            logger.exception(
+                "LLM API error (model=%s, provider=%s)",
+                self.model, self.provider,
+            )
+            return {}
+        except json.JSONDecodeError:
+            logger.exception(
+                "Failed to parse LLM response as JSON (model=%s, provider=%s)",
+                self.model, self.provider,
+            )
+            return {}
+        except Exception:
+            logger.exception(
+                "Unexpected error in LLM call (model=%s, provider=%s)",
+                self.model, self.provider,
+            )
+            raise
 
     def _extract_json(self, text: str) -> dict[str, Any]:
         """Extract JSON from text response, handling markdown code blocks."""
@@ -788,14 +811,22 @@ class MolecularJudge:
         peer_name: str,
         conversation_id: str = "",
     ) -> MolecularReport:
-        """
-        Run full molecular evaluation pipeline.
-        
-        Returns a report with:
-        - Per-proposition molecular analysis
-        - Aggregate scores
-        - Classification distribution
-        - Common issues
+        """Run full molecular evaluation pipeline.
+
+        Args:
+            propositions: Extracted fact strings to evaluate for molecular
+                quality (decontextuality, minimality, and ambiguity).
+            messages: Raw conversation messages used as source context.
+                Each dict should contain ``speaker`` and ``text`` keys.
+            peer_name: Name of the peer whose propositions are being evaluated.
+            conversation_id: Optional identifier for the conversation trace.
+                Defaults to an empty string.
+
+        Returns:
+            A ``MolecularReport`` containing per-proposition molecular
+            analyses (ambiguity, decontextuality, minimality scores and
+            issues), aggregate scores, classification distribution, and
+            common issues found across propositions.
         """
         
         if not propositions:
@@ -918,7 +949,7 @@ def print_report(report: MolecularReport) -> None:
     # Show example problems
     too_atomic = [a for a in report.analyses if a.classification == "too_atomic"]
     if too_atomic:
-        print(f"\nExample Too Atomic (needs more context):")
+        print("\nExample Too Atomic (needs more context):")
         for a in too_atomic[:2]:
             print(f'  - "{a.proposition[:60]}..."')
             if a.decontextuality.suggested_decontextualization:
@@ -926,7 +957,7 @@ def print_report(report: MolecularReport) -> None:
     
     too_verbose = [a for a in report.analyses if a.classification == "too_verbose"]
     if too_verbose:
-        print(f"\nExample Too Verbose (over-elaborated):")
+        print("\nExample Too Verbose (over-elaborated):")
         for a in too_verbose[:2]:
             print(f'  - "{a.proposition[:60]}..." [{a.minimality.token_count} tokens, {a.minimality.claim_count} claims]')
             if a.minimality.suggested_reduction:

@@ -26,6 +26,8 @@ from openai import AsyncOpenAI
 
 from src.telemetry.metrics_collector import MetricsCollector
 
+_logger = logging.getLogger(__name__)
+
 # Valid reasoning levels for dialectic chat
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 REASONING_LEVELS: list[str] = ["minimal", "low", "medium", "high", "max"]
@@ -292,30 +294,51 @@ def format_duration(seconds: float) -> str:
 
 
 def load_traces(path: Path) -> list[dict[str, Any]]:
-    """Load traces from JSON or JSONL file."""
+    """Load traces from JSON or JSONL file.
+
+    Attempts JSONL (one object per line) first; falls back to standard JSON
+    (array or single object).  Returns an empty list when the file cannot be
+    read or parsed.
+    """
     traces: list[dict[str, Any]] = []
 
+    # --- Attempt 1: try JSONL (one JSON object per line) ---
     try:
         with open(path) as f:
             first_line = f.readline().strip()
             if first_line and not first_line.startswith("["):
                 f.seek(0)
-                for line in f:
+                for line_no, line in enumerate(f, 1):
                     line = line.strip()
-                    if line:
-                        try:
-                            traces.append(
-                                cast(dict[str, Any], json.loads(line))
-                            )
-                        except json.JSONDecodeError:
-                            continue
+                    if not line:
+                        continue
+                    try:
+                        traces.append(
+                            cast(dict[str, Any], json.loads(line))
+                        )
+                    except json.JSONDecodeError:
+                        _logger.debug(
+                            "%s:%d: skipping malformed JSON line", path, line_no
+                        )
+                        continue
                 if traces:
                     return traces
-    except Exception:
-        pass
+    except json.JSONDecodeError:
+        _logger.warning("Failed to parse %s as JSONL", path)
+    except OSError:
+        _logger.exception("Could not read trace file %s", path)
+        return []
 
-    with open(path) as f:
-        data = cast(dict[str, Any] | list[dict[str, Any]], json.load(f))
+    # --- Attempt 2: try standard JSON (array or single object) ---
+    try:
+        with open(path) as f:
+            data = cast(dict[str, Any] | list[dict[str, Any]], json.load(f))
+    except json.JSONDecodeError:
+        _logger.exception("Failed to parse %s as JSON", path)
+        return []
+    except OSError:
+        _logger.exception("Could not read trace file %s", path)
+        return []
 
     if isinstance(data, list):
         return data
