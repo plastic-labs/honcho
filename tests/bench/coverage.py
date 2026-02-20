@@ -35,26 +35,40 @@ Generate questions from source; verify answerability from extraction.
 
 ## Usage
 
-python -m bench.coverage --traces path/to/traces.jsonl
+python -m tests.bench.coverage --traces path/to/traces.jsonl
 """
 
 import argparse
 import asyncio
 import json
 import logging
-import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from anthropic import AsyncAnthropic
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from tqdm.asyncio import tqdm
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from .runner_common import (
+    configure_logging,
+    create_anthropic_client,
+    create_openai_client,
+    extract_messages,
+    extract_propositions,
+    format_duration,
+    load_traces,
+)
+
+# Load .env from bench directory
+bench_dir = Path(__file__).parent
+load_dotenv(bench_dir / ".env")
+
+logger = configure_logging(level=logging.INFO, name=__name__)
 
 
 # =============================================================================
@@ -381,11 +395,11 @@ class CoverageJudge:
         use_qa_verification: bool = True,
         verbose: bool = False,
     ):
-        self.llm_client = llm_client
-        self.model = model
-        self.provider = provider
-        self.use_qa_verification = use_qa_verification
-        self.verbose = verbose
+        self.llm_client: AsyncAnthropic | AsyncOpenAI = llm_client
+        self.model: str = model
+        self.provider: str = provider
+        self.use_qa_verification: bool = use_qa_verification
+        self.verbose: bool = verbose
         
         if verbose:
             logger.setLevel(logging.DEBUG)
@@ -406,14 +420,14 @@ class CoverageJudge:
                         temperature=0.0,
                         system=system,
                         messages=[{"role": "user", "content": user}],
-                        tools=[tool_def],
+                        tools=cast(Any, [tool_def]),
                         tool_choice={"type": "tool", "name": tool_def["name"]},
                     ),
                     timeout=300.0,
                 )
                 for block in resp.content:
                     if block.type == "tool_use":
-                        return dict(block.input) if isinstance(block.input, dict) else {}
+                        return dict(cast(Any, block).input)
                 return {}
             else:
                 # OpenAI-compatible
@@ -434,15 +448,16 @@ class CoverageJudge:
                             {"role": "system", "content": system},
                             {"role": "user", "content": user},
                         ],
-                        tools=[openai_tool],
+                        tools=cast(Any, [openai_tool]),
                         tool_choice={"type": "function", "function": {"name": tool_def["name"]}},
                     ),
                     timeout=300.0,
                 )
                 if resp.choices and resp.choices[0].message.tool_calls:
-                    func = resp.choices[0].message.tool_calls[0].function
+                    tc = cast(Any, resp.choices[0].message.tool_calls[0])
+                    func = tc.function
                     if func.arguments:
-                        return json.loads(func.arguments)
+                        return cast(dict[str, Any], json.loads(func.arguments))
                 return {}
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
@@ -508,20 +523,20 @@ class CoverageJudge:
             tool_def
         )
         
-        gold_facts = []
-        for item in result.get("facts", []):
+        gold_facts: list[GoldFact] = []
+        for item in cast(list[dict[str, Any]], result.get("facts", [])):
             try:
                 gold_facts.append(GoldFact(
-                    content=item.get("content", ""),
-                    category=FactCategory(item.get("category", "explicit")),
-                    importance=ImportanceLevel(item.get("importance", "important")),
-                    source_span=item.get("source_span", ""),
-                    requires_inference=item.get("requires_inference", False),
+                    content=cast(str, item.get("content", "")),
+                    category=FactCategory(cast(str, item.get("category", "explicit"))),
+                    importance=ImportanceLevel(cast(str, item.get("importance", "important"))),
+                    source_span=cast(str, item.get("source_span", "")),
+                    requires_inference=cast(bool, item.get("requires_inference", False)),
                 ))
             except (ValueError, KeyError) as e:
                 logger.debug(f"Skipping malformed gold fact: {e}")
                 continue
-        
+
         logger.info(f"Extracted {len(gold_facts)} gold facts from source")
         return gold_facts
 
@@ -585,23 +600,25 @@ class CoverageJudge:
         
         result = await self._call_llm(
             COVERAGE_MATCHING_PROMPT,
-            f"GOLD FACTS (what should be extracted):\n{gold_text}\n\n"
-            f"EXTRACTED FACTS (what was actually extracted):\n{extracted_text}\n\n"
-            f"For each gold fact, determine its coverage status.",
+            (
+                f"GOLD FACTS (what should be extracted):\n{gold_text}\n\n"
+                + f"EXTRACTED FACTS (what was actually extracted):\n{extracted_text}\n\n"
+                + f"For each gold fact, determine its coverage status."
+            ),
             tool_def
         )
         
-        matches = []
-        for item in result.get("matches", []):
-            idx = item.get("gold_index", 1) - 1
+        matches: list[CoverageMatch] = []
+        for item in cast(list[dict[str, Any]], result.get("matches", [])):
+            idx = cast(int, item.get("gold_index", 1)) - 1
             if 0 <= idx < len(gold_facts):
                 try:
                     matches.append(CoverageMatch(
                         gold_fact=gold_facts[idx],
-                        status=CoverageStatus(item.get("status", "missing")),
-                        matched_extraction=item.get("matched_extraction", ""),
-                        match_quality=item.get("match_quality", 0.0),
-                        explanation=item.get("explanation", ""),
+                        status=CoverageStatus(cast(str, item.get("status", "missing"))),
+                        matched_extraction=cast(str, item.get("matched_extraction", "")),
+                        match_quality=cast(float, item.get("match_quality", 0.0)),
+                        explanation=cast(str, item.get("explanation", "")),
                     ))
                 except ValueError:
                     matches.append(CoverageMatch(
@@ -667,9 +684,9 @@ class CoverageJudge:
             tool_def
         )
         
-        questions = [
-            item.get("question", "")
-            for item in result.get("questions", [])
+        questions: list[str] = [
+            cast(str, item.get("question", ""))
+            for item in cast(list[dict[str, Any]], result.get("questions", []))
             if item.get("question")
         ]
         
@@ -722,15 +739,17 @@ class CoverageJudge:
         
         result = await self._call_llm(
             QA_VERIFICATION_PROMPT,
-            f"QUESTIONS:\n{questions_text}\n\n"
-            f"EXTRACTED FACTS:\n{extracted_text}\n\n"
-            f"For each question, determine if it can be answered from the extracted facts alone.",
+            (
+                f"QUESTIONS:\n{questions_text}\n\n"
+                + f"EXTRACTED FACTS:\n{extracted_text}\n\n"
+                + f"For each question, determine if it can be answered from the extracted facts alone."
+            ),
             tool_def
         )
         
-        answerable = 0
-        for item in result.get("results", []):
-            status = item.get("answerable", "no")
+        answerable: float = 0
+        for item in cast(list[dict[str, Any]], result.get("results", [])):
+            status = cast(str, item.get("answerable", "no"))
             if status == "yes":
                 answerable += 1
             elif status == "partial":
@@ -780,24 +799,28 @@ class CoverageJudge:
         extracted_text = "\n".join(f"{i+1}. {f}" for i, f in enumerate(extracted_facts))
         
         result = await self._call_llm(
-            "Verify each extracted fact is grounded in the source messages. "
-            "A fact is GROUNDED if the source text supports it. "
-            "A fact is HALLUCINATED if it claims something not supported by the source.",
-            f"SOURCE MESSAGES:\n{messages_text}\n\n"
-            f"EXTRACTED FACTS:\n{extracted_text}\n\n"
-            f"Analyze each extracted fact.",
+            (
+                "Verify each extracted fact is grounded in the source messages. "
+                + "A fact is GROUNDED if the source text supports it. "
+                + "A fact is HALLUCINATED if it claims something not supported by the source."
+            ),
+            (
+                f"SOURCE MESSAGES:\n{messages_text}\n\n"
+                + f"EXTRACTED FACTS:\n{extracted_text}\n\n"
+                + f"Analyze each extracted fact."
+            ),
             tool_def
         )
         
-        analyses = []
-        for i, fact in enumerate(extracted_facts):
+        analyses: list[ExtractionAnalysis] = []
+        for fact in extracted_facts:
             analyses.append(ExtractionAnalysis(content=fact))
         
-        for item in result.get("analyses", []):
-            idx = item.get("index", 1) - 1
+        for item in cast(list[dict[str, Any]], result.get("analyses", [])):
+            idx = cast(int, item.get("index", 1)) - 1
             if 0 <= idx < len(analyses):
-                analyses[idx].is_grounded = item.get("is_grounded", True)
-                analyses[idx].is_hallucinated = item.get("is_hallucinated", False)
+                analyses[idx].is_grounded = cast(bool, item.get("is_grounded", True))
+                analyses[idx].is_hallucinated = cast(bool, item.get("is_hallucinated", False))
         
         return analyses
 
@@ -929,8 +952,8 @@ class CoverageJudge:
         
         logger.info(
             f"Coverage complete: recall={report.recall:.1%}, "
-            f"partial_recall={report.partial_recall:.1%}, "
-            f"weighted_recall={report.weighted_recall:.1%}"
+            + f"partial_recall={report.partial_recall:.1%}, "
+            + f"weighted_recall={report.weighted_recall:.1%}"
         )
         
         return report
@@ -964,11 +987,12 @@ class CombinedScore:
     
     def compute_combined(
         self,
-        quality_weight: float = 1.0,
-        coverage_weight: float = 1.5,  # Weight coverage higher by default
-    ):
+        quality_weight: float = 1.0,  # noqa: ARG002
+        coverage_weight: float = 1.5,  # noqa: ARG002 - Weight coverage higher by default
+    ) -> None:
         """Compute F-beta scores."""
-        
+        _ = quality_weight, coverage_weight  # reserved for future use
+
         quality = self.molecular  # Use molecular as quality proxy
         recall = self.weighted_coverage or self.coverage
         
@@ -992,8 +1016,8 @@ def compute_combined_score(
     decontextuality: float,
     minimality: float,
     coverage: float,
-    weighted_coverage: float = None,
-    qa_coverage: float = None,
+    weighted_coverage: float | None = None,
+    qa_coverage: float | None = None,
     min_coverage: float = 0.5,
     min_molecular: float = 0.8,
 ) -> CombinedScore:
@@ -1029,86 +1053,6 @@ def compute_combined_score(
     )
     
     return score
-
-
-# =============================================================================
-# TRACE PARSING
-# =============================================================================
-
-
-def extract_propositions(trace: dict[str, Any]) -> list[str]:
-    """Extract propositions from trace output."""
-    output = trace.get("output", {})
-    if not isinstance(output, dict):
-        return []
-    content = output.get("content", {})
-    if not isinstance(content, dict):
-        return []
-    explicit = content.get("explicit", [])
-    if not isinstance(explicit, list):
-        return []
-    return [
-        item["content"] 
-        for item in explicit 
-        if isinstance(item, dict) and "content" in item
-    ]
-
-
-def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract source messages from trace input."""
-    input_data = trace.get("input", {})
-    if not isinstance(input_data, dict):
-        return []
-    prompt = input_data.get("prompt", "")
-    if not isinstance(prompt, str):
-        return []
-    
-    messages = []
-    if "<messages>" in prompt:
-        section = prompt.split("<messages>")[1].split("</messages>")[0]
-        for line in section.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split(" ", 3)
-            if len(parts) >= 3:
-                speaker = parts[2].rstrip(":")
-                text = parts[3] if len(parts) > 3 else ""
-                if "->->" in text:
-                    text = text.split("->->")[0].strip()
-                messages.append({"speaker": speaker, "text": text})
-    return messages
-
-
-def load_traces(path: Path) -> list[dict[str, Any]]:
-    """Load traces from JSON or JSONL file."""
-    traces = []
-    
-    try:
-        with open(path) as f:
-            first_line = f.readline().strip()
-            if first_line and not first_line.startswith("["):
-                f.seek(0)
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            traces.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-                if traces:
-                    return traces
-    except Exception:
-        pass
-    
-    with open(path) as f:
-        data = json.load(f)
-    
-    if isinstance(data, list):
-        return data
-    elif isinstance(data, dict):
-        return [data]
-    return []
 
 
 # =============================================================================
@@ -1181,7 +1125,7 @@ async def main():
     parser = argparse.ArgumentParser(description="CoverageBench - Information Recall Evaluation")
     parser.add_argument("--traces", type=Path, help="JSON/JSONL trace file")
     parser.add_argument("--trace-dir", type=Path, help="Directory of trace files")
-    parser.add_argument("--output-dir", type=Path, default=Path("bench/coverage_results"))
+    parser.add_argument("--output-dir", type=Path, default=Path("tests/bench/coverage_results"))
     parser.add_argument("--provider", choices=["anthropic", "openai", "openrouter"], default="anthropic")
     parser.add_argument("--api-key", type=str, help="API key")
     parser.add_argument("--model", default="claude-sonnet-4-20250514")
@@ -1191,20 +1135,19 @@ async def main():
     parser.add_argument("--concurrency", type=int, default=5, help="Number of concurrent evaluations")
     args = parser.parse_args()
     
-    # Get API key
-    api_key = args.api_key or os.getenv(f"{args.provider.upper()}_API_KEY")
-    if not api_key and args.provider == "anthropic":
-        api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error(f"Set {args.provider.upper()}_API_KEY or use --api-key")
-        return 1
-    
-    # Initialize client
+    # Initialize client using runner_common helpers
     if args.provider == "anthropic":
-        client = AsyncAnthropic(api_key=api_key)
+        client: AsyncAnthropic | AsyncOpenAI = create_anthropic_client(
+            api_key=args.api_key
+        )
+    elif args.provider == "openrouter":
+        client = create_openai_client(
+            api_key=args.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            env_key_name="OPENROUTER_API_KEY",
+        )
     else:
-        base_url = "https://openrouter.ai/api/v1" if args.provider == "openrouter" else None
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        client = create_openai_client(api_key=args.api_key)
     
     judge = CoverageJudge(
         client, 
@@ -1215,7 +1158,7 @@ async def main():
     )
     
     # Load traces
-    all_traces = []
+    all_traces: list[tuple[dict[str, Any], str]] = []
     if args.traces:
         traces = load_traces(args.traces)
         all_traces.extend((t, args.traces.name) for t in traces)
@@ -1225,21 +1168,23 @@ async def main():
             all_traces.extend((t, f.name) for t in traces)
     else:
         parser.error("Specify --traces or --trace-dir")
-    
+
     if args.limit:
         all_traces = all_traces[:args.limit]
-    
+
     print(f"Evaluating {len(all_traces)} traces for coverage with concurrency={args.concurrency}...\n")
+
+    overall_start = time.time()
 
     # Semaphore to limit concurrent API calls
     semaphore = asyncio.Semaphore(args.concurrency)
 
-    async def evaluate_trace(idx: int, trace: dict, source: str) -> tuple[int, CoverageReport | None]:
+    async def evaluate_trace(idx: int, trace: dict[str, Any], _source: str) -> tuple[int, CoverageReport | None]:
         """Evaluate a single trace with concurrency control."""
         async with semaphore:
             props = extract_propositions(trace)
             msgs = extract_messages(trace)
-            conv_id = trace.get("conversation_id", f"trace_{idx:04d}")
+            conv_id = cast(str, trace.get("conversation_id", f"trace_{idx:04d}"))
 
             try:
                 report = await judge.evaluate(props, msgs, conv_id)
@@ -1250,9 +1195,11 @@ async def main():
 
     # Process all traces concurrently with progress bar
     tasks = [evaluate_trace(idx, trace, source) for idx, (trace, source) in enumerate(all_traces)]
-    results_raw = []
+    results_raw: list[tuple[int, CoverageReport]] = []
 
-    for coro in tqdm.as_completed(tasks, total=len(tasks), desc="Evaluating traces"):
+    for coro in cast(Any, tqdm).as_completed(tasks, total=len(tasks), desc="Evaluating traces"):
+        idx: int
+        report: CoverageReport | None
         idx, report = await coro
         if report:
             results_raw.append((idx, report))
@@ -1269,16 +1216,19 @@ async def main():
         for report in results:
             print_report(report)
     
+    total_duration = time.time() - overall_start
+
     # Save results
     if results:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         out_file = args.output_dir / f"coverage_{ts}.json"
-        
-        agg = {
+
+        agg: dict[str, Any] = {
             "timestamp": ts,
             "model": args.model,
             "count": len(results),
+            "duration": format_duration(total_duration),
             "averages": {
                 "recall": sum(r.recall for r in results) / len(results),
                 "partial_recall": sum(r.partial_recall for r in results) / len(results),
@@ -1292,17 +1242,17 @@ async def main():
             },
             "results": [r.to_dict() for r in results],
         }
-        
+
         with open(out_file, "w") as f:
             json.dump(agg, f, indent=2)
-        
-        print(f"\n✅ Saved to {out_file}")
-        
+
+        print(f"\nSaved to {out_file}")
+
         # Aggregate summary
         print("\n" + "=" * 70)
         print("AGGREGATE RESULTS")
         print("=" * 70)
-        print(f"Traces: {len(results)}")
+        print(f"Traces: {len(results)} | Duration: {format_duration(total_duration)}")
         print(f"Total Gold Facts: {agg['totals']['gold_facts']}")
         print(f"Total Extracted: {agg['totals']['extracted_facts']}")
         print(f"\nRecall:          {agg['averages']['recall']:.1%}")
@@ -1310,7 +1260,7 @@ async def main():
         print(f"Weighted Recall: {agg['averages']['weighted_recall']:.1%}")
         print(f"QA Coverage:     {agg['averages']['qa_coverage']:.1%}")
         print(f"Density Ratio:   {agg['averages']['density_ratio']:.1%}")
-    
+
     return 0
 
 

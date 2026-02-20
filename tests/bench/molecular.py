@@ -51,19 +51,36 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from anthropic import AsyncAnthropic
+from anthropic.types import TextBlock
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from .runner_common import (
+    configure_logging,
+    create_anthropic_client,
+    create_openai_client,
+    extract_conversation_id,
+    extract_messages,
+    extract_peer_name,
+    extract_propositions,
+    format_duration,
+    load_traces,
+)
+
+# Load .env from bench directory
+bench_dir = Path(__file__).parent
+load_dotenv(bench_dir / ".env")
+
+logger = configure_logging(level=logging.INFO, name=__name__)
 
 
 # =============================================================================
@@ -445,10 +462,10 @@ class MolecularJudge:
         verbose: bool = False,
         provider: str = "anthropic",
     ):
-        self.llm_client = llm_client
-        self.model = model
-        self.verbose = verbose
-        self.provider = provider
+        self.llm_client: AsyncAnthropic | AsyncOpenAI = llm_client
+        self.model: str = model
+        self.verbose: bool = verbose
+        self.provider: str = provider
         if verbose:
             logger.setLevel(logging.DEBUG)
 
@@ -473,7 +490,7 @@ class MolecularJudge:
                 # Extract text content
                 text_content = ""
                 for block in resp.content:
-                    if hasattr(block, "text"):
+                    if isinstance(block, TextBlock):
                         text_content += block.text
 
                 # Try to extract JSON from the response
@@ -574,21 +591,23 @@ class MolecularJudge:
 
         result = await self._call_llm(
             AMBIGUITY_DETECTION_PROMPT,
-            f"SOURCE CONTEXT (for reference only):\n{source_context}\n\n"
-            f"PROPOSITIONS TO ANALYZE:\n{props_text}\n\n"
-            f"Identify all ambiguities in each proposition.",
+            (
+                f"SOURCE CONTEXT (for reference only):\n{source_context}\n\n"
+                + f"PROPOSITIONS TO ANALYZE:\n{props_text}\n\n"
+                + f"Identify all ambiguities in each proposition."
+            ),
             response_schema,
         )
         
         analyses: list[AmbiguityAnalysis] = []
-        for i, prop in enumerate(propositions):
+        for prop in propositions:
             analyses.append(AmbiguityAnalysis(proposition=prop))
-        
-        for item in result.get("analyses", []):
-            idx = item.get("index", 0) - 1
+
+        for item in cast(list[dict[str, Any]], result.get("analyses", [])):
+            idx: int = int(item.get("index", 0)) - 1
             if 0 <= idx < len(analyses):
-                a = analyses[idx]
-                for amb in item.get("ambiguities", []):
+                a: AmbiguityAnalysis = analyses[idx]
+                for amb in cast(list[dict[str, Any]], item.get("ambiguities", [])):
                     try:
                         atype = AmbiguityType(amb["type"])
                         a.ambiguities.append((atype, amb.get("span", ""), amb.get("explanation", "")))
@@ -648,9 +667,11 @@ class MolecularJudge:
 
         result = await self._call_llm(
             DECONTEXTUALITY_PROMPT,
-            f"SOURCE CONTEXT (the original conversation - propositions should be understandable WITHOUT this):\n{source_context}\n\n"
-            f"PROPOSITIONS TO EVALUATE:\n{props_text}\n\n"
-            f"For each proposition, assess whether it can be understood in COMPLETE ISOLATION.",
+            (
+                f"SOURCE CONTEXT (the original conversation - propositions should be understandable WITHOUT this):\n{source_context}\n\n"
+                + f"PROPOSITIONS TO EVALUATE:\n{props_text}\n\n"
+                + f"For each proposition, assess whether it can be understood in COMPLETE ISOLATION."
+            ),
             response_schema,
         )
         
@@ -658,13 +679,13 @@ class MolecularJudge:
         for prop in propositions:
             analyses.append(DecontextualityAnalysis(proposition=prop, score=0.5, is_standalone=False))
         
-        for item in result.get("analyses", []):
-            idx = item.get("index", 0) - 1
+        for item in cast(list[dict[str, Any]], result.get("analyses", [])):
+            idx: int = int(item.get("index", 0)) - 1
             if 0 <= idx < len(analyses):
-                a = analyses[idx]
+                a: DecontextualityAnalysis = analyses[idx]
                 a.score = item.get("score", 0.5)
                 a.is_standalone = item.get("is_standalone", False)
-                for issue in item.get("issues", []):
+                for issue in cast(list[dict[str, Any]], item.get("issues", [])):
                     try:
                         itype = DecontextualityIssue(issue["type"])
                         a.issues.append((itype, issue.get("description", "")))
@@ -728,9 +749,11 @@ class MolecularJudge:
 
         result = await self._call_llm(
             MINIMALITY_PROMPT,
-            f"SOURCE CONTEXT (for comparison):\n{source_context}\n\n"
-            f"PROPOSITIONS TO EVALUATE:\n{props_text}\n\n"
-            f"For each proposition, assess whether it is MINIMAL (one claim, no excess).",
+            (
+                f"SOURCE CONTEXT (for comparison):\n{source_context}\n\n"
+                + f"PROPOSITIONS TO EVALUATE:\n{props_text}\n\n"
+                + f"For each proposition, assess whether it is MINIMAL (one claim, no excess)."
+            ),
             response_schema,
         )
         
@@ -738,13 +761,13 @@ class MolecularJudge:
         for prop in propositions:
             analyses.append(MinimalityAnalysis(proposition=prop, score=0.5, is_minimal=False))
         
-        for item in result.get("analyses", []):
-            idx = item.get("index", 0) - 1
+        for item in cast(list[dict[str, Any]], result.get("analyses", [])):
+            idx: int = int(item.get("index", 0)) - 1
             if 0 <= idx < len(analyses):
-                a = analyses[idx]
+                a: MinimalityAnalysis = analyses[idx]
                 a.score = item.get("score", 0.5)
                 a.is_minimal = item.get("is_minimal", False)
-                for issue in item.get("issues", []):
+                for issue in cast(list[dict[str, Any]], item.get("issues", [])):
                     try:
                         itype = MinimalityIssue(issue["type"])
                         a.issues.append((itype, issue.get("description", "")))
@@ -844,104 +867,10 @@ class MolecularJudge:
         
         logger.info(
             f"Evaluation complete. Molecular: {report.avg_molecular:.2%} "
-            f"(D: {report.avg_decontextuality:.2%}, M: {report.avg_minimality:.2%})"
+            + f"(D: {report.avg_decontextuality:.2%}, M: {report.avg_minimality:.2%})"
         )
         
         return report
-
-
-# =============================================================================
-# TRACE PARSING (same input format as original)
-# =============================================================================
-
-
-def load_traces(path: Path) -> list[dict[str, Any]]:
-    """Load traces from JSON or JSONL file."""
-    traces: list[dict[str, Any]] = []
-    
-    try:
-        with open(path) as f:
-            first_line = f.readline().strip()
-            if first_line and not first_line.startswith("["):
-                f.seek(0)
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            traces.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-                if traces:
-                    return traces
-    except Exception:
-        pass
-    
-    with open(path) as f:
-        data = json.load(f)
-    
-    if isinstance(data, list):
-        return data
-    elif isinstance(data, dict):
-        return [data]
-    return []
-
-
-def extract_propositions(trace: dict[str, Any]) -> list[str]:
-    """Extract propositions from trace output."""
-    output = trace.get("output", {})
-    if not isinstance(output, dict):
-        return []
-    content = output.get("content", {})
-    if not isinstance(content, dict):
-        return []
-    explicit = content.get("explicit", [])
-    if not isinstance(explicit, list):
-        return []
-    return [item["content"] for item in explicit if isinstance(item, dict) and "content" in item]
-
-
-def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract source messages from trace input."""
-    input_data = trace.get("input", {})
-    if not isinstance(input_data, dict):
-        return []
-    prompt = input_data.get("prompt", "")
-    if not isinstance(prompt, str):
-        return []
-    
-    messages = []
-    if "<messages>" in prompt:
-        section = prompt.split("<messages>")[1].split("</messages>")[0]
-        for line in section.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split(" ", 3)
-            if len(parts) >= 3:
-                speaker = parts[2].rstrip(":")
-                text = parts[3] if len(parts) > 3 else ""
-                if "->->" in text:
-                    text = text.split("->->")[0].strip()
-                messages.append({"speaker": speaker, "text": text})
-    return messages
-
-
-def extract_peer_name(trace: dict[str, Any]) -> str:
-    """Extract peer name from propositions."""
-    for prop in extract_propositions(trace):
-        prop_lower = prop.lower()
-        for pattern in ["name is", "is named", "called"]:
-            if pattern in prop_lower:
-                parts = prop_lower.split(pattern)
-                if len(parts) > 1:
-                    name = parts[1].strip().rstrip(".").split()[0]
-                    return name.capitalize()
-    return "user"
-
-
-def extract_conversation_id(trace: dict[str, Any], index: int) -> str:
-    """Extract or generate conversation ID."""
-    return trace.get("conversation_id", trace.get("id", f"trace_{index:04d}"))
 
 
 # =============================================================================
@@ -1025,21 +954,19 @@ async def main():
     parser.add_argument("--batch-size", type=int, default=1, help="Concurrent batch size")
     args = parser.parse_args()
     
-    # Get API key
-    api_key = args.api_key or os.getenv(f"{args.provider.upper()}_API_KEY")
-    if not api_key and args.provider == "anthropic":
-        api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error(f"Set {args.provider.upper()}_API_KEY or use --api-key")
-        return 1
-    
-    # Initialize client
+    # Initialize client using runner_common helpers
     if args.provider == "anthropic":
-        client = AsyncAnthropic(api_key=api_key)
-    elif args.provider == "openai":
-        client = AsyncOpenAI(api_key=api_key)
+        client: AsyncAnthropic | AsyncOpenAI = create_anthropic_client(
+            api_key=args.api_key
+        )
+    elif args.provider == "openrouter":
+        client = create_openai_client(
+            api_key=args.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            env_key_name="OPENROUTER_API_KEY",
+        )
     else:
-        client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+        client = create_openai_client(api_key=args.api_key)
     
     judge = MolecularJudge(client, args.model, args.verbose, args.provider)
     
@@ -1063,10 +990,11 @@ async def main():
         all_traces = all_traces[:args.limit]
     
     print(f"\nEvaluating {len(all_traces)} traces with Molecular Facts criteria...\n")
-    
+
+    overall_start = time.time()
     results: list[MolecularReport] = []
-    
-    async def process_trace(idx: int, trace: dict[str, Any], source: str) -> MolecularReport | None:
+
+    async def process_trace(idx: int, trace: dict[str, Any], _source: str) -> MolecularReport | None:
         props = extract_propositions(trace)
         if not props:
             logger.warning(f"Trace {idx} has no propositions")
@@ -1103,16 +1031,19 @@ async def main():
             if r:
                 results.append(r)
     
+    total_duration = time.time() - overall_start
+
     # Save results
     if results:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         out_file = args.output_dir / f"molecular_{ts}.json"
-        
-        agg = {
+
+        agg: dict[str, Any] = {
             "timestamp": ts,
             "model": args.model,
             "count": len(results),
+            "duration": format_duration(total_duration),
             "averages": {
                 "molecular": sum(r.avg_molecular for r in results) / len(results),
                 "decontextuality": sum(r.avg_decontextuality for r in results) / len(results),
@@ -1126,17 +1057,17 @@ async def main():
             },
             "results": [r.to_dict() for r in results],
         }
-        
+
         with open(out_file, "w") as f:
             json.dump(agg, f, indent=2)
-        
-        print(f"\n✅ Saved to {out_file}")
-        
+
+        print(f"\nSaved to {out_file}")
+
         if len(results) > 1:
             print("\n" + "=" * 70)
             print("AGGREGATE RESULTS")
             print("=" * 70)
-            print(f"Traces: {len(results)}")
+            print(f"Traces: {len(results)} | Duration: {format_duration(total_duration)}")
             print(f"\nMolecular Score:     {agg['averages']['molecular']:.1%}")
             print(f"Decontextuality:     {agg['averages']['decontextuality']:.1%}")
             print(f"Minimality:          {agg['averages']['minimality']:.1%}")
@@ -1144,10 +1075,12 @@ async def main():
             total_props = sum(r.proposition_count for r in results)
             for k, v in agg["classification_totals"].items():
                 print(f"  {k:<15} {v:4d} ({v/total_props*100:5.1f}%)")
+        else:
+            print(f"Duration: {format_duration(total_duration)}")
     else:
-        print("\n⚠️ No traces evaluated")
+        print("\nNo traces evaluated")
         return 1
-    
+
     return 0
 
 
