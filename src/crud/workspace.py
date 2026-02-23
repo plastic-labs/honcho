@@ -35,8 +35,8 @@ class WorkspaceDeletionResult:
     conclusions_deleted: int
 
 
-WORKSPACE_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}"
-WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
+WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
 def workspace_cache_key(workspace_name: str) -> str:

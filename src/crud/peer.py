@@ -18,8 +18,8 @@ from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
-PEER_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:peer:{peer_name}"
-PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
+PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
