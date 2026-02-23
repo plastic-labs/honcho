@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import dateutil.parser
 import pyarrow.parquet as pq
@@ -142,13 +142,22 @@ def calculate_context_length(text: str) -> int:
 
 
 def load_oolong_synth_dataset(
-    split: str = "test", data_dir: str | Path | None = None
+    split: str = "test",
+    data_dir: str | Path | None = None,
+    max_context_len: int | None = None,
+    min_context_len: int | None = None,
+    max_examples: int | None = None,
+    context_window_id: str | None = None,
 ) -> SimpleDataset:
     """Load the OOLONG-synth dataset from filesystem.
 
     Args:
         split: Dataset split to load (default: "test")
         data_dir: Path to the oolong-synth dataset directory (must contain a 'data' subdirectory)
+        max_context_len: Maximum context length in tokens
+        min_context_len: Minimum context length in tokens (strict >, upstream behavior)
+        max_examples: Maximum number of examples to return
+        context_window_id: Specific context window ID to filter to
 
     Returns:
         SimpleDataset object
@@ -174,23 +183,64 @@ def load_oolong_synth_dataset(
     if not parquet_files:
         raise FileNotFoundError(f"No {split} parquet files found in {dataset_path}")
 
-    # Load and combine all parquet files
+    # Stream rows from parquet shards in batches so we can filter and stop early
+    # without materializing the full split in memory first.
     all_data: list[dict[str, Any]] = []
     for parquet_file in parquet_files:
-        table = pq.read_table(parquet_file)  # pyright: ignore[reportUnknownVariableType]
-        all_data.extend(table.to_pylist())  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+        parquet = pq.ParquetFile(parquet_file)
+        for batch in parquet.iter_batches():  # pyright: ignore[reportUnknownVariableType]
+            rows = cast(
+                list[dict[str, Any]],
+                batch.to_pylist(),  # pyright: ignore[reportUnknownMemberType]
+            )
+            for row in rows:
+                if (
+                    context_window_id is not None
+                    and str(row.get("context_window_id")) != context_window_id
+                ):
+                    continue
+
+                context_len = row.get("context_len")
+                if not isinstance(context_len, int):
+                    context_len = calculate_context_length(
+                        str(row.get("context_window_text", ""))
+                    )
+
+                if max_context_len is not None and context_len > max_context_len:
+                    continue
+
+                # Keep strict greater-than for consistency with existing behavior.
+                if min_context_len is not None and context_len <= min_context_len:
+                    continue
+
+                all_data.append(row)
+                if (
+                    max_examples is not None
+                    and max_examples > 0
+                    and len(all_data) >= max_examples
+                ):
+                    return SimpleDataset(all_data)
 
     return SimpleDataset(all_data)
 
 
 def load_oolong_real_dataset(
-    split: str = "test", data_dir: str | Path | None = None
+    split: str = "test",
+    data_dir: str | Path | None = None,
+    max_context_len: int | None = None,
+    min_context_len: int | None = None,
+    max_examples: int | None = None,
+    context_window_id: str | None = None,
 ) -> SimpleDataset:
     """Load the OOLONG-real dataset from filesystem.
 
     Args:
         split: Dataset split to load (default: "test")
         data_dir: Path to the oolong-real dataset directory (must contain a 'dnd' subdirectory)
+        max_context_len: Maximum context length in tokens
+        min_context_len: Minimum context length in tokens (strict >, upstream behavior)
+        max_examples: Maximum number of examples to return
+        context_window_id: Specific context window ID to filter to
 
     Returns:
         SimpleDataset object
@@ -219,7 +269,37 @@ def load_oolong_real_dataset(
     with open(jsonl_file) as f:
         for line in f:
             if line.strip():
-                data.append(json.loads(line))
+                row_raw = json.loads(line)
+                if not isinstance(row_raw, dict):
+                    continue
+                row = cast(dict[str, Any], row_raw)
+
+                if (
+                    context_window_id is not None
+                    and str(row.get("context_window_id")) != context_window_id
+                ):
+                    continue
+
+                context_len = row.get("context_len")
+                if not isinstance(context_len, int):
+                    context_len = calculate_context_length(
+                        str(row.get("context_window_text", ""))
+                    )
+
+                if max_context_len is not None and context_len > max_context_len:
+                    continue
+
+                # Keep strict greater-than for consistency with existing behavior.
+                if min_context_len is not None and context_len <= min_context_len:
+                    continue
+
+                data.append(row)
+                if (
+                    max_examples is not None
+                    and max_examples > 0
+                    and len(data) >= max_examples
+                ):
+                    return SimpleDataset(data)
 
     return SimpleDataset(data)
 

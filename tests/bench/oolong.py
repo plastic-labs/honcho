@@ -23,7 +23,6 @@ from .oolong_common import (
     calculate_context_length,
     calculate_task_statistics,
     calculate_timing_statistics,
-    filter_dataset,
     format_duration,
     load_oolong_real_dataset,
     load_oolong_synth_dataset,
@@ -152,18 +151,22 @@ class OolongRunner(BaseRunner[TestResult]):
     def load_items(self) -> list[Any]:
         if self.variant == "synth":
             dataset = load_oolong_synth_dataset(
-                split=self.split, data_dir=self.data_dir
+                split=self.split,
+                data_dir=self.data_dir,
+                max_context_len=self.max_context_len,
+                min_context_len=self.min_context_len,
+                max_examples=self.max_examples,
+                context_window_id=self.context_window_id,
             )
         else:
-            dataset = load_oolong_real_dataset(split=self.split, data_dir=self.data_dir)
-
-        dataset = filter_dataset(
-            dataset=dataset,
-            max_context_len=self.max_context_len,
-            min_context_len=self.min_context_len,
-            max_examples=self.max_examples,
-            context_window_id=self.context_window_id,
-        )
+            dataset = load_oolong_real_dataset(
+                split=self.split,
+                data_dir=self.data_dir,
+                max_context_len=self.max_context_len,
+                min_context_len=self.min_context_len,
+                max_examples=self.max_examples,
+                context_window_id=self.context_window_id,
+            )
         return [dataset[i] for i in range(len(dataset))]
 
     def get_workspace_id(self, item: Any) -> str:
