@@ -5,6 +5,7 @@ from cashews import NOT_NONE
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import make_transient_to_detached
 
 from src import models
 from src.cache.client import (
@@ -53,14 +54,25 @@ async def _fetch_collection(
     workspace_name: str,
     observer: str,
     observed: str,
-) -> models.Collection | None:
-    """Fetch a collection from the database."""
-    return await db.scalar(
+) -> dict[str, Any] | None:
+    """Fetch a collection from the database and return as a plain dict for safe caching."""
+    obj = await db.scalar(
         select(models.Collection)
         .where(models.Collection.workspace_name == workspace_name)
         .where(models.Collection.observer == observer)
         .where(models.Collection.observed == observed)
     )
+    if obj is None:
+        return None
+    return {
+        "id": obj.id,
+        "observer": obj.observer,
+        "observed": obj.observed,
+        "workspace_name": obj.workspace_name,
+        "h_metadata": obj.h_metadata,
+        "internal_metadata": obj.internal_metadata,
+        "created_at": obj.created_at,
+    }
 
 
 async def get_collection(
@@ -85,11 +97,13 @@ async def get_collection(
     Raises:
         ResourceNotFoundException: If the collection does not exist
     """
-    collection = await _fetch_collection(db, workspace_name, observer, observed)
-    if collection is None:
+    data = await _fetch_collection(db, workspace_name, observer, observed)
+    if data is None:
         raise ResourceNotFoundException("Collection not found")
-    # Merge cached object into session (cached objects are detached)
-    collection = await db.merge(collection, load=False)
+    # Reconstruct ORM object from cached dict and merge into session
+    obj = models.Collection(**data)
+    make_transient_to_detached(obj)
+    collection = await db.merge(obj, load=False)
     return collection
 
 
@@ -118,7 +132,15 @@ async def get_or_create_collection(
             key = collection_cache_key(workspace_name, observer, observed)
             await safe_cache_set(
                 key,
-                honcho_collection,
+                {
+                    "id": honcho_collection.id,
+                    "observer": honcho_collection.observer,
+                    "observed": honcho_collection.observed,
+                    "workspace_name": honcho_collection.workspace_name,
+                    "h_metadata": honcho_collection.h_metadata,
+                    "internal_metadata": honcho_collection.internal_metadata,
+                    "created_at": honcho_collection.created_at,
+                },
                 expire=settings.CACHE.DEFAULT_TTL_SECONDS,
             )
 
