@@ -496,12 +496,32 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["observer", "observed", "query"],
         },
     },
-    "list_peers": {
-        "name": "list_peers",
-        "description": "List all peers in the workspace. Use this to discover which peers exist before querying about specific ones.",
+    "get_workspace_stats": {
+        "name": "get_workspace_stats",
+        "description": "Get workspace-level statistics: peer count, session count, message count, and date range of messages. Use this to understand the scale of the workspace before deciding how to explore it.",
         "input_schema": {
             "type": "object",
             "properties": {},
+        },
+    },
+    "get_active_peers": {
+        "name": "get_active_peers",
+        "description": "Get the most active peers in the workspace, ranked by recent activity or message count. Returns peer names with their message counts and last-active timestamps. Use this to discover which peers are most relevant.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of peers to return (default: 20, max: 50)",
+                    "default": 20,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["recent_activity", "message_count"],
+                    "description": "Sort order: 'recent_activity' for most recently active, 'message_count' for most messages (default: recent_activity)",
+                    "default": "recent_activity",
+                },
+            },
         },
     },
     "get_peer_card_by_name": {
@@ -625,11 +645,12 @@ _WORKSPACE_SAFE_FALLTHROUGH_TOOLS = {
 
 # Tools for the workspace dialectic agent (workspace-level analysis)
 WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
+    TOOLS["get_workspace_stats"],
+    TOOLS["get_active_peers"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
     TOOLS["grep_messages"],
-    TOOLS["list_peers"],
     TOOLS["get_peer_card_by_name"],
     TOOLS["get_messages_by_date_range"],
     TOOLS["search_messages_temporal"],
@@ -2035,18 +2056,48 @@ async def _handle_search_memory_workspace(
     return f"Found {len(documents)} observations for {observer}->{observed} for query '{tool_input['query']}':\n\n{mem_str}"
 
 
-async def _handle_list_peers(
+async def _handle_get_workspace_stats(
     ctx: WorkspaceToolContext, tool_input: dict[str, Any]
 ) -> str:
-    """Handle list_peers tool."""
+    """Handle get_workspace_stats tool."""
     _ = tool_input
-    stmt = await crud.get_peers(workspace_name=ctx.workspace_name)
-    result = await ctx.db.execute(stmt)
-    peers = list(result.scalars().all())
+    stats = await crud.get_workspace_stats(ctx.db, ctx.workspace_name)
+    lines = [
+        f"Peers: {stats.peer_count}",
+        f"Sessions: {stats.session_count}",
+        f"Messages: {stats.message_count}",
+    ]
+    if stats.oldest_message_at and stats.newest_message_at:
+        lines.append(
+            f"Date range: {stats.oldest_message_at:%Y-%m-%d} to {stats.newest_message_at:%Y-%m-%d}"
+        )
+    return "Workspace stats:\n" + "\n".join(lines)
+
+
+async def _handle_get_active_peers(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_active_peers tool."""
+    limit = min(tool_input.get("limit", 20), 50)
+    sort_by = tool_input.get("sort_by", "recent_activity")
+    if sort_by not in ("recent_activity", "message_count"):
+        sort_by = "recent_activity"
+
+    peers = await crud.get_active_peers(
+        ctx.db, ctx.workspace_name, limit=limit, sort_by=sort_by
+    )
     if not peers:
         return "No peers found in this workspace."
-    peer_list = "\n".join(f"- {p.name}" for p in peers)
-    return f"Found {len(peers)} peers in workspace:\n{peer_list}"
+
+    lines: list[str] = []
+    for p in peers:
+        last_active = (
+            f", last active {p.last_message_at:%Y-%m-%d}" if p.last_message_at else ""
+        )
+        lines.append(f"- {p.name} ({p.message_count} messages{last_active})")
+    return f"Found {len(peers)} active peers (sorted by {sort_by}):\n" + "\n".join(
+        lines
+    )
 
 
 async def _handle_get_peer_card_by_name(
@@ -2093,7 +2144,8 @@ _WORKSPACE_TOOL_HANDLERS: dict[
     str, Callable[[WorkspaceToolContext, dict[str, Any]], Any]
 ] = {
     "search_memory": _handle_search_memory_workspace,
-    "list_peers": _handle_list_peers,
+    "get_workspace_stats": _handle_get_workspace_stats,
+    "get_active_peers": _handle_get_active_peers,
     "get_peer_card": _handle_get_peer_card_by_name,
     "get_observation_context": _handle_get_observation_context_workspace,
     "get_reasoning_chain": _handle_get_reasoning_chain_workspace,

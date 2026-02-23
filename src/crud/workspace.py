@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from logging import getLogger
 from typing import Any
 
@@ -16,6 +17,26 @@ from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
 logger = getLogger(__name__)
+
+
+@dataclass
+class WorkspaceStats:
+    """Workspace-level aggregate statistics."""
+
+    peer_count: int
+    session_count: int
+    message_count: int
+    oldest_message_at: datetime | None
+    newest_message_at: datetime | None
+
+
+@dataclass
+class ActivePeer:
+    """A peer with activity metrics."""
+
+    name: str
+    message_count: int
+    last_message_at: datetime | None
 
 
 @dataclass
@@ -451,3 +472,115 @@ async def delete_workspace(
         messages_deleted=messages_count,
         conclusions_deleted=conclusions_count,
     )
+
+
+async def get_workspace_stats(
+    db: AsyncSession,
+    workspace_name: str,
+) -> WorkspaceStats:
+    """Get aggregate statistics for a workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Returns:
+        WorkspaceStats with peer, session, and message counts plus date range
+    """
+    peer_count = int(
+        await db.scalar(
+            select(func.count(models.Peer.id)).where(
+                models.Peer.workspace_name == workspace_name
+            )
+        )
+        or 0
+    )
+    session_count = int(
+        await db.scalar(
+            select(func.count(models.Session.id)).where(
+                models.Session.workspace_name == workspace_name
+            )
+        )
+        or 0
+    )
+    msg_row = (
+        await db.execute(
+            select(
+                func.count(models.Message.id),
+                func.min(models.Message.created_at),
+                func.max(models.Message.created_at),
+            ).where(models.Message.workspace_name == workspace_name)
+        )
+    ).one()
+    message_count = int(msg_row[0] or 0)
+    oldest_message_at = msg_row[1]
+    newest_message_at = msg_row[2]
+
+    return WorkspaceStats(
+        peer_count=peer_count,
+        session_count=session_count,
+        message_count=message_count,
+        oldest_message_at=oldest_message_at,
+        newest_message_at=newest_message_at,
+    )
+
+
+async def get_active_peers(
+    db: AsyncSession,
+    workspace_name: str,
+    limit: int = 20,
+    sort_by: str = "recent_activity",
+) -> list[ActivePeer]:
+    """Get the most active peers in a workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        limit: Maximum number of peers to return (default 20, max 50)
+        sort_by: Sort order — "recent_activity" (default) or "message_count"
+
+    Returns:
+        List of ActivePeer objects with message counts and last-active dates
+    """
+    limit = min(limit, 50)
+
+    # Subquery: aggregate messages per peer
+    subq = (
+        select(
+            models.Message.peer_name,
+            func.count(models.Message.id).label("msg_count"),
+            func.max(models.Message.created_at).label("last_msg_at"),
+        )
+        .where(models.Message.workspace_name == workspace_name)
+        .group_by(models.Message.peer_name)
+        .subquery()
+    )
+
+    # Join with Peer to get only valid peers
+    stmt = (
+        select(
+            models.Peer.name,
+            func.coalesce(subq.c.msg_count, 0).label("msg_count"),
+            subq.c.last_msg_at,
+        )
+        .outerjoin(subq, models.Peer.name == subq.c.peer_name)
+        .where(models.Peer.workspace_name == workspace_name)
+    )
+
+    if sort_by == "message_count":
+        stmt = stmt.order_by(func.coalesce(subq.c.msg_count, 0).desc())
+    else:
+        # Default: recent_activity — peers with most recent messages first
+        stmt = stmt.order_by(subq.c.last_msg_at.desc().nulls_last())
+
+    stmt = stmt.limit(limit)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        ActivePeer(
+            name=row[0],
+            message_count=int(row[1]),
+            last_message_at=row[2],
+        )
+        for row in rows
+    ]

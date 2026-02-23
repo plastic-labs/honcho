@@ -1,8 +1,8 @@
 """
 Workspace-level Dialectic Agent implementation.
 
-This agent answers queries across all peers in a workspace,
-synthesizing information from multiple peer representations.
+This agent answers queries across all peers in a workspace using an
+analytics-first approach: stats -> message search -> targeted observations.
 """
 
 import logging
@@ -28,9 +28,8 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
     A workspace-level dialectic agent that answers queries across all peers.
 
     Unlike DialecticAgent which focuses on a single observer/observed pair,
-    this agent can query any peer representation in the workspace. It must
-    discover peers via list_peers and search within specific observer/observed
-    pairs using search_memory.
+    this agent discovers relevant peers through workspace stats, message
+    search, and then drills into specific observation pairs.
     """
 
     def __init__(
@@ -53,15 +52,21 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
     # ------------------------------------------------------------------
 
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
-        """Prefetch the list of peers so the agent can skip the list_peers tool call."""
+        """Prefetch workspace stats so the agent can orient itself."""
         _ = query
-        stmt = await crud.get_peers(workspace_name=self.workspace_name)
-        result = await self.db.execute(stmt)
-        peers = list(result.scalars().all())
-        if not peers:
+        stats = await crud.get_workspace_stats(self.db, self.workspace_name)
+        if stats.peer_count == 0:
             return None
-        peer_list = "\n".join(f"- {p.name}" for p in peers)
-        return f"Found {len(peers)} peers in workspace:\n{peer_list}"
+        lines = [
+            f"Peers: {stats.peer_count}",
+            f"Sessions: {stats.session_count}",
+            f"Messages: {stats.message_count}",
+        ]
+        if stats.oldest_message_at and stats.newest_message_at:
+            lines.append(
+                f"Date range: {stats.oldest_message_at:%Y-%m-%d} to {stats.newest_message_at:%Y-%m-%d}"
+            )
+        return "\n".join(lines)
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         return await create_workspace_tool_executor(
@@ -95,4 +100,4 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
 
     @property
     def _prefetch_header(self) -> str:
-        return "Peers in this workspace (already fetched — do NOT call list_peers):"
+        return "Workspace overview (use get_active_peers or search_messages to discover relevant peers):"
