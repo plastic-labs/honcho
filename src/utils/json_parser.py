@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Any
 
-from json_repair import repair_json  # pyright: ignore
+from json_repair import repair_json
 
 logger = logging.getLogger(__name__)
 # logging.getLogger("sqlalchemy.engine.Engine").disabled = True

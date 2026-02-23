@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
+from typing import cast as typing_cast
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
@@ -378,7 +380,7 @@ async def _batch_delete_matching(
             select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
         )
         delete_stmt = delete(model).where(primary_key_column.in_(subquery))
-        delete_result = await db.execute(delete_stmt)
+        delete_result = typing_cast(CursorResult[Any], await db.execute(delete_stmt))
         batch_deleted = delete_result.rowcount or 0
         total_deleted += batch_deleted
 

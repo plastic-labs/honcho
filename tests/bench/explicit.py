@@ -430,11 +430,7 @@ class ExplicitJudge:
                 )
                 for block in resp.content:
                     if block.type == "tool_use":
-                        # block.input is typed as object, but we know it's a dict
-                        input_data = block.input
-                        if isinstance(input_data, dict):
-                            # Cast to dict[str, Any] for type checker
-                            return dict(input_data)  # pyright: ignore[reportUnknownArgumentType]
+                        return dict(block.input)
                 return {}
 
             else:  # AsyncOpenAI
