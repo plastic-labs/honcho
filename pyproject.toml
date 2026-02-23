@@ -8,11 +8,11 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi[standard]>=0.111.0",
+    "fastapi[standard]>=0.131.0",
     "groq>=0.31.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
-    "fastapi-pagination>=0.12.24",
+    "fastapi-pagination>=0.14.2",
     "pgvector>=0.2.5",
     "sentry-sdk[anthropic,fastapi,sqlalchemy]>=2.3.1",
     "greenlet>=3.0.3",
