@@ -4,7 +4,7 @@ from asyncio import Task
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
-from typing import NamedTuple
+from typing import Any, NamedTuple, cast
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -12,6 +12,7 @@ from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -832,10 +833,13 @@ class QueueManager:
         Clean up a specific work unit session by both work_unit_key and AQS ID.
         """
         async with tracked_db("cleanup_work_unit") as db:
-            result = await db.execute(
-                delete(models.ActiveQueueSession)
-                .where(models.ActiveQueueSession.id == aqs_id)
-                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    delete(models.ActiveQueueSession)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                ),
             )
             await db.commit()
             return result.rowcount > 0
