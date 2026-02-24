@@ -1,9 +1,10 @@
 import datetime
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -530,7 +531,7 @@ async def delete_document(
     update_stmt = (
         update(models.Document).where(*conditions).values(deleted_at=func.now())
     )
-    result = await db.execute(update_stmt)
+    result = cast(CursorResult[Any], await db.execute(update_stmt))
 
     if result.rowcount == 0:
         raise ResourceNotFoundException(
@@ -568,7 +569,7 @@ async def delete_document_by_id(
         )
         .values(deleted_at=func.now())
     )
-    result = await db.execute(update_stmt)
+    result = cast(CursorResult[Any], await db.execute(update_stmt))
 
     if result.rowcount == 0:
         raise ResourceNotFoundException(

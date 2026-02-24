@@ -215,9 +215,7 @@ def configure_logging(
     Returns:
         Logger instance
     """
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
     # Suppress HTTP request logs from the Honcho SDK
     logging.getLogger("httpx").setLevel(logging.ERROR)
     logging.getLogger("httpcore").setLevel(logging.ERROR)
@@ -313,9 +311,7 @@ def load_traces(path: Path) -> list[dict[str, Any]]:
                     if not line:
                         continue
                     try:
-                        traces.append(
-                            cast(dict[str, Any], json.loads(line))
-                        )
+                        traces.append(cast(dict[str, Any], json.loads(line)))
                     except json.JSONDecodeError:
                         _logger.debug(
                             "%s:%d: skipping malformed JSON line", path, line_no
@@ -507,6 +503,15 @@ class BaseRunner(ABC, Generic[ResultT]):
         """Return list of peer IDs to trigger dreams for."""
         ...
 
+    def get_dream_session_ids(self, ctx: ItemContext, _item: Any) -> list[str]:
+        """Return session IDs to use for dream scheduling.
+
+        Subclasses can override this when ingestion stores messages across
+        multiple sessions and each session should be included in dream
+        scheduling.
+        """
+        return [ctx.session_id]
+
     @abstractmethod
     async def execute_questions(self, ctx: ItemContext, item: Any) -> ResultT:
         """
@@ -652,15 +657,29 @@ class BaseRunner(ABC, Generic[ResultT]):
                 )
 
             # Trigger dreams
-            print(f"[{workspace_id}] Deriver queue empty. Triggering dreams...")
-            for observer in self.get_dream_observers(item):
-                success = await self._trigger_dream(
-                    ctx.honcho_client, workspace_id, observer, session_id
+            dream_observers = self.get_dream_observers(item)
+            dream_session_ids = self.get_dream_session_ids(ctx, item)
+            if not dream_session_ids:
+                raise ValueError(
+                    f"No dream session IDs available for {workspace_id}. "
+                    + "Dream scheduling requires at least one session id."
                 )
-                if not success:
-                    print(
-                        f"[{workspace_id}] Warning: Dream for {observer} did not complete"
+
+            print(
+                f"[{workspace_id}] Deriver queue empty. Triggering dreams for "
+                + f"{len(dream_observers)} observer(s) across "
+                + f"{len(dream_session_ids)} session(s)..."
+            )
+            for observer in dream_observers:
+                for dream_session_id in dream_session_ids:
+                    success = await self._trigger_dream(
+                        ctx.honcho_client, workspace_id, observer, dream_session_id
                     )
+                    if not success:
+                        print(
+                            f"[{workspace_id}] Warning: Dream for {observer} in "
+                            + f"session {dream_session_id} did not complete"
+                        )
 
             # Execute questions
             print(f"[{workspace_id}] Executing questions...")

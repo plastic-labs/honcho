@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import logging
 from collections.abc import Callable, Sequence
 from functools import wraps
@@ -70,7 +70,7 @@ def with_sentry_transaction(
     """
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
 
             @wraps(func)
             async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:

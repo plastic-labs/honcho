@@ -1,13 +1,16 @@
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
+from typing import cast as typing_cast
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import make_transient_to_detached
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
@@ -41,8 +44,8 @@ class SessionDeletionResult:
     conclusions_deleted: int
 
 
-SESSION_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:session:{session_name}"
-SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:session:{session_name}"
+SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
@@ -72,12 +75,25 @@ async def _fetch_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-) -> models.Session | None:
-    return await db.scalar(
+) -> dict[str, Any] | None:
+    """Fetch a session from the database and return as a plain dict for safe caching."""
+    obj = await db.scalar(
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
     )
+    if obj is None:
+        return None
+    return {
+        "id": obj.id,
+        "name": obj.name,
+        "workspace_name": obj.workspace_name,
+        "is_active": obj.is_active,
+        "h_metadata": obj.h_metadata,
+        "internal_metadata": obj.internal_metadata,
+        "configuration": obj.configuration,
+        "created_at": obj.created_at,
+    }
 
 
 def count_observers_in_config(
@@ -141,11 +157,14 @@ async def get_or_create_session(
     if not session.name:
         raise ValueError("Session name must be provided")
 
-    honcho_session = await _fetch_session(db, workspace_name, session.name)
+    session_data = await _fetch_session(db, workspace_name, session.name)
 
-    # Merge cached object into session if it exists (cached objects are detached)
-    if honcho_session is not None:
-        honcho_session = await db.merge(honcho_session, load=False)
+    # Reconstruct and merge cached dict into session if it exists
+    honcho_session: models.Session | None = None
+    if session_data is not None:
+        obj = models.Session(**session_data)
+        make_transient_to_detached(obj)
+        honcho_session = await db.merge(obj, load=False)
 
         # Reject operations on inactive sessions (marked for deletion)
         if not honcho_session.is_active:
@@ -237,7 +256,18 @@ async def get_or_create_session(
     if needs_cache_update:
         cache_key = session_cache_key(workspace_name, session.name)
         await safe_cache_set(
-            cache_key, honcho_session, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+            cache_key,
+            {
+                "id": honcho_session.id,
+                "name": honcho_session.name,
+                "workspace_name": honcho_session.workspace_name,
+                "is_active": honcho_session.is_active,
+                "h_metadata": honcho_session.h_metadata,
+                "internal_metadata": honcho_session.internal_metadata,
+                "configuration": honcho_session.configuration,
+                "created_at": honcho_session.created_at,
+            },
+            expire=settings.CACHE.DEFAULT_TTL_SECONDS,
         )
         logger.debug(
             "Session %s cache updated in workspace %s", session.name, workspace_name
@@ -269,21 +299,24 @@ async def get_session(
     Raises:
         ResourceNotFoundException: If the session does not exist or is inactive
     """
-    session = await _fetch_session(db, workspace_name, session_name)
+    data = await _fetch_session(db, workspace_name, session_name)
 
-    if session is None:
+    if data is None:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
     # Check if session is active (unless include_inactive is True)
-    if not include_inactive and not session.is_active:
+    # Check on the dict before constructing the ORM object
+    if not include_inactive and not data["is_active"]:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Merge cached object into session (cached objects are detached)
-    session = await db.merge(session, load=False)
+    # Reconstruct ORM object from cached dict and merge into session
+    obj = models.Session(**data)
+    make_transient_to_detached(obj)
+    session = await db.merge(obj, load=False)
 
     return session
 
@@ -378,7 +411,7 @@ async def _batch_delete_matching(
             select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
         )
         delete_stmt = delete(model).where(primary_key_column.in_(subquery))
-        delete_result = await db.execute(delete_stmt)
+        delete_result = typing_cast(CursorResult[Any], await db.execute(delete_stmt))
         batch_deleted = delete_result.rowcount or 0
         total_deleted += batch_deleted
 
