@@ -1,5 +1,7 @@
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Generic, Literal, NamedTuple, TypeVar
+from dataclasses import dataclass, field
+from typing import Generic, Literal, TypeVar
 
 T = TypeVar("T")
 
@@ -18,11 +20,18 @@ def get_current_iteration() -> int:
     return _current_iteration.get()
 
 
-class GetOrCreateResult(NamedTuple, Generic[T]):
+@dataclass
+class GetOrCreateResult(Generic[T]):
     """Result of a get_or_create operation indicating whether the resource was created."""
 
     resource: T
     created: bool
+    on_commit: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
+
+    async def post_commit(self) -> None:
+        """Run deferred cache operations after the transaction is committed."""
+        if self.on_commit is not None:
+            await self.on_commit()
 
 
 SupportedProviders = Literal["anthropic", "openai", "google", "groq", "custom", "vllm"]

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
@@ -68,7 +69,9 @@ async def set_peer_card(
 
     """
     # Ensure the peer exists (get-or-create)
-    await get_or_create_peers(db, workspace_name, [schemas.PeerCreate(name=observer)])
+    peers_result = await get_or_create_peers(
+        db, workspace_name, [schemas.PeerCreate(name=observer)]
+    )
 
     stmt = (
         update(models.Peer)
@@ -84,12 +87,13 @@ async def set_peer_card(
             )
         )
     )
-    result = await db.execute(stmt)
+    result = cast(CursorResult[Any], await db.execute(stmt))
     if result.rowcount == 0:
         raise exceptions.ResourceNotFoundException(
             f"Peer {observer} not found in workspace {workspace_name}"
         )
     await db.commit()
+    await peers_result.post_commit()
 
     # Invalidate cache - read-through pattern
     cache_key = peer_cache_key(workspace_name, observer)

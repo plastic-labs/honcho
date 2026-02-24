@@ -5,6 +5,7 @@ from cashews import NOT_NONE
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import make_transient_to_detached
 
 from src import models, schemas
 from src.cache.client import cache, get_cache_namespace, safe_cache_delete
@@ -17,8 +18,8 @@ from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
-PEER_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:peer:{peer_name}"
-PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
+PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
@@ -112,29 +113,31 @@ async def get_or_create_peers(
         for p in peers_to_create
     ]
     try:
-        db.add_all(new_peers)
-        await db.commit()
+        async with db.begin_nested():
+            db.add_all(new_peers)
     except IntegrityError:
-        await db.rollback()
         if _retry:
             raise ConflictException(
                 f"Unable to create or get peers: {peer_names}"
             ) from None
         return await get_or_create_peers(db, workspace_name, peers, _retry=True)
 
-    # Only invalidate cache for changed/new peers - read-through pattern
-    for peer_obj in changed_peers + new_peers:
-        cache_key = peer_cache_key(workspace_name, peer_obj.name)
-        await safe_cache_delete(cache_key)
-        logger.debug(
-            "Peer %s cache invalidated in workspace %s (changed or new)",
-            peer_obj.name,
-            workspace_name,
-        )
+    # Capture peer names eagerly so the closure holds plain strings, not ORM objects
+    _cache_keys_to_invalidate = [
+        peer_cache_key(workspace_name, p.name) for p in changed_peers + new_peers
+    ]
+
+    async def _invalidate_peer_cache():
+        for cache_key in _cache_keys_to_invalidate:
+            await safe_cache_delete(cache_key)
 
     # Return combined list of existing and new peers
     # created=True if any new peers were created
-    return GetOrCreateResult(existing_peers + new_peers, created=len(new_peers) > 0)
+    return GetOrCreateResult(
+        existing_peers + new_peers,
+        created=len(new_peers) > 0,
+        on_commit=_invalidate_peer_cache if _cache_keys_to_invalidate else None,
+    )
 
 
 @cache(
@@ -152,12 +155,24 @@ async def _fetch_peer(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
-) -> models.Peer | None:
-    return await db.scalar(
+) -> dict[str, Any] | None:
+    """Fetch a peer from the database and return as a plain dict for safe caching."""
+    obj = await db.scalar(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == peer_name)
     )
+    if obj is None:
+        return None
+    return {
+        "id": obj.id,
+        "name": obj.name,
+        "workspace_name": obj.workspace_name,
+        "h_metadata": obj.h_metadata,
+        "internal_metadata": obj.internal_metadata,
+        "configuration": obj.configuration,
+        "created_at": obj.created_at,
+    }
 
 
 async def get_peer(
@@ -179,14 +194,16 @@ async def get_peer(
     Raises:
         ResourceNotFoundException: If the peer does not exist
     """
-    existing_peer = await _fetch_peer(db, workspace_name, peer.name)
-    if existing_peer is None:
+    data = await _fetch_peer(db, workspace_name, peer.name)
+    if data is None:
         raise ResourceNotFoundException(
             f"Peer {peer.name} not found in workspace {workspace_name}"
         )
 
-    # Merge cached object into session (cached objects are detached)
-    existing_peer = await db.merge(existing_peer, load=False)
+    # Reconstruct ORM object from cached dict and merge into session
+    obj = models.Peer(**data)
+    make_transient_to_detached(obj)
+    existing_peer = await db.merge(obj, load=False)
 
     return existing_peer
 
@@ -222,11 +239,10 @@ async def update_peer(
         ValidationException: If the update data is invalid
         ConflictException: If the update violates a unique constraint
     """
-    honcho_peer = (
-        await get_or_create_peers(
-            db, workspace_name, [schemas.PeerCreate(name=peer_name)]
-        )
-    ).resource[0]
+    peers_result = await get_or_create_peers(
+        db, workspace_name, [schemas.PeerCreate(name=peer_name)]
+    )
+    honcho_peer = peers_result.resource[0]
 
     needs_update = False
 
@@ -243,6 +259,8 @@ async def update_peer(
 
     # Early exit if unchanged
     if not needs_update:
+        await db.commit()
+        await peers_result.post_commit()
         logger.debug(
             "Peer %s unchanged in workspace %s, skipping update",
             peer_name,
@@ -252,6 +270,7 @@ async def update_peer(
 
     await db.commit()
     await db.refresh(honcho_peer)
+    await peers_result.post_commit()
 
     cache_key = peer_cache_key(workspace_name, honcho_peer.name)
     await safe_cache_delete(cache_key)

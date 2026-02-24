@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import ParamSpec, TypeVar, overload
 
 from fastapi import Request
-from langfuse import observe  # pyright: ignore
+from langfuse import observe
 from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel

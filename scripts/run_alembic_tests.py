@@ -108,6 +108,7 @@ def main():
             "run",
             "pytest",
             "tests/alembic/test_pipeline.py",
+            "-n0",
         ]
     elif revision_ids:
         # Build a -k expression to filter tests by revision ID
@@ -125,6 +126,7 @@ def main():
             "run",
             "pytest",
             "tests/alembic/test_pipeline.py",
+            "-n0",
             "-k",
             k_expression,
         ]
