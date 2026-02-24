@@ -175,6 +175,8 @@ async def get_or_create_session(
     # Track if we need to update cache and if session was created
     needs_cache_update = False
     created = False
+    ws_result = None
+    peers_result = None
 
     # Check if session already exists
     if honcho_session is None:
@@ -185,7 +187,7 @@ async def get_or_create_session(
                 raise ObserverException(session.name, observer_count)
 
         # Get or create workspace to ensure it exists
-        await get_or_create_workspace(
+        ws_result = await get_or_create_workspace(
             db,
             schemas.WorkspaceCreate(name=workspace_name),
         )
@@ -200,14 +202,12 @@ async def get_or_create_session(
             else {},
         )
         try:
-            db.add(honcho_session)
-            # Flush to ensure session exists in DB before adding peers and set flag to warm cache
-            await db.flush()
+            async with db.begin_nested():
+                db.add(honcho_session)
             needs_cache_update = True
             created = True
 
         except IntegrityError:
-            await db.rollback()
             logger.debug(
                 "Race condition detected for session: %s, retrying get", session.name
             )
@@ -235,7 +235,7 @@ async def get_or_create_session(
 
     # Add all peers to session
     if session.peer_names:
-        await get_or_create_peers(
+        peers_result = await get_or_create_peers(
             db,
             workspace_name=workspace_name,
             peers=[
@@ -251,6 +251,12 @@ async def get_or_create_session(
 
     await db.commit()
     await db.refresh(honcho_session)
+
+    # Run deferred cache operations from workspace/peer creation
+    if ws_result is not None:
+        await ws_result.post_commit()
+    if peers_result is not None:
+        await peers_result.post_commit()
 
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
@@ -882,7 +888,7 @@ async def set_peers_for_session(
     result = await db.execute(update_stmt)
 
     # Get or create peers
-    await get_or_create_peers(
+    peers_result = await get_or_create_peers(
         db,
         workspace_name=workspace_name,
         peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
@@ -897,6 +903,7 @@ async def set_peers_for_session(
     )
 
     await db.commit()
+    await peers_result.post_commit()
     return peers
 
 

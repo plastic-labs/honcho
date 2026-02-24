@@ -82,6 +82,8 @@ async def get_or_create_peer(
     result = await crud.get_or_create_peers(
         db, workspace_name=workspace_id, peers=[peer]
     )
+    await db.commit()
+    await result.post_commit()
     response.status_code = 201 if result.created else 200
     return result.resource[0]
 
@@ -167,11 +169,13 @@ async def chat(
     """
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
-        await crud.get_or_create_peers(
+        peers_result = await crud.get_or_create_peers(
             peer_db,
             workspace_name=workspace_id,
             peers=[schemas.PeerCreate(name=peer_id)],
         )
+        await peer_db.commit()
+    await peers_result.post_commit()
 
     if options.stream:
         # Stream the response using Server-Sent Events
