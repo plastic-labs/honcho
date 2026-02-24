@@ -615,6 +615,8 @@ async def get_active_peers(
     Returns:
         List of ActivePeer objects with message counts and last-active dates
     """
+    if limit <= 0:
+        return []
     limit = min(limit, 50)
 
     # Subquery: aggregate messages per peer
