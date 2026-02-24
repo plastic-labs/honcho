@@ -82,6 +82,8 @@ async def get_or_create_peer(
     result = await crud.get_or_create_peers(
         db, workspace_name=workspace_id, peers=[peer]
     )
+    await db.commit()
+    await result.post_commit()
     response.status_code = 201 if result.created else 200
     return result.resource[0]
 

@@ -119,28 +119,32 @@ async def get_or_create_workspace(
         configuration=workspace.configuration.model_dump(exclude_none=True),
     )
     try:
-        db.add(honcho_workspace)
-        await db.commit()
-        await db.refresh(honcho_workspace)
-
+        async with db.begin_nested():
+            db.add(honcho_workspace)
         logger.debug("Workspace created successfully: %s", workspace.name)
 
-        cache_key = workspace_cache_key(workspace.name)
-        await safe_cache_set(
-            cache_key,
-            {
-                "id": honcho_workspace.id,
-                "name": honcho_workspace.name,
-                "h_metadata": honcho_workspace.h_metadata,
-                "internal_metadata": honcho_workspace.internal_metadata,
-                "configuration": honcho_workspace.configuration,
-                "created_at": honcho_workspace.created_at,
-            },
-            expire=settings.CACHE.DEFAULT_TTL_SECONDS,
+        # Capture cache data eagerly so the closure holds a plain dict, not the ORM object
+        _cache_key = workspace_cache_key(workspace.name)
+        _cache_data = {
+            "id": honcho_workspace.id,
+            "name": honcho_workspace.name,
+            "h_metadata": honcho_workspace.h_metadata,
+            "internal_metadata": honcho_workspace.internal_metadata,
+            "configuration": honcho_workspace.configuration,
+            "created_at": honcho_workspace.created_at,
+        }
+
+        async def _warm_workspace_cache():
+            await safe_cache_set(
+                _cache_key,
+                _cache_data,
+                expire=settings.CACHE.DEFAULT_TTL_SECONDS,
+            )
+
+        return GetOrCreateResult(
+            honcho_workspace, created=True, on_commit=_warm_workspace_cache
         )
-        return GetOrCreateResult(honcho_workspace, created=True)
     except IntegrityError:
-        await db.rollback()
         if _retry:
             raise ConflictException(
                 f"Unable to create or get workspace: {workspace.name}"
@@ -208,16 +212,14 @@ async def update_workspace(
     Returns:
         The updated workspace
     """
-    honcho_workspace: models.Workspace = (
-        await get_or_create_workspace(
-            db,
-            schemas.WorkspaceCreate(
-                name=workspace_name,
-                metadata=workspace.metadata
-                or {},  # Provide empty dict if metadata is None
-            ),
-        )
-    ).resource
+    ws_result = await get_or_create_workspace(
+        db,
+        schemas.WorkspaceCreate(
+            name=workspace_name,
+            metadata=workspace.metadata or {},  # Provide empty dict if metadata is None
+        ),
+    )
+    honcho_workspace: models.Workspace = ws_result.resource
 
     # Track if anything changed
     needs_update = False
@@ -242,11 +244,14 @@ async def update_workspace(
 
     # Early exit if unchanged
     if not needs_update:
+        await db.commit()
+        await ws_result.post_commit()
         logger.debug("Workspace %s unchanged, skipping update", workspace_name)
         return honcho_workspace
 
     await db.commit()
     await db.refresh(honcho_workspace)
+    await ws_result.post_commit()
 
     # Only invalidate if we actually updated
     cache_key = workspace_cache_key(workspace_name)

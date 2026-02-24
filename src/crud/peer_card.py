@@ -69,7 +69,9 @@ async def set_peer_card(
 
     """
     # Ensure the peer exists (get-or-create)
-    await get_or_create_peers(db, workspace_name, [schemas.PeerCreate(name=observer)])
+    peers_result = await get_or_create_peers(
+        db, workspace_name, [schemas.PeerCreate(name=observer)]
+    )
 
     stmt = (
         update(models.Peer)
@@ -91,6 +93,7 @@ async def set_peer_card(
             f"Peer {observer} not found in workspace {workspace_name}"
         )
     await db.commit()
+    await peers_result.post_commit()
 
     # Invalidate cache - read-through pattern
     cache_key = peer_cache_key(workspace_name, observer)

@@ -50,6 +50,8 @@ async def get_or_create_workspace(
         workspace.name = jwt_params.w
 
     result = await crud.get_or_create_workspace(db, workspace=workspace)
+    await db.commit()
+    await result.post_commit()
     response.status_code = 201 if result.created else 200
     return result.resource
 
