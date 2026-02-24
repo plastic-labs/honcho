@@ -80,29 +80,34 @@ logger = configure_logging(level=logging.INFO, name=__name__)
 
 class FactCategory(Enum):
     """Categories of extractable facts."""
-    EXPLICIT = "explicit"           # Directly stated: "I work at Google"
-    IMPLICIT = "implicit"           # Clearly implied: "my commute to Mountain View" → lives near MV
-    RELATIONAL = "relational"       # Relationships: "my sister's husband" → has sister, sister is married
-    TEMPORAL = "temporal"           # Time-bound facts: "started last year"
-    PREFERENCE = "preference"       # Likes/dislikes: "I love hiking"
-    BIOGRAPHICAL = "biographical"   # Personal details: name, age, location
-    BEHAVIORAL = "behavioral"       # Habits/patterns: "I usually wake up early"
+
+    EXPLICIT = "explicit"  # Directly stated: "I work at Google"
+    IMPLICIT = (
+        "implicit"  # Clearly implied: "my commute to Mountain View" → lives near MV
+    )
+    RELATIONAL = "relational"  # Relationships: "my sister's husband" → has sister, sister is married
+    TEMPORAL = "temporal"  # Time-bound facts: "started last year"
+    PREFERENCE = "preference"  # Likes/dislikes: "I love hiking"
+    BIOGRAPHICAL = "biographical"  # Personal details: name, age, location
+    BEHAVIORAL = "behavioral"  # Habits/patterns: "I usually wake up early"
 
 
 class CoverageStatus(Enum):
     """How well a gold fact is covered by extraction."""
-    COVERED = "covered"             # Fully present (possibly rephrased)
-    PARTIAL = "partial"             # Core info present but incomplete
-    MISSING = "missing"             # Not present at all
-    OVERCLAIMED = "overclaimed"     # Extraction claims more than source supports
+
+    COVERED = "covered"  # Fully present (possibly rephrased)
+    PARTIAL = "partial"  # Core info present but incomplete
+    MISSING = "missing"  # Not present at all
+    OVERCLAIMED = "overclaimed"  # Extraction claims more than source supports
 
 
 class ImportanceLevel(Enum):
     """Importance weighting for facts (Pyramid-inspired)."""
-    CRITICAL = "critical"           # Core identifying information
-    IMPORTANT = "important"         # Significant details
-    MINOR = "minor"                 # Nice-to-have details
-    TRIVIAL = "trivial"             # Marginal information
+
+    CRITICAL = "critical"  # Core identifying information
+    IMPORTANT = "important"  # Significant details
+    MINOR = "minor"  # Nice-to-have details
+    TRIVIAL = "trivial"  # Marginal information
 
 
 # =============================================================================
@@ -113,75 +118,79 @@ class ImportanceLevel(Enum):
 @dataclass
 class GoldFact:
     """A fact that should be extractable from the source."""
+
     content: str
     category: FactCategory
     importance: ImportanceLevel
-    source_span: str = ""           # The text that supports this fact
-    requires_inference: bool = False # Whether extraction requires reasoning
+    source_span: str = ""  # The text that supports this fact
+    requires_inference: bool = False  # Whether extraction requires reasoning
 
 
 @dataclass
 class CoverageMatch:
     """Result of matching a gold fact against extraction."""
+
     gold_fact: GoldFact
     status: CoverageStatus
-    matched_extraction: str = ""    # Which extracted fact covers this (if any)
-    match_quality: float = 0.0      # 0-1, how well it matches
+    matched_extraction: str = ""  # Which extracted fact covers this (if any)
+    match_quality: float = 0.0  # 0-1, how well it matches
     explanation: str = ""
 
 
-@dataclass 
+@dataclass
 class ExtractionAnalysis:
     """Analysis of an extracted fact."""
+
     content: str
-    is_grounded: bool = True        # Supported by source
-    is_hallucinated: bool = False   # Claims something not in source
+    is_grounded: bool = True  # Supported by source
+    is_hallucinated: bool = False  # Claims something not in source
     matched_gold: list[str] = field(default_factory=list)  # Which gold facts it covers
 
 
 @dataclass
 class CoverageReport:
     """Complete coverage analysis for a trace."""
+
     conversation_id: str
     source_message_count: int
     source_token_count: int
-    
+
     # Gold facts
     gold_facts: list[GoldFact] = field(default_factory=list)
     gold_fact_count: int = 0
-    
+
     # Extracted facts
     extracted_facts: list[str] = field(default_factory=list)
     extracted_count: int = 0
-    
+
     # Coverage matching
     matches: list[CoverageMatch] = field(default_factory=list)
-    
+
     # Core metrics
-    recall: float = 0.0             # covered / gold
-    partial_recall: float = 0.0     # (covered + 0.5*partial) / gold
-    weighted_recall: float = 0.0    # importance-weighted recall
-    precision: float = 0.0          # grounded / extracted
-    f1: float = 0.0                 # harmonic mean
-    
+    recall: float = 0.0  # covered / gold
+    partial_recall: float = 0.0  # (covered + 0.5*partial) / gold
+    weighted_recall: float = 0.0  # importance-weighted recall
+    precision: float = 0.0  # grounded / extracted
+    f1: float = 0.0  # harmonic mean
+
     # Detailed metrics
     coverage_by_category: dict[str, float] = field(default_factory=dict)
     coverage_by_importance: dict[str, float] = field(default_factory=dict)
-    
+
     # Density metrics
     extraction_density: float = 0.0  # extracted / source_tokens
-    gold_density: float = 0.0        # gold / source_tokens
-    density_ratio: float = 0.0       # extraction_density / gold_density
-    
+    gold_density: float = 0.0  # gold / source_tokens
+    density_ratio: float = 0.0  # extraction_density / gold_density
+
     # QA verification (optional)
     qa_questions: list[str] = field(default_factory=list)
     qa_answerable: int = 0
     qa_coverage: float = 0.0
-    
+
     # Issues
     missing_critical: list[str] = field(default_factory=list)
     hallucinations: list[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "conversation_id": self.conversation_id,
@@ -190,9 +199,15 @@ class CoverageReport:
             "counts": {
                 "gold_facts": self.gold_fact_count,
                 "extracted_facts": self.extracted_count,
-                "covered": sum(1 for m in self.matches if m.status == CoverageStatus.COVERED),
-                "partial": sum(1 for m in self.matches if m.status == CoverageStatus.PARTIAL),
-                "missing": sum(1 for m in self.matches if m.status == CoverageStatus.MISSING),
+                "covered": sum(
+                    1 for m in self.matches if m.status == CoverageStatus.COVERED
+                ),
+                "partial": sum(
+                    1 for m in self.matches if m.status == CoverageStatus.PARTIAL
+                ),
+                "missing": sum(
+                    1 for m in self.matches if m.status == CoverageStatus.MISSING
+                ),
             },
             "scores": {
                 "recall": round(self.recall, 4),
@@ -200,15 +215,21 @@ class CoverageReport:
                 "weighted_recall": round(self.weighted_recall, 4),
                 "precision": round(self.precision, 4),
                 "f1": round(self.f1, 4),
-                "qa_coverage": round(self.qa_coverage, 4) if self.qa_questions else None,
+                "qa_coverage": round(self.qa_coverage, 4)
+                if self.qa_questions
+                else None,
             },
             "density": {
                 "extraction_density": round(self.extraction_density, 4),
                 "gold_density": round(self.gold_density, 4),
                 "density_ratio": round(self.density_ratio, 4),
             },
-            "coverage_by_category": {k: round(v, 3) for k, v in self.coverage_by_category.items()},
-            "coverage_by_importance": {k: round(v, 3) for k, v in self.coverage_by_importance.items()},
+            "coverage_by_category": {
+                k: round(v, 3) for k, v in self.coverage_by_category.items()
+            },
+            "coverage_by_importance": {
+                k: round(v, 3) for k, v in self.coverage_by_importance.items()
+            },
             "issues": {
                 "missing_critical": self.missing_critical[:5],  # Top 5
                 "hallucinations": self.hallucinations[:5],
@@ -381,14 +402,14 @@ For each question, determine if the EXTRACTED FACTS (not the source!) provide en
 class CoverageJudge:
     """
     Evaluates information recall/coverage in fact extraction.
-    
+
     Based on:
     - FActScore: Atomic fact decomposition
     - SAFE: F1 scoring with precision and recall
     - QuestEval: QA-based coverage verification
     - Pyramid: Importance weighting
     """
-    
+
     def __init__(
         self,
         llm_client: AsyncAnthropic | AsyncOpenAI,
@@ -402,15 +423,12 @@ class CoverageJudge:
         self.provider: str = provider
         self.use_qa_verification: bool = use_qa_verification
         self.verbose: bool = verbose
-        
+
         if verbose:
             logger.setLevel(logging.DEBUG)
-    
+
     async def _call_llm(
-        self, 
-        system: str, 
-        user: str, 
-        tool_def: dict[str, Any]
+        self, system: str, user: str, tool_def: dict[str, Any]
     ) -> dict[str, Any]:
         """Call LLM with structured tool output."""
         try:
@@ -451,7 +469,10 @@ class CoverageJudge:
                             {"role": "user", "content": user},
                         ],
                         tools=cast(Any, [openai_tool]),
-                        tool_choice={"type": "function", "function": {"name": tool_def["name"]}},
+                        tool_choice={
+                            "type": "function",
+                            "function": {"name": tool_def["name"]},
+                        },
                     ),
                     timeout=300.0,
                 )
@@ -474,13 +495,15 @@ class CoverageJudge:
             logger.exception("Unexpected error in LLM call")
             raise
 
-    async def extract_gold_facts(self, source_messages: list[dict[str, Any]]) -> list[GoldFact]:
+    async def extract_gold_facts(
+        self, source_messages: list[dict[str, Any]]
+    ) -> list[GoldFact]:
         """
         Stage 1: Extract all facts that SHOULD be extractable from source.
-        
+
         This defines the "gold standard" for recall measurement.
         """
-        
+
         tool_def = {
             "name": "submit_gold_facts",
             "description": "Submit all extractable facts from source messages",
@@ -494,56 +517,64 @@ class CoverageJudge:
                             "properties": {
                                 "content": {
                                     "type": "string",
-                                    "description": "The fact as a standalone statement"
+                                    "description": "The fact as a standalone statement",
                                 },
                                 "category": {
                                     "type": "string",
-                                    "enum": [c.value for c in FactCategory]
+                                    "enum": [c.value for c in FactCategory],
                                 },
                                 "importance": {
                                     "type": "string",
-                                    "enum": [i.value for i in ImportanceLevel]
+                                    "enum": [i.value for i in ImportanceLevel],
                                 },
                                 "source_span": {
                                     "type": "string",
-                                    "description": "The text that supports this fact"
+                                    "description": "The text that supports this fact",
                                 },
                                 "requires_inference": {
                                     "type": "boolean",
-                                    "description": "Whether extracting this requires reasoning beyond literal text"
-                                }
+                                    "description": "Whether extracting this requires reasoning beyond literal text",
+                                },
                             },
-                            "required": ["content", "category", "importance"]
-                        }
+                            "required": ["content", "category", "importance"],
+                        },
                     }
                 },
-                "required": ["facts"]
-            }
+                "required": ["facts"],
+            },
         }
-        
+
         # Format messages for LLM
         messages_text = "\n".join(
             f"[{msg.get('speaker', 'user')}]: {msg.get('text', '')}"
             for msg in source_messages
-            if msg.get('speaker', 'user') == 'user'  # Only user messages
+            if msg.get("speaker", "user") == "user"  # Only user messages
         )
-        
+
         result = await self._call_llm(
             GOLD_EXTRACTION_PROMPT,
             f"Extract all facts from these messages:\n\n{messages_text}",
-            tool_def
+            tool_def,
         )
-        
+
         gold_facts: list[GoldFact] = []
         for item in cast(list[dict[str, Any]], result.get("facts", [])):
             try:
-                gold_facts.append(GoldFact(
-                    content=cast(str, item.get("content", "")),
-                    category=FactCategory(cast(str, item.get("category", "explicit"))),
-                    importance=ImportanceLevel(cast(str, item.get("importance", "important"))),
-                    source_span=cast(str, item.get("source_span", "")),
-                    requires_inference=cast(bool, item.get("requires_inference", False)),
-                ))
+                gold_facts.append(
+                    GoldFact(
+                        content=cast(str, item.get("content", "")),
+                        category=FactCategory(
+                            cast(str, item.get("category", "explicit"))
+                        ),
+                        importance=ImportanceLevel(
+                            cast(str, item.get("importance", "important"))
+                        ),
+                        source_span=cast(str, item.get("source_span", "")),
+                        requires_inference=cast(
+                            bool, item.get("requires_inference", False)
+                        ),
+                    )
+                )
             except (ValueError, KeyError) as e:
                 logger.debug(f"Skipping malformed gold fact: {e}")
                 continue
@@ -552,17 +583,15 @@ class CoverageJudge:
         return gold_facts
 
     async def match_coverage(
-        self,
-        gold_facts: list[GoldFact],
-        extracted_facts: list[str]
+        self, gold_facts: list[GoldFact], extracted_facts: list[str]
     ) -> list[CoverageMatch]:
         """
         Stage 2: Match gold facts against extraction to measure coverage.
         """
-        
+
         if not gold_facts:
             return []
-        
+
         tool_def = {
             "name": "submit_coverage_matches",
             "description": "Submit coverage matching results",
@@ -577,38 +606,40 @@ class CoverageJudge:
                                 "gold_index": {"type": "integer"},
                                 "status": {
                                     "type": "string",
-                                    "enum": [s.value for s in CoverageStatus]
+                                    "enum": [s.value for s in CoverageStatus],
                                 },
                                 "matched_extraction": {
                                     "type": "string",
-                                    "description": "The extracted fact that covers this (if any)"
+                                    "description": "The extracted fact that covers this (if any)",
                                 },
                                 "match_quality": {
                                     "type": "number",
                                     "minimum": 0,
                                     "maximum": 1,
-                                    "description": "How well it matches (1.0 = perfect)"
+                                    "description": "How well it matches (1.0 = perfect)",
                                 },
-                                "explanation": {"type": "string"}
+                                "explanation": {"type": "string"},
                             },
-                            "required": ["gold_index", "status"]
-                        }
+                            "required": ["gold_index", "status"],
+                        },
                     }
                 },
-                "required": ["matches"]
-            }
+                "required": ["matches"],
+            },
         }
-        
+
         # Format for LLM
         gold_text = "\n".join(
             f"{i+1}. [{gf.importance.value.upper()}] {gf.content}"
             for i, gf in enumerate(gold_facts)
         )
-        
-        extracted_text = "\n".join(
-            f"- {fact}" for fact in extracted_facts
-        ) if extracted_facts else "(No facts extracted)"
-        
+
+        extracted_text = (
+            "\n".join(f"- {fact}" for fact in extracted_facts)
+            if extracted_facts
+            else "(No facts extracted)"
+        )
+
         result = await self._call_llm(
             COVERAGE_MATCHING_PROMPT,
             (
@@ -616,47 +647,58 @@ class CoverageJudge:
                 + f"EXTRACTED FACTS (what was actually extracted):\n{extracted_text}\n\n"
                 + "For each gold fact, determine its coverage status."
             ),
-            tool_def
+            tool_def,
         )
-        
+
         matches: list[CoverageMatch] = []
         for item in cast(list[dict[str, Any]], result.get("matches", [])):
             idx = cast(int, item.get("gold_index", 1)) - 1
             if 0 <= idx < len(gold_facts):
                 try:
-                    matches.append(CoverageMatch(
-                        gold_fact=gold_facts[idx],
-                        status=CoverageStatus(cast(str, item.get("status", "missing"))),
-                        matched_extraction=cast(str, item.get("matched_extraction", "")),
-                        match_quality=cast(float, item.get("match_quality", 0.0)),
-                        explanation=cast(str, item.get("explanation", "")),
-                    ))
+                    matches.append(
+                        CoverageMatch(
+                            gold_fact=gold_facts[idx],
+                            status=CoverageStatus(
+                                cast(str, item.get("status", "missing"))
+                            ),
+                            matched_extraction=cast(
+                                str, item.get("matched_extraction", "")
+                            ),
+                            match_quality=cast(float, item.get("match_quality", 0.0)),
+                            explanation=cast(str, item.get("explanation", "")),
+                        )
+                    )
                 except ValueError:
-                    matches.append(CoverageMatch(
-                        gold_fact=gold_facts[idx],
-                        status=CoverageStatus.MISSING,
-                    ))
-        
+                    matches.append(
+                        CoverageMatch(
+                            gold_fact=gold_facts[idx],
+                            status=CoverageStatus.MISSING,
+                        )
+                    )
+
         # Ensure all gold facts have a match result
-        matched_indices = {gold_facts.index(m.gold_fact) for m in matches if m.gold_fact in gold_facts}
+        matched_indices = {
+            gold_facts.index(m.gold_fact) for m in matches if m.gold_fact in gold_facts
+        }
         for i, gf in enumerate(gold_facts):
             if i not in matched_indices:
-                matches.append(CoverageMatch(
-                    gold_fact=gf,
-                    status=CoverageStatus.MISSING,
-                    explanation="No match result returned"
-                ))
-        
+                matches.append(
+                    CoverageMatch(
+                        gold_fact=gf,
+                        status=CoverageStatus.MISSING,
+                        explanation="No match result returned",
+                    )
+                )
+
         return matches
 
     async def generate_qa_pairs(
-        self,
-        source_messages: list[dict[str, Any]]
+        self, source_messages: list[dict[str, Any]]
     ) -> list[str]:
         """
         Stage 3a: Generate questions that should be answerable from complete extraction.
         """
-        
+
         tool_def = {
             "name": "submit_questions",
             "description": "Submit questions for QA-based coverage verification",
@@ -672,52 +714,50 @@ class CoverageJudge:
                                 "expected_answer": {"type": "string"},
                                 "difficulty": {
                                     "type": "string",
-                                    "enum": ["easy", "medium", "hard"]
-                                }
+                                    "enum": ["easy", "medium", "hard"],
+                                },
                             },
-                            "required": ["question"]
-                        }
+                            "required": ["question"],
+                        },
                     }
                 },
-                "required": ["questions"]
-            }
+                "required": ["questions"],
+            },
         }
-        
+
         messages_text = "\n".join(
             f"[{msg.get('speaker', 'user')}]: {msg.get('text', '')}"
             for msg in source_messages
-            if msg.get('speaker', 'user') == 'user'
+            if msg.get("speaker", "user") == "user"
         )
-        
+
         result = await self._call_llm(
             QA_GENERATION_PROMPT,
             f"Generate questions from these messages:\n\n{messages_text}",
-            tool_def
+            tool_def,
         )
-        
+
         questions: list[str] = [
             cast(str, item.get("question", ""))
             for item in cast(list[dict[str, Any]], result.get("questions", []))
             if item.get("question")
         ]
-        
+
         logger.info(f"Generated {len(questions)} QA questions")
         return questions
 
     async def verify_qa_coverage(
-        self,
-        questions: list[str],
-        extracted_facts: list[str]
+        self, questions: list[str], extracted_facts: list[str]
     ) -> tuple[int, int]:
         """
         Stage 3b: Verify how many questions can be answered from extraction alone.
-        
+
         Returns: (answerable_count, total_count)
         """
-        
+
         if not questions:
             return 0, 0
-        
+
         tool_def = {
             "name": "submit_qa_results",
             "description": "Submit QA verification results",
@@ -732,22 +772,26 @@ class CoverageJudge:
                                 "question_index": {"type": "integer"},
                                 "answerable": {
                                     "type": "string",
-                                    "enum": ["yes", "partial", "no"]
+                                    "enum": ["yes", "partial", "no"],
                                 },
                                 "answer_from_extraction": {"type": "string"},
-                                "explanation": {"type": "string"}
+                                "explanation": {"type": "string"},
                             },
-                            "required": ["question_index", "answerable"]
-                        }
+                            "required": ["question_index", "answerable"],
+                        },
                     }
                 },
-                "required": ["results"]
-            }
+                "required": ["results"],
+            },
         }
-        
+
         questions_text = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
-        extracted_text = "\n".join(f"- {f}" for f in extracted_facts) if extracted_facts else "(No facts)"
-        
+        extracted_text = (
+            "\n".join(f"- {f}" for f in extracted_facts)
+            if extracted_facts
+            else "(No facts)"
+        )
+
         result = await self._call_llm(
             QA_VERIFICATION_PROMPT,
             (
@@ -755,9 +799,9 @@ class CoverageJudge:
                 + f"EXTRACTED FACTS:\n{extracted_text}\n\n"
                 + "For each question, determine if it can be answered from the extracted facts alone."
             ),
-            tool_def
+            tool_def,
         )
-        
+
         answerable: float = 0
         for item in cast(list[dict[str, Any]], result.get("results", [])):
             status = cast(str, item.get("answerable", "no"))
@@ -765,18 +809,16 @@ class CoverageJudge:
                 answerable += 1
             elif status == "partial":
                 answerable += 0.5
-        
+
         return int(answerable), len(questions)
 
     async def analyze_extraction_quality(
-        self,
-        extracted_facts: list[str],
-        source_messages: list[dict[str, Any]]
+        self, extracted_facts: list[str], source_messages: list[dict[str, Any]]
     ) -> list[ExtractionAnalysis]:
         """
         Analyze each extracted fact for grounding and hallucination.
         """
-        
+
         tool_def = {
             "name": "submit_extraction_analysis",
             "description": "Analyze extracted facts for grounding",
@@ -791,24 +833,24 @@ class CoverageJudge:
                                 "index": {"type": "integer"},
                                 "is_grounded": {"type": "boolean"},
                                 "is_hallucinated": {"type": "boolean"},
-                                "explanation": {"type": "string"}
+                                "explanation": {"type": "string"},
                             },
-                            "required": ["index", "is_grounded"]
-                        }
+                            "required": ["index", "is_grounded"],
+                        },
                     }
                 },
-                "required": ["analyses"]
-            }
+                "required": ["analyses"],
+            },
         }
-        
+
         messages_text = "\n".join(
             f"[{msg.get('speaker', 'user')}]: {msg.get('text', '')}"
             for msg in source_messages
-            if msg.get('speaker', 'user') == 'user'
+            if msg.get("speaker", "user") == "user"
         )
-        
+
         extracted_text = "\n".join(f"{i+1}. {f}" for i, f in enumerate(extracted_facts))
-        
+
         result = await self._call_llm(
             (
                 "Verify each extracted fact is grounded in the source messages. "
@@ -820,37 +862,39 @@ class CoverageJudge:
                 + f"EXTRACTED FACTS:\n{extracted_text}\n\n"
                 + "Analyze each extracted fact."
             ),
-            tool_def
+            tool_def,
         )
-        
+
         analyses: list[ExtractionAnalysis] = []
         for fact in extracted_facts:
             analyses.append(ExtractionAnalysis(content=fact))
-        
+
         for item in cast(list[dict[str, Any]], result.get("analyses", [])):
             idx = cast(int, item.get("index", 1)) - 1
             if 0 <= idx < len(analyses):
                 analyses[idx].is_grounded = cast(bool, item.get("is_grounded", True))
-                analyses[idx].is_hallucinated = cast(bool, item.get("is_hallucinated", False))
-        
+                analyses[idx].is_hallucinated = cast(
+                    bool, item.get("is_hallucinated", False)
+                )
+
         return analyses
 
     def compute_metrics(self, report: CoverageReport) -> None:
         """Compute all coverage metrics from matches."""
-        
+
         if not report.gold_facts:
             return
-        
+
         n_gold = len(report.gold_facts)
-        
+
         # Count by status
         covered = sum(1 for m in report.matches if m.status == CoverageStatus.COVERED)
         partial = sum(1 for m in report.matches if m.status == CoverageStatus.PARTIAL)
-        
+
         # Basic recall
         report.recall = covered / n_gold if n_gold > 0 else 0
         report.partial_recall = (covered + 0.5 * partial) / n_gold if n_gold > 0 else 0
-        
+
         # Weighted recall (by importance)
         importance_weights = {
             ImportanceLevel.CRITICAL: 3.0,
@@ -858,8 +902,10 @@ class CoverageJudge:
             ImportanceLevel.MINOR: 1.0,
             ImportanceLevel.TRIVIAL: 0.5,
         }
-        
-        total_weight = sum(importance_weights[gf.importance] for gf in report.gold_facts)
+
+        total_weight = sum(
+            importance_weights[gf.importance] for gf in report.gold_facts
+        )
         covered_weight = sum(
             importance_weights[m.gold_fact.importance]
             for m in report.matches
@@ -870,43 +916,67 @@ class CoverageJudge:
             for m in report.matches
             if m.status == CoverageStatus.PARTIAL
         )
-        
-        report.weighted_recall = (covered_weight + partial_weight) / total_weight if total_weight > 0 else 0
-        
+
+        report.weighted_recall = (
+            (covered_weight + partial_weight) / total_weight if total_weight > 0 else 0
+        )
+
         # Precision (grounded extractions / total extractions)
         if report.extracted_count > 0:
             # This would need extraction analysis, simplified here
             report.precision = 1.0  # Assume all grounded unless analyzed
-        
+
         # F1
         if report.recall + report.precision > 0:
-            report.f1 = 2 * report.recall * report.precision / (report.recall + report.precision)
-        
+            report.f1 = (
+                2
+                * report.recall
+                * report.precision
+                / (report.recall + report.precision)
+            )
+
         # Coverage by category
         for category in FactCategory:
             cat_facts = [m for m in report.matches if m.gold_fact.category == category]
             if cat_facts:
-                cat_covered = sum(1 for m in cat_facts if m.status == CoverageStatus.COVERED)
-                report.coverage_by_category[category.value] = cat_covered / len(cat_facts)
-        
+                cat_covered = sum(
+                    1 for m in cat_facts if m.status == CoverageStatus.COVERED
+                )
+                report.coverage_by_category[category.value] = cat_covered / len(
+                    cat_facts
+                )
+
         # Coverage by importance
         for importance in ImportanceLevel:
-            imp_facts = [m for m in report.matches if m.gold_fact.importance == importance]
+            imp_facts = [
+                m for m in report.matches if m.gold_fact.importance == importance
+            ]
             if imp_facts:
-                imp_covered = sum(1 for m in imp_facts if m.status == CoverageStatus.COVERED)
-                report.coverage_by_importance[importance.value] = imp_covered / len(imp_facts)
-        
+                imp_covered = sum(
+                    1 for m in imp_facts if m.status == CoverageStatus.COVERED
+                )
+                report.coverage_by_importance[importance.value] = imp_covered / len(
+                    imp_facts
+                )
+
         # Density metrics
         if report.source_token_count > 0:
-            report.extraction_density = report.extracted_count / report.source_token_count
+            report.extraction_density = (
+                report.extracted_count / report.source_token_count
+            )
             report.gold_density = n_gold / report.source_token_count
-            report.density_ratio = report.extraction_density / report.gold_density if report.gold_density > 0 else 0
-        
+            report.density_ratio = (
+                report.extraction_density / report.gold_density
+                if report.gold_density > 0
+                else 0
+            )
+
         # Track missing critical facts
         report.missing_critical = [
             m.gold_fact.content
             for m in report.matches
-            if m.status == CoverageStatus.MISSING and m.gold_fact.importance == ImportanceLevel.CRITICAL
+            if m.status == CoverageStatus.MISSING
+            and m.gold_fact.importance == ImportanceLevel.CRITICAL
         ]
 
     async def evaluate(
@@ -930,55 +1000,62 @@ class CoverageJudge:
             metrics, per-category/importance breakdowns, and optional QA
             coverage results.
         """
-        
+
         # Estimate token count
         source_text = " ".join(
-            msg.get("text", "") for msg in source_messages
+            msg.get("text", "")
+            for msg in source_messages
             if msg.get("speaker", "user") == "user"
         )
         source_tokens = len(source_text.split())  # Rough estimate
-        
+
         report = CoverageReport(
             conversation_id=conversation_id,
-            source_message_count=len([m for m in source_messages if m.get("speaker") == "user"]),
+            source_message_count=len(
+                [m for m in source_messages if m.get("speaker") == "user"]
+            ),
             source_token_count=source_tokens,
             extracted_facts=extracted_facts,
             extracted_count=len(extracted_facts),
         )
-        
+
         logger.info(f"Evaluating coverage for {conversation_id}...")
-        
+
         # Stage 1: Extract gold facts
         logger.info("Stage 1: Extracting gold facts...")
         report.gold_facts = await self.extract_gold_facts(source_messages)
         report.gold_fact_count = len(report.gold_facts)
-        
+
         if not report.gold_facts:
             logger.warning(f"No gold facts extracted for {conversation_id}")
             return report
-        
+
         # Stage 2: Match coverage
-        logger.info(f"Stage 2: Matching {len(extracted_facts)} extracted against {len(report.gold_facts)} gold facts...")
+        logger.info(
+            f"Stage 2: Matching {len(extracted_facts)} extracted against {len(report.gold_facts)} gold facts..."
+        )
         report.matches = await self.match_coverage(report.gold_facts, extracted_facts)
-        
+
         # Stage 3: QA verification (optional)
         if self.use_qa_verification:
             logger.info("Stage 3: QA-based verification...")
             report.qa_questions = await self.generate_qa_pairs(source_messages)
             if report.qa_questions:
-                answerable, total = await self.verify_qa_coverage(report.qa_questions, extracted_facts)
+                answerable, total = await self.verify_qa_coverage(
+                    report.qa_questions, extracted_facts
+                )
                 report.qa_answerable = answerable
                 report.qa_coverage = answerable / total if total > 0 else 0
-        
+
         # Compute all metrics
         self.compute_metrics(report)
-        
+
         logger.info(
             f"Coverage complete: recall={report.recall:.1%}, "
             + f"partial_recall={report.partial_recall:.1%}, "
             + f"weighted_recall={report.weighted_recall:.1%}"
         )
-        
+
         return report
 
 
@@ -990,24 +1067,24 @@ class CoverageJudge:
 @dataclass
 class CombinedScore:
     """Combined molecular quality + coverage recall score."""
-    
+
     # Individual scores
-    molecular: float = 0.0          # From MolecularBench
+    molecular: float = 0.0  # From MolecularBench
     decontextuality: float = 0.0
     minimality: float = 0.0
-    
-    coverage: float = 0.0           # From CoverageBench
+
+    coverage: float = 0.0  # From CoverageBench
     weighted_coverage: float = 0.0
     qa_coverage: float = 0.0
-    
+
     # Combined scores
-    f1: float = 0.0                 # Harmonic mean of quality and recall
-    f2: float = 0.0                 # F2 weights recall higher
-    f05: float = 0.0                # F0.5 weights precision higher
-    
+    f1: float = 0.0  # Harmonic mean of quality and recall
+    f2: float = 0.0  # F2 weights recall higher
+    f05: float = 0.0  # F0.5 weights precision higher
+
     # For training data filtering
     passes_threshold: bool = False
-    
+
     def compute_combined(
         self,
         quality_weight: float = 1.0,  # noqa: ARG002
@@ -1018,17 +1095,17 @@ class CombinedScore:
 
         quality = self.molecular  # Use molecular as quality proxy
         recall = self.weighted_coverage or self.coverage
-        
+
         if quality + recall == 0:
             return
-        
+
         # F1 (balanced)
         self.f1 = 2 * quality * recall / (quality + recall)
-        
+
         # F2 (recall-weighted)
         beta = 2
         self.f2 = (1 + beta**2) * quality * recall / (beta**2 * quality + recall)
-        
+
         # F0.5 (precision-weighted)
         beta = 0.5
         self.f05 = (1 + beta**2) * quality * recall / (beta**2 * quality + recall)
@@ -1046,7 +1123,7 @@ def compute_combined_score(
 ) -> CombinedScore:
     """
     Combine molecular quality with coverage recall.
-    
+
     Args:
         molecular_score: From MolecularBench
         decontextuality: Decontextuality score
@@ -1057,24 +1134,25 @@ def compute_combined_score(
         min_coverage: Minimum coverage threshold
         min_molecular: Minimum molecular quality threshold
     """
-    
+
     score = CombinedScore(
         molecular=molecular_score,
         decontextuality=decontextuality,
         minimality=minimality,
         coverage=coverage,
-        weighted_coverage=weighted_coverage if weighted_coverage is not None else coverage,
+        weighted_coverage=weighted_coverage
+        if weighted_coverage is not None
+        else coverage,
         qa_coverage=qa_coverage if qa_coverage is not None else 0.0,
     )
-    
+
     score.compute_combined()
-    
+
     # Check if passes both thresholds
     score.passes_threshold = (
-        score.molecular >= min_molecular and
-        score.coverage >= min_coverage
+        score.molecular >= min_molecular and score.coverage >= min_coverage
     )
-    
+
     return score
 
 
@@ -1085,21 +1163,23 @@ def compute_combined_score(
 
 def print_report(report: CoverageReport) -> None:
     """Print formatted coverage report."""
-    
+
     print("\n" + "=" * 70)
     print(f"COVERAGE ANALYSIS: {report.conversation_id}")
     print("=" * 70)
-    
-    print(f"\nSource: {report.source_message_count} messages, ~{report.source_token_count} tokens")
+
+    print(
+        f"\nSource: {report.source_message_count} messages, ~{report.source_token_count} tokens"
+    )
     print(f"Gold Facts: {report.gold_fact_count} | Extracted: {report.extracted_count}")
-    
+
     # Coverage counts
     covered = sum(1 for m in report.matches if m.status == CoverageStatus.COVERED)
     partial = sum(1 for m in report.matches if m.status == CoverageStatus.PARTIAL)
     missing = sum(1 for m in report.matches if m.status == CoverageStatus.MISSING)
-    
+
     print(f"\nCoverage: {covered} covered, {partial} partial, {missing} missing")
-    
+
     # Scores
     print(f"\n{'RECALL SCORES'}")
     print("-" * 40)
@@ -1107,35 +1187,41 @@ def print_report(report: CoverageReport) -> None:
     print(f"{'Partial Recall:':<25} {report.partial_recall:.1%}")
     print(f"{'Weighted Recall:':<25} {report.weighted_recall:.1%}")
     if report.qa_coverage > 0:
-        print(f"{'QA Coverage:':<25} {report.qa_coverage:.1%} ({report.qa_answerable}/{len(report.qa_questions)})")
-    
+        print(
+            f"{'QA Coverage:':<25} {report.qa_coverage:.1%} ({report.qa_answerable}/{len(report.qa_questions)})"
+        )
+
     # Density
     print(f"\n{'DENSITY'}")
     print("-" * 40)
     print(f"{'Extraction Density:':<25} {report.extraction_density:.4f} facts/token")
     print(f"{'Gold Density:':<25} {report.gold_density:.4f} facts/token")
     print(f"{'Density Ratio:':<25} {report.density_ratio:.1%}")
-    
+
     # By category
     if report.coverage_by_category:
         print(f"\n{'COVERAGE BY CATEGORY'}")
         print("-" * 40)
-        for cat, cov in sorted(report.coverage_by_category.items(), key=lambda x: -x[1]):
+        for cat, cov in sorted(
+            report.coverage_by_category.items(), key=lambda x: -x[1]
+        ):
             print(f"  {cat:<20} {cov:.1%}")
-    
+
     # By importance
     if report.coverage_by_importance:
         print(f"\n{'COVERAGE BY IMPORTANCE'}")
         print("-" * 40)
-        for imp, cov in sorted(report.coverage_by_importance.items(), key=lambda x: -x[1]):
+        for imp, cov in sorted(
+            report.coverage_by_importance.items(), key=lambda x: -x[1]
+        ):
             print(f"  {imp:<20} {cov:.1%}")
-    
+
     # Missing critical
     if report.missing_critical:
         print("\n⚠️ MISSING CRITICAL FACTS:")
         for fact in report.missing_critical[:5]:
             print(f"  • {fact[:60]}...")
-    
+
     print("=" * 70)
 
 
@@ -1145,19 +1231,27 @@ def print_report(report: CoverageReport) -> None:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="CoverageBench - Information Recall Evaluation")
+    parser = argparse.ArgumentParser(
+        description="CoverageBench - Information Recall Evaluation"
+    )
     parser.add_argument("--traces", type=Path, help="JSON/JSONL trace file")
     parser.add_argument("--trace-dir", type=Path, help="Directory of trace files")
-    parser.add_argument("--output-dir", type=Path, default=Path("tests/bench/coverage_results"))
-    parser.add_argument("--provider", choices=["anthropic", "openai", "openrouter"], default="anthropic")
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("tests/bench/coverage_results")
+    )
+    parser.add_argument(
+        "--provider", choices=["anthropic", "openai", "openrouter"], default="anthropic"
+    )
     parser.add_argument("--api-key", type=str, help="API key")
     parser.add_argument("--model", default="claude-sonnet-4-20250514")
     parser.add_argument("--no-qa", action="store_true", help="Skip QA verification")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--limit", type=int, help="Limit number of traces")
-    parser.add_argument("--concurrency", type=int, default=5, help="Number of concurrent evaluations")
+    parser.add_argument(
+        "--concurrency", type=int, default=5, help="Number of concurrent evaluations"
+    )
     args = parser.parse_args()
-    
+
     # Initialize client using runner_common helpers
     if args.provider == "anthropic":
         client: AsyncAnthropic | AsyncOpenAI = create_anthropic_client(
@@ -1171,38 +1265,44 @@ async def main():
         )
     else:
         client = create_openai_client(api_key=args.api_key)
-    
+
     judge = CoverageJudge(
-        client, 
-        args.model, 
+        client,
+        args.model,
         args.provider,
         use_qa_verification=not args.no_qa,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
-    
+
     # Load traces
     all_traces: list[tuple[dict[str, Any], str]] = []
     if args.traces:
         traces = load_traces(args.traces)
         all_traces.extend((t, args.traces.name) for t in traces)
     elif args.trace_dir:
-        for f in list(args.trace_dir.glob("*.json")) + list(args.trace_dir.glob("*.jsonl")):
+        for f in list(args.trace_dir.glob("*.json")) + list(
+            args.trace_dir.glob("*.jsonl")
+        ):
             traces = load_traces(f)
             all_traces.extend((t, f.name) for t in traces)
     else:
         parser.error("Specify --traces or --trace-dir")
 
     if args.limit:
-        all_traces = all_traces[:args.limit]
+        all_traces = all_traces[: args.limit]
 
-    print(f"Evaluating {len(all_traces)} traces for coverage with concurrency={args.concurrency}...\n")
+    print(
+        f"Evaluating {len(all_traces)} traces for coverage with concurrency={args.concurrency}...\n"
+    )
 
     overall_start = time.time()
 
     # Semaphore to limit concurrent API calls
     semaphore = asyncio.Semaphore(args.concurrency)
 
-    async def evaluate_trace(idx: int, trace: dict[str, Any], source: str) -> tuple[int, CoverageReport | None]:
+    async def evaluate_trace(
+        idx: int, trace: dict[str, Any], source: str
+    ) -> tuple[int, CoverageReport | None]:
         """Evaluate a single trace with concurrency control."""
         async with semaphore:
             props = extract_propositions(trace)
@@ -1219,17 +1319,26 @@ async def main():
                 logger.exception("API error evaluating %s (source=%s)", conv_id, source)
                 return idx, None
             except json.JSONDecodeError:
-                logger.exception("JSON parse error evaluating %s (source=%s)", conv_id, source)
+                logger.exception(
+                    "JSON parse error evaluating %s (source=%s)", conv_id, source
+                )
                 return idx, None
             except Exception:
-                logger.exception("Unexpected error evaluating %s (source=%s)", conv_id, source)
+                logger.exception(
+                    "Unexpected error evaluating %s (source=%s)", conv_id, source
+                )
                 raise
 
     # Process all traces concurrently with progress bar
-    tasks = [evaluate_trace(idx, trace, source) for idx, (trace, source) in enumerate(all_traces)]
+    tasks = [
+        evaluate_trace(idx, trace, source)
+        for idx, (trace, source) in enumerate(all_traces)
+    ]
     results_raw: list[tuple[int, CoverageReport]] = []
 
-    for coro in cast(Any, tqdm).as_completed(tasks, total=len(tasks), desc="Evaluating traces"):
+    for coro in cast(Any, tqdm).as_completed(
+        tasks, total=len(tasks), desc="Evaluating traces"
+    ):
         idx: int
         report: CoverageReport | None
         idx, report = await coro
@@ -1247,7 +1356,7 @@ async def main():
         print("=" * 70)
         for report in results:
             print_report(report)
-    
+
     total_duration = time.time() - overall_start
 
     # Save results
@@ -1264,7 +1373,8 @@ async def main():
             "averages": {
                 "recall": sum(r.recall for r in results) / len(results),
                 "partial_recall": sum(r.partial_recall for r in results) / len(results),
-                "weighted_recall": sum(r.weighted_recall for r in results) / len(results),
+                "weighted_recall": sum(r.weighted_recall for r in results)
+                / len(results),
                 "qa_coverage": sum(r.qa_coverage for r in results) / len(results),
                 "density_ratio": sum(r.density_ratio for r in results) / len(results),
             },

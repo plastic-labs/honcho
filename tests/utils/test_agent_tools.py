@@ -32,6 +32,7 @@ from src.utils.agent_tools import (
     create_observations,
     create_tool_executor,
     extract_preferences,
+    get_recent_history,
 )
 
 # =============================================================================
@@ -501,7 +502,7 @@ class TestSearchMemory:
         make_tool_context: Callable[..., ToolContext],
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """Uses one embedding for query_documents and search_messages fallback."""
+        """Uses one embedding for query_documents + fallback and scopes visibility."""
         ctx = make_tool_context()
         ctx.agent_type = "dialectic"
 
@@ -535,9 +536,11 @@ class TestSearchMemory:
             query: str,
             limit: int = 10,
             context_window: int = 2,
+            peer_perspective: str | None = None,
             embedding: list[float] | None = None,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (db, workspace_name, session_name, query, limit, context_window)
+            assert peer_perspective == ctx.observer
             fallback_embeddings.append(embedding)
             msg = models.Message(
                 workspace_name=ctx.workspace_name,
@@ -582,6 +585,43 @@ class TestSearchMessages:
 
         # Should return some result (may be empty if semantic search doesn't match)
         assert isinstance(result, str)
+
+    async def test_passes_peer_perspective_to_crud(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """search_messages tool should pass observer as peer perspective."""
+        captured: dict[str, Any] = {}
+
+        async def fake_search_messages(
+            db: AsyncSession,
+            workspace_name: str,
+            session_name: str | None,
+            query: str,
+            limit: int = 10,
+            context_window: int = 2,
+            peer_perspective: str | None = None,
+            embedding: list[float] | None = None,
+        ) -> list[tuple[list[models.Message], list[models.Message]]]:
+            _ = (
+                db,
+                workspace_name,
+                session_name,
+                query,
+                limit,
+                context_window,
+                embedding,
+            )
+            captured["peer_perspective"] = peer_perspective
+            return []
+
+        monkeypatch.setattr(crud, "search_messages", fake_search_messages)
+
+        ctx = make_tool_context()
+        await _handle_search_messages(ctx, {"query": "test message"})
+
+        assert captured["peer_perspective"] == ctx.observer
 
 
 @pytest.mark.asyncio
@@ -642,15 +682,50 @@ class TestGetRecentHistory:
     """Tests for _handle_get_recent_history."""
 
     async def test_with_session_returns_messages(
-        self, make_tool_context: Callable[..., ToolContext]
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
     ):
         """Returns conversation history for session."""
+        workspace, peer1, _peer2, session, _messages, _documents = tool_test_data
+        await db_session.execute(
+            models.session_peers_table.insert().values(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer1.name,
+                joined_at=datetime.now(timezone.utc) - timedelta(days=1),
+                left_at=None,
+            )
+        )
+        await db_session.flush()
+
         ctx = make_tool_context()
 
         result = await _handle_get_recent_history(ctx, {})
 
         assert "Conversation history" in result
         assert "messages" in result.lower()
+
+    async def test_with_session_passes_peer_perspective_to_crud(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Session history should pass observer as peer perspective to CRUD layer."""
+        captured: dict[str, Any] = {}
+
+        async def fake_get_messages(*args: Any, **kwargs: Any) -> Any:
+            _ = args
+            captured["peer_perspective"] = kwargs.get("peer_perspective")
+            return select(models.Message).where(models.Message.id == -1)
+
+        monkeypatch.setattr(crud, "get_messages", fake_get_messages)
+
+        ctx = make_tool_context()
+        await _handle_get_recent_history(ctx, {})
+
+        assert captured["peer_perspective"] == ctx.observer
 
     async def test_without_session_uses_observed(
         self,
@@ -676,6 +751,83 @@ class TestGetRecentHistory:
 
         # Should get messages from peer2 across sessions
         assert isinstance(result, str)
+
+    async def test_without_session_scopes_by_peer_membership_window(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """No-session history path should respect observer visibility windows."""
+        workspace, observer = sample_data
+        observed = models.Peer(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(observed)
+        await db_session.flush()
+
+        session_visible = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        session_hidden = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add_all([session_visible, session_hidden])
+        await db_session.flush()
+
+        base_time = datetime.now(timezone.utc)
+        join_time = base_time + timedelta(seconds=5)
+        await db_session.execute(
+            models.session_peers_table.insert().values(
+                workspace_name=workspace.name,
+                session_name=session_visible.name,
+                peer_name=observer.name,
+                joined_at=join_time,
+                left_at=None,
+            )
+        )
+        await db_session.flush()
+
+        msg_before_join = models.Message(
+            workspace_name=workspace.name,
+            session_name=session_visible.name,
+            peer_name=observed.name,
+            content="Before observer joined",
+            seq_in_session=1,
+            token_count=5,
+            created_at=base_time,
+        )
+        msg_after_join = models.Message(
+            workspace_name=workspace.name,
+            session_name=session_visible.name,
+            peer_name=observed.name,
+            content="After observer joined",
+            seq_in_session=2,
+            token_count=5,
+            created_at=base_time + timedelta(seconds=10),
+        )
+        msg_hidden = models.Message(
+            workspace_name=workspace.name,
+            session_name=session_hidden.name,
+            peer_name=observed.name,
+            content="Observer never in this session",
+            seq_in_session=1,
+            token_count=5,
+            created_at=base_time + timedelta(seconds=10),
+        )
+        db_session.add_all([msg_before_join, msg_after_join, msg_hidden])
+        await db_session.flush()
+
+        scoped_history = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=None,
+            observed=observed.name,
+            peer_perspective=observer.name,
+        )
+        scoped_ids = {m.public_id for m in scoped_history}
+        assert msg_after_join.public_id in scoped_ids
+        assert msg_before_join.public_id not in scoped_ids
+        assert msg_hidden.public_id not in scoped_ids
 
 
 @pytest.mark.asyncio
@@ -885,6 +1037,45 @@ class TestExtractPreferences:
         # Should return some result about preferences
         assert isinstance(result, str)
 
+    async def test_passes_peer_perspective_to_search_messages(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """extract_preferences should scope semantic queries by observer visibility."""
+        captured: list[str | None] = []
+
+        async def fake_search_messages(
+            _db: AsyncSession,
+            workspace_name: str,
+            session_name: str | None,
+            query: str,
+            limit: int = 10,
+            context_window: int = 0,
+            peer_perspective: str | None = None,
+            embedding: list[float] | None = None,
+        ) -> list[tuple[list[models.Message], list[models.Message]]]:
+            _ = (
+                workspace_name,
+                session_name,
+                query,
+                limit,
+                context_window,
+                embedding,
+            )
+            captured.append(peer_perspective)
+            return []
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.search_messages", fake_search_messages
+        )
+
+        ctx = make_tool_context()
+        await _handle_extract_preferences(ctx, {})
+
+        assert captured
+        assert all(p == ctx.observer for p in captured)
+
     async def test_falls_back_to_per_query_embedding_when_batch_fails(
         self,
         db_session: AsyncSession,
@@ -912,9 +1103,10 @@ class TestExtractPreferences:
             query: str,
             limit: int,
             context_window: int,
-            embedding: list[float] | None,
+            peer_perspective: str | None = None,
+            embedding: list[float] | None = None,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
-            _ = (limit, context_window)
+            _ = (limit, context_window, peer_perspective)
             embedding_args.append(embedding)
             msg = models.Message(
                 workspace_name=workspace_name,
