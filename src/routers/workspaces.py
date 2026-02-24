@@ -171,6 +171,11 @@ async def get_queue_status(
     """
     Get the processing queue status for a Workspace, optionally scoped to an observer, sender,
     and/or session.
+
+    Only tracks user-facing task types (representation, summary, dream).
+    Internal infrastructure tasks (reconciler, webhook, deletion) are excluded.
+    Note: completed counts reflect items since the last periodic queue cleanup,
+    not lifetime totals.
     """
     try:
         return await crud.get_queue_status(

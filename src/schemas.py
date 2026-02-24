@@ -799,10 +799,19 @@ class SessionQueueStatus(BaseModel):
 
 
 class QueueStatus(BaseModel):
-    """Aggregated processing queue status."""
+    """Aggregated processing queue status.
+
+    Tracks user-facing task types only: representation, summary, and dream.
+    Internal infrastructure tasks (reconciler, webhook, deletion) are excluded.
+
+    Note: completed_work_units reflects items since the last periodic queue
+    cleanup, not lifetime totals.
+    """
 
     total_work_units: int = Field(description="Total work units")
-    completed_work_units: int = Field(description="Completed work units")
+    completed_work_units: int = Field(
+        description="Completed work units (since last periodic cleanup)"
+    )
     in_progress_work_units: int = Field(
         description="Work units currently being processed"
     )
