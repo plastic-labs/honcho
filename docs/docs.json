@@ -64,6 +64,7 @@
                     "group": "Advanced",
                     "pages": [
                       "v3/documentation/features/advanced/overview",
+                      "v3/documentation/features/advanced/dreaming",
                       "v3/documentation/features/advanced/queue-status",
                       "v3/documentation/features/advanced/reasoning-configuration",
                       "v3/documentation/features/advanced/representation-scopes",
