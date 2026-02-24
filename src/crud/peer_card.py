@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
-from src.cache.client import cache
-from src.crud.peer import get_peer, peer_cache_key
+from src.cache.client import safe_cache_delete
+from src.crud.peer import get_or_create_peers, get_peer, peer_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +33,18 @@ async def get_peer_card(
         observer: Peer name of the observer
 
     Returns:
-        The peer's card text if present, otherwise None (also None if peer not found).
+        The peer's card text if present, otherwise None.
+
+    Raises:
+        ResourceNotFoundException: If the peer does not exist.
     """
-    try:
-        peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
-        return cast(
-            list[str] | None,
-            peer.internal_metadata.get(
-                construct_peer_card_label(observer=observer, observed=observed)
-            ),
-        )
-    except exceptions.ResourceNotFoundException:
-        return None
+    peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+    return cast(
+        list[str] | None,
+        peer.internal_metadata.get(
+            construct_peer_card_label(observer=observer, observed=observed)
+        ),
+    )
 
 
 async def set_peer_card(
@@ -66,9 +67,10 @@ async def set_peer_card(
         observed: Peer name of the peer described in the peer card
         observer: Peer name of the observer
 
-    Raises:
-        ResourceNotFoundException: If the peer does not exist
     """
+    # Ensure the peer exists (get-or-create)
+    await get_or_create_peers(db, workspace_name, [schemas.PeerCreate(name=observer)])
+
     stmt = (
         update(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
@@ -82,11 +84,9 @@ async def set_peer_card(
                 }
             )
         )
-        .returning(models.Peer)
     )
-    result = await db.execute(stmt)
-    updated_peer = result.scalar_one_or_none()
-    if updated_peer is None:
+    result = cast(CursorResult[Any], await db.execute(stmt))
+    if result.rowcount == 0:
         raise exceptions.ResourceNotFoundException(
             f"Peer {observer} not found in workspace {workspace_name}"
         )
@@ -94,7 +94,7 @@ async def set_peer_card(
 
     # Invalidate cache - read-through pattern
     cache_key = peer_cache_key(workspace_name, observer)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
 
 def construct_peer_card_label(*, observer: str, observed: str) -> str:

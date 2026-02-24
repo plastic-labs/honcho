@@ -4,12 +4,18 @@ from logging import getLogger
 from typing import Any
 
 from cashews import NOT_NONE
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import make_transient_to_detached
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import (
+    cache,
+    get_cache_namespace,
+    safe_cache_delete,
+    safe_cache_set,
+)
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
@@ -50,8 +56,8 @@ class WorkspaceDeletionResult:
     conclusions_deleted: int
 
 
-WORKSPACE_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}"
-WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
+WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
 def workspace_cache_key(workspace_name: str) -> str:
@@ -76,11 +82,21 @@ def workspace_cache_key(workspace_name: str) -> str:
 )
 async def _fetch_workspace(
     db: AsyncSession, workspace_name: str
-) -> models.Workspace | None:
-    """Fetch a workspace from the database."""
-    return await db.scalar(
+) -> dict[str, Any] | None:
+    """Fetch a workspace from the database and return as a plain dict for safe caching."""
+    obj = await db.scalar(
         select(models.Workspace).where(models.Workspace.name == workspace_name)
     )
+    if obj is None:
+        return None
+    return {
+        "id": obj.id,
+        "name": obj.name,
+        "h_metadata": obj.h_metadata,
+        "internal_metadata": obj.internal_metadata,
+        "configuration": obj.configuration,
+        "created_at": obj.created_at,
+    }
 
 
 async def get_or_create_workspace(
@@ -107,12 +123,14 @@ async def get_or_create_workspace(
         raise ValueError("Workspace name must be provided")
 
     # Check if workspace already exists
-    existing_workspace = await _fetch_workspace(db, workspace.name)
-    if existing_workspace is not None:
+    data = await _fetch_workspace(db, workspace.name)
+    if data is not None:
         # Workspace already exists
         logger.debug("Found existing workspace: %s", workspace.name)
-        # Merge cached object into session (cached objects are detached)
-        existing_workspace = await db.merge(existing_workspace, load=False)
+        # Reconstruct ORM object from cached dict and merge into session
+        obj = models.Workspace(**data)
+        make_transient_to_detached(obj)
+        existing_workspace = await db.merge(obj, load=False)
         return GetOrCreateResult(existing_workspace, created=False)
 
     # Workspace doesn't exist, create a new one
@@ -129,8 +147,17 @@ async def get_or_create_workspace(
         logger.debug("Workspace created successfully: %s", workspace.name)
 
         cache_key = workspace_cache_key(workspace.name)
-        await cache.set(
-            cache_key, honcho_workspace, expire=settings.CACHE.DEFAULT_TTL_SECONDS
+        await safe_cache_set(
+            cache_key,
+            {
+                "id": honcho_workspace.id,
+                "name": honcho_workspace.name,
+                "h_metadata": honcho_workspace.h_metadata,
+                "internal_metadata": honcho_workspace.internal_metadata,
+                "configuration": honcho_workspace.configuration,
+                "created_at": honcho_workspace.created_at,
+            },
+            expire=settings.CACHE.DEFAULT_TTL_SECONDS,
         )
         return GetOrCreateResult(honcho_workspace, created=True)
     except IntegrityError:
@@ -175,13 +202,15 @@ async def get_workspace(
     Raises:
         ResourceNotFoundException: If the workspace does not exist
     """
-    existing_workspace = await _fetch_workspace(db, workspace_name)
+    data = await _fetch_workspace(db, workspace_name)
 
-    if existing_workspace is None:
+    if data is None:
         raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
-    # Merge cached object into session (cached objects are detached)
-    existing_workspace = await db.merge(existing_workspace, load=False)
+    # Reconstruct ORM object from cached dict and merge into session
+    obj = models.Workspace(**data)
+    make_transient_to_detached(obj)
+    existing_workspace = await db.merge(obj, load=False)
 
     return existing_workspace
 
@@ -242,10 +271,37 @@ async def update_workspace(
 
     # Only invalidate if we actually updated
     cache_key = workspace_cache_key(workspace_name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace
+
+
+async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> None:
+    """
+    Verify that a workspace has no active sessions.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Raises:
+        ConflictException: If active sessions exist in the workspace
+    """
+    has_active_sessions: bool = bool(
+        await db.scalar(
+            select(
+                exists().where(
+                    models.Session.workspace_name == workspace_name,
+                    models.Session.is_active == True,  # noqa: E712
+                )
+            )
+        )
+    )
+    if has_active_sessions:
+        raise ConflictException(
+            f"Cannot delete workspace '{workspace_name}': active session(s) remain. Delete all sessions first."
+        )
 
 
 async def delete_workspace(
@@ -270,6 +326,11 @@ async def delete_workspace(
     if honcho_workspace is None:
         logger.warning("Workspace %s not found", workspace_name)
         raise ResourceNotFoundException()
+
+    # NOTE: No active session check here — that gate lives in the router.
+    # This crud method is called by the background worker, where a session
+    # could have been created after the user's request was accepted (202).
+    # The deletion should proceed and cascade-delete any new sessions.
 
     # Create a snapshot of the workspace data before deletion
     workspace_snapshot = schemas.Workspace(

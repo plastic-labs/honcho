@@ -430,31 +430,43 @@ async def test_session_queue_status(
     """
     honcho_client, client_type = client_fixture
 
+    def assert_session_queue_status(status: QueueStatusResponse) -> None:
+        assert status.total_work_units >= 0
+        assert status.completed_work_units >= 0
+        assert status.in_progress_work_units >= 0
+        assert status.pending_work_units >= 0
+        assert status.total_work_units == (
+            status.completed_work_units
+            + status.in_progress_work_units
+            + status.pending_work_units
+        )
+        # Session queue status should be flattened (no per-session map)
+        assert status.sessions is None
+
     if client_type == "async":
         session = await honcho_client.aio.session(id="test-session-deriver-status")
         assert isinstance(session, Session)
 
         status = await session.aio.queue_status()
         assert isinstance(status, QueueStatusResponse)
-        assert hasattr(status, "total_work_units")
-        assert hasattr(status, "completed_work_units")
-        assert hasattr(status, "in_progress_work_units")
-        assert hasattr(status, "pending_work_units")
-        assert status.sessions is None
+        assert_session_queue_status(status)
 
         # Test with observer only
         peer = await honcho_client.aio.peer(id="test-peer-session-deriver")
         await peer.aio.get_metadata()  # Create the peer
         status = await session.aio.queue_status(observer=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_session_queue_status(status)
 
         # Test with sender only
         status = await session.aio.queue_status(sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_session_queue_status(status)
 
         # Test with both observer and sender
         status = await session.aio.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_session_queue_status(status)
     else:
         session = honcho_client.session(id="test-session-deriver-status")
         assert isinstance(session, Session)
@@ -462,25 +474,24 @@ async def test_session_queue_status(
         # Test with no parameters
         status = session.queue_status()
         assert isinstance(status, QueueStatusResponse)
-        assert hasattr(status, "total_work_units")
-        assert hasattr(status, "completed_work_units")
-        assert hasattr(status, "in_progress_work_units")
-        assert hasattr(status, "pending_work_units")
-        assert status.sessions is None
+        assert_session_queue_status(status)
 
         # Test with observer only
         peer = honcho_client.peer(id="test-peer-session-deriver")
         peer.get_metadata()  # Create the peer
         status = session.queue_status(observer=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_session_queue_status(status)
 
         # Test with sender only
         status = session.queue_status(sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_session_queue_status(status)
 
         # Test with both observer and sender
         status = session.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
+        assert_session_queue_status(status)
 
 
 @pytest.mark.asyncio

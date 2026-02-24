@@ -5,9 +5,10 @@ from cashews import NOT_NONE
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import make_transient_to_detached
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace
+from src.cache.client import cache, get_cache_namespace, safe_cache_delete
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
@@ -17,8 +18,8 @@ from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
-PEER_CACHE_KEY_TEMPLATE = "workspace:{workspace_name}:peer:{peer_name}"
-PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock"
+PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
+PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
@@ -125,7 +126,7 @@ async def get_or_create_peers(
     # Only invalidate cache for changed/new peers - read-through pattern
     for peer_obj in changed_peers + new_peers:
         cache_key = peer_cache_key(workspace_name, peer_obj.name)
-        await cache.delete(cache_key)
+        await safe_cache_delete(cache_key)
         logger.debug(
             "Peer %s cache invalidated in workspace %s (changed or new)",
             peer_obj.name,
@@ -152,12 +153,24 @@ async def _fetch_peer(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
-) -> models.Peer | None:
-    return await db.scalar(
+) -> dict[str, Any] | None:
+    """Fetch a peer from the database and return as a plain dict for safe caching."""
+    obj = await db.scalar(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == peer_name)
     )
+    if obj is None:
+        return None
+    return {
+        "id": obj.id,
+        "name": obj.name,
+        "workspace_name": obj.workspace_name,
+        "h_metadata": obj.h_metadata,
+        "internal_metadata": obj.internal_metadata,
+        "configuration": obj.configuration,
+        "created_at": obj.created_at,
+    }
 
 
 async def get_peer(
@@ -179,14 +192,16 @@ async def get_peer(
     Raises:
         ResourceNotFoundException: If the peer does not exist
     """
-    existing_peer = await _fetch_peer(db, workspace_name, peer.name)
-    if existing_peer is None:
+    data = await _fetch_peer(db, workspace_name, peer.name)
+    if data is None:
         raise ResourceNotFoundException(
             f"Peer {peer.name} not found in workspace {workspace_name}"
         )
 
-    # Merge cached object into session (cached objects are detached)
-    existing_peer = await db.merge(existing_peer, load=False)
+    # Reconstruct ORM object from cached dict and merge into session
+    obj = models.Peer(**data)
+    make_transient_to_detached(obj)
+    existing_peer = await db.merge(obj, load=False)
 
     return existing_peer
 
@@ -254,7 +269,7 @@ async def update_peer(
     await db.refresh(honcho_peer)
 
     cache_key = peer_cache_key(workspace_name, honcho_peer.name)
-    await cache.delete(cache_key)
+    await safe_cache_delete(cache_key)
 
     logger.debug("Peer %s updated successfully", peer_name)
     return honcho_peer

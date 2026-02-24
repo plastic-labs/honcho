@@ -8,7 +8,7 @@ entry points for answering queries.
 import logging
 from collections.abc import AsyncIterator
 
-from src import crud
+from src import crud, schemas
 from src.config import ReasoningLevel
 from src.dependencies import tracked_db
 from src.dialectic.core import DialecticAgent
@@ -41,6 +41,11 @@ async def agentic_chat(
         The synthesized answer string
     """
     async with tracked_db("dialectic.agentic_chat") as db:
+        # Validate that the peers exist before proceeding
+        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        if observer != observed:
+            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+
         # Resolve configuration to check if peer cards should be used
         session = None
         if session_name:
@@ -102,6 +107,11 @@ async def agentic_chat_stream(
         Chunks of the response text as they are generated
     """
     async with tracked_db("dialectic.agentic_chat_stream") as db:
+        # Validate that the peers exist before proceeding
+        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        if observer != observed:
+            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+
         # Resolve configuration to check if peer cards should be used
         session = None
         if session_name:

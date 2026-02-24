@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -356,7 +356,7 @@ class UnifiedTestExecutor:
                 raise ValueError("peer_id required for get_peer_card")
 
             peer = await self.client.aio.peer(id=step.observer_peer_id)
-            card = await peer.aio.card(
+            card = await peer.aio.get_card(
                 step.observed_peer_id
                 if step.observed_peer_id
                 else step.observer_peer_id
@@ -429,16 +429,10 @@ class UnifiedTestExecutor:
                     f"No tool use in judge response: {resp.content}"
                 )
 
-            data: object = tool_use.input
-            if not isinstance(data, dict):
-                raise TestExecutionError(f"Tool input is not a dict: {data}")
-
-            typed_data = cast(dict[str, Any], data)
-            passed: bool = typed_data.get("passed", False)
+            data = tool_use.input
+            passed = bool(data.get("passed", False))
             if passed != assertion.pass_if:
-                raise TestExecutionError(
-                    f"LLM Judge failed: {typed_data.get('reasoning')}"
-                )
+                raise TestExecutionError(f"LLM Judge failed: {data.get('reasoning')}")
 
         elif isinstance(assertion, ContainsAssertion):
             text = result_str if assertion.case_sensitive else result_str.lower()

@@ -1,4 +1,8 @@
-from .collection import get_collection, get_or_create_collection
+from .collection import (
+    get_collection,
+    get_or_create_collection,
+    update_collection_internal_metadata,
+)
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
     create_documents,
@@ -61,6 +65,7 @@ from .workspace import (
     ActivePeer,
     WorkspaceDeletionResult,
     WorkspaceStats,
+    check_no_active_sessions,
     delete_workspace,
     get_active_peers,
     get_all_workspaces,
@@ -74,6 +79,7 @@ __all__ = [
     # Collection
     "get_collection",
     "get_or_create_collection",
+    "update_collection_internal_metadata",
     # Deriver
     "get_deriver_status",
     "get_queue_status",
@@ -134,6 +140,7 @@ __all__ = [
     "ActivePeer",
     "WorkspaceDeletionResult",
     "WorkspaceStats",
+    "check_no_active_sessions",
     "delete_workspace",
     "get_active_peers",
     "get_all_workspaces",

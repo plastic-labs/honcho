@@ -622,6 +622,7 @@ async def search_messages(
     limit: int = 10,
     context_window: int = 2,
     peer_perspective: str | None = None,
+    embedding: list[float] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -637,14 +638,17 @@ async def search_messages(
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         peer_perspective: Optional peer name to enforce session membership visibility
+        embedding: Optional pre-computed embedding
 
     Returns:
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
         Context messages are ordered chronologically and include the matched messages.
     """
-    # Generate embedding for the search query
-    query_embedding = await embedding_client.embed(query)
+    # Use provided embedding or generate one
+    query_embedding = (
+        embedding if embedding is not None else await embedding_client.embed(query)
+    )
 
     # First, find the top matching messages
     match_stmt = (

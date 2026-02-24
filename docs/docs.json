@@ -419,18 +419,6 @@
             ]
           },
           {
-            "tab": "Changelog",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "changelog/introduction",
-                  "changelog/compatibility-guide"
-                ]
-              }
-            ]
-          },
-          {
             "tab": "Contributing",
             "groups": [
               {
@@ -589,18 +577,6 @@
                   "v1/api-reference/endpoint/documents/update-document",
                   "v1/api-reference/endpoint/documents/delete-document",
                   "v1/api-reference/endpoint/documents/query-documents"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Changelog",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "changelog/introduction",
-                  "changelog/compatibility-guide"
                 ]
               }
             ]

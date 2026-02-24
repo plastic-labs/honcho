@@ -778,38 +778,38 @@ class TestMessageEmbeddings:
 class TestEndToEndReconciliation:
     """Test full reconciliation cycle."""
 
-    async def test_reconciliation_cycle_completes(
-        self,
-        db_session: AsyncSession,
-    ) -> None:
-        """Test full reconciliation cycle processes documents and embeddings."""
-        # This would be an integration test with the full cycle
-        # For now, we verify the function signature and return type
+    async def test_reconciliation_cycle_completes_when_no_work_found(self) -> None:
+        """Reconciliation should run each stage once and stop when no work is found."""
+        mock_vector_store = MagicMock(spec=VectorStore)
         with (
-            patch("src.reconciler.sync_vectors.tracked_db") as mock_tracked_db,
-            patch("src.reconciler.sync_vectors.get_external_vector_store"),
             patch(
-                "src.reconciler.sync_vectors._get_documents_needing_sync"
-            ) as mock_get_docs,
+                "src.reconciler.sync_vectors.get_external_vector_store",
+                return_value=mock_vector_store,
+            ),
             patch(
-                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync"
-            ) as mock_get_embs,
-            patch("src.crud.document.cleanup_soft_deleted_documents") as mock_cleanup,
+                "src.reconciler.sync_vectors._reconcile_documents_batch",
+                new_callable=AsyncMock,
+            ) as mock_reconcile_docs,
+            patch(
+                "src.reconciler.sync_vectors._reconcile_message_embeddings_batch",
+                new_callable=AsyncMock,
+            ) as mock_reconcile_embs,
+            patch(
+                "src.reconciler.sync_vectors._cleanup_documents_batch",
+                new_callable=AsyncMock,
+            ) as mock_cleanup_docs,
         ):
-            # Mock to return empty results (no work to do)
-            mock_get_docs.return_value = []
-            mock_get_embs.return_value = []
-            mock_cleanup.return_value = 0
+            mock_reconcile_docs.return_value = False
+            mock_reconcile_embs.return_value = False
+            mock_cleanup_docs.return_value = False
 
-            # Mock context manager
-            mock_db_context = MagicMock()
-            mock_db_context.__aenter__ = AsyncMock(return_value=db_session)
-            mock_db_context.__aexit__ = AsyncMock(return_value=None)
-            mock_tracked_db.return_value = mock_db_context
-
-            # Run cycle
             metrics = await run_vector_reconciliation_cycle()
 
-            # Verify metrics returned
-            assert isinstance(metrics, ReconciliationMetrics)
-            assert metrics.total_synced == 0  # No work done
+        assert isinstance(metrics, ReconciliationMetrics)
+        assert metrics.total_synced == 0
+        assert metrics.total_failed == 0
+        assert metrics.total_cleaned == 0
+
+        mock_reconcile_docs.assert_awaited_once()
+        mock_reconcile_embs.assert_awaited_once()
+        mock_cleanup_docs.assert_awaited_once()

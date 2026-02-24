@@ -28,7 +28,6 @@ from src.routers import (
     webhooks,
     workspaces,
 )
-from src.security import create_admin_jwt
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -75,10 +74,13 @@ logger = logging.getLogger(__name__)
 logging.getLogger("cashews.backends.redis.client").setLevel(logging.CRITICAL)
 
 
-# JWT Setup
-async def setup_admin_jwt():
-    token = create_admin_jwt()
-    print(f"\n    ADMIN JWT: {token}\n")
+class MetricsAccessFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "GET /metrics" not in msg
+
+
+logging.getLogger("uvicorn.access").addFilter(MetricsAccessFilter())
 
 
 def before_send(event: "Event", hint: "Hint | None") -> "Event | None":
