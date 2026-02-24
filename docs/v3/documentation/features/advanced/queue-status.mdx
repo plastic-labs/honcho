@@ -74,6 +74,26 @@ work_units will be processed in parallel
 - If local representations are turned in a Session then a message will
   generate an additional work unit for every peer that has `observe_others=True`
 
+### Tracked task types
+
+The queue status endpoint reports on the following task types:
+
+| Task Type | Description |
+|---|---|
+| **representation** | Memory formation — the deriver processes messages and extracts observations about peers |
+| **summary** | Session summarization — creates short and long summaries at configurable message intervals |
+| **dream** | Memory consolidation — explores and consolidates observations to improve memory quality |
+
+Internal infrastructure tasks (such as webhook delivery, resource deletion, and
+vector reconciliation) are **not** included in queue status counts.
+
+<Note>
+**Completed counts are not lifetime totals.** Honcho periodically cleans up
+processed queue items to keep the queue table lean. As a result,
+`completed_work_units` reflects items completed since the last cleanup cycle,
+not the total number of items ever processed.
+</Note>
+
 The `queue_status` method can take additional
 parameters to scope the status to a specific work unit:
 
