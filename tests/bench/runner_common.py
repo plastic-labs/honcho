@@ -1,12 +1,14 @@
 """
-Shared utilities for Honcho benchmark test runners.
+Shared utilities for Honcho benchmark test runners and evaluators.
 
 Contains the BaseRunner abstract class and RunnerConfig dataclass that provide
-a common framework for all benchmark runners (longmem, beam, locomo).
+a common framework for all benchmark runners (longmem, beam, locomo), as well
+as shared utilities for trace-based evaluators (molecular, coverage).
 """
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import time
@@ -15,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar, cast
 
 from anthropic import AsyncAnthropic
 from honcho import Honcho
@@ -23,6 +25,8 @@ from honcho.api_types import SessionConfiguration, SummaryConfiguration
 from openai import AsyncOpenAI
 
 from src.telemetry.metrics_collector import MetricsCollector
+
+_logger = logging.getLogger(__name__)
 
 # Valid reasoning levels for dialectic chat
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
@@ -195,22 +199,27 @@ def validate_common_arguments(args: argparse.Namespace) -> str | None:
     return None
 
 
-def configure_logging() -> logging.Logger:
+def configure_logging(
+    level: int = logging.WARNING,
+    name: str | None = None,
+) -> logging.Logger:
     """
     Configure logging for benchmark runners.
 
-    Sets up logging with WARNING level and suppresses HTTP request logs.
+    Sets up logging at the specified level and suppresses HTTP request logs.
+
+    Args:
+        level: Logging level (default: WARNING for runners, use INFO for evaluators)
+        name: Logger name (default: caller's __name__)
 
     Returns:
-        Logger instance for the calling module
+        Logger instance
     """
-    logging.basicConfig(
-        level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
     # Suppress HTTP request logs from the Honcho SDK
     logging.getLogger("httpx").setLevel(logging.ERROR)
     logging.getLogger("httpcore").setLevel(logging.ERROR)
-    return logging.getLogger(__name__)
+    return logging.getLogger(name or __name__)
 
 
 def create_anthropic_client(api_key: str | None = None) -> AsyncAnthropic:
@@ -275,6 +284,127 @@ def format_duration(seconds: float) -> str:
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         return f"{hours}h {minutes}m"
+
+
+# ---------------------------------------------------------------------------
+# Trace parsing utilities (shared by trace-based evaluators)
+# ---------------------------------------------------------------------------
+
+
+def load_traces(path: Path) -> list[dict[str, Any]]:
+    """Load traces from JSON or JSONL file.
+
+    Attempts JSONL (one object per line) first; falls back to standard JSON
+    (array or single object).  Returns an empty list when the file cannot be
+    read or parsed.
+    """
+    traces: list[dict[str, Any]] = []
+
+    # --- Attempt 1: try JSONL (one JSON object per line) ---
+    try:
+        with open(path) as f:
+            first_line = f.readline().strip()
+            if first_line and not first_line.startswith("["):
+                f.seek(0)
+                for line_no, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        traces.append(cast(dict[str, Any], json.loads(line)))
+                    except json.JSONDecodeError:
+                        _logger.debug(
+                            "%s:%d: skipping malformed JSON line", path, line_no
+                        )
+                        continue
+                if traces:
+                    return traces
+    except json.JSONDecodeError:
+        _logger.warning("Failed to parse %s as JSONL", path)
+    except OSError:
+        _logger.exception("Could not read trace file %s", path)
+        return []
+
+    # --- Attempt 2: try standard JSON (array or single object) ---
+    try:
+        with open(path) as f:
+            data = cast(dict[str, Any] | list[dict[str, Any]], json.load(f))
+    except json.JSONDecodeError:
+        _logger.exception("Failed to parse %s as JSON", path)
+        return []
+    except OSError:
+        _logger.exception("Could not read trace file %s", path)
+        return []
+
+    if isinstance(data, list):
+        return data
+    return [data]
+
+
+def extract_propositions(trace: dict[str, Any]) -> list[str]:
+    """Extract propositions from trace output."""
+    output = trace.get("output")
+    if not isinstance(output, dict):
+        return []
+    output_d = cast(dict[str, Any], output)
+    content = output_d.get("content")
+    if not isinstance(content, dict):
+        return []
+    content_d = cast(dict[str, Any], content)
+    explicit = content_d.get("explicit")
+    if not isinstance(explicit, list):
+        return []
+    results: list[str] = []
+    for raw_item in cast(list[Any], explicit):
+        item = cast(dict[str, Any], raw_item)
+        if isinstance(raw_item, dict) and "content" in item:
+            results.append(str(item["content"]))
+    return results
+
+
+def extract_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract source messages from trace input."""
+    input_data = trace.get("input")
+    if not isinstance(input_data, dict):
+        return []
+    input_d = cast(dict[str, Any], input_data)
+    prompt = input_d.get("prompt", "")
+    if not isinstance(prompt, str):
+        return []
+
+    messages: list[dict[str, Any]] = []
+    if "<messages>" in prompt:
+        section = prompt.split("<messages>")[1].split("</messages>")[0]
+        for line in section.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(" ", 3)
+            if len(parts) >= 3:
+                speaker = parts[2].rstrip(":")
+                text = parts[3] if len(parts) > 3 else ""
+                if "->->" in text:
+                    text = text.split("->->")[0].strip()
+                messages.append({"speaker": speaker, "text": text})
+    return messages
+
+
+def extract_peer_name(trace: dict[str, Any]) -> str:
+    """Extract peer name from propositions."""
+    for prop in extract_propositions(trace):
+        prop_lower = prop.lower()
+        for pattern in ["name is", "is named", "called"]:
+            if pattern in prop_lower:
+                parts = prop_lower.split(pattern)
+                if len(parts) > 1:
+                    name = parts[1].strip().rstrip(".").split()[0]
+                    return name.capitalize()
+    return "user"
+
+
+def extract_conversation_id(trace: dict[str, Any], index: int) -> str:
+    """Extract or generate conversation ID."""
+    return trace.get("conversation_id", trace.get("id", f"trace_{index:04d}"))
 
 
 class BaseRunner(ABC, Generic[ResultT]):
