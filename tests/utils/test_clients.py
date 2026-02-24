@@ -840,6 +840,37 @@ class TestGoogleClient:
                 response_model=SampleTestModel,
             )
 
+    async def test_google_blocked_finish_reason_with_valid_parsed_does_not_raise(self):
+        """Blocked finish_reason should not raise if parsed content is valid."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_response.parsed = SampleTestModel(name="Alice", age=30, active=True)
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "SAFETY"
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 5
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-2.5-flash",
+                prompt="Generate a person",
+                max_tokens=100,
+                response_model=SampleTestModel,
+            )
+
+        assert isinstance(response.content, SampleTestModel)
+        assert response.content.name == "Alice"
+        assert response.finish_reasons == ["SAFETY"]
+
 
 @pytest.mark.asyncio
 class TestGroqClient:

@@ -815,6 +815,62 @@ class TestUpdatePeerCard:
         assert all(line.strip() for line in peer_card)
         assert peer_card.count("Name: John") == 1
 
+    async def test_none_content_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """None content should not overwrite the existing peer card."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        # First, create a valid peer card
+        await _handle_update_peer_card(
+            ctx, {"content": ["Name: Alice", "Location: NYC"]}
+        )
+
+        # Now attempt to update with None — should be a no-op
+        result = await _handle_update_peer_card(ctx, {"content": None})
+        assert "empty" in result.lower()
+
+        # Verify original card is preserved
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert "Name: Alice" in peer_card
+
+    async def test_empty_list_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Empty list should not clear the existing peer card."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        # First, create a valid peer card
+        await _handle_update_peer_card(ctx, {"content": ["Name: Bob", "Age: 30"]})
+
+        # Now attempt to update with empty list — should be a no-op
+        result = await _handle_update_peer_card(ctx, {"content": []})
+        assert "empty" in result.lower()
+
+        # Verify original card is preserved
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert "Name: Bob" in peer_card
+
 
 @pytest.mark.asyncio
 class TestGetPeerCard:

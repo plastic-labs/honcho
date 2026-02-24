@@ -254,9 +254,10 @@ class LoCoMoSummaryRunner(BaseRunner[ConversationResult]):
                         )
                     )
 
-        # Store token count for results
+        # Store counts for results
         ctx.peers["_total_tokens"] = total_tokens
         ctx.peers["_total_sessions"] = len(sessions)
+        ctx.peers["_total_turns"] = len(messages)
 
         # Add messages in batches of 100
         for i in range(0, len(messages), 100):
@@ -276,7 +277,8 @@ class LoCoMoSummaryRunner(BaseRunner[ConversationResult]):
         """
         Retrieve summaries from the session and format them as context.
 
-        Prefers the long summary if available, falls back to short summary.
+        Collects and concatenates both long and short summaries (long first,
+        then short), including token counts in headings.
 
         Returns:
             Formatted summary context string, or a note if no summaries available.
@@ -329,7 +331,7 @@ class LoCoMoSummaryRunner(BaseRunner[ConversationResult]):
             "speaker_a": speaker_a,
             "speaker_b": speaker_b,
             "total_sessions": ctx.peers.get("_total_sessions", 0),
-            "total_turns": 0,
+            "total_turns": ctx.peers.get("_total_turns", 0),
             "total_tokens": ctx.peers.get("_total_tokens", 0),
             "question_results": [],
             "category_scores": {},
@@ -404,17 +406,17 @@ class LoCoMoSummaryRunner(BaseRunner[ConversationResult]):
 
                 passed = judgment.get("passed", False)
 
-                question_result: QuestionResult = {
-                    "question_id": q_idx,
-                    "question": question,
-                    "expected_answer": str(expected_answer),
-                    "actual_response": actual_response,
-                    "category": category,
-                    "category_name": category_name,
-                    "evidence": evidence,
-                    "judgment": judgment,
-                    "passed": passed,
-                }
+                question_result = QuestionResult(
+                    question_id=q_idx,
+                    question=question,
+                    expected_answer=str(expected_answer),
+                    actual_response=actual_response,
+                    category=category,
+                    category_name=category_name,
+                    evidence=evidence,
+                    judgment=judgment,
+                    passed=passed,
+                )
 
                 result["question_results"].append(question_result)
 
@@ -425,7 +427,7 @@ class LoCoMoSummaryRunner(BaseRunner[ConversationResult]):
                     print(f"      Got: {actual_response[:200]}...")
 
             except Exception as e:
-                self.logger.error(f"Error executing question {q_idx}: {e}")
+                self.logger.exception(f"Error executing question {q_idx}: {e}")
                 question_result = QuestionResult(
                     question_id=q_idx,
                     question=question,
@@ -469,8 +471,9 @@ class LoCoMoSummaryRunner(BaseRunner[ConversationResult]):
         if self.config.json_output:
             output_file = self.config.json_output
         else:
-            output_file = Path(
-                f"tests/bench/eval_results/locomo_summary_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            output_file = (
+                bench_dir
+                / f"eval_results/locomo_summary_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
         generate_json_summary(

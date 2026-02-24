@@ -92,11 +92,18 @@ class TestCreateSummary:
             new_callable=AsyncMock,
             return_value=mock_response,
         ):
-            summary, is_fallback, _, _ = await _call_create_summary(SummaryType.SHORT)
+            (
+                summary,
+                is_fallback,
+                input_tokens,
+                output_tokens,
+            ) = await _call_create_summary(SummaryType.SHORT)
 
         assert is_fallback is True
         assert "Conversation with 5 messages" in summary["content"]
         assert summary["content"] != ""
+        assert input_tokens == 0
+        assert output_tokens == 0
 
     async def test_whitespace_response_uses_fallback(self):
         """Whitespace-only LLM response is treated as empty."""
@@ -112,10 +119,17 @@ class TestCreateSummary:
             new_callable=AsyncMock,
             return_value=mock_response,
         ):
-            summary, is_fallback, _, _ = await _call_create_summary(SummaryType.SHORT)
+            (
+                summary,
+                is_fallback,
+                input_tokens,
+                output_tokens,
+            ) = await _call_create_summary(SummaryType.SHORT)
 
         assert is_fallback is True
         assert "Conversation with 5 messages" in summary["content"]
+        assert input_tokens == 0
+        assert output_tokens == 0
 
     async def test_exception_uses_fallback(self):
         """LLM exception triggers the existing fallback path."""

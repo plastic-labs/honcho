@@ -1118,6 +1118,14 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
 
     raw_peer_card_content = tool_input["content"]
 
+    # Guard against None or empty content — keep the existing peer card.
+    if raw_peer_card_content is None:
+        logger.warning(
+            "Peer card update called with None content for %s, keeping existing card",
+            ctx.workspace_name,
+        )
+        return "Peer card content was empty, no update performed."
+
     # Normalize and deduplicate to keep peer cards bounded and stable.
     normalized_peer_card: list[str] = []
     seen: set[str] = set()
@@ -1137,6 +1145,14 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
             continue
         seen.add(normalized_key)
         normalized_peer_card.append(line)
+
+    # Don't clear the peer card if all content normalized to empty.
+    if not normalized_peer_card:
+        logger.warning(
+            "Peer card update normalized to empty for %s, keeping existing card",
+            ctx.workspace_name,
+        )
+        return "Peer card content was empty after normalization, no update performed."
 
     if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:
         logger.warning(

@@ -575,6 +575,8 @@ async def _create_summary(
                 else ""
             )
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
+            llm_input_tokens = 0
+            llm_output_tokens = 0
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error

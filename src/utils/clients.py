@@ -2262,7 +2262,10 @@ async def honcho_llm_call_inner(
                 )
 
                 # Raise on blocked responses before checking parsed content
-                if finish_reason in GEMINI_BLOCKED_FINISH_REASONS:
+                if (
+                    not gemini_response.parsed
+                    and finish_reason in GEMINI_BLOCKED_FINISH_REASONS
+                ):
                     raise LLMError(
                         f"Gemini response blocked (finish_reason={finish_reason})",
                         provider="google",
@@ -2512,6 +2515,9 @@ async def handle_streaming_response(
                     yield HonchoLLMCallStreamChunk(content=chunk.text)
                 final_chunk = chunk
 
+            # NOTE: Blocked-response check is intentionally omitted for streaming.
+            # Exceptions mid-iteration in an async generator won't be caught by
+            # the tenacity retry wrapper in honcho_llm_call.
             finish_reason = "stop"  # Default fallback
             gemini_output_tokens: int | None = None
             if (
