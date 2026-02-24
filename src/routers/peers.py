@@ -205,6 +205,13 @@ async def chat(
             media_type="text/event-stream",
         )
 
+    # Prometheus metrics — record attempt (consistent with streaming path)
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        )
+
     response = await agentic_chat(
         workspace_name=workspace_id,
         session_name=options.session_id,
@@ -215,13 +222,6 @@ async def chat(
         observed=options.target if options.target is not None else peer_id,
         reasoning_level=options.reasoning_level,
     )
-
-    # Prometheus metrics
-    if settings.METRICS.ENABLED:
-        prometheus_metrics.record_dialectic_call(
-            workspace_name=workspace_id,
-            reasoning_level=options.reasoning_level,
-        )
 
     return schemas.DialecticResponse(content=response if response else None)
 

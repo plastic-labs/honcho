@@ -2033,7 +2033,7 @@ async def _handle_search_memory_workspace(
     if not observer or not observed:
         return "ERROR: 'observer' and 'observed' are required parameters. Use the peer list provided in your query."
 
-    top_k = min(tool_input.get("top_k", 20), 40)
+    top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
     documents = await crud.query_documents(
         db=ctx.db,
         workspace_name=ctx.workspace_name,
@@ -2099,7 +2099,7 @@ async def _handle_get_active_peers(
     ctx: WorkspaceToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_active_peers tool."""
-    limit = min(tool_input.get("limit", 20), 50)
+    limit = min(_safe_int(tool_input.get("limit"), 20), 50)
     sort_by = tool_input.get("sort_by", "recent_activity")
     if sort_by not in ("recent_activity", "message_count"):
         sort_by = "recent_activity"

@@ -309,17 +309,17 @@ async def chat(
             media_type="text/event-stream",
         )
 
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        )
+
     response = await workspace_chat(
         workspace_name=workspace_id,
         session_name=options.session_id,
         query=options.query,
         reasoning_level=options.reasoning_level,
     )
-
-    if settings.METRICS.ENABLED:
-        prometheus_metrics.record_dialectic_call(
-            workspace_name=workspace_id,
-            reasoning_level=options.reasoning_level,
-        )
 
     return schemas.DialecticResponse(content=response if response else None)
