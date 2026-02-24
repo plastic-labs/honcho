@@ -23,6 +23,7 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
+from src.exceptions import LLMError
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.json_parser import validate_and_repair_json
@@ -31,6 +32,16 @@ from src.utils.tokens import estimate_tokens
 from src.utils.types import SupportedProviders, set_current_iteration
 
 logger = logging.getLogger(__name__)
+
+# Gemini finish reasons that indicate the response was blocked by safety or policy
+# filters. When these occur, the response typically has no usable text content and
+# retrying with a backup provider is appropriate.
+GEMINI_BLOCKED_FINISH_REASONS = {
+    "SAFETY",
+    "RECITATION",
+    "PROHIBITED_CONTENT",
+    "BLOCKLIST",
+}
 
 
 @dataclass
@@ -2202,6 +2213,19 @@ async def honcho_llm_call_inner(
                     else "stop"
                 )
 
+                # Raise on blocked responses so retry/backup-provider logic kicks in
+                if (
+                    not text_content
+                    and not gemini_tool_calls
+                    and finish_reason in GEMINI_BLOCKED_FINISH_REASONS
+                ):
+                    raise LLMError(
+                        f"Gemini response blocked (finish_reason={finish_reason})",
+                        provider="google",
+                        model=model,
+                        finish_reason=finish_reason,
+                    )
+
                 return HonchoLLMCallResponse(
                     content=text_content,
                     input_tokens=input_token_count,
@@ -2236,6 +2260,15 @@ async def honcho_llm_call_inner(
                     and gemini_response.candidates[0].finish_reason
                     else "stop"
                 )
+
+                # Raise on blocked responses before checking parsed content
+                if finish_reason in GEMINI_BLOCKED_FINISH_REASONS:
+                    raise LLMError(
+                        f"Gemini response blocked (finish_reason={finish_reason})",
+                        provider="google",
+                        model=model,
+                        finish_reason=finish_reason,
+                    )
 
                 # Validate that parsed content matches the response model
                 if not isinstance(gemini_response.parsed, response_model):

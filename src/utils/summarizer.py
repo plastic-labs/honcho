@@ -565,8 +565,16 @@ async def _create_summary(
         # Detect potential issues with the summary
         if not summary_text.strip():
             logger.error(
-                "Generated summary is empty! This may indicate a token limit issue."
+                "Generated summary is empty (finish_reasons=%s). Falling back to basic summary.",
+                response.finish_reasons,
             )
+            is_fallback = True
+            summary_text = (
+                f"Conversation with {message_count} messages about {last_message_content_preview}..."
+                if message_count > 0
+                else ""
+            )
+            summary_tokens = estimate_tokens(summary_text) if summary_text else 0
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error

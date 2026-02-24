@@ -26,6 +26,7 @@ from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
 from src.config import settings
+from src.exceptions import LLMError
 from src.utils.clients import (
     CLIENTS,
     HonchoLLMCallResponse,
@@ -742,6 +743,102 @@ class TestGoogleClient:
             assert response.content == ""
             assert response.output_tokens == 0  # Fallback value
             assert response.finish_reasons == ["stop"]  # Default fallback
+
+    @pytest.mark.parametrize(
+        "finish_reason", ["SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST"]
+    )
+    async def test_google_blocked_response_raises_error(self, finish_reason: str):
+        """Test that blocked Gemini responses raise LLMError for retry/failover."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        # Blocked responses typically have candidates with no content
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = finish_reason
+        mock_candidate = Mock()
+        mock_candidate.content = None
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 0
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with (
+            patch.dict(CLIENTS, {"google": mock_client}),
+            pytest.raises(LLMError, match=f"finish_reason={finish_reason}"),
+        ):
+            await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-2.5-flash",
+                prompt="Summarize this",
+                max_tokens=1000,
+            )
+
+    async def test_google_max_tokens_empty_does_not_raise(self):
+        """Test that MAX_TOKENS with empty content returns normally (not a blocked response)."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "MAX_TOKENS"
+        mock_candidate = Mock()
+        mock_candidate.content = None
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 0
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-2.5-flash",
+                prompt="Hello",
+                max_tokens=100,
+            )
+            # MAX_TOKENS is not a blocked reason — returns empty content without raising
+            assert response.content == ""
+            assert response.finish_reasons == ["MAX_TOKENS"]
+
+    async def test_google_blocked_response_model_raises_error(self):
+        """Test that blocked responses in the response_model path raise LLMError."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_response.parsed = None
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "SAFETY"
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 0
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with (
+            patch.dict(CLIENTS, {"google": mock_client}),
+            pytest.raises(LLMError, match="finish_reason=SAFETY"),
+        ):
+            await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-2.5-flash",
+                prompt="Generate a person",
+                max_tokens=100,
+                response_model=SampleTestModel,
+            )
 
 
 @pytest.mark.asyncio
