@@ -1116,7 +1116,7 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
             "Peer card creation is disabled for this workspace/session configuration."
         )
 
-    raw_peer_card_content = tool_input["content"]
+    raw_peer_card_content = tool_input.get("content")
 
     # Guard against None or empty content — keep the existing peer card.
     if raw_peer_card_content is None:

@@ -585,7 +585,7 @@ async def _create_summary(
             if message_count > 0
             else ""
         )
-        summary_tokens = 50
+        summary_tokens = 0
         is_fallback = True
 
     return (
