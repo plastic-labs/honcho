@@ -640,6 +640,21 @@ async def run_generation_pipeline(
 
 
 # ---------------------------------------------------------------------------
+# Size presets
+# ---------------------------------------------------------------------------
+
+# Maps size name -> number of seeds to use from the built-in pool.
+# Each seed is expanded across all (class, intensity) combinations (18 by default).
+# So total entries = seeds * combinations.
+SIZE_PRESETS: dict[str, int] = {
+    "tiny": 1,      # 1 seed  * 18 combos =   18 entries
+    "small": 3,     # 3 seeds * 18 combos =   54 entries
+    "medium": 10,   # 10 seeds * 18 combos = 180 entries
+    "large": 50,    # 50 seeds * 18 combos = 900 entries
+}
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -650,15 +665,28 @@ async def async_main() -> int:
         description="Generate RefusalBench dataset using OpenRouter LLMs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Size presets (seeds x 18 combinations):
+  tiny   =   1 seed  ->    18 entries
+  small  =   3 seeds ->    54 entries
+  medium =  10 seeds ->   180 entries
+  large  =  50 seeds ->   900 entries
+
 Examples:
-  %(prog)s
-  %(prog)s --verify
-  %(prog)s --perturbation-class P-Ambiguity --intensity LOW --max-concurrent 1 --batch-size 1
+  %(prog)s --size small
+  %(prog)s --size medium --verify
+  %(prog)s --size tiny --perturbation-class P-Ambiguity --intensity LOW
   %(prog)s --seed-file seeds.jsonl --generator-model anthropic/claude-sonnet-4
   %(prog)s --output tests/bench/refusalbench_data/my_dataset.jsonl
         """,
     )
 
+    parser.add_argument(
+        "--size",
+        type=str,
+        default=None,
+        choices=list(SIZE_PRESETS.keys()),
+        help="Dataset size preset: tiny (18), small (54), medium (180), large (900). Controls how many seeds are used.",
+    )
     parser.add_argument(
         "--seed-file",
         type=str,
@@ -741,6 +769,17 @@ Examples:
         print("No seed data available")
         return 1
 
+    # Apply size preset (slice seeds from the built-in pool)
+    size_label: str | None = args.size
+    if size_label and not args.seed_file:
+        max_seeds = SIZE_PRESETS[size_label]
+        seeds = seeds[:max_seeds]
+        print(f"Size preset '{size_label}': using {len(seeds)} seeds")
+    elif size_label and args.seed_file:
+        max_seeds = SIZE_PRESETS[size_label]
+        seeds = seeds[:max_seeds]
+        print(f"Size preset '{size_label}': using first {len(seeds)} seeds from file")
+
     print(f"Loaded {len(seeds)} seed QA pairs")
 
     # Create client and catalogue
@@ -755,6 +794,10 @@ Examples:
     # Determine output path
     if args.output:
         output_path = Path(args.output)
+    elif size_label:
+        output_path = (
+            bench_dir / "refusalbench_data" / f"refusalbench_{size_label}.jsonl"
+        )
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = (
