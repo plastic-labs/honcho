@@ -119,7 +119,7 @@ Return only the summary without any explanation or meta-commentary.
 {formatted_messages}
 </conversation>
 
-Produce as thorough a summary as possible in {output_words} words or less.
+Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
 """)
 
 
@@ -153,7 +153,7 @@ Return only the summary without any explanation or meta-commentary.
 {formatted_messages}
 </conversation>
 
-Produce as thorough a summary as possible in {output_words} words or less.
+Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
 """)
 
 
@@ -565,8 +565,18 @@ async def _create_summary(
         # Detect potential issues with the summary
         if not summary_text.strip():
             logger.error(
-                "Generated summary is empty! This may indicate a token limit issue."
+                "Generated summary is empty (finish_reasons=%s). Falling back to basic summary.",
+                response.finish_reasons,
             )
+            is_fallback = True
+            summary_text = (
+                f"Conversation with {message_count} messages about {last_message_content_preview}..."
+                if message_count > 0
+                else ""
+            )
+            summary_tokens = estimate_tokens(summary_text) if summary_text else 0
+            llm_input_tokens = 0
+            llm_output_tokens = 0
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
@@ -575,7 +585,7 @@ async def _create_summary(
             if message_count > 0
             else ""
         )
-        summary_tokens = 50
+        summary_tokens = 0
         is_fallback = True
 
     return (

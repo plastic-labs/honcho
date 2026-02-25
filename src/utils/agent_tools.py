@@ -27,6 +27,9 @@ from src.utils.types import get_current_iteration
 
 logger = logging.getLogger(__name__)
 
+# Hard cap to prevent unbounded peer card growth from repeated agent updates.
+MAX_PEER_CARD_FACTS = 40
+
 
 def _safe_int(value: Any, default: int) -> int:
     """Coerce a tool input value to int, returning default on failure.
@@ -247,13 +250,20 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "update_peer_card": {
         "name": "update_peer_card",
-        "description": "Update the peer card with facts about the observed peer. The peer card is a summary of key information about the peer.",
+        "description": (
+            "Update the peer card with durable profile facts about the observed peer. "
+            + "Only include stable biographical facts, standing instructions, and long-lived preferences/traits. "
+            + "Do not include one-off conclusions, temporary events, or duplicate entries."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "content": {
                     "type": "array",
-                    "description": "List of facts about the peer",
+                    "description": (
+                        "Complete deduplicated peer card list (max 40 entries). "
+                        + "Each entry should be a concise standalone profile fact."
+                    ),
                     "items": {"type": "string"},
                 },
             },
@@ -1106,12 +1116,58 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
             "Peer card creation is disabled for this workspace/session configuration."
         )
 
-    peer_card_content = tool_input["content"]
+    raw_peer_card_content = tool_input.get("content")
+
+    # Guard against None or empty content — keep the existing peer card.
+    if raw_peer_card_content is None:
+        logger.warning(
+            "Peer card update called with None content for %s, keeping existing card",
+            ctx.workspace_name,
+        )
+        return "Peer card content was empty, no update performed."
+
+    # Normalize and deduplicate to keep peer cards bounded and stable.
+    normalized_peer_card: list[str] = []
+    seen: set[str] = set()
+    items = (
+        cast(list[str], raw_peer_card_content)
+        if isinstance(raw_peer_card_content, list)
+        else [str(raw_peer_card_content)]
+    )
+    for item in items:
+        line = str(item).strip()
+        if not line:
+            continue
+
+        # Case-insensitive dedupe with whitespace normalization.
+        normalized_key = " ".join(line.lower().split())
+        if normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        normalized_peer_card.append(line)
+
+    # Don't clear the peer card if all content normalized to empty.
+    if not normalized_peer_card:
+        logger.warning(
+            "Peer card update normalized to empty for %s, keeping existing card",
+            ctx.workspace_name,
+        )
+        return "Peer card content was empty after normalization, no update performed."
+
+    if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:
+        logger.warning(
+            "Peer card update exceeded max facts (%s), truncating from %s to %s",
+            MAX_PEER_CARD_FACTS,
+            len(normalized_peer_card),
+            MAX_PEER_CARD_FACTS,
+        )
+        normalized_peer_card = normalized_peer_card[:MAX_PEER_CARD_FACTS]
+
     async with ctx.db_lock:
         await crud.set_peer_card(
             ctx.db,
             workspace_name=ctx.workspace_name,
-            peer_card=peer_card_content,
+            peer_card=normalized_peer_card,
             observer=ctx.observer,
             observed=ctx.observed,
         )
@@ -1122,15 +1178,6 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
     # Emit telemetry event if context is available
     if ctx.run_id and ctx.agent_type and ctx.parent_category:
         # Count facts in peer card (content is a list of strings per tool schema)
-        facts_count: int
-        if isinstance(peer_card_content, list):
-            content_list = cast(list[str], peer_card_content)
-            facts_count = len([line for line in content_list if line.strip()])
-        else:
-            # Fallback for string (defensive)
-            facts_count = len(
-                [line for line in str(peer_card_content).split("\n") if line.strip()]
-            )
         emit(
             AgentToolPeerCardUpdatedEvent(
                 run_id=ctx.run_id,
@@ -1140,7 +1187,7 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
                 workspace_name=ctx.workspace_name,
                 observer=ctx.observer,
                 observed=ctx.observed,
-                facts_count=facts_count,
+                facts_count=len(normalized_peer_card),
             )
         )
 

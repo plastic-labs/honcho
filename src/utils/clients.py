@@ -23,6 +23,7 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
+from src.exceptions import LLMError
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.json_parser import validate_and_repair_json
@@ -31,6 +32,16 @@ from src.utils.tokens import estimate_tokens
 from src.utils.types import SupportedProviders, set_current_iteration
 
 logger = logging.getLogger(__name__)
+
+# Gemini finish reasons that indicate the response was blocked by safety or policy
+# filters. When these occur, the response typically has no usable text content and
+# retrying with a backup provider is appropriate.
+GEMINI_BLOCKED_FINISH_REASONS = {
+    "SAFETY",
+    "RECITATION",
+    "PROHIBITED_CONTENT",
+    "BLOCKLIST",
+}
 
 
 @dataclass
@@ -2062,6 +2073,9 @@ async def honcho_llm_call_inner(
             # Build config for Gemini
             gemini_config: dict[str, Any] = {}
 
+            # Gemini uses max_output_tokens, not max_tokens.
+            gemini_config["max_output_tokens"] = params["max_tokens"]
+
             if temperature is not None:
                 gemini_config["temperature"] = temperature
 
@@ -2199,6 +2213,19 @@ async def honcho_llm_call_inner(
                     else "stop"
                 )
 
+                # Raise on blocked responses so retry/backup-provider logic kicks in
+                if (
+                    not text_content
+                    and not gemini_tool_calls
+                    and finish_reason in GEMINI_BLOCKED_FINISH_REASONS
+                ):
+                    raise LLMError(
+                        f"Gemini response blocked (finish_reason={finish_reason})",
+                        provider="google",
+                        model=model,
+                        finish_reason=finish_reason,
+                    )
+
                 return HonchoLLMCallResponse(
                     content=text_content,
                     input_tokens=input_token_count,
@@ -2233,6 +2260,18 @@ async def honcho_llm_call_inner(
                     and gemini_response.candidates[0].finish_reason
                     else "stop"
                 )
+
+                # Raise on blocked responses before checking parsed content
+                if (
+                    not gemini_response.parsed
+                    and finish_reason in GEMINI_BLOCKED_FINISH_REASONS
+                ):
+                    raise LLMError(
+                        f"Gemini response blocked (finish_reason={finish_reason})",
+                        provider="google",
+                        model=model,
+                        finish_reason=finish_reason,
+                    )
 
                 # Validate that parsed content matches the response model
                 if not isinstance(gemini_response.parsed, response_model):
@@ -2449,23 +2488,25 @@ async def handle_streaming_response(
 
         case genai.Client():
             prompt_text = params["messages"][0]["content"] if params["messages"] else ""
+            stream_config: GenerateContentConfigDict = {
+                "max_output_tokens": cast(int, params["max_tokens"]),
+            }
 
             if response_model is not None:
+                stream_config["response_mime_type"] = "application/json"
+                stream_config["response_schema"] = response_model
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
-                    config={
-                        "response_mime_type": "application/json",
-                        "response_schema": response_model,
-                    },
+                    config=stream_config,
                 )
             else:
+                if json_mode:
+                    stream_config["response_mime_type"] = "application/json"
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
-                    config={
-                        "response_mime_type": "application/json" if json_mode else None,
-                    },
+                    config=stream_config,
                 )
 
             final_chunk = None
@@ -2474,6 +2515,9 @@ async def handle_streaming_response(
                     yield HonchoLLMCallStreamChunk(content=chunk.text)
                 final_chunk = chunk
 
+            # NOTE: Blocked-response check is intentionally omitted for streaming.
+            # Exceptions mid-iteration in an async generator won't be caught by
+            # the tenacity retry wrapper in honcho_llm_call.
             finish_reason = "stop"  # Default fallback
             gemini_output_tokens: int | None = None
             if (

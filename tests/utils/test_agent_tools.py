@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.utils.agent_tools import (
+    MAX_PEER_CARD_FACTS,
     ObservationsCreatedResult,
     ToolContext,
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
@@ -787,6 +788,88 @@ class TestUpdatePeerCard:
         )
         assert peer_card is not None
         assert "Name: John" in peer_card
+
+    async def test_deduplicates_and_caps_peer_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Normalizes peer card updates to avoid unbounded growth."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        oversized = ["Name: John", "  Name:  John  ", "", "   "]
+        oversized.extend([f"Fact {i}" for i in range(MAX_PEER_CARD_FACTS + 5)])
+
+        await _handle_update_peer_card(ctx, {"content": oversized})
+
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert len(peer_card) == MAX_PEER_CARD_FACTS
+        assert all(line.strip() for line in peer_card)
+        assert peer_card.count("Name: John") == 1
+
+    async def test_none_content_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """None content should not overwrite the existing peer card."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        # First, create a valid peer card
+        await _handle_update_peer_card(
+            ctx, {"content": ["Name: Alice", "Location: NYC"]}
+        )
+
+        # Now attempt to update with None — should be a no-op
+        result = await _handle_update_peer_card(ctx, {"content": None})
+        assert "empty" in result.lower()
+
+        # Verify original card is preserved
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert "Name: Alice" in peer_card
+
+    async def test_empty_list_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Empty list should not clear the existing peer card."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        # First, create a valid peer card
+        await _handle_update_peer_card(ctx, {"content": ["Name: Bob", "Age: 30"]})
+
+        # Now attempt to update with empty list — should be a no-op
+        result = await _handle_update_peer_card(ctx, {"content": []})
+        assert "empty" in result.lower()
+
+        # Verify original card is preserved
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert "Name: Bob" in peer_card
 
 
 @pytest.mark.asyncio
