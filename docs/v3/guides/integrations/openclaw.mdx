@@ -12,58 +12,41 @@ Honcho can run entirely locally with OpenClaw — no external API required. Keep
 </Note>
 
 
-## Get Your API Key
-
-Create a Honcho API key from [app.honcho.dev](https://app.honcho.dev), then add it to your OpenClaw env file:
-
-```bash
-echo "HONCHO_API_KEY=hc_..." >> ~/.openclaw/.env
-```
-
 ## Install the Plugin
-
-### Option A: ClawHub Skill (Recommended)
-
-The `honcho-setup` skill on [ClawHub](https://clawhub.ai/ajspig/honcho-setup) handles installation, migration, and workspace setup interactively:
-
-```bash
-clawhub install honcho-setup
-```
-
-Then run the skill from a chat session. It will walk you through plugin installation, legacy memory migration, and workspace doc setup.
-
-### Option B: Manual Install
-
-Install the plugin using the OpenClaw plugin system. **Do not install `@honcho-ai/sdk` directly or use `npm install` in the workspace.**
 
 ```bash
 openclaw plugins install @honcho-ai/openclaw-honcho
+openclaw honcho setup
+openclaw gateway --force
 ```
 
-Then enable it:
+`openclaw honcho setup` prompts for your API key, writes the config, and optionally uploads any legacy memory files to Honcho.
+
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.loom.com/embed/bc870932f1694302a80f1f71276790e8"
+  title="Loom video"
+  allowFullScreen
+></iframe>
+<Note>
+**Alternative: ClawHub Skill**
+
+The `honcho-setup` skill handles installation and migration interactively from a chat session:
 
 ```bash
-openclaw plugins enable openclaw-honcho
-```
-
-If the gateway logs show `Cannot find module '@honcho-ai/sdk'`, install the plugin's dependencies manually:
-
-```bash
-cd ~/.openclaw/extensions/openclaw-honcho && npm install
-```
-
-Restart the gateway after installing:
-
-```bash
+npx clawhub install honcho-setup
+# Restart OpenClaw, then invoke the skill from a session
+openclaw plugins install @honcho-ai/openclaw-honcho
 openclaw gateway restart
 ```
+</Note>
 
 ## Migrating Legacy Memory
 
-If you have existing workspace memory files (`USER.md`, `MEMORY.md`, `IDENTITY.md`, `memory/`, `canvas/`, etc.), these can be migrated to Honcho. The recommended path is the `honcho-setup` ClawHub skill, which handles this interactively.
+If you have existing workspace memory files (`USER.md`, `MEMORY.md`, `IDENTITY.md`, `memory/`, `canvas/`, etc.), `openclaw honcho setup` will detect them and offer to migrate them.
 
 <Note>
-Commit any existing memory files to version control before migrating.
+Migration is **non-destructive** — files are uploaded to Honcho. Originals are never deleted or moved.
 </Note>
 
 ### Legacy files
@@ -73,19 +56,11 @@ Commit any existing memory files to version control before migrating.
 - All files in `memory/` and `canvas/` directories
 
 **Agent/self files** (content describes the agent):
-- `SOUL.md`, `AGENTS.md`, `TOOLS.md`, `BOOTSTRAP.md`, `HEARTBEAT.md`
+- `SOUL.md`, `AGENTS.md`, `TOOLS.md`, `BOOTSTRAP.md`
 
 ### Upload to Honcho
 
-Files are uploaded to Honcho via the **messages upload endpoint**. User/owner files are uploaded through the owner peer, and agent/self files through the openclaw peer. The `honcho-setup` skill automates this using `session.uploadFile()`.
-
-### Archive originals
-
-After uploading:
-
-1. **Remove originals** for legacy-only files: `USER.md`, `MEMORY.md`, `IDENTITY.md`, `HEARTBEAT.md`
-2. **Keep originals** for active workspace docs: `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md`
-3. **Move directories** (`memory/`, `canvas/`) into an `archive/` directory
+Files are uploaded via `session.uploadFile()`. User/owner files go to the owner peer; agent/self files go to the openclaw peer.
 
 ## How It Works
 
@@ -116,6 +91,7 @@ Once installed, the plugin runs automatically:
 ## CLI Commands
 
 ```bash
+openclaw honcho setup                           # Configure API key and migrate legacy files
 openclaw honcho status                          # Connection status
 openclaw honcho ask <question>                  # Query Honcho about the user
 openclaw honcho search <query> [-k N] [-d D]    # Semantic search (topK, maxDistance)
@@ -123,10 +99,11 @@ openclaw honcho search <query> [-k N] [-d D]    # Semantic search (topK, maxDist
 
 ## Configuration
 
-Optional — the plugin works out of the box with `HONCHO_API_KEY` set.
+Run `openclaw honcho setup` to configure interactively, or set values directly in `~/.openclaw/openclaw.json` under `plugins.entries["openclaw-honcho"].config`.
 
 | Key | Default | Description |
 | --- | ------- | ----------- |
+| `apiKey` | — | Honcho API key (required for managed; omit for self-hosted). |
 | `workspaceId` | `"openclaw"` | Honcho workspace ID for memory isolation. |
 | `baseUrl` | `"https://api.honcho.dev"` | API endpoint (for self-hosted instances). |
 
@@ -135,7 +112,8 @@ Optional — the plugin works out of the box with `HONCHO_API_KEY` set.
 Point the plugin to your local instance and follow the [self-hosting guide](https://github.com/plastic-labs/honcho?tab=readme-ov-file#local-development) to get started:
 
 ```bash
-echo "HONCHO_BASE_URL=http://localhost:8000" >> ~/.openclaw/.env
+openclaw honcho setup
+# Enter blank API key, set Base URL to http://localhost:8000
 ```
 
 ## Local File Search (QMD Integration)
