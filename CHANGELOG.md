@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.3] - 2026-02-25
+
+### Added
+
+- Consolidated session context into a single DB session with 40/60 token budget allocation between summary and messages
+- Observation validation via `ObservationInput` Pydantic schema with partial-success support and batch embedding with per-observation fallback
+- Peer card hard cap of 40 facts with case-insensitive deduplication and whitespace normalization
+- Safe integer coercion (`_safe_int`) for all LLM tool inputs to handle non-integer values like `"Infinity"`
+- Embedding pre-computation and reuse across multiple search calls in dialectic and representation flows
+- Peer existence validation in dialectic chat endpoints — raises ResourceNotFoundException instead of silently failing
+- Logging filter to suppress noisy `GET /metrics` access logs
+- Oolong long-context aggregation benchmark (synth and real variants, 1K–4M token context windows)
+- MolecularBench fact quality evaluation (ambiguity, decontextuality, minimality scoring)
+- CoverageBench information recall evaluation (gold fact extraction, coverage matching, QA verification)
+- LoCoMo summary-as-context baseline evaluation
+- Webhook delivery tests, dependency lifecycle tests, queue cleanup tests, summarizer fallback tests
+- Parallel test execution via pytest-xdist with worker-specific databases
+- `test_reasoning_levels.py` script for LOCOM dataset testing across reasoning levels
+
+### Changed
+
+- Workspace deletion is now async — returns 202 Accepted, validates no active sessions (409 Conflict), cascade-deletes in background
+- Redis caching layer now stores plain-dict instead of ORM objects, with v2-prefixed keys, storage, resilient `safe_cache_set`/`safe_cache_delete` helpers, and deferred post-commit cache invalidation
+- All `get_or_create_*` CRUD operations now use savepoints (`db.begin_nested()`) instead of commit/rollback for race condition prevention
+- Reconciler vector sync uses direct ORM mutation instead of batch parameterized UPDATE statements
+- Summarizer enforces hard word limit in prompt and creates fallback text for empty summaries with `summary_tokens = 0`
+- Blocked Gemini responses (SAFETY, RECITATION, PROHIBITED_CONTENT, BLOCKLIST) now raise `LLMError` to trigger retry/backup-provider logic
+- Gemini client explicitly sets `max_output_tokens` from `max_tokens` parameter
+- All deriver and metrics collector logging replaced with structured `logging.getLogger(__name__)` calls
+- Dreamer specialist prompts updated to enforce durable-facts-only peer cards with max 40 entries and deduplication
+- `GetOrCreateResult` changed from `NamedTuple` to `dataclass` with `async post_commit()` method
+- FastAPI upgraded from 0.111.0 to 0.131.0; added pyarrow dependency
+- Queue status filtering to only show user-facing tasks (representation, summary, dream); excludes internal infrastructure tasks
+
+### Fixed
+
+- JWT timestamp bug — `JWTParams.t` was evaluated once at class definition time instead of per-instance
+- Session cache invalidation on deletion was missing
+- `get_peer_card()` now properly propagates `ResourceNotFoundException` instead of swallowing it
+- `set_peer_card()` ensures peer exists via `get_or_create_peers()` before updating
+- Backup provider failover with proper tool input type safety
+- Removed `setup_admin_jwt()` from server startup
+- Sentry coroutine detection switched from `asyncio.iscoroutinefunction` to `inspect.iscoroutinefunction`
+
+### Removed
+
+- `explicit.py` and `obex.py` benchmarks replaced by coverage.py and molecular.py
+- Claude Code review automation workflow (`.github/workflows/claude.yml`)
+- Coverage reporting from default pytest configuration
+
 ## [3.0.2] - 2026-01-27
 
 ### Added
