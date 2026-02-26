@@ -13,7 +13,7 @@
       "name": "GNU Affero General Public License v3.0",
       "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
     },
-    "version": "3.0.0"
+    "version": "3.0.3"
   },
   "servers": [
     {
@@ -28,9 +28,7 @@
   "paths": {
     "/v3/workspaces": {
       "post": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Get Or Create Workspace",
         "description": "Get a Workspace by ID.\n\nIf workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the workspace_id from the JWT.",
         "operationId": "get_or_create_workspace_v3_workspaces_post",
@@ -77,11 +75,9 @@
     },
     "/v3/workspaces/list": {
       "post": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Get All Workspaces",
-        "description": "Get all Workspaces",
+        "description": "Get all Workspaces, paginated with optional filters.",
         "operationId": "get_all_workspaces_v3_workspaces_list_post",
         "security": [
           {
@@ -162,9 +158,7 @@
     },
     "/v3/workspaces/{workspace_id}": {
       "put": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Update Workspace",
         "description": "Update Workspace metadata and/or configuration.",
         "operationId": "update_workspace_v3_workspaces__workspace_id__put",
@@ -220,11 +214,9 @@
         }
       },
       "delete": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Delete Workspace",
-        "description": "Delete a Workspace. This will permanently delete all sessions, peers, messages, and conclusions\nassociated with the workspace.\n\nThis action cannot be undone.",
+        "description": "Delete a Workspace. This accepts the deletion request and processes it in the background,\npermanently deleting all peers, messages, conclusions, and other resources associated\nwith the workspace.\n\nReturns 409 Conflict if the workspace contains active sessions.\nDelete all sessions first, then delete the workspace.\n\nThis action cannot be undone.",
         "operationId": "delete_workspace_v3_workspaces__workspace_id__delete",
         "security": [
           {
@@ -244,8 +236,13 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Successful Response"
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -262,9 +259,7 @@
     },
     "/v3/workspaces/{workspace_id}/search": {
       "post": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Search Workspace",
         "description": "Search messages in a Workspace using optional filters. Use `limit` to control the number of\nresults returned.",
         "operationId": "search_workspace_v3_workspaces__workspace_id__search_post",
@@ -326,11 +321,9 @@
     },
     "/v3/workspaces/{workspace_id}/queue/status": {
       "get": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Get Queue Status",
-        "description": "Get the processing queue status for a Workspace, optionally scoped to an observer, sender,\nand/or session.",
+        "description": "Get the processing queue status for a Workspace, optionally scoped to an observer, sender,\nand/or session.\n\nOnly tracks user-facing task types (representation, summary, dream).\nInternal infrastructure tasks (reconciler, webhook, deletion) are excluded.\nNote: completed counts reflect items since the last periodic queue cleanup,\nnot lifetime totals.",
         "operationId": "get_queue_status_v3_workspaces__workspace_id__queue_status_get",
         "security": [
           {
@@ -429,11 +422,9 @@
     },
     "/v3/workspaces/{workspace_id}/schedule_dream": {
       "post": {
-        "tags": [
-          "workspaces"
-        ],
+        "tags": ["workspaces"],
         "summary": "Schedule Dream",
-        "description": "",
+        "description": "Manually schedule a dream task for a specific collection.\n\nThis endpoint bypasses all automatic dream conditions (document threshold,\nminimum hours between dreams) and schedules the dream task for a future execution.\n\nCurrently this endpoint only supports scheduling immediate dreams. In the future,\nusers may pass a cron-style expression to schedule dreams at specific times.",
         "operationId": "schedule_dream_v3_workspaces__workspace_id__schedule_dream_post",
         "security": [
           {
@@ -482,11 +473,9 @@
     },
     "/v3/workspaces/{workspace_id}/peers/list": {
       "post": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Get Peers",
-        "description": "Get all Peers for a Workspace",
+        "description": "Get all Peers for a Workspace, paginated with optional filters.",
         "operationId": "get_peers_v3_workspaces__workspace_id__peers_list_post",
         "security": [
           {
@@ -576,9 +565,7 @@
     },
     "/v3/workspaces/{workspace_id}/peers": {
       "post": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Get Or Create Peer",
         "description": "Get a Peer by ID or create a new Peer with the given ID.\n\nIf peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the peer_id from the JWT.",
         "operationId": "get_or_create_peer_v3_workspaces__workspace_id__peers_post",
@@ -636,9 +623,7 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}": {
       "put": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Update Peer",
         "description": "Update a Peer's metadata and/or configuration.",
         "operationId": "update_peer_v3_workspaces__workspace_id__peers__peer_id__put",
@@ -705,11 +690,9 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/sessions": {
       "post": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Get Sessions For Peer",
-        "description": "Get all Sessions for a Peer",
+        "description": "Get all Sessions for a Peer, paginated with optional filters.",
         "operationId": "get_sessions_for_peer_v3_workspaces__workspace_id__peers__peer_id__sessions_post",
         "security": [
           {
@@ -808,11 +791,9 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/chat": {
       "post": {
-        "tags": [
-          "peers"
-        ],
-        "summary": "Chat",
-        "description": "",
+        "tags": ["peers"],
+        "summary": "Query a Peer's representation using natural language",
+        "description": "Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively\nanswer the query based on all latent knowledge gathered about the peer from their messages and conclusions.",
         "operationId": "chat_v3_workspaces__workspace_id__peers__peer_id__chat_post",
         "security": [
           {
@@ -869,9 +850,7 @@
                       "title": "Content"
                     }
                   },
-                  "required": [
-                    "content"
-                  ],
+                  "required": ["content"],
                   "title": "DialecticResponse",
                   "type": "object"
                 }
@@ -894,9 +873,7 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/representation": {
       "post": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Get Representation",
         "description": "Get a curated subset of a Peer's Representation. A Representation is always a subset of the total\nknowledge about the Peer. The subset can be scoped and filtered in various ways.\n\n\nIf a session_id is provided in the body, we get the Representation of the Peer scoped to that Session.\nIf a target is provided, we get the Representation of the target from the perspective of the Peer.\nIf no target is provided, we get the omniscient Honcho Representation of the Peer.",
         "operationId": "get_representation_v3_workspaces__workspace_id__peers__peer_id__representation_post",
@@ -963,9 +940,7 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/card": {
       "get": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Get Peer Card",
         "description": "Get a peer card for a specific peer relationship.\n\nReturns the peer card that the observer peer has for the target peer if it exists.\nIf no target is specified, returns the observer's own peer card.",
         "operationId": "get_peer_card_v3_workspaces__workspace_id__peers__peer_id__card_get",
@@ -1039,9 +1014,7 @@
         }
       },
       "put": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Set Peer Card",
         "description": "Set a peer card for a specific peer relationship.\n\nSets the peer card that the observer peer has for the target peer.\nIf no target is specified, sets the observer's own peer card.",
         "operationId": "set_peer_card_v3_workspaces__workspace_id__peers__peer_id__card_put",
@@ -1128,9 +1101,7 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/context": {
       "get": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Get Peer Context",
         "description": "Get context for a peer, including their representation and peer card.\n\nThis endpoint returns a curated subset of the representation and peer card for a peer.\nIf a target is specified, returns the context for the target from the\nobserver peer's perspective. If no target is specified, returns the\npeer's own context (self-observation).\n\nThis is useful for getting all the context needed about a peer without\nmaking multiple API calls.",
         "operationId": "get_peer_context_v3_workspaces__workspace_id__peers__peer_id__context_get",
@@ -1296,9 +1267,7 @@
     },
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/search": {
       "post": {
-        "tags": [
-          "peers"
-        ],
+        "tags": ["peers"],
         "summary": "Search Peer",
         "description": "Search a Peer's messages, optionally filtered by various criteria.",
         "operationId": "search_peer_v3_workspaces__workspace_id__peers__peer_id__search_post",
@@ -1369,11 +1338,9 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/list": {
       "post": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Get Sessions",
-        "description": "Get all Sessions for a Workspace",
+        "description": "Get all Sessions for a Workspace, paginated with optional filters.",
         "operationId": "get_sessions_v3_workspaces__workspace_id__sessions_list_post",
         "security": [
           {
@@ -1463,9 +1430,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions": {
       "post": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Get Or Create Session",
         "description": "Get a Session by ID or create a new Session with the given ID.\n\nIf Session ID is provided as a parameter, it verifies the Session is in the Workspace.\nOtherwise, it uses the session_id from the JWT for verification.",
         "operationId": "get_or_create_session_v3_workspaces__workspace_id__sessions_post",
@@ -1523,9 +1488,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}": {
       "put": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Update Session",
         "description": "Update a Session's metadata and/or configuration.",
         "operationId": "update_session_v3_workspaces__workspace_id__sessions__session_id__put",
@@ -1590,9 +1553,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Delete Session",
         "description": "Delete a Session and all associated messages.\n\nThe Session is marked as inactive immediately and returns 202 Accepted. The actual\ndeletion of all related data happens asynchronously via the queue with retry support.\n\nThis action cannot be undone.",
         "operationId": "delete_session_v3_workspaces__workspace_id__sessions__session_id__delete",
@@ -1646,9 +1607,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/clone": {
       "post": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Clone Session",
         "description": "Clone a Session, optionally up to a specific message ID.",
         "operationId": "clone_session_v3_workspaces__workspace_id__sessions__session_id__clone_post",
@@ -1722,9 +1681,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/peers": {
       "post": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Add Peers To Session",
         "description": "Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.",
         "operationId": "add_peers_to_session_v3_workspaces__workspace_id__sessions__session_id__peers_post",
@@ -1793,9 +1750,7 @@
         }
       },
       "put": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Set Session Peers",
         "description": "Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.\n\nThis will fully replace the current set of Peers in the Session.",
         "operationId": "set_session_peers_v3_workspaces__workspace_id__sessions__session_id__peers_put",
@@ -1864,9 +1819,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Remove Peers From Session",
         "description": "Remove Peers by ID from a Session.",
         "operationId": "remove_peers_from_session_v3_workspaces__workspace_id__sessions__session_id__peers_delete",
@@ -1935,11 +1888,9 @@
         }
       },
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Get Session Peers",
-        "description": "Get all Peers in a Session",
+        "description": "Get all Peers in a Session. Results are paginated.",
         "operationId": "get_session_peers_v3_workspaces__workspace_id__sessions__session_id__peers_get",
         "security": [
           {
@@ -2020,9 +1971,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config": {
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Get Peer Config",
         "description": "Get the configuration for a Peer in a Session.",
         "operationId": "get_peer_config_v3_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get",
@@ -2085,9 +2034,7 @@
         }
       },
       "put": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Set Peer Config",
         "description": "Set the configuration for a Peer in a Session.",
         "operationId": "set_peer_config_v3_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_put",
@@ -2156,9 +2103,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/context": {
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Get Session Context",
         "description": "Produce a context object from the Session. The caller provides an optional token limit which the entire context must fit into.\nIf not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit\nto the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than\nthis. If the caller does not want a summary, we allocate all the tokens to recent messages.",
         "operationId": "get_session_context_v3_workspaces__workspace_id__sessions__session_id__context_get",
@@ -2383,9 +2328,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/summaries": {
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Get Session Summaries",
         "description": "Get available summaries for a Session.\n\nReturns both short and long summaries if available, including metadata like\nthe message ID they cover up to, creation timestamp, and token count.",
         "operationId": "get_session_summaries_v3_workspaces__workspace_id__sessions__session_id__summaries_get",
@@ -2441,9 +2384,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/search": {
       "post": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Search Session",
         "description": "Search a Session with optional filters. Use `limit` to control the number of results returned.",
         "operationId": "search_session_v3_workspaces__workspace_id__sessions__session_id__search_post",
@@ -2514,9 +2455,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages": {
       "post": {
-        "tags": [
-          "messages"
-        ],
+        "tags": ["messages"],
         "summary": "Create Messages For Session",
         "description": "Add new message(s) to a session.",
         "operationId": "create_messages_for_session_v3_workspaces__workspace_id__sessions__session_id__messages_post",
@@ -2586,9 +2525,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/upload": {
       "post": {
-        "tags": [
-          "messages"
-        ],
+        "tags": ["messages"],
         "summary": "Create Messages With File",
         "description": "Create messages from uploaded files. Files are converted to text and split into multiple messages.",
         "operationId": "create_messages_with_file_v3_workspaces__workspace_id__sessions__session_id__messages_upload_post",
@@ -2658,11 +2595,9 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/list": {
       "post": {
-        "tags": [
-          "messages"
-        ],
+        "tags": ["messages"],
         "summary": "Get Messages",
-        "description": "Get all messages for a Session with optional filters",
+        "description": "Get all messages for a Session with optional filters. Results are paginated.",
         "operationId": "get_messages_v3_workspaces__workspace_id__sessions__session_id__messages_list_post",
         "security": [
           {
@@ -2780,9 +2715,7 @@
     },
     "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}": {
       "get": {
-        "tags": [
-          "messages"
-        ],
+        "tags": ["messages"],
         "summary": "Get Message",
         "description": "Get a single message by ID from a Session.",
         "operationId": "get_message_v3_workspaces__workspace_id__sessions__session_id__messages__message_id__get",
@@ -2845,9 +2778,7 @@
         }
       },
       "put": {
-        "tags": [
-          "messages"
-        ],
+        "tags": ["messages"],
         "summary": "Update Message",
         "description": "Update the metadata of a message.\n\nThis will overwrite any existing metadata for the message.",
         "operationId": "update_message_v3_workspaces__workspace_id__sessions__session_id__messages__message_id__put",
@@ -2923,9 +2854,7 @@
     },
     "/v3/workspaces/{workspace_id}/conclusions": {
       "post": {
-        "tags": [
-          "conclusions"
-        ],
+        "tags": ["conclusions"],
         "summary": "Create Conclusions",
         "description": "Create one or more Conclusions.\n\nConclusions are logical certainties derived from interactions between Peers. They form the basis of a Peer's Representation.",
         "operationId": "create_conclusions_v3_workspaces__workspace_id__conclusions_post",
@@ -2987,11 +2916,9 @@
     },
     "/v3/workspaces/{workspace_id}/conclusions/list": {
       "post": {
-        "tags": [
-          "conclusions"
-        ],
+        "tags": ["conclusions"],
         "summary": "List Conclusions",
-        "description": "List Conclusions using optional filters, ordered by recency unless `reverse` is true",
+        "description": "List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.",
         "operationId": "list_conclusions_v3_workspaces__workspace_id__conclusions_list_post",
         "security": [
           {
@@ -3100,9 +3027,7 @@
     },
     "/v3/workspaces/{workspace_id}/conclusions/query": {
       "post": {
-        "tags": [
-          "conclusions"
-        ],
+        "tags": ["conclusions"],
         "summary": "Query Conclusions",
         "description": "Query Conclusions using semantic search. Use `top_k` to control the number of results returned.",
         "operationId": "query_conclusions_v3_workspaces__workspace_id__conclusions_query_post",
@@ -3164,9 +3089,7 @@
     },
     "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}": {
       "delete": {
-        "tags": [
-          "conclusions"
-        ],
+        "tags": ["conclusions"],
         "summary": "Delete Conclusion",
         "description": "Delete a single Conclusion by ID.\n\nThis action cannot be undone.",
         "operationId": "delete_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__delete",
@@ -3215,9 +3138,7 @@
     },
     "/v3/keys": {
       "post": {
-        "tags": [
-          "keys"
-        ],
+        "tags": ["keys"],
         "summary": "Create Key",
         "description": "Create a new Key",
         "operationId": "create_key_v3_keys_post",
@@ -3324,9 +3245,7 @@
     },
     "/v3/workspaces/{workspace_id}/webhooks": {
       "post": {
-        "tags": [
-          "webhooks"
-        ],
+        "tags": ["webhooks"],
         "summary": "Get Or Create Webhook Endpoint",
         "description": "Get or create a webhook endpoint URL.",
         "operationId": "get_or_create_webhook_endpoint_v3_workspaces__workspace_id__webhooks_post",
@@ -3384,9 +3303,7 @@
         }
       },
       "get": {
-        "tags": [
-          "webhooks"
-        ],
+        "tags": ["webhooks"],
         "summary": "List Webhook Endpoints",
         "description": "List all webhook endpoints, optionally filtered by workspace.",
         "operationId": "list_webhook_endpoints_v3_workspaces__workspace_id__webhooks_get",
@@ -3462,9 +3379,7 @@
     },
     "/v3/workspaces/{workspace_id}/webhooks/{endpoint_id}": {
       "delete": {
-        "tags": [
-          "webhooks"
-        ],
+        "tags": ["webhooks"],
         "summary": "Delete Webhook Endpoint",
         "description": "Delete a specific webhook endpoint.",
         "operationId": "delete_webhook_endpoint_v3_workspaces__workspace_id__webhooks__endpoint_id__delete",
@@ -3517,9 +3432,7 @@
     },
     "/v3/workspaces/{workspace_id}/webhooks/test": {
       "get": {
-        "tags": [
-          "webhooks"
-        ],
+        "tags": ["webhooks"],
         "summary": "Test Emit",
         "description": "Test publishing a webhook event.",
         "operationId": "test_emit_v3_workspaces__workspace_id__webhooks_test_get",
@@ -3571,7 +3484,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           },
           "peer_id": {
@@ -3613,10 +3526,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "file",
-          "peer_id"
-        ],
+        "required": ["file", "peer_id"],
         "title": "Body_create_messages_with_file_v3_workspaces__workspace_id__sessions__session_id__messages_upload_post"
       },
       "Conclusion": {
@@ -3680,9 +3590,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "conclusions"
-        ],
+        "required": ["conclusions"],
         "title": "ConclusionBatchCreate",
         "description": "Schema for batch conclusion creation with a max of 100 conclusions."
       },
@@ -3718,11 +3626,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "content",
-          "observer_id",
-          "observed_id"
-        ],
+        "required": ["content", "observer_id", "observed_id"],
         "title": "ConclusionCreate",
         "description": "Schema for creating a single conclusion."
       },
@@ -3789,9 +3693,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "query"
-        ],
+        "required": ["query"],
         "title": "ConclusionQuery",
         "description": "Query parameters for semantic search of conclusions."
       },
@@ -3835,22 +3737,14 @@
           },
           "reasoning_level": {
             "type": "string",
-            "enum": [
-              "minimal",
-              "low",
-              "medium",
-              "high",
-              "max"
-            ],
+            "enum": ["minimal", "low", "medium", "high", "max"],
             "title": "Reasoning Level",
             "description": "Level of reasoning to apply: minimal, low, medium, high, or max",
             "default": "low"
           }
         },
         "type": "object",
-        "required": [
-          "query"
-        ],
+        "required": ["query"],
         "title": "DialecticOptions"
       },
       "DreamConfiguration": {
@@ -3873,9 +3767,7 @@
       },
       "DreamType": {
         "type": "string",
-        "enum": [
-          "omni"
-        ],
+        "enum": ["omni"],
         "title": "DreamType",
         "description": "Types of dreams that can be triggered."
       },
@@ -3954,9 +3846,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "messages"
-        ],
+        "required": ["messages"],
         "title": "MessageBatchCreate",
         "description": "Schema for batch message creation with a max of 100 messages"
       },
@@ -4026,10 +3916,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "content",
-          "peer_id"
-        ],
+        "required": ["content", "peer_id"],
         "title": "MessageCreate"
       },
       "MessageGet": {
@@ -4080,9 +3967,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "query"
-        ],
+        "required": ["query"],
         "title": "MessageSearchOptions"
       },
       "MessageUpdate": {
@@ -4134,11 +4019,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "items",
-          "page",
-          "size"
-        ],
+        "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[Conclusion]"
       },
       "Page_Message_": {
@@ -4172,11 +4053,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "items",
-          "page",
-          "size"
-        ],
+        "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[Message]"
       },
       "Page_Peer_": {
@@ -4210,11 +4087,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "items",
-          "page",
-          "size"
-        ],
+        "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[Peer]"
       },
       "Page_Session_": {
@@ -4248,11 +4121,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "items",
-          "page",
-          "size"
-        ],
+        "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[Session]"
       },
       "Page_WebhookEndpoint_": {
@@ -4286,11 +4155,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "items",
-          "page",
-          "size"
-        ],
+        "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[WebhookEndpoint]"
       },
       "Page_Workspace_": {
@@ -4324,11 +4189,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "items",
-          "page",
-          "size"
-        ],
+        "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[Workspace]"
       },
       "Peer": {
@@ -4358,11 +4219,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "workspace_id",
-          "created_at"
-        ],
+        "required": ["id", "workspace_id", "created_at"],
         "title": "Peer"
       },
       "PeerCardConfiguration": {
@@ -4428,9 +4285,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "peer_card"
-        ],
+        "required": ["peer_card"],
         "title": "PeerCardSet"
       },
       "PeerContext": {
@@ -4474,10 +4329,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "peer_id",
-          "target_id"
-        ],
+        "required": ["peer_id", "target_id"],
         "title": "PeerContext",
         "description": "Context for a peer, including representation and peer card."
       },
@@ -4516,9 +4368,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id"
-        ],
+        "required": ["id"],
         "title": "PeerCreate"
       },
       "PeerGet": {
@@ -4676,7 +4526,7 @@
           "completed_work_units": {
             "type": "integer",
             "title": "Completed Work Units",
-            "description": "Completed work units"
+            "description": "Completed work units (since last periodic cleanup)"
           },
           "in_progress_work_units": {
             "type": "integer",
@@ -4712,7 +4562,7 @@
           "pending_work_units"
         ],
         "title": "QueueStatus",
-        "description": "Aggregated processing queue status."
+        "description": "Aggregated processing queue status.\n\nTracks user-facing task types only: representation, summary, and dream.\nInternal infrastructure tasks (reconciler, webhook, deletion) are excluded.\n\nNote: completed_work_units reflects items since the last periodic queue\ncleanup, not lifetime totals."
       },
       "ReasoningConfiguration": {
         "properties": {
@@ -4752,9 +4602,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "representation"
-        ],
+        "required": ["representation"],
         "title": "RepresentationResponse"
       },
       "ScheduleDreamRequest": {
@@ -4794,10 +4642,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "observer",
-          "dream_type"
-        ],
+        "required": ["observer", "dream_type"],
         "title": "ScheduleDreamRequest"
       },
       "Session": {
@@ -4831,12 +4676,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "is_active",
-          "workspace_id",
-          "created_at"
-        ],
+        "required": ["id", "is_active", "workspace_id", "created_at"],
         "title": "Session"
       },
       "SessionConfiguration": {
@@ -4944,10 +4784,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "messages"
-        ],
+        "required": ["id", "messages"],
         "title": "SessionContext"
       },
       "SessionCreate": {
@@ -4997,9 +4834,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id"
-        ],
+        "required": ["id"],
         "title": "SessionCreate"
       },
       "SessionGet": {
@@ -5125,9 +4960,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id"
-        ],
+        "required": ["id"],
         "title": "SessionSummaries"
       },
       "SessionUpdate": {
@@ -5263,14 +5096,17 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
+        "required": ["loc", "msg", "type"],
         "title": "ValidationError"
       },
       "WebhookEndpoint": {
@@ -5301,12 +5137,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "workspace_id",
-          "url",
-          "created_at"
-        ],
+        "required": ["id", "workspace_id", "url", "created_at"],
         "title": "WebhookEndpoint"
       },
       "WebhookEndpointCreate": {
@@ -5317,9 +5148,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "url"
-        ],
+        "required": ["url"],
         "title": "WebhookEndpointCreate"
       },
       "Workspace": {
@@ -5345,10 +5174,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "created_at"
-        ],
+        "required": ["id", "created_at"],
         "title": "Workspace"
       },
       "WorkspaceConfiguration": {
@@ -5423,9 +5249,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id"
-        ],
+        "required": ["id"],
         "title": "WorkspaceCreate"
       },
       "WorkspaceGet": {
