@@ -16,59 +16,52 @@ This skill helps you set up and run Honcho locally for development.
    cd honcho
    ```
 
-   ```
-
 2. **Install dependencies:**
+
    ```bash
    # Install uv (Python package manager) if needed
    curl -LsSf https://astral.sh/uv/install.sh | sh
-   
+
    # Install project dependencies
    uv sync
    ```
 
-   ```
-
 3. **Set up environment:**
+
    ```bash
    # Copy and configure environment template
    cp .env.template .env
-   
+
    # Edit .env with your configuration
    # You'll need at minimum:
    # - HONCHO_API_KEY (get from https://app.honcho.dev)
    # - Database settings (see Database Setup below)
    ```
 
-   ```
-
 4. **Set up the database:**
+
    ```bash
    # Option 1: Use Docker (recommended for local dev)
    docker compose up -d
-   
+
    # Option 2: Use Supabase
    # Update .env with your Supabase connection details
    ```
 
-   ```
-
 5. **Run migrations:**
+
    ```bash
    uv run alembic upgrade head
    ```
 
-   ```
-
 6. **Run Honcho:**
+
    ```bash
    # In one terminal - API server
    uv run fastapi dev src/main.py
-   
+
    # In another terminal - Deriver (background reasoning engine)
    uv run python -m src.deriver
-   ```
-
    ```
 
 ---
@@ -90,11 +83,9 @@ uv sync
 uv add <package-name>
 ```
 
-```
-
 ### Setting Up .env
 
-The `.env.template`' file contains all available configuration options:
+The `.env.template` file contains all available configuration options:
 
 ```bash
 # Copy the template
@@ -102,8 +93,6 @@ cp .env.template .env
 
 # Edit .env with your values
 nano .env
-```
-
 ```
 
 **Required variables:**
@@ -137,20 +126,15 @@ docker compose down
 docker compose down -v
 ```
 
-```
-
 **Option 2: Supabase**
 
 1. Create a free Supabase project at https://supabase.com
 2. Go to Settings → Database → Connection string
 3. Copy the "URI" format connection string
 4. Add to `.env`:
-   ```
 
    ```
    DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT-REF].supabase.co:5432/postgres
-   ```
-
    ```
 
 **Option 3: Local PostgreSQL**
@@ -166,8 +150,6 @@ docker run -d \
 
 # Then set DATABASE_URL in .env:
 # DATABASE_URL=postgresql://postgres:honcho@localhost:5432/honcho
-```
-
 ```
 
 ### Running Migrations
@@ -186,8 +168,6 @@ uv run alembic history
 
 # Rollback one migration
 uv run alembic downgrade -1
-```
-
 ```
 
 ---
@@ -209,8 +189,6 @@ uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
 uv run fastapi dev src/main.py --port 8080
 ```
 
-```
-
 The API will be available at http://localhost:8000
 
 - **API Documentation:** http://localhost:8000/docs
@@ -225,9 +203,7 @@ The deriver is the background reasoning engine that processes messages asynchron
 uv run python -m src.deriver
 
 # With logging visible
-uv run python -m src.deriver --log-level INFO
-```
-
+LOG_LEVEL=INFO uv run python -m src.deriver
 ```
 
 **The deriver needs to run continuously.** It polls for new messages and processes them with Honcho's reasoning models.
@@ -237,27 +213,24 @@ uv run python -m src.deriver --log-level INFO
 **Typical local development setup:**
 
 1. Open Terminal 1:
+
    ```bash
    uv run fastapi dev src/main.py
    ```
 
-   ```
-
 2. Open Terminal 2:
+
    ```bash
    uv run python -m src.deriver
    ```
 
-   ```
-
 3. Open Terminal 3 (for running tests, etc.):
+
    ```bash
    # Run tests
    uv run pytest
-   
-   # Or make changes and watch reload in Terminal 1
-   ```
 
+   # Or make changes and watch reload in Terminal 1
    ```
 
 ---
@@ -283,8 +256,6 @@ uv run pytest -v
 uv run pytest -m "not slow"
 ```
 
-```
-
 ### Pre-commit Hooks
 
 Honcho uses pre-commit for code quality checks:
@@ -300,13 +271,10 @@ uv run pre-commit run --all-files
 uv run pre-commit run
 ```
 
-```
-
 Pre-commit hooks will run:
-- Code formatting (black, isort)
-- Linting (pylint, flake8)
-- Type checking (mypy)
-- Markdown linting
+- Code formatting (ruff-format)
+- Linting (ruff)
+- Type checking (basedpyright)
 
 ### Creating New Migrations
 
@@ -326,8 +294,6 @@ nano migrations/versions/<timestamp>_description_of_changes.py
 uv run alembic upgrade head
 ```
 
-```
-
 ### Adding Dependencies
 
 ```bash
@@ -341,8 +307,6 @@ uv add --dev package-name
 uv remove package-name
 ```
 
-```
-
 ---
 
 ## Troubleshooting
@@ -354,12 +318,11 @@ uv remove package-name
 **Solutions:**
 
 1. **Check if Docker database is running:**
+
    ```bash
    docker compose ps
    # If not running, start it:
    docker compose up -d
-   ```
-
    ```
 
 2. **Verify DATABASE_URL in .env:**
@@ -368,17 +331,15 @@ uv remove package-name
    - Ensure the port matches (usually 5432)
 
 3. **Test the connection manually:**
+
    ```bash
    uv run python -c "import os; from sqlalchemy import create_engine; engine = create_engine(os.getenv('DATABASE_URL')); print(engine.connect())"
    ```
 
-   ```
-
 4. **Check docker logs:**
+
    ```bash
    docker compose logs postgres
-   ```
-
    ```
 
 ### Missing API Key Errors
@@ -394,19 +355,15 @@ uv remove package-name
    - Copy your API key from Settings
 
 2. **Add to .env:**
-   ```
 
    ```
    HONCHO_API_KEY=your_api_key_here
    ```
 
-   ```
-
 3. **Verify it's loaded:**
+
    ```bash
    uv run python -c "import os; print(os.getenv('HONCHO_API_KEY'))"
-   ```
-
    ```
 
 ### Deriver Not Processing Messages
@@ -416,10 +373,9 @@ uv remove package-name
 **Solutions:**
 
 1. **Check if deriver is running:**
+
    ```bash
    ps aux | grep deriver
-   ```
-
    ```
 
 2. **Check deriver logs for errors:**
@@ -441,25 +397,22 @@ uv remove package-name
 **Solutions:**
 
 1. **Reinstall dependencies:**
+
    ```bash
    uv sync
    ```
 
-   ```
-
 2. **Check PYTHONPATH:**
+
    ```bash
    # Should include src/ directory
    export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
    ```
 
-   ```
-
 3. **Verify installation:**
+
    ```bash
    uv run python -c "import honcho; print(honcho.__file__)"
-   ```
-
    ```
 
 ### Port Already in Use
@@ -469,17 +422,15 @@ uv remove package-name
 **Solutions:**
 
 1. **Kill the process using the port:**
+
    ```bash
    lsof -ti:8000 | xargs kill -9
    ```
 
-   ```
-
 2. **Or use a different port:**
+
    ```bash
    uv run fastapi dev src/main.py --port 8080
-   ```
-
    ```
 
 ### Migration Conflicts
@@ -489,26 +440,23 @@ uv remove package-name
 **Solutions:**
 
 1. **Check current migration:**
+
    ```bash
    uv run alembic current
    ```
 
-   ```
-
 2. **Stamp database to current revision (use with caution):**
+
    ```bash
    uv run alembic stamp head
    ```
 
-   ```
-
 3. **Reset database (destructive!):**
+
    ```bash
    docker compose down -v
    docker compose up -d
    uv run alembic upgrade head
-   ```
-
    ```
 
 ### Slow Performance
@@ -558,21 +506,20 @@ uv run python -m src.deriver               # Deriver
 uv run pytest                              # Run tests
 uv run pytest -v                           # Verbose tests
 uv run pytest --cov=src                    # Coverage report
-uv run pre-commit run --all-files           # Run pre-commit hooks
-uv run black .                             # Format code
-uv run mypy src/                           # Type checking
+uv run pre-commit run --all-files          # Run pre-commit hooks
+uv run ruff format src/                    # Format code
+uv run basedpyright                        # Type checking
 
 # Troubleshooting
 docker compose logs -f                     # View logs
 lsof -ti:8000                             # Find process on port
 ```
 
-```
-
 ---
 
 ## Getting Help
 
+- **Contributing Guide:** See [CONTRIBUTING.md](../../../CONTRIBUTING.md) at the repository root for additional contributor guidelines.
 - **Documentation:** https://docs.honcho.dev
 - **GitHub Issues:** https://github.com/plastic-labs/honcho/issues
 - **Discord:** https://discord.gg/plasticlabs
