@@ -1,12 +1,11 @@
 # Honcho MCP Server
 
-## Quickstart: Use the Hosted MCP Server
+A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) for [Honcho](https://honcho.dev), providing AI memory and personalization tools to LLM clients like Claude Desktop.
 
-Go to <https://app.honcho.dev> and get an API key. Then go to Claude Desktop and navigate to custom MCP servers.
+## Quickstart: Use the Hosted Server
 
-If you don't have node/bun installed you will need to do that. You can also use npm if you already have that installed. If not, Claude Desktop or Claude Code can help!
-
-Add Honcho to your Claude desktop config. You must provide a username for Honcho to refer to you as -- preferably what you want Claude to actually call you.
+1. Get an API key at <https://app.honcho.dev>
+2. Add Honcho to your Claude Desktop config:
 
 ```json
 {
@@ -30,356 +29,90 @@ Add Honcho to your Claude desktop config. You must provide a username for Honcho
 }
 ```
 
-You may customize your assistant name and/or workspace ID. Both are optional.
+### Optional Headers
 
-```json
-{
-  "mcpServers": {
-    "honcho": {
-      "command": "bunx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.honcho.dev",
-        "--header",
-        "Authorization:${AUTH_HEADER}",
-        "--header",
-        "X-Honcho-User-Name:${USER_NAME}",
-        "--header",
-        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
-        "--header",
-        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
-      ],
-      "env": {
-        "AUTH_HEADER": "Bearer <your-honcho-key>",
-        "USER_NAME": "<your-name>",
-        "ASSISTANT_NAME": "<your-assistant-name>",
-        "WORKSPACE_ID": "<your-custom-workspace-id>"
-      }
-    }
-  }
-}
-```
+| Header | Default | Description |
+| --- | --- | --- |
+| `X-Honcho-Assistant-Name` | `"Assistant"` | Name for the assistant peer |
+| `X-Honcho-Workspace-ID` | `"default"` | Workspace to operate in |
+| `X-Honcho-Base-URL` | `https://api.honcho.dev` | Custom API base URL |
 
 ## Available Tools
 
-### start_conversation
+### Bespoke Flow (Simple)
 
-Start a new conversation session with Honcho. This initializes a session for tracking conversation history and context.
+| Tool | Description |
+| --- | --- |
+| `start_conversation` | Start a new conversation, returns a session ID |
+| `get_personalization_insights` | Ask Honcho about the user for personalized responses |
+| `add_turn` | Record user + assistant messages |
 
-**Returns:** A session ID that you must store and use for all subsequent interactions in this conversation.
+### General Tools
 
-### add_turn
+**Workspace:** `search_workspace`, `get_workspace_metadata`, `set_workspace_metadata`
 
-Add a conversation turn (user and assistant messages) to the current session. This stores the conversation in Honcho for context tracking.
+**Peers:** `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`, `get_peer_metadata`, `set_peer_metadata`, `search_peer_messages`
 
-**Parameters:**
+**Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `add_messages_to_session`, `get_session_messages`, `search_session_messages`, `get_session_context`, `get_session_representation`, `get_session_metadata`, `set_session_metadata`
 
-- `session_id`: The ID of the session to add the turn to
-- `messages`: Array of message objects with `role` ("user" or "assistant") and `content`
+**Conclusions:** `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
 
-**Example usage:**
+**System:** `schedule_dream`, `get_queue_status`
 
-```json
-{
-  "session_id": "session-uuid",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Hello, how are you?"
-    },
-    {
-      "role": "assistant",
-      "content": "I'm doing well, thank you!"
-    }
-  ]
-}
+## Architecture
+
+```
+src/
+  index.ts              # Worker entry point — parse config, delegate to MCP handler
+  server.ts             # createServer() — registers all tools on an McpServer
+  config.ts             # HonchoConfig, parseConfig(), createClient()
+  types.ts              # ToolContext, result helpers
+  tools/
+    bespoke.ts          # start_conversation, add_turn, get_personalization_insights
+    workspace.ts        # search, metadata
+    peers.ts            # CRUD, chat, card, context, representation, search
+    sessions.ts         # CRUD, peers, messages, context, representation, clone
+    conclusions.ts      # list, query, create, delete
+    system.ts           # dream, queue status
 ```
 
-### get_personalization_insights
+Built on:
 
-Get personalization insights from Honcho based on conversation history. This queries the user's conversation context to provide personalized responses.
+- **[agents](https://www.npmjs.com/package/agents)** — `createMcpHandler` for Cloudflare Workers
+- **[@modelcontextprotocol/sdk](https://www.npmjs.com/package/@modelcontextprotocol/sdk)** — `McpServer` for tool registration
+- **[@honcho-ai/sdk](https://www.npmjs.com/package/@honcho-ai/sdk)** v2 — Honcho TypeScript SDK
 
-**Parameters:**
+## Development
 
-- `session_id`: The ID of the session for context
-- `query`: The question about the user's preferences, habits, etc.
-
-**Example queries:**
-
-- "What does this message reveal about the user's communication preferences?"
-- "How formal or casual should I be with the user based on our history?"
-- "What emotional state might the user be in right now?"
-
-### search_workspace
-
-Search for messages across the entire workspace.
-
-**Parameters:**
-
-- `query`: The search query to use
-
-### get_workspace_metadata
-
-Get metadata for the current workspace.
-
-**Parameters:** None
-
-### set_workspace_metadata
-
-Set metadata for the current workspace.
-
-**Parameters:**
-
-- `metadata`: A dictionary of metadata to associate with the workspace
-
-### create_peer
-
-Create or get a peer with the specified ID and optional configuration.
-
-**Parameters:**
-
-- `peer_id`: Unique identifier for the peer
-- `config`: Optional configuration dictionary for the peer
-
-### get_peer_metadata
-
-Get metadata for a specific peer.
-
-**Parameters:**
-
-- `peer_id`: The ID of the peer to get metadata for
-
-### set_peer_metadata
-
-Set metadata for a specific peer.
-
-**Parameters:**
-
-- `peer_id`: The ID of the peer to set metadata for
-- `metadata`: A dictionary of metadata to associate with the peer
-
-### search_peer_messages
-
-Search for messages sent by a peer.
-
-**Parameters:**
-
-- `peer_id`: The ID of the peer to search messages for
-- `query`: The search query to use
-
-### chat
-
-Query a peer's representation with natural language questions.
-
-**Parameters:**
-
-- `peer_id`: The ID of the peer to query
-- `query`: The natural language question to ask
-- `target_peer_id`: Optional target peer ID for local representation queries
-- `session_id`: Optional session ID to scope the query to a specific session
-
-### list_peers
-
-Get all peers in the current workspace.
-
-**Parameters:** None
-
-### create_session
-
-Create or get a session with the specified ID and optional configuration.
-
-**Parameters:**
-
-- `session_id`: Unique identifier for the session
-- `config`: Optional configuration dictionary for the session
-
-### get_session_metadata
-
-Get metadata for a specific session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to get metadata for
-
-### set_session_metadata
-
-Set metadata for a specific session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to set metadata for
-- `metadata`: A dictionary of metadata to associate with the session
-
-### add_peers_to_session
-
-Add peers to a session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to add peers to
-- `peer_ids`: List of peer IDs to add to the session
-
-### remove_peers_from_session
-
-Remove peers from a session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to remove peers from
-- `peer_ids`: List of peer IDs to remove from the session
-
-### get_session_peers
-
-Get all peer IDs in a session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to get peers from
-
-### add_messages_to_session
-
-Add messages to a session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to add messages to
-- `messages`: List of message dictionaries with `peer_id`, `content`, and optional `metadata`
-
-### get_session_messages
-
-Get messages from a session with optional filtering.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to get messages from
-- `filters`: Optional dictionary of filter criteria
-
-### get_session_context
-
-Get optimized context for a session within a token limit.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to get context for
-- `summary`: Whether to include summary information (default: true)
-- `tokens`: Maximum number of tokens to include in the context
-
-### search_session_messages
-
-Search for messages in a specific session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session to search messages in
-- `query`: The search query to use
-
-### get_working_representation
-
-Get the current working representation of a peer in a session.
-
-**Parameters:**
-
-- `session_id`: The ID of the session
-- `peer_id`: The ID of the peer to get the working representation of
-- `target_peer_id`: Optional target peer ID to get the representation of what peer_id knows about target_peer_id
-
-### list_sessions
-
-Get all sessions in the current workspace.
-
-**Parameters:** None
-
-## Contributing or Self Hosting
-
-A Cloudflare Worker that implements the Model Context Protocol (MCP) to provide Honcho functionality as tools for AI assistants like Claude Desktop.
-
-### Deploy MCP Worker
-
-1. **Install dependencies:**
-
-   ```bash
-   bun i
-   ```
-
-2. **Login to Cloudflare (if not already done):**
-
-   ```bash
-   bun wrangler login
-   ```
-
-3. **Configure your worker name in `wrangler.toml`:**
-   - Update the `name` field to your desired worker name
-   - Update the worker names in the `[env.production]` and `[env.staging]` sections
-
-4. **Test locally:**
-
-   ```bash
-   bun dev
-   ```
-
-5. **Deploy to production:**
-
-   ```bash
-   bun run deploy
-   ```
-
-### Configuration Options
-
-You can customize the behavior using HTTP headers:
-
-**Available Configuration:**
-
-- `apiKey`: Your Honcho API key
-- `baseUrl`: Custom Honcho API base URL (default: <https://api.honcho.dev>)
-- `workspaceId`: Workspace ID (default: "default")
-- `userName`: User identifier (default: "User")
-- `assistantName`: Assistant identifier (default: "Assistant")
-
-#### Using HTTP Headers
-
-Pass configuration to mcp-remote via custom headers:
+### Setup
 
 ```bash
-bunx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev \
-  --header "Authorization:Bearer YOUR_HONCHO_API_KEY" \
-  --header "X-Honcho-Workspace-ID:my-workspace" \
-  --header "X-Honcho-User-Name:john" \
-  --header "X-Honcho-Assistant-Name:Claude" \
-  --header "X-Honcho-Base-URL:https://custom.honcho.dev"
+bun install
 ```
 
-**Supported Custom Headers:**
-
-- `Authorization: Bearer YOUR_API_KEY` - Your Honcho API key
-- `X-Honcho-Base-URL` - Custom Honcho API base URL
-- `X-Honcho-Workspace-ID` - Workspace identifier
-- `X-Honcho-User-Name` - User identifier
-- `X-Honcho-Assistant-Name` - Assistant identifier
-
-### Authentication
-
-The MCP server requires a valid Honcho API key provided via the Authorization header.
-
-### Testing
-
-You can test the MCP server using `mcp-remote` with the local URL:
+### Local dev
 
 ```bash
-bunx mcp-remote http://localhost:8787 --header "Authorization:Bearer your-api-key"
+bun dev
 ```
 
-### Error Handling
+### Type-check
 
-The server provides proper JSON-RPC 2.0 error responses:
+```bash
+bun run tsc --noEmit
+```
 
-- `-32700`: Parse error
-- `-32600`: Invalid Request
-- `-32601`: Method not found
-- `-32602`: Invalid params
-- `-32603`: Internal error
+### Test locally
 
-Common issues:
+```bash
+bunx mcp-remote http://localhost:8787 \
+  --header "Authorization:Bearer <key>" \
+  --header "X-Honcho-User-Name:test"
+```
 
-- **Missing API key**: Ensure you provide a valid Honcho API key via header or URL parameter
-- **Invalid tool parameters**: Check that required parameters are provided and properly formatted
-- **Network errors**: Verify the worker is deployed and accessible
+### Deploy
+
+```bash
+bun run deploy              # production
+bun run deploy:staging      # staging
+```
