@@ -302,8 +302,61 @@ REASONING_LEVELS: list[ReasoningLevel] = [
 ]
 
 
+class SynthesisModelSettings(BaseModel):
+    """Settings for the synthesis model in two-phase dialectic.
+
+    When configured, dialectic runs in two phases:
+    1. Search phase: Uses the parent level's model for tool calling
+    2. Synthesis phase: Uses this model for final response generation
+    """
+
+    model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
+
+    PROVIDER: Annotated[SupportedProviders, Field(validation_alias="provider")]
+    MODEL: Annotated[str, Field(validation_alias="model")]
+    BACKUP_PROVIDER: Annotated[
+        SupportedProviders | None, Field(validation_alias="backup_provider")
+    ] = None
+    BACKUP_MODEL: Annotated[str | None, Field(validation_alias="backup_model")] = None
+    THINKING_BUDGET_TOKENS: Annotated[
+        int, Field(ge=0, le=100_000, validation_alias="thinking_budget_tokens")
+    ] = 0
+    MAX_OUTPUT_TOKENS: Annotated[
+        int | None, Field(ge=1, le=100_000, validation_alias="max_output_tokens")
+    ] = None  # None means use global DIALECTIC.MAX_OUTPUT_TOKENS
+
+    @model_validator(mode="after")
+    def _validate_backup_configuration(self) -> "SynthesisModelSettings":
+        """Ensure both backup fields are set together or both are None."""
+        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
+            raise ValueError(
+                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_anthropic_thinking_budget(self) -> "SynthesisModelSettings":
+        """Ensure Anthropic thinking budget is >= 1024 when enabled."""
+        if (
+            self.PROVIDER == "anthropic"
+            and self.THINKING_BUDGET_TOKENS > 0
+            and self.THINKING_BUDGET_TOKENS < 1024
+        ):
+            raise ValueError(
+                f"THINKING_BUDGET_TOKENS must be >= 1024 for Anthropic provider when enabled (got {self.THINKING_BUDGET_TOKENS})"
+            )
+        return self
+
+
 class DialecticLevelSettings(BaseModel):
-    """Settings for a specific reasoning level in the dialectic."""
+    """Settings for a specific reasoning level in the dialectic.
+
+    Supports two modes:
+    1. Single-model mode (default): One model handles both tool calling and synthesis
+    2. Two-model mode: Search model handles tool calling, synthesis model generates final response
+
+    To enable two-model mode, set the SYNTHESIS field with SynthesisModelSettings.
+    """
 
     model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -325,6 +378,11 @@ class DialecticLevelSettings(BaseModel):
     TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
         None  # None/auto lets model decide, "any"/"required" forces tool use
     )
+
+    # Optional synthesis model for two-phase dialectic
+    SYNTHESIS: Annotated[
+        SynthesisModelSettings | None, Field(validation_alias="synthesis")
+    ] = None
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self) -> "DialecticLevelSettings":
@@ -367,29 +425,38 @@ class DialecticSettings(HonchoSettings):
                 TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
+                PROVIDER="custom",
+                MODEL="z-ai/glm-4.7-flash",
                 THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=5,
-                TOOL_CHOICE="any",
+                MAX_TOOL_ITERATIONS=4,
             ),
             "medium": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=2,
+                PROVIDER="custom",
+                MODEL="z-ai/glm-4.7-flash",
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=4,
+                SYNTHESIS=SynthesisModelSettings(
+                    PROVIDER="anthropic",
+                    MODEL="claude-haiku-4-5",
+                    THINKING_BUDGET_TOKENS=1024,
+                ),
             ),
             "high": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=4,
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=5,
             ),
             "max": DialecticLevelSettings(
                 PROVIDER="anthropic",
                 MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=2048,
-                MAX_TOOL_ITERATIONS=10,
+                THINKING_BUDGET_TOKENS=0,
+                MAX_TOOL_ITERATIONS=8,
+                SYNTHESIS=SynthesisModelSettings(
+                    PROVIDER="anthropic",
+                    MODEL="claude-opus-4-5",
+                    THINKING_BUDGET_TOKENS=1024,
+                ),
             ),
         }
     )
@@ -408,11 +475,36 @@ class DialecticSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
-        """Ensure the output token limit exceeds all thinking budgets."""
+        """Ensure effective output token limits exceed all thinking budgets."""
         for level, level_settings in self.LEVELS.items():
-            if self.MAX_OUTPUT_TOKENS <= level_settings.THINKING_BUDGET_TOKENS:
+            effective_level_max_output_tokens = (
+                level_settings.MAX_OUTPUT_TOKENS
+                if level_settings.MAX_OUTPUT_TOKENS is not None
+                else self.MAX_OUTPUT_TOKENS
+            )
+            if (
+                effective_level_max_output_tokens
+                <= level_settings.THINKING_BUDGET_TOKENS
+            ):
                 raise ValueError(
-                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                    f"Effective MAX_OUTPUT_TOKENS ({effective_level_max_output_tokens}) must be greater than THINKING_BUDGET_TOKENS ({level_settings.THINKING_BUDGET_TOKENS}) for level '{level}'"
+                )
+
+            synthesis_settings = level_settings.SYNTHESIS
+            if synthesis_settings is None:
+                continue
+
+            effective_synthesis_max_output_tokens = (
+                synthesis_settings.MAX_OUTPUT_TOKENS
+                if synthesis_settings.MAX_OUTPUT_TOKENS is not None
+                else self.MAX_OUTPUT_TOKENS
+            )
+            if (
+                effective_synthesis_max_output_tokens
+                <= synthesis_settings.THINKING_BUDGET_TOKENS
+            ):
+                raise ValueError(
+                    f"Effective SYNTHESIS.MAX_OUTPUT_TOKENS ({effective_synthesis_max_output_tokens}) must be greater than SYNTHESIS.THINKING_BUDGET_TOKENS ({synthesis_settings.THINKING_BUDGET_TOKENS}) for level '{level}'"
                 )
         return self
 
