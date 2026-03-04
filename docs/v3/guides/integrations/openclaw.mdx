@@ -66,7 +66,7 @@ Files are uploaded via `session.uploadFile()`. User/owner files go to the owner 
 
 Once installed, the plugin runs automatically:
 
-* **Message Observation** — After every AI turn, the conversation is persisted to Honcho. Both user and agent messages are observed, allowing Honcho to build and refine its models. On first install, the plugin captures the full pre-existing session history with original message timestamps — no conversations are lost.
+* **Message Observation** — After every AI turn, the conversation is persisted to Honcho. Both user and agent messages are observed, allowing Honcho to build and refine its models.
 * **Tool-Based Context Access** — The AI can query Honcho mid-conversation using tools like `honcho_recall`, `honcho_search`, and `honcho_analyze` to retrieve relevant context. Context is injected during OpenClaw's `before_prompt_build` phase, ensuring accurate turn boundaries.
 * **Dual Peer Model** — Honcho maintains separate representations: one for the user (preferences, facts, communication style) and one for the agent (personality, learned behaviors). Each OpenClaw agent gets its own Honcho peer (`agent-{id}`), so multi-agent workspaces maintain isolated memory.
 * **Clean Persistence** — Platform metadata (conversation info, sender headers, thread context, forwarded messages) is stripped before saving to Honcho, ensuring only meaningful content is persisted.
