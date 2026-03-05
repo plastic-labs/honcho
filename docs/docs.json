@@ -117,6 +117,13 @@
                 ]
               },
               {
+                "group": "Community Integrations",
+                "pages": [
+                  "v3/guides/community/agent0",
+                  "v3/guides/community/hermes"
+                ]
+              },
+              {
                 "group": "Migrations",
                 "pages": [
                   "v3/guides/migrations/mem0"

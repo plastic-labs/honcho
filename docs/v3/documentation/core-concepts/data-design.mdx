@@ -68,7 +68,7 @@ Not every peer needs a representation. Set `observe_me: false` on peers that beh
 
 <CodeGroup>
 ```python Python
-from honcho import PeerConfig
+from honcho.api_types import PeerConfig
 
 # The assistant doesn't need a representation
 assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
@@ -79,7 +79,7 @@ user = honcho.peer("user-123", configuration=PeerConfig(observe_me=True))
 
 ```typescript TypeScript
 const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
-const user = await honcho.peer("user-123", { configuration: { observeMe: True } });
+const user = await honcho.peer("user-123", { configuration: { observeMe: true } });
 ```
 </CodeGroup>
 
@@ -113,8 +113,8 @@ An assistant that remembers the user across sessions and platforms. The [Honcho 
 
 <CodeGroup>
 ```python Python
-from honcho import Honcho, PeerConfig
-from honcho.api_types import SessionPeerConfig
+from honcho import Honcho
+from honcho.api_types import PeerConfig, SessionPeerConfig
 
 honcho = Honcho(workspace_id="my-companion-app")
 
@@ -176,7 +176,8 @@ Coding agents survive terminal restarts, editor switches, and project hops. The 
 
 <CodeGroup>
 ```python Python
-from honcho import Honcho, PeerConfig
+from honcho import Honcho
+from honcho.api_types import PeerConfig
 
 honcho = Honcho(workspace_id="claude_code")
 

@@ -1,0 +1,33 @@
+---
+title: "Hermes Agent"
+icon: 'bolt'
+description: "Add AI-native memory to Hermes Agent"
+sidebarTitle: 'Hermes Agent'
+---
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is an open-source AI agent from Nous Research with advanced tool-calling capabilities, terminal access, a skills system, and multi-platform deployment (Telegram, Discord, Slack, WhatsApp). The Honcho integration gives Hermes persistent cross-session memory and user modeling.
+
+## Getting Started
+
+Honcho support is built into Hermes Agent. See the [Hermes Agent README](https://github.com/NousResearch/hermes-agent) for full installation and configuration instructions.
+
+The integration is opt-in and requires:
+1. A Honcho API key from [app.honcho.dev](https://app.honcho.dev)
+2. The `honcho-ai` package (`pip install hermes-agent[honcho]`)
+3. Enabling Honcho in your Hermes config
+
+## How It Works
+
+The integration runs alongside Hermes's existing `USER.md` memory system. Honcho adds cross-session reasoning — prefetching user context into each turn, syncing exchanges for ongoing modeling, and exposing a dialectic tool (`query_user_context`) for the agent to query its understanding mid-conversation.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Hermes Agent" icon="github" href="https://github.com/NousResearch/hermes-agent">
+    Source code, installation, and full documentation.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="/documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>
