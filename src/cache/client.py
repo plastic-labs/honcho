@@ -49,6 +49,7 @@ async def init_cache() -> None:
             cache.setup(
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
+                retry_on_error=[RuntimeError],
             )
 
         except Exception as setup_err:
