@@ -52,7 +52,8 @@
                 "pages": [
                   "v3/documentation/core-concepts/architecture",
                   "v3/documentation/core-concepts/reasoning",
-                  "v3/documentation/core-concepts/representation"
+                  "v3/documentation/core-concepts/representation",
+                  "v3/documentation/core-concepts/modeling-data"
                 ]
               },
               {
@@ -71,7 +72,8 @@
                       "v3/documentation/features/advanced/summarizer",
                       "v3/documentation/features/advanced/search",
                       "v3/documentation/features/advanced/using-filters",
-                      "v3/documentation/features/advanced/streaming-response"
+                      "v3/documentation/features/advanced/streaming-response",
+                      "v3/documentation/features/advanced/file-uploads"
                     ]
                   }
                 ]
@@ -91,9 +93,7 @@
               {
                 "group": "Overview",
                 "pages": [
-                  "v3/guides/overview",
-                  "v3/guides/file-uploads",
-                  "v3/guides/modeling-data"
+                  "v3/guides/overview"
                 ]
               },
               {
@@ -108,17 +108,12 @@
                 ]
               },
               {
-                "group": "Migrations",
-                "pages": [
-                  "v3/guides/migrations/mem0"
-                ]
-              },
-              {
                 "group": "Tutorials",
                 "pages": [
                   "v3/guides/discord",
                   "v3/guides/telegram",
-                  "v3/guides/integrations/reachy-mini"
+                  "v3/guides/integrations/reachy-mini",
+                  "v3/guides/migrations/mem0"
                 ]
               }
             ]
