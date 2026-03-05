@@ -93,7 +93,7 @@
                 "pages": [
                   "v3/guides/overview",
                   "v3/guides/file-uploads",
-                  "v3/guides/storing-data"
+                  "v3/guides/modeling-data"
                 ]
               },
               {
@@ -104,8 +104,7 @@
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/mcp",
                   "v3/guides/integrations/n8n",
-                  "v3/guides/integrations/openclaw",
-                  "v3/guides/integrations/reachy-mini"
+                  "v3/guides/integrations/openclaw"
                 ]
               },
               {
@@ -115,10 +114,11 @@
                 ]
               },
               {
-                "group": "Chatbots",
+                "group": "Tutorials",
                 "pages": [
                   "v3/guides/discord",
-                  "v3/guides/telegram"
+                  "v3/guides/telegram",
+                  "v3/guides/integrations/reachy-mini"
                 ]
               }
             ]
