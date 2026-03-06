@@ -68,7 +68,7 @@ Not every peer needs a representation. Set `observe_me: false` on peers that beh
 
 <CodeGroup>
 ```python Python
-from honcho.api_types import PeerConfig
+from honcho import PeerConfig
 
 # The assistant doesn't need a representation
 assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
@@ -322,7 +322,7 @@ const fullView = await player.chat("What is this player up to?");
 - **Leaving `observe_me` on for assistants** -- Wastes reasoning compute on a peer you control. Deterministic behavior doesn't need to be modeled.
 - **Not storing messages** -- Honcho reasons about messages asynchronously. If you don't call `add_messages()`, there's nothing to reason about — no messages means no memory. See [Storing Data](/v3/documentation/features/advanced/storing-data) for details.
 - **Creating a new workspace per user** -- Use peers within a single workspace instead. Workspaces are for isolation between applications, not between users.
-- **Too many tiny sessions** -- Summaries and `get_context` are scoped to a single session. If you split a continuous conversation across many sessions, context is fragmented and each session is too short to summarize. Reuse a session when context should flow continuously.
+- **Too many tiny sessions** -- Summaries and `session.context()` are scoped to a single session. If you split a continuous conversation across many sessions, context is fragmented and each session is too short to summarize. Reuse a session when context should flow continuously.
 - **Blocking on processing** -- Messages are processed asynchronously in the background. Don't poll or wait for reasoning to complete before continuing your application flow.
 
 ## Next Steps
