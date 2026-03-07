@@ -1,8 +1,8 @@
 {
-  "name": "honcho-mcp-proxy",
-  "version": "1.0.0",
-  "description": "Cloudflare Worker proxy for Honcho MCP Server",
-  "main": "worker.ts",
+  "name": "honcho-mcp",
+  "version": "3.0.0",
+  "description": "Honcho MCP Server — Cloudflare Worker",
+  "main": "src/index.ts",
   "packageManager": "bun@1.2.0",
   "engines": {
     "node": ">=18.0.0",
@@ -15,7 +15,10 @@
     "deploy:staging": "wrangler deploy --env staging"
   },
   "dependencies": {
-    "@honcho-ai/sdk": "^2.0.0"
+    "@honcho-ai/sdk": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "agents": "^0.4.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241002.0",
