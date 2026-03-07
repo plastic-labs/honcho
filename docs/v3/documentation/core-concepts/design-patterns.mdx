@@ -1,5 +1,5 @@
 ---
-title: Data Design
+title: Design Patterns
 description: "Design your workspace, peers, and sessions for common application patterns"
 icon: "cubes"
 ---
@@ -12,7 +12,7 @@ If you're using a coding agent (Claude Code, Cursor, etc.), the **`/honcho-integ
 
 | Decision | Recommendation |
 |----------|---------------|
-| How many workspaces? | One per application. Separate per-tenant if you need hard data isolation. |
+| How many workspaces? | One per application. Separate per-agent if you need hard data isolation. |
 | Who should be a peer? | Any entity you want Honcho to reason about — users, agents, NPCs, students, customers. |
 | How should I scope sessions? | Flexible -- per-conversation, per-channel, per-scene, etc. See [Session Design](#session-design) below. |
 | Should I set `observe_me: false`? | Yes, for any peer you don't need Honcho to build a representation of — typically assistants or bots with deterministic behavior. |
@@ -30,7 +30,7 @@ Workspaces are the top-level container. Everything inside a workspace (peers, se
 | Per-tenant | Multi-tenant SaaS where each customer's data must be completely isolated. |
 
 <Info>
-You don't need to create workspaces explicitly. The SDK creates one called `default` if you don't specify a `workspace_id`
+If you are using the SDK, it will create a workspace called `default` if no name is specified for `workspace_id`
 </Info>
 
 ---
@@ -49,7 +49,8 @@ A peer is any entity that participates in a session. Observation settings contro
 
 Give peers stable, unique identifiers scoped to your application:
 
-```python
+<CodeGroup>
+```python Python
 # Prefix with the source platform for multi-channel apps
 peer = honcho.peer("discord_491827364")
 peer = honcho.peer("slack_U04ABCDEF")
@@ -61,6 +62,40 @@ peer = honcho.peer("user_abc123")
 peer = honcho.peer("assistant")
 peer = honcho.peer("dungeon-master")
 ```
+
+```typescript TypeScript
+// Prefix with the source platform for multi-channel apps
+const peer = await honcho.peer("discord_491827364");
+const peer = await honcho.peer("slack_U04ABCDEF");
+
+// Use your own user IDs for backend integrations
+const peer = await honcho.peer("user_abc123");
+
+// Use descriptive names for agents/assistants
+const peer = await honcho.peer("assistant");
+const peer = await honcho.peer("dungeon-master");
+```
+</CodeGroup>
+
+If your Peer represents an entity that may go by multiple different names, such as nicknames indicate that in the Peer Card:
+
+<CodeGroup>
+```python Python
+peer = honcho.peer("user_abc123")
+peer.set_card([
+    "Name: Alice. Also known as 'Ali' and 'A'.",
+    "College student, prefers casual tone.",
+])
+```
+
+```typescript TypeScript
+const peer = await honcho.peer("user_abc123");
+await peer.setCard([
+    "Name: Alice. Also known as 'Ali' and 'A'.",
+    "College student, prefers casual tone.",
+]);
+```
+</CodeGroup>
 
 **When to disable reasoning**
 
@@ -320,7 +355,7 @@ const fullView = await player.chat("What is this player up to?");
 ## Common Mistakes
 
 - **Leaving `observe_me` on for assistants** -- Wastes reasoning compute on a peer you control. Deterministic behavior doesn't need to be modeled.
-- **Not storing messages** -- Honcho reasons about messages asynchronously. If you don't call `add_messages()`, there's nothing to reason about — no messages means no memory. See [Storing Data](/v3/documentation/features/advanced/storing-data) for details.
+- **Not storing messages** -- Honcho reasons about messages asynchronously. If you don't call `add_messages()`, there's nothing to reason about — no messages means no memory. See [Storing Data](/v3/documentation/features/storing-data) for details.
 - **Creating a new workspace per user** -- Use peers within a single workspace instead. Workspaces are for isolation between applications, not between users.
 - **Too many tiny sessions** -- Summaries and `session.context()` are scoped to a single session. If you split a continuous conversation across many sessions, context is fragmented and each session is too short to summarize. Reuse a session when context should flow continuously.
 - **Blocking on processing** -- Messages are processed asynchronously in the background. Don't poll or wait for reasoning to complete before continuing your application flow.
