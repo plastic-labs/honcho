@@ -1,0 +1,142 @@
+---
+title: "Granola"
+icon: 'microphone'
+description: "Import meeting notes and transcripts from Granola into Honcho"
+sidebarTitle: 'Granola'
+---
+
+Import your [Granola](https://granola.ai) meeting data into Honcho to build queryable representations of the people you meet with. The transfer script handles participants, transcripts, and summaries — mapping them onto Honcho's peer and session model.
+
+<Note>
+The full code is available on [GitHub](https://github.com/plastic-labs/honcho/tree/main/examples/granola).
+</Note>
+
+## Quick Start
+
+```bash
+pip install honcho-ai httpx
+export HONCHO_API_KEY="your-key-from-app.honcho.dev"
+
+python honcho_granola.py
+```
+
+The script will:
+1. Open your browser for Granola OAuth authentication
+2. Fetch all meetings and their content
+3. Walk you through each meeting interactively — confirm peers, choose import mode, skip meetings you don't want
+4. Print a summary of what was transferred
+
+## Honcho Mapping
+
+| Granola Concept | Honcho Concept | Details |
+|-----------------|----------------|---------|
+| Your Granola account | Workspace (`granola`) | One workspace for all meetings |
+| Meeting participant | Peer | Email as ID for deduplication across meetings |
+| Individual meeting | Session (`meeting-{id}`) | One session per meeting |
+| Transcript turns | Messages with attribution | Two-person calls get full speaker attribution |
+| Meeting summary | Message from note creator | Multi-person calls store the summary |
+
+## Key Design Decisions
+
+**Email as Peer ID.** The script uses email addresses as the basis for peer IDs, normalized to a URL-safe format (e.g., `vince@plasticlabs.ai` becomes `vince-plasticlabs-ai`). This ensures consistent identification across meetings — if you meet someone in 5 different calls, all conversations accumulate under the same peer.
+
+```python
+# These all resolve to the same peer:
+honcho.peer("vince-plasticlabs-ai")  # From Meeting A
+honcho.peer("vince-plasticlabs-ai")  # From Meeting B
+```
+
+**Auto-Detecting "Me".** Granola marks the note creator in its participant list with `(note creator)`. The script uses this to identify you automatically.
+
+```
+Participants: Abigail (note creator) from Plasticlabs <abigail@plasticlabs.ai>,
+              Vince Trost from Plasticlabs <vince@plasticlabs.ai>
+```
+
+**Two-Person Calls: Full Attribution.** When exactly one other participant is present *and* the transcript contains `Them:` turns, the transcript is stored with speaker-attributed messages. Consecutive same-speaker turns are merged before storing.
+
+```python
+session.add_messages([
+    me.message("What's your timeline for the launch?"),
+    them.message("We're targeting Q2, but it depends on the API integration."),
+])
+```
+
+**Multi-Person Calls: Summary Mode.** Granola's transcript uses `Them:` for all non-creator speakers with no disambiguation — in a 4-person call, everyone else is just `Them:`. Rather than guess incorrectly, the script stores Granola's summary as your record of the meeting, with participants in metadata.
+
+```python
+session.add_messages([
+    me.message(
+        f"Meeting: Product Planning\n"
+        f"Date: Mar 5, 2026 2:00 PM\n"
+        f"Participants: Vince Trost from Plasticlabs, Jordan from Acme Corp\n\n"
+        f"{meeting_summary}",
+        metadata={
+            "participants": "Vince Trost from Plasticlabs, Jordan from Acme Corp",
+            "mode": "summary",
+            "granola_meeting_id": meeting_id,
+        }
+    )
+])
+```
+
+The summary is attributed to you because it's *your* record of what happened. Granola captured your notes from a meeting where those people were present.
+
+**Interactive Confirmation.** When the script encounters a new participant, it prompts before creating the peer. For multi-person calls that are actually 1:1s (extra participants listed but didn't speak), you can override the detection.
+
+**Noisy Transcripts Preserved.** Granola's raw transcripts are often fragmented (`Me: Yeah.  Them: Yeah.  Me: And.`). The script merges consecutive same-speaker turns but otherwise preserves the raw content. Honcho's reasoning extracts signal from noisy data.
+
+## Querying After Import
+
+```python
+from honcho import Honcho
+
+honcho = Honcho(workspace_id="granola", api_key=os.environ["HONCHO_API_KEY"])
+
+# Peer IDs are normalized from emails: vince@plasticlabs.ai -> vince-plasticlabs-ai
+vince = honcho.peer("vince-plasticlabs-ai")
+print(vince.chat("What is Vince working on?"))
+print(vince.chat("What concerns has Vince raised?"))
+
+me = honcho.peer("abigail-plasticlabs-ai")
+print(me.chat("What topics do I discuss most frequently?"))
+```
+
+## Combining with Other Sources
+
+Because meetings live in a standard Honcho workspace, you can enrich peer representations with data from other channels:
+
+```python
+# Same workspace, same peer — data accumulates
+vince = honcho.peer("vince-plasticlabs-ai")
+me = honcho.peer("abigail-plasticlabs-ai")
+
+discord_session = honcho.session("discord-general-2024-03")
+discord_session.add_messages([
+    vince.message("Just shipped the new API version!"),
+    me.message("Congrats! How's the migration guide coming?"),
+])
+
+# Queries now draw from both meeting transcripts AND Discord history
+vince.chat("What has Vince shipped recently?")
+```
+
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| Granola OAuth fails | Ensure you have a paid Granola plan (MCP requires Pro+). Clear cached token and retry. |
+| Missing transcripts | Free tier has no transcript access. The script falls back to summary content. |
+| 500 errors from Honcho | Check for null bytes or control characters in transcript content. The script sanitizes these automatically. |
+| Rate limiting with many meetings | The script processes sequentially with delays. Honcho ingestion is async — don't poll for immediate results. |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Design Patterns" icon="cubes" href="/v3/documentation/core-concepts/design-patterns">
+    See how the Granola integration maps to common Honcho patterns.
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/honcho/tree/main/examples/granola">
+    Source code and example script.
+  </Card>
+</CardGroup>

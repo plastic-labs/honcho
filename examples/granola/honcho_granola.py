@@ -20,10 +20,11 @@ import json
 import os
 import re
 import sys
+import traceback
 import webbrowser
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 import threading
 import httpx
 from typing import Any, TypedDict, cast
@@ -104,9 +105,6 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         pass  # Suppress HTTP request logging
 
 
-TOKEN_CACHE_FILE = os.path.expanduser("~/.granola_token.json")
-
-
 class GranolaMCPClient:
     """Client for interacting with Granola MCP server."""
 
@@ -117,26 +115,6 @@ class GranolaMCPClient:
         self.resource_metadata: dict[str, Any] = {}
         self.client_id: str | None = None
         self.pkce_verifier: str | None = None
-        self._load_cached_token()
-
-    def _load_cached_token(self):
-        """Load a previously cached access token if it exists."""
-        try:
-            with open(TOKEN_CACHE_FILE) as f:
-                data = json.load(f)
-                self.access_token = data.get("access_token")
-                self.client_id = data.get("client_id")
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
-
-    def _save_cached_token(self):
-        """Cache the access token to disk."""
-        with open(TOKEN_CACHE_FILE, "w") as f:
-            json.dump({
-                "access_token": self.access_token,
-                "client_id": self.client_id,
-            }, f)
-        os.chmod(TOKEN_CACHE_FILE, 0o600)  # readable only by owner
 
     def _generate_pkce(self) -> tuple[str, str]:
         """Generate PKCE code verifier and challenge."""
@@ -172,25 +150,6 @@ class GranolaMCPClient:
         except Exception as e:
             print(f"   Could not fetch PRM: {e}")
 
-        # Alternative: Make an unauthenticated request to MCP and parse WWW-Authenticate
-        try:
-            response = await self.http_client.post(
-                GRANOLA_MCP_URL,
-                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-                headers={"Content-Type": "application/json"}
-            )
-
-            if response.status_code == 401:
-                www_auth = response.headers.get("WWW-Authenticate", "")
-                print(f"   Got 401 with WWW-Authenticate header")
-                # Parse the header to extract auth server URL
-                # Format: Bearer realm="...", resource="...", scope="..."
-                if "resource=" in www_auth:
-                    # Extract resource metadata URL
-                    pass
-        except Exception as e:
-            print(f"   Could not probe MCP endpoint: {e}")
-
         return self.resource_metadata
 
     async def discover_oauth_metadata(self) -> dict[str, Any]:
@@ -204,7 +163,6 @@ class GranolaMCPClient:
         if auth_servers:
             auth_server_url = auth_servers[0] if isinstance(auth_servers[0], str) else auth_servers[0].get("issuer")
         else:
-            # Use the auth server URL we discovered from the error message
             auth_server_url = "https://mcp-auth.granola.ai"
 
         # Fetch authorization server metadata
@@ -223,7 +181,7 @@ class GranolaMCPClient:
             except Exception:
                 continue
 
-        # Fallback based on what we learned from the error
+        # Fallback to known Granola auth endpoints
         self.auth_metadata = {
             "authorization_endpoint": "https://mcp-auth.granola.ai/oauth2/authorize",
             "token_endpoint": "https://mcp-auth.granola.ai/oauth2/token",
@@ -265,28 +223,8 @@ class GranolaMCPClient:
 
         return {}
 
-    async def _test_cached_token(self) -> bool:
-        """Test if the cached token is still valid."""
-        if not self.access_token:
-            return False
-        try:
-            # Try a lightweight MCP call
-            await self.call_mcp_tool("list_meetings", {"limit": 1})
-            return True
-        except Exception:
-            self.access_token = None
-            return False
-
     async def authenticate(self) -> bool:
         """Perform OAuth authentication with Granola following MCP spec."""
-        # Try cached token first
-        if self.access_token:
-            print("\n🔐 Testing cached Granola token...")
-            if await self._test_cached_token():
-                print("✅ Cached token is valid!")
-                return True
-            print("   Cached token expired, re-authenticating...")
-
         global auth_result
         auth_result = {"code": None, "error": None}
 
@@ -300,9 +238,8 @@ class GranolaMCPClient:
         client_id = client_info.get("client_id") or self.client_id
 
         if not client_id:
-            # The error showed a client_id was already assigned, extract it
-            print("   Using pre-registered client flow...")
-            client_id = "granola-transfer-client"
+            print("❌ No client_id obtained from DCR. Cannot authenticate.")
+            return False
 
         # Step 3: Generate PKCE (required by OAuth 2.1 / MCP spec)
         self.pkce_verifier, pkce_challenge = self._generate_pkce()
@@ -314,8 +251,7 @@ class GranolaMCPClient:
         if supported_scopes:
             scope = " ".join(supported_scopes)
         else:
-            # Don't specify scope - let Granola provide default scopes
-            # The error was "invalid_scope" so we shouldn't guess
+            # Don't specify scope — let Granola provide default scopes
             scope = None
 
         # Build authorization URL
@@ -342,7 +278,6 @@ class GranolaMCPClient:
         if resource_url:
             auth_params["resource"] = resource_url
 
-        from urllib.parse import urlencode
         query = urlencode(auth_params)
         full_auth_url = f"{auth_url}?{query}"
 
@@ -392,7 +327,6 @@ class GranolaMCPClient:
             if response.status_code == 200:
                 token_response = response.json()
                 self.access_token = token_response.get("access_token")
-                self._save_cached_token()
                 print("✅ Successfully authenticated with Granola!")
                 return True
             else:
@@ -550,7 +484,6 @@ class GranolaMCPClient:
 
         # Return the raw text — it likely contains the notes in XML/markup format
         # This is still valuable content to store in Honcho
-        print(f"   [DEBUG] get_meetings returned non-JSON (first 500 chars): {text[:500]}")
         return {"id": meeting_id, "raw_content": text}
 
     async def get_meeting_transcript(self, meeting_id: str) -> str | None:
@@ -574,16 +507,10 @@ class GranolaMCPClient:
             if transcript:
                 return str(transcript)
 
-            print(f"   [DEBUG] Transcript result structure: {json.dumps(result, default=str)[:300]}")
             return None
         except Exception as e:
             print(f"   Transcript unavailable: {e}")
             return None
-
-    async def query_meetings(self, query: str) -> dict[str, Any]:
-        """Query meetings with natural language."""
-        result = await self.call_mcp_tool("query_granola_meetings", {"query": query})
-        return result
 
     async def close(self):
         """Close the HTTP client."""
@@ -672,13 +599,12 @@ def parse_transcript_turns(transcript: str) -> list[TranscriptTurn]:
 def analyze_transcript(transcript: str) -> dict[str, Any]:
     """Return stats about a transcript."""
     turns = parse_transcript_turns(transcript)
-    me_turns = [t for t in turns if t["speaker"] == "Me"]
-    them_turns = [t for t in turns if t["speaker"] == "Them"]
+    me_count = sum(1 for t in turns if t["speaker"] == "Me")
+    them_count = len(turns) - me_count
     total_words = sum(len(t["text"].split()) for t in turns)
     return {
-        "turns": turns,
-        "me_count": len(me_turns),
-        "them_count": len(them_turns),
+        "me_count": me_count,
+        "them_count": them_count,
         "total_words": total_words,
     }
 
@@ -888,48 +814,8 @@ class HonchoClient:
             msg_meta = metadata if start == 0 else None
             messages.append(me_peer.message(chunk, metadata=msg_meta, created_at=created_at))
 
-        print(f"  [DEBUG] store_summary: {len(messages)} message(s), first chunk len={len(messages[0].content) if messages else 0}")
         for i in range(0, len(messages), 100):
-            batch = messages[i : i + 100]
-            try:
-                session.add_messages(batch)
-            except Exception:
-                # Dump debug info for the failing batch
-                for j, msg in enumerate(batch):
-                    print(f"  [DEBUG] msg[{j}]: peer_id={msg.peer_id!r}, content_len={len(msg.content)}, has_metadata={msg.metadata is not None}, created_at={msg.created_at!r}")
-                    # Check for problematic chars
-                    bad_chars: list[str] = []
-                    for k, ch in enumerate(msg.content):
-                        if ord(ch) == 0 or (ord(ch) < 32 and ch not in '\n\r\t'):
-                            bad_chars.append(f"pos {k}: {ch!r} (ord={ord(ch)})")
-                    if bad_chars:
-                        print(f"  [DEBUG]   bad chars: {bad_chars[:10]}")
-                    else:
-                        print(f"  [DEBUG]   no bad chars found")
-                # Raw HTTP debug — bypass SDK to see actual server response
-                print(f"  [DEBUG] Making raw HTTP request to see full error...")
-                try:
-                    import httpx as _httpx
-                    raw_client = _httpx.Client(timeout=30.0)
-                    base = self.client.base_url
-                    key = os.environ.get("HONCHO_API_KEY", "")
-                    url = f"{base}/v3/workspaces/{self.workspace_id}/sessions/{session_id}/messages"
-                    raw_body = {
-                        "messages": [{"content": "test", "peer_id": batch[0].peer_id}]
-                    }
-                    raw_resp = raw_client.post(
-                        url,
-                        json=raw_body,
-                        headers={
-                            "Authorization": f"Bearer {key}",
-                            "Content-Type": "application/json",
-                        },
-                    )
-                    print(f"  [DEBUG] URL: {url}")
-                    print(f"  [DEBUG] Raw response: {raw_resp.status_code} {raw_resp.text[:1000]}")
-                except Exception as e2:
-                    print(f"  [DEBUG] Raw HTTP debug failed: {e2}")
-                raise
+            session.add_messages(messages[i : i + 100])
 
         return session_id
 
@@ -1074,6 +960,12 @@ async def main():
                     "  [Enter] import as summary / [2] actually 2-person / [k] skip: ",
                     ["", "2", "k"], default=""
                 )
+            else:
+                # No transcript or no other participants — offer summary or skip
+                choice = prompt_choice(
+                    "  [Enter] import as summary / [k] skip: ",
+                    ["", "k"], default=""
+                )
 
             if choice == "k":
                 print("  -> Skipped")
@@ -1177,7 +1069,6 @@ async def main():
 
             except Exception as e:
                 print(f"  -> FAILED: {e}")
-                import traceback
                 traceback.print_exc()
                 results["failed"] += 1
 
@@ -1196,7 +1087,6 @@ async def main():
         sys.exit(0)
     except Exception as e:
         print(f"\nTransfer failed: {e}")
-        import traceback
         traceback.print_exc()
         sys.exit(1)
     finally:
