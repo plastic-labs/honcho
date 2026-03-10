@@ -23,23 +23,28 @@ export const WorkspaceIdSchema = z
 /**
  * Schema for Honcho client configuration options.
  */
-export const HonchoConfigSchema = z.object({
-  apiKey: z.string().optional(),
-  environment: z.enum(['local', 'production']).optional(),
-  baseURL: z.url('Base URL must be a valid URL').optional(),
-  workspaceId: WorkspaceIdSchema.optional(),
-  timeout: z.number().positive('Timeout must be a positive number').optional(),
-  maxRetries: z
-    .number()
-    .int()
-    .min(0, 'Max retries must be a non-negative integer')
-    .max(3, 'Max retries must be at most 3')
-    .optional(),
-  defaultHeaders: z.record(z.string(), z.string()).optional(),
-  defaultQuery: z
-    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
-    .optional(),
-})
+export const HonchoConfigSchema = z
+  .object({
+    apiKey: z.string().optional(),
+    environment: z.enum(['local', 'production']).optional(),
+    baseURL: z.url('Base URL must be a valid URL').optional(),
+    workspaceId: WorkspaceIdSchema.optional(),
+    timeout: z
+      .number()
+      .positive('Timeout must be a positive number')
+      .optional(),
+    maxRetries: z
+      .number()
+      .int()
+      .min(0, 'Max retries must be a non-negative integer')
+      .max(3, 'Max retries must be at most 3')
+      .optional(),
+    defaultHeaders: z.record(z.string(), z.string()).optional(),
+    defaultQuery: z
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+      .optional(),
+  })
+  .strict()
 
 /**
  * Schema for peer metadata.
