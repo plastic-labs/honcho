@@ -93,7 +93,6 @@
                 "pages": [
                   "v3/guides/integrations/claude-code",
                   "v3/guides/integrations/crewai",
-                  "v3/guides/integrations/granola",
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/mcp",
                   "v3/guides/integrations/n8n",
@@ -104,6 +103,7 @@
                 "group": "Tutorials",
                 "pages": [
                   "v3/guides/discord",
+                  "v3/guides/granola",
                   "v3/guides/telegram",
                   "v3/guides/integrations/reachy-mini"
                 ]
@@ -302,13 +302,12 @@
                 "pages": [
                   "v2/integrations/crewai",
                   "v2/integrations/langgraph",
-                  "v2/integrations/mcp",
-                  "v2/integrations/n8n"
+                  "v2/integrations/mcp"
                 ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+                "pages": ["v2/guides/discord", "v2/guides/n8n", "v2/guides/telegram"]
               }
             ]
           },
