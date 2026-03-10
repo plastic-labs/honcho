@@ -38,19 +38,19 @@ The script will:
 
 ## Key Design Decisions
 
-**Email as Peer ID.** The script uses email addresses as the basis for peer IDs, normalized to a URL-safe format (e.g., `vince@plasticlabs.ai` becomes `vince-plasticlabs-ai`). This ensures consistent identification across meetings — if you meet someone in 5 different calls, all conversations accumulate under the same peer.
+**Email as Peer ID.** The script uses email addresses as the basis for peer IDs, normalized to a URL-safe format (e.g., `alice@example.com` becomes `alice-example-com`). This ensures consistent identification across meetings — if you meet someone in 5 different calls, all conversations accumulate under the same peer.
 
 ```python
 # These all resolve to the same peer:
-honcho.peer("vince-plasticlabs-ai")  # From Meeting A
-honcho.peer("vince-plasticlabs-ai")  # From Meeting B
+honcho.peer("alice-example-com")  # From Meeting A
+honcho.peer("alice-example-com")  # From Meeting B
 ```
 
 **Auto-Detecting "Me".** Granola marks the note creator in its participant list with `(note creator)`. The script uses this to identify you automatically.
 
 ```
-Participants: Abigail (note creator) from Plasticlabs <abigail@plasticlabs.ai>,
-              Vince Trost from Plasticlabs <vince@plasticlabs.ai>
+Participants: You (note creator) from Your Company <you@example.com>,
+              Alice from Acme Corp <alice@example.com>
 ```
 
 **Two-Person Calls: Full Attribution.** When exactly one other participant is present *and* the transcript contains `Them:` turns, the transcript is stored with speaker-attributed messages. Consecutive same-speaker turns are merged before storing.
@@ -69,10 +69,10 @@ session.add_messages([
     me.message(
         f"Meeting: Product Planning\n"
         f"Date: Mar 5, 2026 2:00 PM\n"
-        f"Participants: Vince Trost from Plasticlabs, Jordan from Acme Corp\n\n"
+        f"Participants: Alice from Acme Corp, Bob from Widgets Inc\n\n"
         f"{meeting_summary}",
         metadata={
-            "participants": "Vince Trost from Plasticlabs, Jordan from Acme Corp",
+            "participants": "Alice from Acme Corp, Bob from Widgets Inc",
             "mode": "summary",
             "granola_meeting_id": meeting_id,
         }
@@ -93,12 +93,12 @@ from honcho import Honcho
 
 honcho = Honcho(workspace_id="granola", api_key=os.environ["HONCHO_API_KEY"])
 
-# Peer IDs are normalized from emails: vince@plasticlabs.ai -> vince-plasticlabs-ai
-vince = honcho.peer("vince-plasticlabs-ai")
-print(vince.chat("What is Vince working on?"))
-print(vince.chat("What concerns has Vince raised?"))
+# Peer IDs are normalized from emails: alice@example.com -> alice-example-com
+alice = honcho.peer("alice-example-com")
+print(alice.chat("What is Alice working on?"))
+print(alice.chat("What concerns has Alice raised?"))
 
-me = honcho.peer("abigail-plasticlabs-ai")
+me = honcho.peer("you-example-com")
 print(me.chat("What topics do I discuss most frequently?"))
 ```
 
@@ -108,17 +108,17 @@ Because meetings live in a standard Honcho workspace, you can enrich peer repres
 
 ```python
 # Same workspace, same peer — data accumulates
-vince = honcho.peer("vince-plasticlabs-ai")
-me = honcho.peer("abigail-plasticlabs-ai")
+alice = honcho.peer("alice-example-com")
+me = honcho.peer("you-example-com")
 
 discord_session = honcho.session("discord-general-2024-03")
 discord_session.add_messages([
-    vince.message("Just shipped the new API version!"),
+    alice.message("Just shipped the new API version!"),
     me.message("Congrats! How's the migration guide coming?"),
 ])
 
 # Queries now draw from both meeting transcripts AND Discord history
-vince.chat("What has Vince shipped recently?")
+alice.chat("What has Alice shipped recently?")
 ```
 
 ## Troubleshooting

@@ -286,9 +286,8 @@ class GranolaMCPClient:
         server_thread = threading.Thread(target=server.handle_request)
         server_thread.start()
 
-        print(f"\n📱 Opening browser for Granola authentication...")
-        print(f"   If browser doesn't open, visit:\n   {full_auth_url}\n")
-
+        print(f"\n Opening browser for Granola authentication...")
+        print("   If the browser doesn't open automatically, re-run this script and ensure a browser is available.")
         webbrowser.open(full_auth_url)
 
         # Wait for callback
