@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.2] - 2026-03-10
+
+### Changed
+
+- **Breaking**: Client constructor now rejects unknown options via `.strict()` Zod validation. Previously, misspelled options (e.g., `baseUrl` instead of `baseURL`) were silently ignored, causing the SDK to fall back to defaults. Now a `ZodError` is thrown with the unrecognized key name.
+
 ## [2.0.1] - 2026-02-09
 
 ### Added
