@@ -55,7 +55,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             recently fetched. Call get_configuration() for fresh data.
     """
 
-    model_config = ConfigDict(extra="allow")  # pyright: ignore
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore
 
     workspace_id: str = Field(
         ...,

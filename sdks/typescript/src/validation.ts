@@ -54,9 +54,11 @@ export const PeerMetadataSchema = z.record(z.string(), z.unknown())
 /**
  * Schema for peer configuration.
  */
-export const PeerConfigSchema = z.object({
-  observeMe: z.boolean().nullable().optional(),
-})
+export const PeerConfigSchema = z
+  .object({
+    observeMe: z.boolean().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for peer ID validation.
@@ -83,48 +85,58 @@ export const SessionMetadataSchema = z.record(z.string(), z.unknown())
  * Schema for reasoning configuration.
  * Used in workspace, session, and message configuration.
  */
-export const ReasoningConfigSchema = z.object({
-  enabled: z.boolean().nullable().optional(),
-  customInstructions: z.string().nullable().optional(),
-})
+export const ReasoningConfigSchema = z
+  .object({
+    enabled: z.boolean().nullable().optional(),
+    customInstructions: z.string().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for peer card configuration.
  * Used in workspace and session configuration.
  */
-export const PeerCardConfigSchema = z.object({
-  use: z.boolean().nullable().optional(),
-  create: z.boolean().nullable().optional(),
-})
+export const PeerCardConfigSchema = z
+  .object({
+    use: z.boolean().nullable().optional(),
+    create: z.boolean().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for summary configuration.
  * Used in workspace and session configuration.
  */
-export const SummaryConfigSchema = z.object({
-  enabled: z.boolean().nullable().optional(),
-  messagesPerShortSummary: z.number().int().min(10).nullable().optional(),
-  messagesPerLongSummary: z.number().int().min(20).nullable().optional(),
-})
+export const SummaryConfigSchema = z
+  .object({
+    enabled: z.boolean().nullable().optional(),
+    messagesPerShortSummary: z.number().int().min(10).nullable().optional(),
+    messagesPerLongSummary: z.number().int().min(20).nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for dream configuration.
  * Used in workspace and session configuration.
  */
-export const DreamConfigSchema = z.object({
-  enabled: z.boolean().nullable().optional(),
-})
+export const DreamConfigSchema = z
+  .object({
+    enabled: z.boolean().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for session configuration.
  * Includes reasoning, peer card, summary, and dream settings.
  */
-export const SessionConfigSchema = z.object({
-  reasoning: ReasoningConfigSchema.nullable().optional(),
-  peerCard: PeerCardConfigSchema.nullable().optional(),
-  summary: SummaryConfigSchema.nullable().optional(),
-  dream: DreamConfigSchema.nullable().optional(),
-})
+export const SessionConfigSchema = z
+  .object({
+    reasoning: ReasoningConfigSchema.nullable().optional(),
+    peerCard: PeerCardConfigSchema.nullable().optional(),
+    summary: SummaryConfigSchema.nullable().optional(),
+    dream: DreamConfigSchema.nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for session ID validation.
@@ -141,10 +153,12 @@ export const SessionIdSchema = z
 /**
  * Schema for session peer configuration.
  */
-export const SessionPeerConfigSchema = z.object({
-  observeMe: z.boolean().nullable().optional(),
-  observeOthers: z.boolean().nullable().optional(),
-})
+export const SessionPeerConfigSchema = z
+  .object({
+    observeMe: z.boolean().nullable().optional(),
+    observeOthers: z.boolean().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for message content.
@@ -171,19 +185,22 @@ export const MessageConfigurationSchema = z
   .object({
     reasoning: ReasoningConfigSchema.nullable().optional(),
   })
+  .strict()
   .nullable()
   .optional()
 
 /**
  * Schema for message input.
  */
-export const MessageInputSchema = z.object({
-  peerId: PeerIdSchema,
-  content: MessageContentSchema,
-  metadata: MessageMetadataSchema,
-  configuration: MessageConfigurationSchema,
-  createdAt: z.string().nullable().optional(),
-})
+export const MessageInputSchema = z
+  .object({
+    peerId: PeerIdSchema,
+    content: MessageContentSchema,
+    metadata: MessageMetadataSchema,
+    configuration: MessageConfigurationSchema,
+    createdAt: z.string().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for search query validation.
@@ -204,24 +221,26 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
 /**
  * Schema for chat query parameters.
  */
-export const ChatQuerySchema = z.object({
-  query: SearchQuerySchema,
-  target: z
-    .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
-    .optional()
-    .transform((val) =>
-      val ? (typeof val === 'string' ? val : val.id) : undefined
-    ),
-  session: z
-    .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
-    .optional()
-    .transform((val) =>
-      val ? (typeof val === 'string' ? val : val.id) : undefined
-    ),
-  reasoningLevel: z
-    .enum(['minimal', 'low', 'medium', 'high', 'max'])
-    .optional(),
-})
+export const ChatQuerySchema = z
+  .object({
+    query: SearchQuerySchema,
+    target: z
+      .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
+      .optional()
+      .transform((val) =>
+        val ? (typeof val === 'string' ? val : val.id) : undefined
+      ),
+    session: z
+      .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
+      .optional()
+      .transform((val) =>
+        val ? (typeof val === 'string' ? val : val.id) : undefined
+      ),
+    reasoningLevel: z
+      .enum(['minimal', 'low', 'medium', 'high', 'max'])
+      .optional(),
+  })
+  .strict()
 
 /**
  * Schema for validating Message API responses (snake_case).
@@ -240,34 +259,36 @@ const MessageResponseSchema: z.ZodType<MessageResponse> = z.object({
 /**
  * Schema for representation options.
  */
-export const RepresentationOptionsSchema = z.object({
-  searchQuery: z
-    .string()
-    .min(1, 'searchQuery must be a non-empty string')
-    .refine(
-      (query: string) => query.trim().length > 0,
-      'searchQuery cannot be only whitespace'
-    )
-    .optional(),
-  searchTopK: z
-    .number()
-    .int()
-    .min(1, 'searchTopK must be at least 1')
-    .max(100, 'searchTopK must be at most 100')
-    .optional(),
-  searchMaxDistance: z
-    .number()
-    .min(0.0, 'searchMaxDistance must be at least 0.0')
-    .max(1.0, 'searchMaxDistance must be at most 1.0')
-    .optional(),
-  includeMostFrequent: z.boolean().optional(),
-  maxConclusions: z
-    .number()
-    .int()
-    .min(1, 'maxConclusions must be at least 1')
-    .max(100, 'maxConclusions must be at most 100')
-    .optional(),
-})
+export const RepresentationOptionsSchema = z
+  .object({
+    searchQuery: z
+      .string()
+      .min(1, 'searchQuery must be a non-empty string')
+      .refine(
+        (query: string) => query.trim().length > 0,
+        'searchQuery cannot be only whitespace'
+      )
+      .optional(),
+    searchTopK: z
+      .number()
+      .int()
+      .min(1, 'searchTopK must be at least 1')
+      .max(100, 'searchTopK must be at most 100')
+      .optional(),
+    searchMaxDistance: z
+      .number()
+      .min(0.0, 'searchMaxDistance must be at least 0.0')
+      .max(1.0, 'searchMaxDistance must be at most 1.0')
+      .optional(),
+    includeMostFrequent: z.boolean().optional(),
+    maxConclusions: z
+      .number()
+      .int()
+      .min(1, 'maxConclusions must be at least 1')
+      .max(100, 'maxConclusions must be at most 100')
+      .optional(),
+  })
+  .strict()
 
 /**
  * Schema for context retrieval parameters.
@@ -287,6 +308,7 @@ export const ContextParamsSchema = z
     limitToSession: z.boolean().optional(),
     representationOptions: RepresentationOptionsSchema.optional(),
   })
+  .strict()
   .superRefine((data, ctx) => {
     if (data.searchQuery && !data.peerTarget) {
       ctx.addIssue({
@@ -308,68 +330,81 @@ export const ContextParamsSchema = z
 /**
  * Schema for deriver status options.
  */
-export const QueueStatusOptionsSchema = z.object({
-  observer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
-  sender: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
-  session: z
-    .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
-    .optional(),
-  timeout: z.number().positive('Timeout must be a positive number').optional(),
-})
+export const QueueStatusOptionsSchema = z
+  .object({
+    observer: z
+      .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
+      .optional(),
+    sender: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+    session: z
+      .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
+      .optional(),
+    timeout: z
+      .number()
+      .positive('Timeout must be a positive number')
+      .optional(),
+  })
+  .strict()
 
 /**
  * Schema for file upload parameters.
  * Supports File objects (browser), Buffer, Uint8Array, and custom uploadable objects.
  */
-export const FileUploadSchema = z.object({
-  file: z.union([
-    // Browser File object
-    z.instanceof(File),
-    // Node.js Buffer
-    z.instanceof(Buffer),
-    // Uint8Array
-    z.instanceof(Uint8Array),
-    // Custom uploadable object with filename, content, and content_type
-    z.object({
-      filename: z.string().min(1, 'Filename must be a non-empty string'),
-      content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
-      content_type: z
-        .string()
-        .min(1, 'Content type must be a non-empty string'),
-    }),
-    // Fallback for any other uploadable type
-    z
-      .any()
-      .refine(
-        (val) => val !== null && val !== undefined,
-        'File must not be null or undefined'
-      ),
-  ]),
-  peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
-  metadata: MessageMetadataSchema,
-  configuration: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().nullable().optional(),
-})
+export const FileUploadSchema = z
+  .object({
+    file: z.union([
+      // Browser File object
+      z.instanceof(File),
+      // Node.js Buffer
+      z.instanceof(Buffer),
+      // Uint8Array
+      z.instanceof(Uint8Array),
+      // Custom uploadable object with filename, content, and content_type
+      z.object({
+        filename: z.string().min(1, 'Filename must be a non-empty string'),
+        content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
+        content_type: z
+          .string()
+          .min(1, 'Content type must be a non-empty string'),
+      }),
+      // Fallback for any other uploadable type
+      z
+        .any()
+        .refine(
+          (val) => val !== null && val !== undefined,
+          'File must not be null or undefined'
+        ),
+    ]),
+    peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
+    metadata: MessageMetadataSchema,
+    configuration: MessageConfigurationSchema,
+    createdAt: z.string().nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for get representation parameters.
  */
-export const GetRepresentationParamsSchema = z.object({
-  peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
-  target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
-  options: RepresentationOptionsSchema.optional(),
-})
+export const GetRepresentationParamsSchema = z
+  .object({
+    peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
+    target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+    options: RepresentationOptionsSchema.optional(),
+  })
+  .strict()
 
 /**
  * Schema for peer get representation parameters.
  */
-export const PeerGetRepresentationParamsSchema = z.object({
-  session: z
-    .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
-    .optional(),
-  target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
-  options: RepresentationOptionsSchema.optional(),
-})
+export const PeerGetRepresentationParamsSchema = z
+  .object({
+    session: z
+      .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
+      .optional(),
+    target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+    options: RepresentationOptionsSchema.optional(),
+  })
+  .strict()
 
 /**
  * Schema for peer card target parameter.
@@ -840,12 +875,14 @@ export const WorkspaceMetadataSchema = z.record(z.string(), z.unknown())
  * Schema for workspace configuration.
  * Includes reasoning, peer card, summary, and dream settings.
  */
-export const WorkspaceConfigSchema = z.object({
-  reasoning: ReasoningConfigSchema.nullable().optional(),
-  peerCard: PeerCardConfigSchema.nullable().optional(),
-  summary: SummaryConfigSchema.nullable().optional(),
-  dream: DreamConfigSchema.nullable().optional(),
-})
+export const WorkspaceConfigSchema = z
+  .object({
+    reasoning: ReasoningConfigSchema.nullable().optional(),
+    peerCard: PeerCardConfigSchema.nullable().optional(),
+    summary: SummaryConfigSchema.nullable().optional(),
+    dream: DreamConfigSchema.nullable().optional(),
+  })
+  .strict()
 
 /**
  * Schema for limit.
@@ -859,21 +896,23 @@ export const LimitSchema = z
 /**
  * Schema for conclusion query parameters.
  */
-export const ConclusionQueryParamsSchema = z.object({
-  query: SearchQuerySchema,
-  top_k: z
-    .number()
-    .int()
-    .min(1, 'top_k must be at least 1')
-    .max(100, 'top_k must be at most 100')
-    .optional(),
-  distance: z
-    .number()
-    .min(0.0, 'distance must be at least 0.0')
-    .max(1.0, 'distance must be at most 1.0')
-    .optional(),
-  filters: FilterSchema,
-})
+export const ConclusionQueryParamsSchema = z
+  .object({
+    query: SearchQuerySchema,
+    top_k: z
+      .number()
+      .int()
+      .min(1, 'top_k must be at least 1')
+      .max(100, 'top_k must be at most 100')
+      .optional(),
+    distance: z
+      .number()
+      .min(0.0, 'distance must be at least 0.0')
+      .max(1.0, 'distance must be at most 1.0')
+      .optional(),
+    filters: FilterSchema,
+  })
+  .strict()
 
 /**
  * Type exports for use throughout the SDK.

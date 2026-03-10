@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.2] - 2026-03-10
+
+### Changed
+
+- All input models now reject unknown fields via `extra="forbid"` Pydantic validation. Previously, misspelled or extraneous fields were silently ignored. Now a `ValidationError` is raised with the unrecognized field name.
+
 ## [2.0.1] - 2026-02-09
 
 ### Added
