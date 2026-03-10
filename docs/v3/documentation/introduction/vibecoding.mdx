@@ -41,7 +41,7 @@ npx skills add plastic-labs/honcho
 ```
 
 ```bash Install as Claude Skill Manually
-curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/.claude/skills/honcho-integration/SKILL.md
 ```
 </CodeGroup>
 
@@ -57,6 +57,21 @@ curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com
 4. **Verifies the setup** to ensure everything is configured correctly
 
 Invoke with `/honcho-integration` in your coding agent.
+
+#### local-development
+
+**For contributors and self-hosters.** This skill helps you get the Honcho repo running locally, including environment setup, database configuration, migrations, server startup, deriver startup, tests, and troubleshooting.
+
+It is especially useful when you need to:
+
+- bootstrap a fresh clone
+- configure `.env` and local Postgres
+- run `alembic upgrade head`
+- start `uv run fastapi dev src/main.py`
+- start `uv run python -m src.deriver`
+- debug local setup failures quickly
+
+Invoke with `/local-development` in your coding agent.
 
 #### migrate-honcho-py / migrate-honcho-ts
 
