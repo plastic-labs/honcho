@@ -530,7 +530,26 @@ def parse_participants(participants_str: str) -> ParsedParticipants:
     if not participants_str:
         return result
 
-    for entry in re.split(r",\s*(?=[A-Z])", participants_str):
+    # Split on commas, but not commas inside angle brackets (e.g. email fields).
+    entries: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in participants_str:
+        if ch == "<":
+            depth += 1
+            current.append(ch)
+        elif ch == ">":
+            depth = max(depth - 1, 0)
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            entries.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        entries.append("".join(current))
+
+    for entry in entries:
         entry = entry.strip()
         if not entry:
             continue
@@ -662,6 +681,7 @@ def sanitize_content(text: str) -> str:
     # Remove other control characters (keep newlines and tabs)
     text = re.sub(r"[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     return text
+
 
 
 def to_honcho_peer_id(value: str, fallback: str = "peer") -> str:
@@ -877,8 +897,9 @@ async def main():
                 m.update(details)
                 if extract_summary_from_meeting(m):
                     fetched_summary = True
-            except Exception:
-                pass
+            except Exception as exc:
+                m["detail_fetch_failed"] = True
+                print(f"   ⚠ Failed to fetch details for {mid}: {exc}")
 
             if fetched_transcript and fetched_summary:
                 print(f"   [{i}/{len(meetings)}] transcript+summary: {title}")
@@ -972,7 +993,12 @@ async def main():
                 continue
 
             creator_email = creator["email"] if creator else None
-            me_source = creator_email or "abigail@plasticlabs.ai"
+            creator_name = creator.get("name") if creator else None
+            me_source = creator_email or creator_name
+            if not me_source:
+                print("  -> Skipped (no creator identifier)")
+                results["skipped"] += 1
+                continue
             me_peer_id = to_honcho_peer_id(me_source)
 
             # ---- Register note creator peer ----
