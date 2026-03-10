@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Memory leak in deriver: `_observation_locks` dict grew unboundedly with every unique (workspace, observer, observed) combination; replaced with `WeakValueDictionary` so locks are automatically evicted when no longer in use (DEV-1412)
+- SQL injection vector in `dependencies.py`: parameterized `SET application_name` queries using `set_config()` instead of f-string interpolation (DEV-1400)
+- NUL byte (`\x00`) crashes: all user-facing text inputs (message content, metadata, peer cards, queries) are now sanitized at the Pydantic schema level before reaching PostgreSQL (DEV-1400)
+
+### Added
+
+- JSONB metadata validation: max 100 top-level keys and max nesting depth of 5 on all metadata input fields (DEV-1400)
+- Filter recursion depth limit: `_build_filter_conditions()` now enforces a max depth of 5 to prevent stack overflow from deeply nested filter dicts (DEV-1400)
+
 ## [3.0.3] - 2026-02-25
 
 ### Added

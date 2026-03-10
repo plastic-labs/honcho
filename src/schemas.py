@@ -8,6 +8,7 @@ import tiktoken
 from pydantic import (
     AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     PrivateAttr,
@@ -19,6 +20,55 @@ from src.config import ReasoningLevel, settings
 from src.utils.types import DocumentLevel
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
+
+_METADATA_MAX_KEYS = 100
+_METADATA_MAX_DEPTH = 5
+
+
+def _sanitize_value(v: Any) -> Any:
+    """Recursively strip NUL bytes from strings in nested data structures."""
+    if isinstance(v, str):
+        return v.replace("\x00", "")
+    if isinstance(v, dict):
+        d = cast(dict[str, Any], v)
+        return {k: _sanitize_value(val) for k, val in d.items()}
+    if isinstance(v, list):
+        lst = cast(list[Any], v)
+        return [_sanitize_value(item) for item in lst]
+    return v
+
+
+def _check_metadata_limits(
+    data: dict[str, Any],
+    *,
+    _current_depth: int = 1,
+) -> None:
+    """Validate metadata dict doesn't exceed key count or nesting depth limits."""
+    if _current_depth > _METADATA_MAX_DEPTH:
+        raise ValueError(
+            f"Metadata nesting exceeds maximum depth of {_METADATA_MAX_DEPTH}"
+        )
+    if _current_depth == 1 and len(data) > _METADATA_MAX_KEYS:
+        raise ValueError(
+            f"Metadata exceeds maximum of {_METADATA_MAX_KEYS} top-level keys"
+        )
+    for v in data.values():
+        if isinstance(v, dict):
+            _check_metadata_limits(
+                cast(dict[str, Any], v), _current_depth=_current_depth + 1
+            )
+
+
+def _validate_metadata(v: Any) -> Any:
+    """Validate and sanitize a metadata dict: enforce limits and strip NUL bytes."""
+    if not isinstance(v, dict):
+        return v
+    data = cast(dict[str, Any], v)
+    _check_metadata_limits(data)
+    return _sanitize_value(data)
+
+
+_SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
 
 
 class DreamType(str, Enum):
@@ -213,7 +263,7 @@ class WorkspaceCreate(WorkspaceBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict[str, Any] = {}
+    metadata: _SanitizedMetadata = {}
     configuration: WorkspaceConfiguration = Field(
         default_factory=WorkspaceConfiguration
     )
@@ -226,7 +276,7 @@ class WorkspaceGet(WorkspaceBase):
 
 
 class WorkspaceUpdate(WorkspaceBase):
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     configuration: WorkspaceConfiguration | None = None
 
 
@@ -252,7 +302,7 @@ class PeerCreate(PeerBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     configuration: dict[str, Any] | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
@@ -263,7 +313,7 @@ class PeerGet(PeerBase):
 
 
 class PeerUpdate(PeerBase):
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     configuration: dict[str, Any] | None = None
 
 
@@ -330,6 +380,16 @@ class PeerCardResponse(BaseModel):
 class PeerCardSet(BaseModel):
     peer_card: list[str] = Field(..., description="The peer card content to set")
 
+    @field_validator("peer_card", mode="before")
+    @classmethod
+    def sanitize_peer_card(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return [
+                item.replace("\x00", "") if isinstance(item, str) else item
+                for item in cast(list[Any], v)
+            ]
+        return v
+
 
 class MessageBase(BaseModel):
     pass
@@ -338,11 +398,16 @@ class MessageBase(BaseModel):
 class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=settings.MAX_MESSAGE_SIZE)]
     peer_name: str = Field(alias="peer_id")
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     configuration: MessageConfiguration | None = None
     created_at: datetime.datetime | None = None
 
     _encoded_message: list[int] = PrivateAttr(default=[])
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def sanitize_content(cls, v: str) -> str:
+        return v.replace("\x00", "")
 
     @property
     def encoded_message(self) -> list[int]:
@@ -362,7 +427,7 @@ class MessageGet(MessageBase):
 
 
 class MessageUpdate(MessageBase):
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
 
 
 class Message(MessageBase):
@@ -392,7 +457,7 @@ class MessageUploadCreate(BaseModel):
     """Schema for message creation from file uploads"""
 
     peer_id: str = Field(..., description="ID of the peer creating the message")
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     configuration: MessageConfiguration | None = None
     created_at: datetime.datetime | None = None
 
@@ -408,7 +473,7 @@ class SessionCreate(SessionBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
     configuration: SessionConfiguration | None = None
 
@@ -420,7 +485,7 @@ class SessionGet(SessionBase):
 
 
 class SessionUpdate(SessionBase):
-    metadata: dict[str, Any] | None = None
+    metadata: _SanitizedMetadata | None = None
     configuration: SessionConfiguration | None = None
 
 
@@ -565,7 +630,7 @@ class DocumentCreate(DocumentBase):
 class ObservationInput(BaseModel):
     """Validated observation input from LLM tool calls."""
 
-    content: str = Field(min_length=1)
+    content: Annotated[str, Field(min_length=1)]
     level: DocumentLevel = "explicit"
     source_ids: list[str] | None = None
     premises: list[str] | None = None
@@ -575,6 +640,11 @@ class ObservationInput(BaseModel):
         | None
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def sanitize_content(cls, v: str) -> str:
+        return v.replace("\x00", "")
 
     @model_validator(mode="after")
     def validate_level_fields(self) -> Self:
@@ -659,6 +729,11 @@ class ConclusionCreate(BaseModel):
 
     _token_count: int = PrivateAttr(default=0)
 
+    @field_validator("content", mode="after")
+    @classmethod
+    def sanitize_content(cls, v: str) -> str:
+        return v.replace("\x00", "")
+
     @model_validator(mode="after")
     def validate_token_count(self) -> Self:
         """Validate that content doesn't exceed embedding token limit."""
@@ -686,7 +761,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: str = Field(..., description="Search query")
+    query: Annotated[str, Field(..., description="Search query")]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -696,6 +771,11 @@ class MessageSearchOptions(BaseModel):
         le=100,
         description="Number of results to return",
     )
+
+    @field_validator("query", mode="after")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return v.replace("\x00", "")
 
 
 class DialecticOptions(BaseModel):
@@ -714,6 +794,11 @@ class DialecticOptions(BaseModel):
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
     )
+
+    @field_validator("query", mode="after")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return v.replace("\x00", "")
 
 
 class DialecticResponse(BaseModel):

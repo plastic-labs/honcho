@@ -13,12 +13,12 @@ from src.dependencies import tracked_db as real_tracked_db
 class FakeSession:
     def __init__(self, *, in_transaction: bool = False):
         self._in_transaction: bool = in_transaction
-        self.execute_calls: list[Any] = []
+        self.execute_calls: list[tuple[Any, ...]] = []
         self.rollback_calls: int = 0
         self.close_calls: int = 0
 
-    async def execute(self, statement: Any) -> None:
-        self.execute_calls.append(statement)
+    async def execute(self, statement: Any, params: Any = None) -> None:
+        self.execute_calls.append((statement, params))
 
     async def rollback(self) -> None:
         self.rollback_calls += 1
@@ -45,9 +45,9 @@ async def test_get_db_sets_application_name_when_tracing_enabled(
         db = await anext(dep_gen)
         assert db is fake_db
         assert len(fake_db.execute_calls) == 1
-        assert "SET application_name = 'request:test-ctx'" in str(
-            fake_db.execute_calls[0]
-        )
+        stmt, params = fake_db.execute_calls[0]
+        assert "set_config" in str(stmt)
+        assert params == {"name": "request:test-ctx"}
     finally:
         await dep_gen.aclose()
         request_context.reset(context_token)
@@ -96,9 +96,9 @@ async def test_tracked_db_creates_and_resets_task_context(
 
     assert request_context.get() is None
     assert len(fake_db.execute_calls) == 1
-    assert "SET application_name = 'task:cleanup_job:12345678'" in str(
-        fake_db.execute_calls[0]
-    )
+    stmt, params = fake_db.execute_calls[0]
+    assert "set_config" in str(stmt)
+    assert params == {"name": "task:cleanup_job:12345678"}
     assert fake_db.rollback_calls == 0
     assert fake_db.close_calls == 1
 
@@ -119,7 +119,9 @@ async def test_tracked_db_preserves_existing_request_context(
         request_context.reset(context_token)
 
     assert len(fake_db.execute_calls) == 1
-    assert "SET application_name = 'request:existing'" in str(fake_db.execute_calls[0])
+    stmt, params = fake_db.execute_calls[0]
+    assert "set_config" in str(stmt)
+    assert params == {"name": "request:existing"}
     assert fake_db.rollback_calls == 0
     assert fake_db.close_calls == 1
 
