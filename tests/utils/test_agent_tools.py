@@ -1160,3 +1160,144 @@ class TestToolExecutor:
         if "Found" in result and "observations" in result:
             # IDs should be included in the output
             assert "[id:" in result or "observations" in result
+
+
+# =============================================================================
+# Observation Lock Registry Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestObservationLockRegistry:
+    """Tests for the WeakValueDictionary-based observation lock registry."""
+
+    async def test_same_key_returns_same_lock(self):
+        """Concurrent callers with the same key get the same Lock instance."""
+        from src.utils.agent_tools import get_observation_lock
+
+        lock_a = await get_observation_lock("ws1", "obs1", "peer1")
+        lock_b = await get_observation_lock("ws1", "obs1", "peer1")
+
+        assert lock_a is lock_b
+
+    async def test_different_keys_return_different_locks(self):
+        """Different keys produce independent Lock instances."""
+        from src.utils.agent_tools import get_observation_lock
+
+        lock_a = await get_observation_lock("ws_diff_a", "obs", "peer")
+        lock_b = await get_observation_lock("ws_diff_b", "obs", "peer")
+
+        assert lock_a is not lock_b
+
+    async def test_lock_evicted_after_all_references_dropped(self):
+        """Lock is removed from registry once no strong references remain."""
+        import gc
+
+        from src.utils.agent_tools import (
+            _observation_locks,  # pyright: ignore[reportPrivateUsage]
+            get_observation_lock,
+        )
+
+        key = ("ws_evict", "obs_evict", "peer_evict")
+        lock = await get_observation_lock(*key)
+        assert key in _observation_locks
+
+        # Drop the only strong reference and force GC
+        del lock
+        gc.collect()
+
+        assert key not in _observation_locks
+
+    async def test_lock_recreated_after_eviction(self):
+        """A new lock is created for a key whose previous lock was evicted."""
+        import gc
+
+        from src.utils.agent_tools import get_observation_lock
+
+        key = ("ws_recreate", "obs_recreate", "peer_recreate")
+        first_lock = await get_observation_lock(*key)
+        first_id = id(first_lock)
+
+        # Evict
+        del first_lock
+        gc.collect()
+
+        # Recreate
+        second_lock = await get_observation_lock(*key)
+        assert id(second_lock) != first_id
+        assert isinstance(second_lock, asyncio.Lock)
+
+    async def test_lock_survives_while_any_reference_held(self):
+        """Lock stays alive as long as at least one strong reference exists."""
+        import gc
+
+        from src.utils.agent_tools import (
+            _observation_locks,  # pyright: ignore[reportPrivateUsage]
+            get_observation_lock,
+        )
+
+        key = ("ws_survive", "obs_survive", "peer_survive")
+        ref_a = await get_observation_lock(*key)
+        ref_b = await get_observation_lock(*key)
+        assert ref_a is ref_b
+
+        # Drop one reference — lock should survive via the other
+        del ref_a
+        gc.collect()
+        assert key in _observation_locks
+
+        # Drop the last reference — now it should be evicted
+        del ref_b
+        gc.collect()
+        assert key not in _observation_locks
+
+    async def test_concurrent_executors_share_lock_for_mutual_exclusion(self):
+        """Two coroutines using the same key are serialized by the shared lock."""
+        from src.utils.agent_tools import get_observation_lock
+
+        key = ("ws_mutex", "obs_mutex", "peer_mutex")
+        shared_lock = await get_observation_lock(*key)
+
+        order: list[str] = []
+
+        async def task(name: str, delay: float):
+            async with shared_lock:
+                order.append(f"{name}_start")
+                await asyncio.sleep(delay)
+                order.append(f"{name}_end")
+
+        # task_a grabs the lock first, task_b must wait
+        task_a = asyncio.create_task(task("a", 0.05))
+        await asyncio.sleep(0.01)  # let task_a acquire the lock
+        task_b = asyncio.create_task(task("b", 0.01))
+
+        await asyncio.gather(task_a, task_b)
+
+        # task_a must fully complete before task_b starts
+        assert order == ["a_start", "a_end", "b_start", "b_end"]
+
+    async def test_no_registry_growth_across_many_keys(self):
+        """Registry does not retain locks after references are dropped."""
+        import gc
+
+        from src.utils.agent_tools import (
+            _observation_locks,  # pyright: ignore[reportPrivateUsage]
+            get_observation_lock,
+        )
+
+        locks: list[asyncio.Lock] = []
+        for i in range(100):
+            locks.append(await get_observation_lock(f"ws_growth_{i}", "obs", "peer"))
+
+        count_before = sum(
+            1 for k in _observation_locks if k[0].startswith("ws_growth_")
+        )
+        assert count_before == 100
+
+        # Drop all strong references and force GC
+        locks.clear()
+        gc.collect()
+
+        # All 100 entries should be cleaned up
+        remaining = sum(1 for k in _observation_locks if k[0].startswith("ws_growth_"))
+        assert remaining == 0
