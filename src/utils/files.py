@@ -172,7 +172,7 @@ class JSONProcessor:
 
 class ImageProcessor:
     def supports_file_type(self, content_type: str) -> bool:
-        return content_type.startswith("image/")
+        return content_type.startswith("image/") and settings.OCR.MODE != "off"
 
     async def extract_text(self, content: bytes, content_type: str) -> str:
         return await _ocr_extract_text(content, content_type)
