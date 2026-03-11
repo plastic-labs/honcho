@@ -12,7 +12,6 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Schedule a dream — a background memory-consolidation task for a peer.",
         "Dreams consolidate observations into higher-level insights and update peer cards.",
         "Use this after a long conversation to improve Honcho's memory quality.",
-        "Returns a confirmation message.",
       ].join("\n"),
       inputSchema: {
         peer_id: z.string().describe("The observer peer to dream for."),

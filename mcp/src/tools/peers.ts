@@ -281,9 +281,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     "get_peer_metadata",
     {
       description: [
-        "Get the metadata dictionary for a peer.",
-        "Use this to read custom attributes stored on a peer.",
-        "Returns a JSON object of key-value pairs.",
+        "Get metadata for a peer.",
       ].join("\n"),
       inputSchema: {
         peer_id: z.string().describe("The peer to get metadata for."),
@@ -307,9 +305,8 @@ export function register(server: McpServer, ctx: ToolContext) {
     "set_peer_metadata",
     {
       description: [
-        "Set metadata for a peer (overwrites existing metadata).",
-        "Use this to store custom attributes on a peer.",
-        "Returns a confirmation message.",
+        "Set metadata for a peer.",
+        "Overwrites existing metadata.",
       ].join("\n"),
       inputSchema: {
         peer_id: z.string().describe("The peer to set metadata for."),

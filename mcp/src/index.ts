@@ -19,6 +19,10 @@ export default {
     env: unknown,
     executionCtx: ExecutionContext,
   ): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
     let config;
     try {
       config = parseConfig(request);
@@ -35,6 +39,7 @@ export default {
       const honcho = createClient(config);
       const server = createServer({ honcho, config });
       const handler = createMcpHandler(server, {
+        route: "/",
         corsOptions: {
           origin: CORS_ORIGIN,
           methods: CORS_METHODS,

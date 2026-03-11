@@ -149,7 +149,6 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Delete a specific conclusion by ID.",
         "Use this to remove incorrect or outdated knowledge.",
-        "Returns a confirmation message.",
       ].join("\n"),
       inputSchema: {
         peer_id: z.string().describe("The observer peer."),

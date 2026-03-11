@@ -1,7 +1,14 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Message } from "@honcho-ai/sdk";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, formatMessages } from "../types.js";
+import {
+  textResult,
+  errorResult,
+  formatMessage,
+  formatMessages,
+  formatSessionSummaries,
+} from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── create_session ──────────────────────────────────────────────────
@@ -61,9 +68,8 @@ export function register(server: McpServer, ctx: ToolContext) {
     "delete_session",
     {
       description: [
-        "Permanently delete a session and all its messages.",
-        "Use this to clean up conversations that are no longer needed. This cannot be undone.",
-        "Returns a confirmation message.",
+        "Delete a session and all its messages.",
+        "This cannot be undone.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to delete."),
@@ -121,7 +127,6 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Add one or more peers to a session.",
         "Use this to bring participants into a conversation.",
-        "Returns a confirmation message.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to add peers to."),
@@ -175,8 +180,6 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       description: [
         "Remove one or more peers from a session.",
-        "Use this to remove participants from a conversation.",
-        "Returns a confirmation message.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to remove peers from."),
@@ -224,6 +227,42 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
   );
 
+  // ── inspect_session ─────────────────────────────────────────────────
+  server.registerTool(
+    "inspect_session",
+    {
+      description: [
+        "Inspect a session at a glance.",
+        "Aggregates peer IDs, message count, and available summaries.",
+        "Returns a single JSON object.",
+      ].join("\n"),
+      inputSchema: {
+        session_id: z.string().describe("The session to inspect."),
+      },
+    },
+    async ({ session_id }) => {
+      try {
+        const session = await ctx.honcho.session(session_id);
+        const [peers, messagePage, summaries] = await Promise.all([
+          session.peers(),
+          session.messages(),
+          session.summaries(),
+        ]);
+
+        return textResult({
+          session_id,
+          peers: peers.map((peer) => ({ id: peer.id })),
+          message_count: messagePage.total,
+          summaries: formatSessionSummaries(summaries),
+        });
+      } catch (e) {
+        return errorResult(
+          `Failed to inspect session: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  );
+
   // ── add_messages_to_session ─────────────────────────────────────────
   server.registerTool(
     "add_messages_to_session",
@@ -232,7 +271,6 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Add messages to a session from specific peers.",
         "Use this for multi-peer conversations where you need to attribute messages to specific peers.",
         "For the simple user/assistant flow, use add_turn instead.",
-        "Returns a confirmation message.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to add messages to."),
@@ -311,6 +349,46 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
   );
 
+  // ── get_session_message ─────────────────────────────────────────────
+  server.registerTool(
+    "get_session_message",
+    {
+      description: [
+        "Get a single message from a session by ID.",
+        "Use this when you already know the message ID and need the exact record.",
+        "Returns the message object.",
+      ].join("\n"),
+      inputSchema: {
+        session_id: z.string().describe("The session the message belongs to."),
+        message_id: z.string().describe("The message ID to fetch."),
+      },
+    },
+    async ({ session_id, message_id }) => {
+      try {
+        // Workaround: the current @honcho-ai/sdk Session API does not expose
+        // a single-message getter, so we fetch the message by ID via raw HTTP.
+        const messageData = await ctx.honcho.http.get<{
+          id: string;
+          content: string;
+          peer_id: string;
+          session_id: string;
+          workspace_id: string;
+          metadata: Record<string, unknown>;
+          created_at: string;
+          token_count: number;
+        }>(
+          `/v3/workspaces/${ctx.honcho.workspaceId}/sessions/${session_id}/messages/${message_id}`,
+        );
+        const message = Message.fromApiResponse(messageData);
+        return textResult(formatMessage(message));
+      } catch (e) {
+        return errorResult(
+          `Failed to get message: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  );
+
   // ── search_session_messages ─────────────────────────────────────────
   server.registerTool(
     "search_session_messages",
@@ -367,17 +445,37 @@ export function register(server: McpServer, ctx: ToolContext) {
         return textResult({
           session_id: context.sessionId,
           summary: context.summary,
-          messages: context.messages.map((msg) => ({
-            id: msg.id,
-            content: msg.content,
-            peer_id: msg.peerId,
-            metadata: msg.metadata,
-            created_at: msg.createdAt,
-          })),
+          messages: formatMessages(context.messages),
         });
       } catch (e) {
         return errorResult(
           `Failed to get context: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  );
+
+  // ── get_session_summaries ───────────────────────────────────────────
+  server.registerTool(
+    "get_session_summaries",
+    {
+      description: [
+        "Get the short and long summaries available for a session.",
+        "Use this when you want Honcho's generated rollups of the conversation so far.",
+        "Returns the session ID plus short and long summary objects when available.",
+      ].join("\n"),
+      inputSchema: {
+        session_id: z.string().describe("The session to get summaries for."),
+      },
+    },
+    async ({ session_id }) => {
+      try {
+        const session = await ctx.honcho.session(session_id);
+        const summaries = await session.summaries();
+        return textResult(formatSessionSummaries(summaries));
+      } catch (e) {
+        return errorResult(
+          `Failed to get session summaries: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     },
@@ -425,9 +523,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     "get_session_metadata",
     {
       description: [
-        "Get the metadata dictionary for a session.",
-        "Use this to read custom attributes stored on a session.",
-        "Returns a JSON object.",
+        "Get metadata for a session.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to get metadata for."),
@@ -451,9 +547,8 @@ export function register(server: McpServer, ctx: ToolContext) {
     "set_session_metadata",
     {
       description: [
-        "Set metadata for a session (overwrites existing metadata).",
-        "Use this to store custom attributes on a session.",
-        "Returns a confirmation message.",
+        "Set metadata for a session.",
+        "Overwrites existing metadata.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to set metadata for."),
