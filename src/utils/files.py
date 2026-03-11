@@ -135,9 +135,11 @@ class PDFProcessor:
 
         try:
             return await _ocr_extract_text(content, content_type)
-        except Exception:
+        except Exception as e:
             if native_text.strip():
-                logger.warning("OCR failed for PDF upload, falling back to native text")
+                logger.warning(
+                    "OCR failed for PDF upload, falling back to native text: %s", e
+                )
                 return native_text
             raise
 
