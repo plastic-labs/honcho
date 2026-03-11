@@ -30,22 +30,28 @@ def _get_peer_id(peer_id: str | None) -> str:
 
 
 @app.command("list")
-def list_peers() -> None:
+def list_peers(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
     """List all peers in the workspace."""
+    from honcho_cli.commands.workspace import _compact_config, _raw_list
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
     client, config = get_client()
 
     try:
-        peers = list(client.peers())
+        raw_peers = _raw_list(client.peers())
         items = [
             {
                 "id": p.id,
-                "metadata": getattr(p, "metadata", {}),
-                "configuration": _config_to_dict(p.configuration) if getattr(p, "configuration", None) else None,
-                "created_at": str(getattr(p, "created_at", "")),
+                "metadata": p.metadata,
+                "configuration": _compact_config(_config_to_dict(p.configuration)) if p.configuration else None,
+                "created_at": str(p.created_at),
             }
-            for p in peers
+            for p in raw_peers
         ]
         print_result(items, columns=["id", "metadata", "created_at"], title="Peers")
     except Exception as e:
@@ -55,18 +61,23 @@ def list_peers() -> None:
 @app.command()
 def inspect(
     peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a peer: card, session count, recent conclusions."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
     client, config = get_client()
-    peer = client.peer(pid)
+    p = client.peer(pid)
 
     try:
-        card = peer.get_card()
-        sessions = list(peer.sessions())
-        conclusions = list(peer.conclusions.list())
+        card = p.get_card()
+        sessions = list(p.sessions())
+        conclusions = list(p.conclusions.list())
 
         result = {
             "id": pid,
@@ -88,16 +99,21 @@ def inspect(
 def card(
     peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
     target: Optional[str] = typer.Option(None, help="Target peer for relationship card"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get raw peer card content."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
     client, config = get_client()
-    peer = client.peer(pid)
+    p = client.peer(pid)
 
     try:
-        result = peer.get_card(target=target)
+        result = p.get_card(target=target)
         print_result({"peer_id": pid, "target": target, "card": result})
     except Exception as e:
         _handle_error(e, "peer", pid)
@@ -109,16 +125,21 @@ def chat(
     peer_id: Optional[str] = typer.Option(None, help="Peer ID (uses default if omitted)"),
     target: Optional[str] = typer.Option(None, help="Target peer for perspective"),
     session: Optional[str] = typer.Option(None, help="Session context"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic about a peer."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
     client, config = get_client()
-    peer = client.peer(pid)
+    p = client.peer(pid)
 
     try:
-        response = peer.chat(query, target=target, session=session)
+        response = p.chat(query, target=target, session=session)
         print_result({"peer_id": pid, "query": query, "response": response})
     except Exception as e:
         _handle_error(e, "peer", pid)
@@ -129,16 +150,21 @@ def search(
     query: str = typer.Argument(help="Search query"),
     peer_id: Optional[str] = typer.Option(None, help="Peer ID (uses default if omitted)"),
     limit: int = typer.Option(10, help="Max results"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search a peer's messages."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
     client, config = get_client()
-    peer = client.peer(pid)
+    p = client.peer(pid)
 
     try:
-        results = peer.search(query, limit=limit)
+        results = p.search(query, limit=limit)
         items = [
             {
                 "id": m.id,

@@ -31,28 +31,34 @@ def _get_session_id(session_id: str | None) -> str:
 
 @app.command("list")
 def list_sessions(
-    peer_id: Optional[str] = typer.Option(None, "--peer", help="Filter by peer"),
+    peer_id: Optional[str] = typer.Option(None, "--peer", "-p", help="Filter by peer"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List sessions in the workspace."""
+    from honcho_cli.commands.workspace import _raw_list
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     client, config = get_client()
 
     try:
         if peer_id:
             peer = client.peer(peer_id)
-            sessions = list(peer.sessions())
+            raw_sessions = _raw_list(peer.sessions())
         else:
-            sessions = list(client.sessions())
+            raw_sessions = _raw_list(client.sessions())
 
         items = [
             {
                 "id": s.id,
-                "is_active": getattr(s, "is_active", None),
-                "metadata": getattr(s, "metadata", {}),
-                "created_at": str(getattr(s, "created_at", "")),
+                "is_active": s.is_active,
+                "metadata": s.metadata,
+                "created_at": str(s.created_at),
             }
-            for s in sessions
+            for s in raw_sessions
         ]
         print_result(items, columns=["id", "is_active", "metadata", "created_at"], title="Sessions")
     except Exception as e:
@@ -62,20 +68,28 @@ def list_sessions(
 @app.command()
 def inspect(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a session: peers, message count, summaries, config."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
-    session = client.session(sid)
+    sess = client.session(sid)
 
     try:
-        peers = session.peers()
-        messages = list(session.messages())
-        summaries = session.summaries()
-        sess_config = session.get_configuration()
+        peers = sess.peers()
+        messages = list(sess.messages())
+        summaries = sess.summaries()
+        sess_config = sess.get_configuration()
 
+        from honcho_cli.commands.workspace import _compact_config
+
+        raw_config = _config_to_dict(sess_config) if sess_config else None
         result = {
             "id": sid,
             "peers": [{"id": p.id} for p in peers],
@@ -84,7 +98,7 @@ def inspect(
                 "short": summaries.short_summary if hasattr(summaries, "short_summary") else None,
                 "long": summaries.long_summary if hasattr(summaries, "long_summary") else None,
             },
-            "configuration": _config_to_dict(sess_config) if sess_config else None,
+            "configuration": _compact_config(raw_config) if isinstance(raw_config, dict) else raw_config,
         }
         print_result(result)
     except Exception as e:
@@ -96,16 +110,21 @@ def messages(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
     last: int = typer.Option(20, "--last", help="Number of recent messages"),
     reverse: bool = typer.Option(False, "--reverse", help="Reverse order (oldest first)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List recent messages in a session."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
-    session = client.session(sid)
+    sess = client.session(sid)
 
     try:
-        msgs = list(session.messages())
+        msgs = list(sess.messages())
         if not reverse:
             msgs = msgs[-last:]
         else:
@@ -131,16 +150,21 @@ def context(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
     tokens: Optional[int] = typer.Option(None, help="Token budget"),
     summary: bool = typer.Option(True, help="Include summary"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get session context (what an agent would see)."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
-    session = client.session(sid)
+    sess = client.session(sid)
 
     try:
-        ctx = session.context(tokens=tokens, summary=summary)
+        ctx = sess.context(tokens=tokens, summary=summary)
         result = ctx.__dict__ if hasattr(ctx, "__dict__") else ctx
         print_result(result)
     except Exception as e:
@@ -150,16 +174,21 @@ def context(
 @app.command()
 def summaries(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get session summaries (short + long)."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
-    session = client.session(sid)
+    sess = client.session(sid)
 
     try:
-        s = session.summaries()
+        s = sess.summaries()
         result = {
             "session_id": sid,
             "short_summary": s.short_summary if hasattr(s, "short_summary") else None,

@@ -1,4 +1,11 @@
-"""Shared callback for subcommand groups to accept global-style flags."""
+"""Shared callback and command-level flag helpers.
+
+Flags like --json, -w, -p, -s work in TWO positions:
+  1. Group-level (before subcommand):  honcho workspace --json list
+  2. Command-level (after subcommand): honcho workspace list --json -w granola
+
+Both positions are idempotent — if set at group level, the command-level is a no-op.
+"""
 
 from __future__ import annotations
 
@@ -9,10 +16,28 @@ import typer
 from honcho_cli.output import set_json_mode, set_quiet_mode
 
 
+def handle_cmd_flags(
+    json_output: bool = False,
+    workspace: str | None = None,
+    peer: str | None = None,
+    session: str | None = None,
+) -> None:
+    """Apply command-level flags. Idempotent if already set by group callback."""
+    if json_output:
+        set_json_mode(True)
+
+    from honcho_cli.main import _global_overrides
+
+    if workspace:
+        _global_overrides["workspace"] = workspace
+    if peer:
+        _global_overrides["peer"] = peer
+    if session:
+        _global_overrides["session"] = session
+
+
 def add_common_options(app: typer.Typer) -> None:
     """Add a callback to a sub-app that accepts --json, --quiet, -w, -p, -s."""
-    # Allow flags like --json after subcommands (e.g., `honcho workspace inspect granola --json`)
-    app.info.context_settings = {"allow_interspersed_args": True}
 
     @app.callback(invoke_without_command=True)
     def _callback(
@@ -28,7 +53,6 @@ def add_common_options(app: typer.Typer) -> None:
         if quiet:
             set_quiet_mode(True)
 
-        # Import here to avoid circular imports
         from honcho_cli.main import _global_overrides
 
         if workspace:
