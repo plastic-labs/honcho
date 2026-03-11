@@ -1,0 +1,103 @@
+"""Honcho CLI — Agent-first admin & debugging tool.
+
+Entry point and top-level command group.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+import typer
+
+from honcho_cli import __version__
+from honcho_cli.output import set_json_mode, set_quiet_mode
+
+app = typer.Typer(
+    name="honcho",
+    help="Agent-first admin & debugging CLI for Honcho.",
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+)
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        print(f"honcho-cli {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", envvar="HONCHO_WORKSPACE_ID", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", envvar="HONCHO_PEER_ID", help="Override peer ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", envvar="HONCHO_SESSION_ID", help="Override session ID"),
+    version: bool = typer.Option(False, "--version", "-V", callback=version_callback, is_eager=True, help="Show version"),
+) -> None:
+    """Honcho CLI — admin & debugging tool for Honcho workspaces."""
+    set_json_mode(json_output)
+    set_quiet_mode(quiet)
+
+    # Store global overrides for commands to access
+    _global_overrides["workspace"] = workspace
+    _global_overrides["peer"] = peer
+    _global_overrides["session"] = session
+
+
+# Global overrides from flags (commands read these)
+_global_overrides: dict[str, str | None] = {
+    "workspace": None,
+    "peer": None,
+    "session": None,
+}
+
+
+def get_resolved_config():
+    """Get config with global flag overrides applied."""
+    from honcho_cli.config import CLIConfig
+
+    config = CLIConfig.load()
+
+    if _global_overrides["workspace"]:
+        config.workspace_id = _global_overrides["workspace"]
+    if _global_overrides["peer"]:
+        config.peer_id = _global_overrides["peer"]
+    if _global_overrides["session"]:
+        config.session_id = _global_overrides["session"]
+
+    return config
+
+
+def get_client():
+    """Create a Honcho client from resolved config."""
+    from honcho import Honcho
+
+    from honcho_cli.config import get_client_kwargs
+
+    config = get_resolved_config()
+    return Honcho(**get_client_kwargs(config)), config
+
+
+# Register command groups
+from honcho_cli.commands.config_cmd import app as config_app
+from honcho_cli.commands.conclusion import app as conclusion_app
+from honcho_cli.commands.describe import app as describe_app
+from honcho_cli.commands.key import app as key_app
+from honcho_cli.commands.message import app as message_app
+from honcho_cli.commands.peer import app as peer_app
+from honcho_cli.commands.session import app as session_app
+from honcho_cli.commands.workspace import app as workspace_app
+
+app.add_typer(config_app, name="config")
+app.add_typer(workspace_app, name="workspace")
+app.add_typer(peer_app, name="peer")
+app.add_typer(session_app, name="session")
+app.add_typer(message_app, name="message")
+app.add_typer(conclusion_app, name="conclusion")
+app.add_typer(key_app, name="key")
+app.add_typer(describe_app, name="describe")
+
+
+if __name__ == "__main__":
+    app()
