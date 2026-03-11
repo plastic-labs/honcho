@@ -60,6 +60,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "AUTH": "auth",
         "SENTRY": "sentry",
         "CACHE": "cache",
+        "OCR": "ocr",
         "LLM": "llm",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
@@ -448,6 +449,44 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
+class OCRSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="OCR_", extra="ignore")  # pyright: ignore
+
+    PROVIDER: Literal["mistral", "deepseek_compatible"] | None = None
+    MODE: Literal["off", "fallback", "force"] = "off"
+    TIMEOUT_SECONDS: Annotated[int, Field(default=60, gt=0, le=300)] = 60
+    MIN_EXTRACTED_TEXT_CHARS: Annotated[int, Field(default=100, ge=0, le=10_000)] = (
+        100
+    )
+
+    MISTRAL_API_KEY: str | None = None
+    MISTRAL_MODEL: str = "mistral-ocr-latest"
+
+    DEEPSEEK_BASE_URL: str | None = None
+    DEEPSEEK_API_KEY: str | None = None
+    DEEPSEEK_MODEL: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_configuration(self) -> "OCRSettings":
+        if self.MODE == "off":
+            return self
+
+        if self.PROVIDER is None:
+            raise ValueError("OCR.PROVIDER must be set when OCR.MODE is not 'off'")
+
+        if self.PROVIDER == "mistral" and not self.MISTRAL_API_KEY:
+            raise ValueError(
+                "OCR_MISTRAL_API_KEY must be set when OCR.PROVIDER is 'mistral'"
+            )
+
+        if self.PROVIDER == "deepseek_compatible" and not self.DEEPSEEK_BASE_URL:
+            raise ValueError(
+                "OCR_DEEPSEEK_BASE_URL must be set when OCR.PROVIDER is 'deepseek_compatible'"
+            )
+
+        return self
+
+
 class MetricsSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
     ENABLED: bool = False
@@ -656,6 +695,7 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
+    OCR: OCRSettings = Field(default_factory=OCRSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)

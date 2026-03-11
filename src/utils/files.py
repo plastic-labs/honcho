@@ -1,8 +1,10 @@
 import datetime
+import base64
 import logging
 from io import BytesIO
 from typing import Any, Protocol
 
+import httpx
 from fastapi import UploadFile
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Integer, select
@@ -17,31 +19,134 @@ logger = logging.getLogger(__name__)
 
 
 class FileProcessor(Protocol):
-    async def extract_text(self, content: bytes) -> str: ...
+    async def extract_text(self, content: bytes, content_type: str) -> str: ...
     def supports_file_type(self, content_type: str) -> bool: ...
+
+
+def _native_pdf_text(content: bytes) -> str:
+    import pdfplumber
+
+    with pdfplumber.open(BytesIO(content)) as pdf_reader:
+        text_parts: list[str] = []
+        for page_num, page in enumerate(pdf_reader.pages):
+            text = page.extract_text()
+            if text and text.strip():
+                text_parts.append(f"[Page {page_num + 1}]\n{text}")
+        return "\n\n".join(text_parts)
+
+
+def _ocr_endpoint() -> str:
+    if settings.OCR.PROVIDER == "mistral":
+        return "https://api.mistral.ai/v1/ocr"
+
+    base_url = settings.OCR.DEEPSEEK_BASE_URL
+    if not base_url:
+        raise UnsupportedFileTypeError("DeepSeek-compatible OCR endpoint not configured")
+    return (
+        base_url
+        if base_url.rstrip("/").endswith("/ocr")
+        else f"{base_url.rstrip('/')}/ocr"
+    )
+
+
+def _ocr_headers() -> dict[str, str]:
+    if settings.OCR.PROVIDER == "mistral":
+        return {
+            "Authorization": f"Bearer {settings.OCR.MISTRAL_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+    headers = {"Content-Type": "application/json"}
+    if settings.OCR.DEEPSEEK_API_KEY:
+        headers["Authorization"] = f"Bearer {settings.OCR.DEEPSEEK_API_KEY}"
+    return headers
+
+
+def _ocr_payload(content: bytes, content_type: str) -> dict[str, Any]:
+    encoded = base64.b64encode(content).decode("ascii")
+    data_url = f"data:{content_type};base64,{encoded}"
+
+    document: dict[str, Any]
+    if content_type.startswith("image/"):
+        document = {"type": "image_url", "image_url": data_url}
+    else:
+        document = {"type": "document_url", "document_url": data_url}
+
+    payload = {"document": document}
+    if settings.OCR.PROVIDER == "mistral":
+        payload["model"] = settings.OCR.MISTRAL_MODEL
+        payload["include_image_base64"] = False
+    elif settings.OCR.DEEPSEEK_MODEL:
+        payload["model"] = settings.OCR.DEEPSEEK_MODEL
+    return payload
+
+
+def _coerce_ocr_text(response_json: dict[str, Any]) -> str:
+    pages = response_json.get("pages")
+    if isinstance(pages, list):
+        text_parts: list[str] = []
+        for page in pages:
+            if not isinstance(page, dict):
+                continue
+            text = page.get("markdown") or page.get("text")
+            if isinstance(text, str) and text.strip():
+                index = len(text_parts) + 1
+                text_parts.append(f"[Page {index}]\n{text.strip()}")
+        if text_parts:
+            return "\n\n".join(text_parts)
+
+    for key in ("markdown", "text", "content"):
+        value = response_json.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    raise ValueError("OCR response did not contain extracted text")
+
+
+async def _ocr_extract_text(content: bytes, content_type: str) -> str:
+    if settings.OCR.MODE == "off":
+        raise UnsupportedFileTypeError("OCR is not enabled")
+
+    async with httpx.AsyncClient(timeout=settings.OCR.TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            _ocr_endpoint(),
+            headers=_ocr_headers(),
+            json=_ocr_payload(content, content_type),
+        )
+        response.raise_for_status()
+        return _coerce_ocr_text(response.json())
 
 
 class PDFProcessor:
     def supports_file_type(self, content_type: str) -> bool:
         return content_type == "application/pdf"
 
-    async def extract_text(self, content: bytes) -> str:
-        import pdfplumber
+    async def extract_text(self, content: bytes, content_type: str) -> str:
+        native_text = _native_pdf_text(content)
 
-        with pdfplumber.open(BytesIO(content)) as pdf_reader:
-            text_parts: list[str] = []
-            for page_num, page in enumerate(pdf_reader.pages):
-                text = page.extract_text()
-                if text and text.strip():
-                    text_parts.append(f"[Page {page_num + 1}]\n{text}")
-            return "\n\n".join(text_parts)
+        if settings.OCR.MODE == "off":
+            return native_text
+
+        if (
+            settings.OCR.MODE == "fallback"
+            and len(native_text.strip()) >= settings.OCR.MIN_EXTRACTED_TEXT_CHARS
+        ):
+            return native_text
+
+        try:
+            return await _ocr_extract_text(content, content_type)
+        except Exception:
+            if native_text.strip():
+                logger.warning("OCR failed for PDF upload, falling back to native text")
+                return native_text
+            raise
 
 
 class TextProcessor:
     def supports_file_type(self, content_type: str) -> bool:
         return content_type.startswith("text/")
 
-    async def extract_text(self, content: bytes) -> str:
+    async def extract_text(self, content: bytes, content_type: str) -> str:
         # Try different encodings
         for encoding in ["utf-8", "utf-16", "latin-1"]:
             try:
@@ -55,12 +160,20 @@ class JSONProcessor:
     def supports_file_type(self, content_type: str) -> bool:
         return content_type == "application/json"
 
-    async def extract_text(self, content: bytes) -> str:
+    async def extract_text(self, content: bytes, content_type: str) -> str:
         import json
 
         data = json.loads(content.decode("utf-8"))
         # Convert JSON to readable text format
         return json.dumps(data, ensure_ascii=False)
+
+
+class ImageProcessor:
+    def supports_file_type(self, content_type: str) -> bool:
+        return content_type.startswith("image/")
+
+    async def extract_text(self, content: bytes, content_type: str) -> str:
+        return await _ocr_extract_text(content, content_type)
 
 
 class FileProcessingService:
@@ -69,7 +182,7 @@ class FileProcessingService:
             PDFProcessor(),
             TextProcessor(),
             JSONProcessor(),
-            # Add more processors as needed
+            ImageProcessor(),
         ]
 
     async def extract_text_from_upload(self, file: UploadFile) -> str:
@@ -85,7 +198,7 @@ class FileProcessingService:
                 f"Unsupported file type: {file.content_type}. Supported types: {[p.__class__.__name__ for p in self.processors]}"
             )
 
-        return await processor.extract_text(content)
+        return await processor.extract_text(content, file.content_type or "")
 
     def _get_processor(self, content_type: str) -> FileProcessor | None:
         for processor in self.processors:

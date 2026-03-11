@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.models import Peer, Workspace
+from src.utils import files as file_utils
 
 
 async def _create_test_session(
@@ -586,3 +587,112 @@ async def test_large_file_upload_with_metadata(
         assert message["peer_id"] == test_peer.name
         assert message["session_id"] == session_name
         assert message["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_image_ocr(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test image uploads use OCR when configured."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "force")
+
+    async def mock_ocr_extract_text(content: bytes, content_type: str) -> str:
+        assert content == b"fake-image-bytes"
+        assert content_type == "image/png"
+        return "Extracted image text"
+
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", mock_ocr_extract_text)
+
+    files = {"file": ("test.png", io.BytesIO(b"fake-image-bytes"), "image/png")}
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "Extracted image text"
+
+
+@pytest.mark.asyncio
+async def test_pdf_upload_uses_native_text_when_fallback_succeeds(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test PDF uploads avoid OCR when native extraction is sufficient."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    native_text = "A" * (settings.OCR.MIN_EXTRACTED_TEXT_CHARS + 1)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "fallback")
+    monkeypatch.setattr(file_utils, "_native_pdf_text", lambda content: native_text)
+
+    async def fail_if_called(content: bytes, content_type: str) -> str:
+        raise AssertionError("OCR should not be called when native PDF extraction works")
+
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", fail_if_called)
+
+    files = {"file": ("test.pdf", io.BytesIO(b"fake-pdf-bytes"), "application/pdf")}
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == native_text
+
+
+@pytest.mark.asyncio
+async def test_pdf_upload_falls_back_to_ocr_when_native_text_missing(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test PDF uploads use OCR when native extraction does not yield useful text."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "fallback")
+    monkeypatch.setattr(file_utils, "_native_pdf_text", lambda content: "")
+
+    async def mock_ocr_extract_text(content: bytes, content_type: str) -> str:
+        assert content_type == "application/pdf"
+        return "OCR fallback text"
+
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", mock_ocr_extract_text)
+
+    files = {"file": ("test.pdf", io.BytesIO(b"fake-pdf-bytes"), "application/pdf")}
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "OCR fallback text"
