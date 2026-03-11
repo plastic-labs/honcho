@@ -47,12 +47,16 @@ def generate(
     admin: bool = typer.Option(False, "--admin", help="Generate admin key"),
     expires: str = typer.Option("90d", "--expires", help="Expiry duration (e.g., 30d, 24h)"),
     no_expire: bool = typer.Option(False, "--no-expire", help="No expiration (use with caution)"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Generate a scoped JWT key.
 
     Requires an admin JWT in config. Generated keys are scoped down from admin.
     """
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_resolved_config
+
+    handle_cmd_flags(json_output=json_output)
 
     config = get_resolved_config()
 

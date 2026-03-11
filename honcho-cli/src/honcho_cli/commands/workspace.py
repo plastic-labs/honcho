@@ -1,4 +1,4 @@
-"""Workspace commands: inspect, delete, search, queue-status."""
+"""Workspace commands: list, inspect, delete, search, queue-status."""
 
 from __future__ import annotations
 
@@ -26,12 +26,54 @@ def _get_workspace_id(workspace_id: str | None) -> str:
     return validate_resource_id(wid, "workspace")
 
 
+def _raw_list(page) -> list:
+    """Collect all raw API response items across all pages of a SyncPage."""
+    items = list(page._raw_items)
+    while page.has_next_page():
+        page = page.get_next_page()
+        if page is None:
+            break
+        items.extend(page._raw_items)
+    return items
+
+
+def _compact_config(config_dict: dict) -> dict | str:
+    """Return '(defaults)' if all config values are None, else the dict."""
+    if all(v is None for v in config_dict.values()):
+        return "(defaults)"
+    return config_dict
+
+
+@app.command("list")
+def list_workspaces(
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """List all accessible workspaces."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output)
+    client, config = get_client()
+
+    try:
+        workspaces = list(client.workspaces())
+        items = [{"id": w} for w in workspaces]
+        print_result(items, columns=["id"], title="Workspaces")
+    except Exception as e:
+        _handle_error(e, "workspace", "list")
+
+
 @app.command()
 def inspect(
     workspace_id: Optional[str] = typer.Argument(None, help="Workspace ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a workspace: peers, sessions, config."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
 
     wid = _get_workspace_id(workspace_id)
     client, config = get_client()
@@ -44,17 +86,24 @@ def inspect(
         ws_config = client.get_configuration()
         ws_metadata = client.get_metadata()
 
-        peers = list(client.peers())
-        sessions = list(client.sessions())
+        # Use raw API response objects to get all fields (created_at, is_active)
+        raw_peers = _raw_list(client.peers())
+        raw_sessions = _raw_list(client.sessions())
 
         result = {
             "workspace_id": wid,
             "metadata": ws_metadata,
-            "configuration": _config_to_dict(ws_config),
-            "peer_count": len(peers),
-            "session_count": len(sessions),
-            "peers": [{"id": p.id, "metadata": getattr(p, "metadata", {})} for p in peers[:20]],
-            "sessions": [{"id": s.id, "is_active": getattr(s, "is_active", None), "metadata": getattr(s, "metadata", {})} for s in sessions[:20]],
+            "configuration": _compact_config(_config_to_dict(ws_config)),
+            "peer_count": len(raw_peers),
+            "session_count": len(raw_sessions),
+            "peers": [
+                {"id": p.id, "metadata": p.metadata, "created_at": str(p.created_at)}
+                for p in raw_peers[:20]
+            ],
+            "sessions": [
+                {"id": s.id, "is_active": s.is_active, "metadata": s.metadata, "created_at": str(s.created_at)}
+                for s in raw_sessions[:20]
+            ],
         }
         print_result(result)
     except Exception as e:
@@ -66,9 +115,13 @@ def delete(
     workspace_id: str = typer.Argument(help="Workspace ID to delete"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without deleting"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a workspace. Destructive — requires --yes or interactive confirm."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output)
 
     validate_resource_id(workspace_id, "workspace")
     client, config = get_client()
@@ -100,10 +153,15 @@ def delete(
 def search(
     query: str = typer.Argument(help="Search query"),
     workspace_id: Optional[str] = typer.Option(None, help="Workspace ID"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     limit: int = typer.Option(10, help="Max results"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search messages across workspace."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
 
     wid = _get_workspace_id(workspace_id)
     client, config = get_client()
@@ -128,12 +186,17 @@ def search(
 @app.command("queue-status")
 def queue_status(
     workspace_id: Optional[str] = typer.Option(None, help="Workspace ID"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     observer: Optional[str] = typer.Option(None, help="Filter by observer peer"),
     sender: Optional[str] = typer.Option(None, help="Filter by sender peer"),
     session: Optional[str] = typer.Option(None, help="Filter by session"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get queue processing status."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
 
     _get_workspace_id(workspace_id)
     client, config = get_client()

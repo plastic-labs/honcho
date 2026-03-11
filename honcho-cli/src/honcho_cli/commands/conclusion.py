@@ -21,10 +21,15 @@ add_common_options(app)
 def list_conclusions(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List conclusions."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     client, config = get_client()
 
     if not observer:
@@ -33,13 +38,13 @@ def list_conclusions(
         print_error("NO_PEER", "Observer peer ID required. Use --observer or set default peer.")
         raise typer.Exit(1)
 
-    peer = client.peer(observer)
+    p = client.peer(observer)
 
     try:
         if observed:
-            scope = peer.conclusions_of(observed)
+            scope = p.conclusions_of(observed)
         else:
-            scope = peer.conclusions
+            scope = p.conclusions
 
         conclusions = list(scope.list())
         items = [
@@ -63,10 +68,15 @@ def search(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     top_k: int = typer.Option(10, help="Max results"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Semantic search over conclusions."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     client, config = get_client()
 
     if not observer:
@@ -75,13 +85,13 @@ def search(
         print_error("NO_PEER", "Observer peer ID required. Use --observer or set default peer.")
         raise typer.Exit(1)
 
-    peer = client.peer(observer)
+    p = client.peer(observer)
 
     try:
         if observed:
-            scope = peer.conclusions_of(observed)
+            scope = p.conclusions_of(observed)
         else:
-            scope = peer.conclusions
+            scope = p.conclusions
 
         results = scope.query(query, top_k=top_k)
         items = [
@@ -104,11 +114,16 @@ def create(
     content: str = typer.Argument(help="Conclusion content or JSON payload"),
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
-    session_id: Optional[str] = typer.Option(None, "--session", help="Session context"),
+    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Session context"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create a conclusion."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     client, config = get_client()
 
     if not observer:
@@ -124,13 +139,13 @@ def create(
     except (json.JSONDecodeError, AttributeError):
         pass
 
-    peer = client.peer(observer)
+    p = client.peer(observer)
 
     try:
         if observed:
-            scope = peer.conclusions_of(observed)
+            scope = p.conclusions_of(observed)
         else:
-            scope = peer.conclusions
+            scope = p.conclusions
 
         result = scope.create(content, session_id=session_id)
         print_result({
@@ -150,10 +165,15 @@ def delete(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a conclusion."""
+    from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     validate_resource_id(conclusion_id, "conclusion")
     client, config = get_client()
 
@@ -166,13 +186,13 @@ def delete(
     if not yes:
         typer.confirm(f"Delete conclusion '{conclusion_id}'?", abort=True)
 
-    peer = client.peer(observer)
+    p = client.peer(observer)
 
     try:
         if observed:
-            scope = peer.conclusions_of(observed)
+            scope = p.conclusions_of(observed)
         else:
-            scope = peer.conclusions
+            scope = p.conclusions
 
         scope.delete(conclusion_id)
         status(f"Conclusion '{conclusion_id}' deleted")
