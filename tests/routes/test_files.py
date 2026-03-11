@@ -200,6 +200,8 @@ async def test_create_messages_with_unsupported_file_type(
     response = client.post(url, files=files, data=form_data)
 
     assert response.status_code == 415
+    assert "image/*" not in response.json()["detail"]
+    assert "application/pdf" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -739,6 +741,28 @@ async def test_pdf_upload_falls_back_to_ocr_when_native_text_missing(
     data = response.json()
     assert len(data) == 1
     assert data[0]["content"] == "OCR fallback text"
+
+
+@pytest.mark.asyncio
+async def test_pdf_force_mode_skips_native_extraction_and_propagates_ocr_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test force mode uses OCR directly and does not fall back to native extraction."""
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "force")
+
+    def fail_if_called(content: bytes) -> str:
+        raise AssertionError("Native PDF extraction should not run in force mode")
+
+    async def raise_ocr_error(content: bytes, content_type: str) -> str:
+        assert content_type == "application/pdf"
+        raise RuntimeError("OCR unavailable")
+
+    monkeypatch.setattr(file_utils, "_native_pdf_text", fail_if_called)
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", raise_ocr_error)
+
+    with pytest.raises(RuntimeError, match="OCR unavailable"):
+        await file_utils.PDFProcessor().extract_text(b"fake-pdf-bytes", "application/pdf")
 
 
 @pytest.mark.asyncio

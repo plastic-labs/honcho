@@ -122,10 +122,13 @@ class PDFProcessor:
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes, content_type: str) -> str:
-        native_text = _native_pdf_text(content)
-
         if settings.OCR.MODE == "off":
-            return native_text
+            return _native_pdf_text(content)
+
+        if settings.OCR.MODE == "force":
+            return await _ocr_extract_text(content, content_type)
+
+        native_text = _native_pdf_text(content)
 
         if (
             settings.OCR.MODE == "fallback"
@@ -136,7 +139,7 @@ class PDFProcessor:
         try:
             return await _ocr_extract_text(content, content_type)
         except Exception as e:
-            if native_text.strip():
+            if settings.OCR.MODE == "fallback" and native_text.strip():
                 logger.warning(
                     "OCR failed for PDF upload, falling back to native text: %s", e
                 )
@@ -184,8 +187,9 @@ class FileProcessingService:
             PDFProcessor(),
             TextProcessor(),
             JSONProcessor(),
-            ImageProcessor(),
         ]
+        if settings.OCR.MODE != "off":
+            self.processors.append(ImageProcessor())
 
     async def extract_text_from_upload(self, file: UploadFile) -> str:
         """Extract text from uploaded file without saving to disk."""
@@ -197,7 +201,7 @@ class FileProcessingService:
         processor = self._get_processor(file.content_type or "")
         if not processor:
             raise UnsupportedFileTypeError(
-                f"Unsupported file type: {file.content_type}. Supported types: {[p.__class__.__name__ for p in self.processors]}"
+                f"Unsupported file type: {file.content_type}. Supported types: {self._supported_types()}"
             )
 
         return await processor.extract_text(content, file.content_type or "")
@@ -207,6 +211,12 @@ class FileProcessingService:
             if processor.supports_file_type(content_type):
                 return processor
         return None
+
+    def _supported_types(self) -> list[str]:
+        supported_types = ["application/pdf", "text/*", "application/json"]
+        if any(isinstance(processor, ImageProcessor) for processor in self.processors):
+            supported_types.append("image/*")
+        return supported_types
 
 
 def split_text_into_chunks(text: str, max_chars: int = 49500) -> list[str]:
