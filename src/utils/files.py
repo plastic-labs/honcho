@@ -128,7 +128,11 @@ class PDFProcessor:
         if settings.OCR.MODE == "force":
             return await _ocr_extract_text(content, content_type)
 
-        native_text = _native_pdf_text(content)
+        native_text = ""
+        try:
+            native_text = _native_pdf_text(content)
+        except Exception:
+            logger.warning("Native PDF extraction failed; trying OCR", exc_info=True)
 
         if (
             settings.OCR.MODE == "fallback"

@@ -766,6 +766,31 @@ async def test_pdf_force_mode_skips_native_extraction_and_propagates_ocr_error(
 
 
 @pytest.mark.asyncio
+async def test_pdf_fallback_mode_uses_ocr_when_native_extraction_raises(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test fallback mode still attempts OCR if native PDF parsing fails."""
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "fallback")
+
+    def raise_native_error(content: bytes) -> str:
+        raise ValueError("pdf parse failure")
+
+    async def mock_ocr_extract_text(content: bytes, content_type: str) -> str:
+        assert content_type == "application/pdf"
+        return "OCR after parse error"
+
+    monkeypatch.setattr(file_utils, "_native_pdf_text", raise_native_error)
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", mock_ocr_extract_text)
+
+    result = await file_utils.PDFProcessor().extract_text(
+        b"fake-pdf-bytes", "application/pdf"
+    )
+
+    assert result == "OCR after parse error"
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     not os.getenv("RUN_LIVE_MISTRAL_OCR_TEST")
     or not (os.getenv("MISTRAL_API_KEY") or os.getenv("OCR_MISTRAL_API_KEY")),
