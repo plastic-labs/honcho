@@ -376,19 +376,21 @@ class GranolaMCPClient:
         """Get the raw transcript for a meeting (paid tiers only)."""
         try:
             result = await self.call_mcp_tool("get_meeting_transcript", {"meeting_id": meeting_id})
-            text = self._extract_mcp_text(result)
-
-            if text and "no transcript" not in text.lower() and len(text) > 50:
-                return text
-
-            if text:
-                print(f"   Transcript response too short or empty: {text[:100]}")
-
-            transcript = result.get("transcript")
-            return str(transcript) if transcript else None
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError, OSError) as e:
             print(f"   Transcript unavailable: {e}")
             return None
+
+        text = self._extract_mcp_text(result)
+
+        if text and "no transcript" not in text.lower():
+            return text
+
+        # Fall back to a top-level "transcript" key when extracted text is empty
+        if not text:
+            transcript = result.get("transcript")
+            return str(transcript) if transcript else None
+
+        return None
 
     async def close(self):
         """Close the HTTP client."""
@@ -637,10 +639,10 @@ class HonchoClient:
         for j, t in enumerate(merged):
             peer = me_peer if t["speaker"] == "Me" else them_peer
             content = sanitize_content(t["text"])
-            if len(content) > self.MAX_MESSAGE_LEN:
-                content = content[: self.MAX_MESSAGE_LEN]
-            msg_meta = metadata if j == 0 else None
-            messages.append(peer.message(content, metadata=msg_meta, created_at=created_at))
+            for start in range(0, len(content), self.MAX_MESSAGE_LEN):
+                chunk = content[start : start + self.MAX_MESSAGE_LEN]
+                msg_meta = metadata if j == 0 and start == 0 else None
+                messages.append(peer.message(chunk, metadata=msg_meta, created_at=created_at))
 
         for i in range(0, len(messages), 100):
             session.add_messages(messages[i : i + 100])
