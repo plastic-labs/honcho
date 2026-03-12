@@ -13,12 +13,21 @@ The full code is available on [GitHub](https://github.com/plastic-labs/honcho/tr
 
 ## Quick Start
 
-```bash
+<CodeGroup>
+```bash uv
+uv pip install honcho-ai httpx
+export HONCHO_API_KEY="your-key-from-app.honcho.dev"
+
+uv run python honcho_granola.py
+```
+
+```bash pip
 pip install honcho-ai httpx
 export HONCHO_API_KEY="your-key-from-app.honcho.dev"
 
 python honcho_granola.py
 ```
+</CodeGroup>
 
 The script will:
 1. Open your browser for Granola OAuth authentication
@@ -82,7 +91,7 @@ session.add_messages([
 
 The summary is attributed to you because it's *your* record of what happened. Granola captured your notes from a meeting where those people were present.
 
-**Interactive Confirmation.** When the script encounters a new participant, it prompts before creating the peer. For multi-person calls that are actually 1:1s (extra participants listed but didn't speak), you can override the detection.
+**Interactive Confirmation.** For each meeting, you choose the import mode: two-person (full attribution), summary, or skip. For multi-person calls that are actually 1:1s (extra participants listed but didn't speak), you can override the detection and select the actual speaker.
 
 **Noisy Transcripts Preserved.** Granola's raw transcripts are often fragmented (`Me: Yeah.  Them: Yeah.  Me: And.`). The script merges consecutive same-speaker turns but otherwise preserves the raw content. Honcho's reasoning extracts signal from noisy data.
 
