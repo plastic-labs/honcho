@@ -6,7 +6,7 @@ A one-time migration script that fetches all meeting notes from Granola MCP
 and stores them in Honcho for long-term memory and reasoning.
 
 Requirements:
-    pip install mcp honcho-ai httpx
+    pip install honcho-ai httpx
 
 Environment Variables:
     HONCHO_API_KEY - Your Honcho API key (get from app.honcho.dev/api-keys)
@@ -33,9 +33,9 @@ from typing import Any, TypedDict, cast
 GRANOLA_MCP_URL = "https://mcp.granola.ai/mcp"
 
 # OAuth configuration for Granola
-# Using Dynamic Client Registration - no client_id/secret needed
 OAUTH_REDIRECT_PORT = 8765
 OAUTH_REDIRECT_URI = f"http://localhost:{OAUTH_REDIRECT_PORT}/callback"
+
 
 class Participant(TypedDict):
     name: str
@@ -108,95 +108,30 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
 class GranolaMCPClient:
     """Client for interacting with Granola MCP server."""
 
+    # Granola OAuth endpoints
+    AUTH_BASE = "https://mcp-auth.granola.ai"
+    AUTHORIZATION_ENDPOINT = f"{AUTH_BASE}/oauth2/authorize"
+    TOKEN_ENDPOINT = f"{AUTH_BASE}/oauth2/token"
+    REGISTRATION_ENDPOINT = f"{AUTH_BASE}/oauth2/register"
+
     def __init__(self):
         self.access_token: str | None = None
         self.http_client: httpx.AsyncClient = httpx.AsyncClient(timeout=60.0)
-        self.auth_metadata: dict[str, Any] = {}
-        self.resource_metadata: dict[str, Any] = {}
-        self.client_id: str | None = None
-        self.pkce_verifier: str | None = None
 
-    def _generate_pkce(self) -> tuple[str, str]:
+    @staticmethod
+    def _generate_pkce() -> tuple[str, str]:
         """Generate PKCE code verifier and challenge."""
         import secrets
         import hashlib
         import base64
 
-        # Generate code verifier (43-128 characters)
         verifier = secrets.token_urlsafe(32)
-
-        # Generate code challenge using S256
         challenge_bytes = hashlib.sha256(verifier.encode()).digest()
         challenge = base64.urlsafe_b64encode(challenge_bytes).rstrip(b'=').decode()
-
         return verifier, challenge
 
-    async def discover_protected_resource_metadata(self) -> dict[str, Any]:
-        """
-        Fetch Protected Resource Metadata per RFC 9728 / MCP spec.
-        This tells us which auth server to use and what scopes are supported.
-        """
-        base_url = GRANOLA_MCP_URL.rsplit('/mcp', 1)[0]
-
-        # Try the well-known endpoint for protected resource metadata
-        prm_url = f"{base_url}/.well-known/oauth-protected-resource"
-
-        try:
-            response = await self.http_client.get(prm_url)
-            if response.status_code == 200:
-                self.resource_metadata = cast(dict[str, Any], response.json())
-                print(f"   Found protected resource metadata")
-                return self.resource_metadata
-        except Exception as e:
-            print(f"   Could not fetch PRM: {e}")
-
-        return self.resource_metadata
-
-    async def discover_oauth_metadata(self) -> dict[str, Any]:
-        """Fetch OAuth Authorization Server metadata."""
-        # First get the protected resource metadata to find auth server
-        await self.discover_protected_resource_metadata()
-
-        # Get auth server URL from resource metadata or use known URL
-        auth_servers = self.resource_metadata.get("authorization_servers", [])
-
-        if auth_servers:
-            auth_server_url = auth_servers[0] if isinstance(auth_servers[0], str) else auth_servers[0].get("issuer")
-        else:
-            auth_server_url = "https://mcp-auth.granola.ai"
-
-        # Fetch authorization server metadata
-        discovery_urls = [
-            f"{auth_server_url}/.well-known/oauth-authorization-server",
-            f"{auth_server_url}/.well-known/openid-configuration",
-        ]
-
-        for url in discovery_urls:
-            try:
-                response = await self.http_client.get(url)
-                if response.status_code == 200:
-                    self.auth_metadata = cast(dict[str, Any], response.json())
-                    print(f"   Found auth server metadata at {url}")
-                    return self.auth_metadata
-            except Exception:
-                continue
-
-        # Fallback to known Granola auth endpoints
-        self.auth_metadata = {
-            "authorization_endpoint": "https://mcp-auth.granola.ai/oauth2/authorize",
-            "token_endpoint": "https://mcp-auth.granola.ai/oauth2/token",
-            "registration_endpoint": "https://mcp-auth.granola.ai/oauth2/register",
-        }
-        return self.auth_metadata
-
-    async def register_client_dynamic(self) -> dict[str, Any]:
-        """Register client using Dynamic Client Registration."""
-        reg_endpoint = self.auth_metadata.get("registration_endpoint")
-
-        if not reg_endpoint:
-            print("   No DCR endpoint found, will use existing client_id")
-            return {}
-
+    async def _register_client(self) -> str | None:
+        """Register client via Dynamic Client Registration and return client_id."""
         registration_data = {
             "client_name": "Granola to Honcho Transfer",
             "redirect_uris": [OAUTH_REDIRECT_URI],
@@ -207,59 +142,39 @@ class GranolaMCPClient:
 
         try:
             response = await self.http_client.post(
-                reg_endpoint,
+                self.REGISTRATION_ENDPOINT,
                 json=registration_data,
                 headers={"Content-Type": "application/json"}
             )
             if response.status_code in (200, 201):
                 result = cast(dict[str, Any], response.json())
-                self.client_id = result.get("client_id")
-                print(f"   Registered client: {self.client_id}")
-                return result
+                client_id = result.get("client_id")
+                print(f"   Registered client: {client_id}")
+                return client_id
             else:
                 print(f"   DCR response: {response.status_code} - {response.text[:200]}")
         except Exception as e:
             print(f"   DCR failed: {e}")
 
-        return {}
+        return None
 
     async def authenticate(self) -> bool:
-        """Perform OAuth authentication with Granola following MCP spec."""
+        """Perform OAuth authentication with Granola."""
         global auth_result
         auth_result = {"code": None, "error": None}
 
         print("\n🔐 Authenticating with Granola...")
 
-        # Step 1: Discover OAuth endpoints
-        await self.discover_oauth_metadata()
-
-        # Step 2: Try dynamic client registration
-        client_info = await self.register_client_dynamic()
-        client_id = client_info.get("client_id") or self.client_id
-
+        # Step 1: Register client (DCR) to get a client_id
+        client_id = await self._register_client()
         if not client_id:
             print("❌ No client_id obtained from DCR. Cannot authenticate.")
             return False
 
-        # Step 3: Generate PKCE (required by OAuth 2.1 / MCP spec)
-        self.pkce_verifier, pkce_challenge = self._generate_pkce()
+        # Step 2: Generate PKCE (required by OAuth 2.1)
+        pkce_verifier, pkce_challenge = self._generate_pkce()
 
-        # Step 4: Determine scopes
-        # Use scopes from resource metadata, or omit to let server decide
-        supported_scopes = self.resource_metadata.get("scopes_supported", [])
-
-        if supported_scopes:
-            scope = " ".join(supported_scopes)
-        else:
-            # Don't specify scope — let Granola provide default scopes
-            scope = None
-
-        # Build authorization URL
-        auth_url = self.auth_metadata.get(
-            "authorization_endpoint",
-            "https://mcp-auth.granola.ai/oauth2/authorize"
-        )
-
+        # Step 3: Browser-based authorization
         auth_params = {
             "client_id": client_id,
             "redirect_uri": OAUTH_REDIRECT_URI,
@@ -269,19 +184,8 @@ class GranolaMCPClient:
             "code_challenge_method": "S256",
         }
 
-        # Only add scope if we know valid ones
-        if scope:
-            auth_params["scope"] = scope
+        full_auth_url = f"{self.AUTHORIZATION_ENDPOINT}?{urlencode(auth_params)}"
 
-        # Add resource indicator per RFC 8707 if we have it
-        resource_url = self.resource_metadata.get("resource")
-        if resource_url:
-            auth_params["resource"] = resource_url
-
-        query = urlencode(auth_params)
-        full_auth_url = f"{auth_url}?{query}"
-
-        # Start local server for callback
         server = HTTPServer(("localhost", OAUTH_REDIRECT_PORT), OAuthCallbackHandler)
         server_thread = threading.Thread(target=server.handle_request)
         server_thread.start()
@@ -290,7 +194,6 @@ class GranolaMCPClient:
         print("   If the browser doesn't open automatically, re-run this script and ensure a browser is available.")
         webbrowser.open(full_auth_url)
 
-        # Wait for callback
         server_thread.join(timeout=120)
         server.server_close()
 
@@ -302,23 +205,18 @@ class GranolaMCPClient:
             print("❌ Authentication timed out")
             return False
 
-        # Step 5: Exchange code for token (with PKCE verifier)
-        token_url = self.auth_metadata.get(
-            "token_endpoint",
-            "https://mcp-auth.granola.ai/oauth2/token"
-        )
-
+        # Step 4: Exchange code for token
         token_data = {
             "grant_type": "authorization_code",
             "code": auth_result["code"],
             "redirect_uri": OAUTH_REDIRECT_URI,
             "client_id": client_id,
-            "code_verifier": self.pkce_verifier,
+            "code_verifier": pkce_verifier,
         }
 
         try:
             response = await self.http_client.post(
-                token_url,
+                self.TOKEN_ENDPOINT,
                 data=token_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
@@ -337,6 +235,16 @@ class GranolaMCPClient:
             print(f"❌ Token exchange error: {e}")
             return False
 
+    @staticmethod
+    def _extract_mcp_text(result: dict[str, Any]) -> str:
+        """Extract the first text content block from an MCP tool result."""
+        content = result.get("content", [])
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and "text" in first:
+                return str(first["text"])
+        return ""
+
     async def call_mcp_tool(
         self, tool_name: str, arguments: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -344,7 +252,6 @@ class GranolaMCPClient:
         if not self.access_token:
             raise ValueError("Not authenticated. Call authenticate() first.")
 
-        # MCP uses JSON-RPC 2.0 format
         request_body = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -355,7 +262,6 @@ class GranolaMCPClient:
             }
         }
 
-        # Streamable HTTP transport requires accepting both JSON and SSE
         headers = {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
@@ -375,16 +281,14 @@ class GranolaMCPClient:
 
         # Handle SSE (Server-Sent Events) response
         if "text/event-stream" in content_type:
-            # Parse SSE format: lines starting with "data: " contain JSON
             result: dict[str, Any] | None = None
             for line in response.text.split("\n"):
                 line = line.strip()
                 if line.startswith("data: "):
-                    data = line[6:]  # Remove "data: " prefix
+                    data = line[6:]
                     if data:
                         try:
                             parsed = cast(dict[str, Any], json.loads(data))
-                            # Look for the final result (method response)
                             if "result" in parsed:
                                 result = parsed
                             elif "error" in parsed:
@@ -409,14 +313,7 @@ class GranolaMCPClient:
         print("\n📋 Fetching meeting list from Granola...")
 
         result = await self.call_mcp_tool("list_meetings", {"limit": limit})
-
-        # Extract the text content from MCP response
-        content = result.get("content", [])
-        text = ""
-        if isinstance(content, list) and content:
-            if isinstance(content[0], dict) and "text" in content[0]:
-                first_item = cast(dict[str, Any], content[0])
-                text = str(first_item["text"])
+        text = self._extract_mcp_text(result)
 
         # Try JSON first
         try:
@@ -434,7 +331,6 @@ class GranolaMCPClient:
             text
         ):
             mid, title, date = match.groups()
-            # Extract participants for this meeting block
             block_start = match.end()
             block_end = text.find("</meeting>", block_start)
             block = text[block_start:block_end] if block_end != -1 else ""
@@ -458,14 +354,7 @@ class GranolaMCPClient:
     async def get_meeting_details(self, meeting_id: str) -> dict[str, Any]:
         """Get full meeting details including notes."""
         result = await self.call_mcp_tool("get_meetings", {"meeting_ids": [meeting_id]})
-
-        # Extract text from MCP response
-        content = result.get("content", [])
-        text = ""
-        if isinstance(content, list) and content:
-            if isinstance(content[0], dict) and "text" in content[0]:
-                first_item = cast(dict[str, Any], content[0])
-                text = str(first_item["text"])
+        text = self._extract_mcp_text(result)
 
         # Try JSON first
         try:
@@ -481,32 +370,22 @@ class GranolaMCPClient:
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # Return the raw text — it likely contains the notes in XML/markup format
-        # This is still valuable content to store in Honcho
         return {"id": meeting_id, "raw_content": text}
 
     async def get_meeting_transcript(self, meeting_id: str) -> str | None:
         """Get the raw transcript for a meeting (paid tiers only)."""
         try:
             result = await self.call_mcp_tool("get_meeting_transcript", {"meeting_id": meeting_id})
+            text = self._extract_mcp_text(result)
 
-            content = result.get("content", [])
-            if isinstance(content, list) and content:
-                if isinstance(content[0], dict) and "text" in content[0]:
-                    first_item = cast(dict[str, Any], content[0])
-                    text = str(first_item["text"])
-                    # Check for empty/error responses
-                    if text and "no transcript" not in text.lower() and len(text) > 50:
-                        return text
-                    else:
-                        print(f"   Transcript response too short or empty: {text[:100]}")
-                        return None
+            if text and "no transcript" not in text.lower() and len(text) > 50:
+                return text
+
+            if text:
+                print(f"   Transcript response too short or empty: {text[:100]}")
 
             transcript = result.get("transcript")
-            if transcript:
-                return str(transcript)
-
-            return None
+            return str(transcript) if transcript else None
         except Exception as e:
             print(f"   Transcript unavailable: {e}")
             return None
@@ -614,9 +493,8 @@ def parse_transcript_turns(transcript: str) -> list[TranscriptTurn]:
     return turns
 
 
-def analyze_transcript(transcript: str) -> dict[str, Any]:
-    """Return stats about a transcript."""
-    turns = parse_transcript_turns(transcript)
+def transcript_stats(turns: list[TranscriptTurn]) -> dict[str, int]:
+    """Return stats about pre-parsed transcript turns."""
     me_count = sum(1 for t in turns if t["speaker"] == "Me")
     them_count = len(turns) - me_count
     total_words = sum(len(t["text"].split()) for t in turns)
@@ -628,60 +506,50 @@ def analyze_transcript(transcript: str) -> dict[str, Any]:
 
 
 def extract_summary_from_xml(raw_content: str) -> str:
-    """Pull the <summary> text out of Granola's XML-like response."""
+    """Pull the <summary> text out of Granola's XML-like response.
+
+    Returns empty string if no recognized tags are found.
+    """
     match = re.search(r"<summary>\s*(.*?)\s*</summary>", raw_content, re.DOTALL)
     if match:
         return match.group(1).strip()
-    # Try <notes> as fallback
     notes_match = re.search(r"<notes>\s*(.*?)\s*</notes>", raw_content, re.DOTALL)
     if notes_match:
         return notes_match.group(1).strip()
-    return raw_content
+    return ""
 
 
 def extract_summary_from_meeting(meeting: dict[str, Any]) -> str:
     """Extract best available meeting summary text from any details shape."""
     candidates: list[str] = []
 
-    # Common direct fields from parsed JSON payloads.
     for key in ("summary", "notes", "note", "meeting_notes", "description"):
         value = meeting.get(key)
         if isinstance(value, str) and value.strip():
             candidates.append(value.strip())
 
-    # Legacy/raw XML-ish payload used by this script.
     raw_content = meeting.get("raw_content")
     if isinstance(raw_content, str) and raw_content.strip():
         candidates.append(raw_content.strip())
-
-    # MCP payloads often come back as {"content": [{"type":"text","text":"..."}]}.
-    content = meeting.get("content")
-    if isinstance(content, list):
-        for item in cast(list[object], content):
-            if isinstance(item, dict):
-                payload = cast(dict[str, Any], item)
-                text = payload.get("text")
-                if isinstance(text, str) and text.strip():
-                    candidates.append(text.strip())
-    elif isinstance(content, str) and content.strip():
-        candidates.append(content.strip())
 
     for candidate in candidates:
         extracted = extract_summary_from_xml(candidate).strip()
         if extracted:
             return extracted
 
+    # Return the first non-empty candidate as-is if no XML tags matched
+    for candidate in candidates:
+        if candidate:
+            return candidate
+
     return ""
 
 
 def sanitize_content(text: str) -> str:
     """Remove null bytes and other characters that break server-side processing."""
-    # Remove null bytes
     text = text.replace("\x00", "")
-    # Remove other control characters (keep newlines and tabs)
     text = re.sub(r"[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     return text
-
 
 
 def to_honcho_peer_id(value: str, fallback: str = "peer") -> str:
@@ -731,7 +599,7 @@ class HonchoClient:
         meeting: dict[str, Any],
         me_peer_id: str,
         them_peer_id: str,
-        transcript_text: str,
+        turns: list[TranscriptTurn],
         me_email: str | None = None,
         them_email: str | None = None,
     ) -> str:
@@ -744,7 +612,6 @@ class HonchoClient:
         session_id = f"meeting-{meeting_id}"
         session = self.client.session(session_id)
 
-        turns = parse_transcript_turns(transcript_text)
         metadata: dict[str, object] = {
             "title": meeting.get("title", ""),
             "date": meeting.get("date", ""),
@@ -758,7 +625,6 @@ class HonchoClient:
         if them_email:
             metadata["them_email"] = them_email
 
-        # Batch turns into messages, respecting size limits
         # Merge consecutive same-speaker turns
         merged: list[TranscriptTurn] = []
         for t in turns:
@@ -773,11 +639,9 @@ class HonchoClient:
             content = sanitize_content(t["text"])
             if len(content) > self.MAX_MESSAGE_LEN:
                 content = content[: self.MAX_MESSAGE_LEN]
-            # Attach metadata to the first message only
             msg_meta = metadata if j == 0 else None
             messages.append(peer.message(content, metadata=msg_meta, created_at=created_at))
 
-        # add_messages has a 100 message batch limit
         for i in range(0, len(messages), 100):
             session.add_messages(messages[i : i + 100])
 
@@ -794,15 +658,13 @@ class HonchoClient:
         created_at = self._parse_date(meeting.get("date", ""))
         me_peer = self.client.peer(me_peer_id)
 
-        # Best available content
-        content = meeting.get("transcript") or ""
-        if content:
-            content = extract_transcript_text(content)
-
+        # Prefer summary; only fall back to transcript for multi-person
         summary = extract_summary_from_meeting(meeting)
-
-        # Prefer summary for multi-person; transcript is noisy with ambiguous "Them"
-        body = summary or content or "No content available"
+        if summary:
+            body = summary
+        else:
+            raw_transcript = meeting.get("transcript") or ""
+            body = extract_transcript_text(raw_transcript) if raw_transcript else "No content available"
 
         session_id = f"meeting-{meeting_id}"
         session = self.client.session(session_id)
@@ -826,7 +688,6 @@ class HonchoClient:
             metadata["note_creator_email"] = note_creator_email
 
         full = sanitize_content(header + body)
-        # Chunk into messages that fit within the server-side content limit
         messages: list[Any] = []
         for start in range(0, len(full), self.MAX_MESSAGE_LEN):
             chunk = full[start : start + self.MAX_MESSAGE_LEN]
@@ -843,15 +704,54 @@ class HonchoClient:
 # Interactive main
 # ---------------------------------------------------------------------------
 
-def prompt_choice(prompt_text: str, valid: list[str], default: str = "") -> str:
-    """Prompt user for input, return lowered choice."""
+def prompt_choice(prompt_text: str, valid: list[str]) -> str:
+    """Prompt user for input, return lowered choice. Empty string is valid if in list."""
     while True:
         raw = input(prompt_text).strip().lower()
-        if not raw and default:
-            return default
         if raw in valid:
             return raw
-        print(f"   Please enter one of: {', '.join(valid)}")
+        print(f"   Please enter one of: {', '.join(repr(v) for v in valid)}")
+
+
+def _register_peer(
+    peer_id: str,
+    participant: Participant,
+    confirmed_peers: dict[str, str],
+) -> None:
+    """Print and register a new peer if not already seen."""
+    if peer_id in confirmed_peers:
+        return
+    email = participant["email"]
+    label = participant["name"] + (f" <{email}>" if email else "")
+    print(f"\n  New peer: {label} (peer_id: {peer_id})")
+    confirmed_peers[peer_id] = email or participant["name"]
+
+
+def _import_two_person(
+    honcho: HonchoClient,
+    meeting: dict[str, Any],
+    me_peer_id: str,
+    them: Participant,
+    turns: list[TranscriptTurn],
+    creator_email: str | None,
+    confirmed_peers: dict[str, str],
+) -> None:
+    """Shared logic for importing a meeting as a two-person conversation."""
+    them_email = them["email"]
+    them_source = them_email or them["name"]
+    them_peer_id = to_honcho_peer_id(them_source)
+
+    _register_peer(them_peer_id, them, confirmed_peers)
+
+    honcho.store_two_person(
+        meeting,
+        me_peer_id,
+        them_peer_id,
+        turns,
+        me_email=creator_email,
+        them_email=them_email,
+    )
+    print(f"  -> Imported as 2-person ({me_peer_id} + {them_peer_id})")
 
 
 async def main():
@@ -933,10 +833,11 @@ async def main():
             creator = participants["note_creator"]
             others = participants["others"]
 
-            # Analyze transcript if available
+            # Parse transcript once — reused for stats and storage
             transcript_raw = m.get("transcript")
             transcript_text = extract_transcript_text(transcript_raw) if transcript_raw else ""
-            stats = analyze_transcript(transcript_text) if transcript_text else None
+            turns = parse_transcript_turns(transcript_text) if transcript_text else []
+            stats = transcript_stats(turns) if turns else None
 
             # Print meeting info
             print(f"\n{'─' * 60}")
@@ -953,8 +854,7 @@ async def main():
             if stats:
                 print(f"  Transcript: {stats['me_count']} Me turns, {stats['them_count']} Them turns, ~{stats['total_words']} words")
             else:
-                summary = extract_summary_from_meeting(m)
-                has_summary = bool(summary)
+                has_summary = bool(extract_summary_from_meeting(m))
                 print(f"  Content: {'summary available' if has_summary else 'metadata only'}")
 
             # Check for empty meetings
@@ -965,26 +865,23 @@ async def main():
 
             # ---- Ask user what to do ----
             if len(others) == 1 and stats and stats["them_count"] > 0:
-                # Looks like a real two-person call
                 them = others[0]
                 them_label = f"{them['name']}" + (f" <{them['email']}>" if them['email'] else "")
                 print(f"\n  Detected: 2-person call (you + {them_label})")
                 choice = prompt_choice(
                     "  [Enter] import as 2-person / [s]ummary mode / [k] skip: ",
-                    ["", "s", "k"], default=""
+                    ["", "s", "k"],
                 )
             elif len(others) > 1 and stats and stats["them_count"] > 0:
-                # Multi-person — but might actually be 2-person
                 print(f"\n  {len(others)} participants listed")
                 choice = prompt_choice(
                     "  [Enter] import as summary / [2] actually 2-person / [k] skip: ",
-                    ["", "2", "k"], default=""
+                    ["", "2", "k"],
                 )
             else:
-                # No transcript or no other participants — offer summary or skip
                 choice = prompt_choice(
                     "  [Enter] import as summary / [k] skip: ",
-                    ["", "k"], default=""
+                    ["", "k"],
                 )
 
             if choice == "k":
@@ -1001,46 +898,20 @@ async def main():
                 continue
             me_peer_id = to_honcho_peer_id(me_source)
 
-            # ---- Register note creator peer ----
-            if me_peer_id not in confirmed_peers:
-                print(f"\n  New peer: {me_source} (peer_id: {me_peer_id})")
-                confirmed_peers[me_peer_id] = me_source
+            _register_peer(
+                me_peer_id,
+                creator or {"name": me_source, "email": creator_email, "org": None},
+                confirmed_peers,
+            )
 
             try:
                 if choice == "" and len(others) == 1 and stats and stats["them_count"] > 0:
-                    # Two-person import
-                    them = others[0]
-                    them_email = them["email"]
-                    them_source = them_email or them["name"]
-                    them_peer_id = to_honcho_peer_id(them_source)
-
-                    if them_peer_id not in confirmed_peers:
-                        them_label = (
-                            f"{them['name']}"
-                            + (
-                                f" <{them_email}>"
-                                if them_email
-                                else f" (no email, using: {them_source})"
-                            )
-                        )
-                        print(f"\n  New peer: {them_label}")
-                        print(f"    peer_id: {them_peer_id}")
-                        confirmed_peers[them_peer_id] = them_source
-
-                    honcho.store_two_person(
-                        m,
-                        me_peer_id,
-                        them_peer_id,
-                        transcript_text,
-                        me_email=creator_email,
-                        them_email=them_email,
-                    )
-                    print(
-                        f"  -> Imported as 2-person ({me_peer_id} + {them_peer_id})"
+                    _import_two_person(
+                        honcho, m, me_peer_id, others[0], turns,
+                        creator_email, confirmed_peers,
                     )
 
                 elif choice == "2":
-                    # User says this multi-person listing is actually 2-person
                     print("\n  Who is 'Them' in this call?")
                     for j, p in enumerate(others, 1):
                         email_str = f" <{p['email']}>" if p['email'] else ""
@@ -1051,44 +922,19 @@ async def main():
                         them = others[idx]
                     except (ValueError, IndexError):
                         print("  Invalid choice, importing as summary instead.")
-                        honcho.store_summary(
-                            m,
-                            me_peer_id,
-                            note_creator_email=creator_email,
-                        )
+                        honcho.store_summary(m, me_peer_id, note_creator_email=creator_email)
                         results["imported"] += 1
-                        print(f"  -> Imported as summary")
+                        print("  -> Imported as summary")
                         continue
 
-                    them_email = them["email"]
-                    them_source = them_email or them["name"]
-                    them_peer_id = to_honcho_peer_id(them_source)
-                    if them_peer_id not in confirmed_peers:
-                        label = f"{them['name']}" + (f" <{them_email}>" if them_email else "")
-                        print(f"\n  New peer: {label}")
-                        print(f"    peer_id: {them_peer_id}")
-                        confirmed_peers[them_peer_id] = them_source
-
-                    honcho.store_two_person(
-                        m,
-                        me_peer_id,
-                        them_peer_id,
-                        transcript_text,
-                        me_email=creator_email,
-                        them_email=them_email,
-                    )
-                    print(
-                        f"  -> Imported as 2-person ({me_peer_id} + {them_peer_id})"
+                    _import_two_person(
+                        honcho, m, me_peer_id, them, turns,
+                        creator_email, confirmed_peers,
                     )
 
                 else:
-                    # Summary mode (default for multi-person and fallback)
-                    honcho.store_summary(
-                        m,
-                        me_peer_id,
-                        note_creator_email=creator_email,
-                    )
-                    print(f"  -> Imported as summary")
+                    honcho.store_summary(m, me_peer_id, note_creator_email=creator_email)
+                    print("  -> Imported as summary")
 
                 results["imported"] += 1
 
