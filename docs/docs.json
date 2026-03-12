@@ -116,7 +116,8 @@
                 "group": "Chatbots",
                 "pages": [
                   "v3/guides/discord",
-                  "v3/guides/telegram"
+                  "v3/guides/telegram",
+                  "v3/guides/gmail"
                 ]
               }
             ]
