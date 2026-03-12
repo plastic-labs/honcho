@@ -7,7 +7,7 @@ Each Gmail thread becomes a Honcho session, each sender becomes a peer.
 Prerequisites:
 1. Create a Google Cloud project and enable the Gmail API
 2. Create OAuth 2.0 credentials (Desktop app type)
-3. Download the credentials JSON and save as 'credentials.json' in this directory
+3. Download the credentials JSON (client_secret_*.json) into this directory
 4. Install dependencies:
    pip install google-api-python-client google-auth-oauthlib honcho-ai
 
@@ -17,6 +17,7 @@ a 'token.json' file will be created to store your credentials for future runs.
 
 import argparse
 import base64
+import glob
 import os
 import re
 import time
@@ -31,7 +32,22 @@ from googleapiclient.errors import HttpError
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
-def get_gmail_service(credentials_file: str = "credentials.json", token_file: str = "token.json"):
+def find_credentials() -> str:
+    """Find a Google OAuth credentials file in the current directory."""
+    matches = glob.glob("client_secret*.json")
+    if matches:
+        return matches[0]
+    raise FileNotFoundError(
+        "No client_secret*.json file found.\n"
+        "Download OAuth credentials from Google Cloud Console:\n"
+        "1. Go to console.cloud.google.com\n"
+        "2. Create/select a project and enable Gmail API\n"
+        "3. Create OAuth 2.0 credentials (Desktop app)\n"
+        "4. Download the JSON into this directory"
+    )
+
+
+def get_gmail_service(credentials_file: str | None = None, token_file: str = "token.json"):
     """Authenticate and return a Gmail API service instance."""
     creds = None
 
@@ -43,15 +59,9 @@ def get_gmail_service(credentials_file: str = "credentials.json", token_file: st
             print("Refreshing expired credentials...")
             creds.refresh(Request())
         else:
-            if not os.path.exists(credentials_file):
-                raise FileNotFoundError(
-                    f"Credentials file '{credentials_file}' not found.\n"
-                    "Download OAuth credentials from Google Cloud Console:\n"
-                    "1. Go to console.cloud.google.com\n"
-                    "2. Create/select a project and enable Gmail API\n"
-                    "3. Create OAuth 2.0 credentials (Desktop app)\n"
-                    "4. Download JSON and save as 'credentials.json'"
-                )
+            if credentials_file is None:
+                credentials_file = find_credentials()
+            print(f"Using credentials: {credentials_file}")
             print("Opening browser for OAuth consent...")
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -202,7 +212,7 @@ def main():
     parser.add_argument("--label", "-l", default=None, help="Gmail label to filter by (e.g. INBOX)")
     parser.add_argument("--max-threads", "-n", type=int, default=10, help="Max threads to fetch (default: 10)")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be loaded without writing to Honcho")
-    parser.add_argument("--credentials", "-c", default="credentials.json", help="Path to OAuth credentials JSON")
+    parser.add_argument("--credentials", "-c", default=None, help="Path to OAuth credentials JSON (auto-detects client_secret*.json)")
     parser.add_argument("--token", "-t", default="token.json", help="Path to store/load access token")
     args = parser.parse_args()
 

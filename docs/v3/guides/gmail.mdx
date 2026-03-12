@@ -48,27 +48,41 @@ Follow Google's official [Gmail API Python Quickstart](https://developers.google
 1. Create a Google Cloud project and enable the Gmail API
 2. Configure the OAuth consent screen
 3. Create OAuth credentials (select **Desktop app** as the application type)
-4. Download the credentials JSON and save it as `credentials.json` in your working directory
+4. Download the credentials JSON into the same directory as the script
+
+The script auto-detects Google's default `client_secret_*.json` filename, so no renaming needed. You can also pass a custom path with `--credentials`.
 
 The script only needs the `gmail.readonly` scope.
 
 ## Step 2: Install Dependencies
 
-```bash
+<CodeGroup>
+```bash uv
+uv pip install google-api-python-client google-auth-oauthlib honcho-ai
+```
+
+```bash pip
 pip install google-api-python-client google-auth-oauthlib honcho-ai
 ```
+</CodeGroup>
 
 ## Step 3: Run the Script
 
-Download the script from [GitHub](https://github.com/plastic-labs/honcho/tree/main/examples/gmail) or copy it from the full source below.
+Make sure your `client_secret_*.json` (from Step 1) is in the same directory as the script.
 
 ### Dry Run (Preview)
 
 First, test without writing to Honcho:
 
-```bash
+<CodeGroup>
+```bash uv
+uv run gmail_to_honcho.py --dry-run --max-threads 5
+```
+
+```bash python
 python gmail_to_honcho.py --dry-run --max-threads 5
 ```
+</CodeGroup>
 
 On first run, a browser window opens for OAuth consent. After authorizing, a `token.json` file is created — future runs won't require browser interaction.
 
@@ -101,16 +115,35 @@ Summary:
 
 When ready, run without `--dry-run`:
 
-```bash
+<CodeGroup>
+```bash uv
+export HONCHO_API_KEY=your_api_key
+uv run gmail_to_honcho.py --workspace gmail-inbox --max-threads 20
+```
+
+```bash python
 export HONCHO_API_KEY=your_api_key
 python gmail_to_honcho.py --workspace gmail-inbox --max-threads 20
 ```
+</CodeGroup>
 
 ### Filter by Query or Label
 
 Use Gmail search syntax to filter which threads to load:
 
-```bash
+<CodeGroup>
+```bash uv
+# Only emails from a specific sender
+uv run gmail_to_honcho.py --query "from:alice@example.com"
+
+# Only emails with a label
+uv run gmail_to_honcho.py --label INBOX
+
+# Combine filters
+uv run gmail_to_honcho.py --query "after:2024/01/01 has:attachment" --max-threads 50
+```
+
+```bash python
 # Only emails from a specific sender
 python gmail_to_honcho.py --query "from:alice@example.com"
 
@@ -120,6 +153,7 @@ python gmail_to_honcho.py --label INBOX
 # Combine filters
 python gmail_to_honcho.py --query "after:2024/01/01 has:attachment" --max-threads 50
 ```
+</CodeGroup>
 
 ## CLI Reference
 
@@ -134,19 +168,19 @@ options:
   --label, -l        Gmail label to filter by (e.g., INBOX)
   --max-threads, -n  Max threads to fetch (default: 10)
   --dry-run          Preview without writing to Honcho
-  --credentials, -c  Path to OAuth credentials JSON (default: credentials.json)
+  --credentials, -c  Path to OAuth credentials JSON (auto-detects client_secret*.json)
   --token, -t        Path to store access token (default: token.json)
 ```
 
 ## Troubleshooting
 
-### "credentials.json not found"
+### "No client_secret*.json file found"
 
-Download OAuth credentials from Google Cloud Console (Step 1) and save as `credentials.json` in your working directory.
+Download OAuth credentials from Google Cloud Console (Step 1) and place the `client_secret_*.json` file in the same directory as the script.
 
 ### "Access blocked: This app's request is invalid"
 
-Your OAuth consent screen may not be configured correctly. Ensure you've added the `gmail.readonly` scope and added your email as a test user.
+Your OAuth consent screen may not be configured correctly. Ensure you've added the `gmail.readonly` scope.
 
 ### "Token has been expired or revoked"
 
@@ -156,6 +190,9 @@ Delete `token.json` and run the script again to re-authenticate.
 
 The script includes a small delay when creating peers to avoid hitting Honcho's rate limits. For large imports (100+ threads), consider running in batches.
 
+### Unique Messages
+
+Use an AI assistant in your inbox? Want to parse out its messages differently? Feel free to modify and improve the structure of this script to fit your bespoke email setup. This script was written for agents and as such is easy to update with your coding assistant.
 
 ## Full Script
 
@@ -170,7 +207,7 @@ Each Gmail thread becomes a Honcho session, each sender becomes a peer.
 Prerequisites:
 1. Create a Google Cloud project and enable the Gmail API
 2. Create OAuth 2.0 credentials (Desktop app type)
-3. Download the credentials JSON and save as 'credentials.json' in this directory
+3. Download the credentials JSON (client_secret_*.json) into this directory
 4. Install dependencies:
    pip install google-api-python-client google-auth-oauthlib honcho-ai
 
@@ -180,6 +217,7 @@ a 'token.json' file will be created to store your credentials for future runs.
 
 import argparse
 import base64
+import glob
 import os
 import re
 import time
@@ -194,7 +232,22 @@ from googleapiclient.errors import HttpError
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
-def get_gmail_service(credentials_file: str = "credentials.json", token_file: str = "token.json"):
+def find_credentials() -> str:
+    """Find a Google OAuth credentials file in the current directory."""
+    matches = glob.glob("client_secret*.json")
+    if matches:
+        return matches[0]
+    raise FileNotFoundError(
+        "No client_secret*.json file found.\n"
+        "Download OAuth credentials from Google Cloud Console:\n"
+        "1. Go to console.cloud.google.com\n"
+        "2. Create/select a project and enable Gmail API\n"
+        "3. Create OAuth 2.0 credentials (Desktop app)\n"
+        "4. Download the JSON into this directory"
+    )
+
+
+def get_gmail_service(credentials_file: str | None = None, token_file: str = "token.json"):
     """Authenticate and return a Gmail API service instance."""
     creds = None
 
@@ -206,15 +259,9 @@ def get_gmail_service(credentials_file: str = "credentials.json", token_file: st
             print("Refreshing expired credentials...")
             creds.refresh(Request())
         else:
-            if not os.path.exists(credentials_file):
-                raise FileNotFoundError(
-                    f"Credentials file '{credentials_file}' not found.\n"
-                    "Download OAuth credentials from Google Cloud Console:\n"
-                    "1. Go to console.cloud.google.com\n"
-                    "2. Create/select a project and enable Gmail API\n"
-                    "3. Create OAuth 2.0 credentials (Desktop app)\n"
-                    "4. Download JSON and save as 'credentials.json'"
-                )
+            if credentials_file is None:
+                credentials_file = find_credentials()
+            print(f"Using credentials: {credentials_file}")
             print("Opening browser for OAuth consent...")
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -365,7 +412,7 @@ def main():
     parser.add_argument("--label", "-l", default=None, help="Gmail label to filter by (e.g. INBOX)")
     parser.add_argument("--max-threads", "-n", type=int, default=10, help="Max threads to fetch (default: 10)")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be loaded without writing to Honcho")
-    parser.add_argument("--credentials", "-c", default="credentials.json", help="Path to OAuth credentials JSON")
+    parser.add_argument("--credentials", "-c", default=None, help="Path to OAuth credentials JSON (auto-detects client_secret*.json)")
     parser.add_argument("--token", "-t", default="token.json", help="Path to store/load access token")
     args = parser.parse_args()
 
