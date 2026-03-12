@@ -86,6 +86,7 @@ Beyond the bespoke flow, Honcho exposes the full API for advanced use cases.
 | `inspect_session` | Inspect detailed session structure/metadata |
 | `add_messages_to_session` | Add messages from specific peers |
 | `get_session_messages` | Read conversation history |
+| `get_session_message` | Get a single message from a session by ID. Use this when you already know the message ID and need the exact record. |
 | `search_session_messages` | Semantic search within a session |
 | `get_session_context` | Get LLM-ready context (messages + summary) |
 | `get_session_summaries` | Retrieve session summaries (for overview/search) |
