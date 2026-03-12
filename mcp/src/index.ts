@@ -46,7 +46,7 @@ export default {
           headers: CORS_ALLOWED_HEADERS,
         },
       });
-      return handler(request, env, executionCtx);
+      return await handler(request, env, executionCtx);
     } catch (e) {
       const message =
         e instanceof Error ? e.message : "Internal server error";

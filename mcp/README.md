@@ -49,7 +49,7 @@ A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://m
 
 ### General Tools
 
-**Workspace:** `search_workspace`, `get_workspace_metadata`, `set_workspace_metadata`
+**Workspace:** `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `list_workspaces` (enumerates accessible workspaces), `search_workspace`, `get_workspace_metadata`, `set_workspace_metadata`
 
 **Peers:** `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`, `get_peer_metadata`, `set_peer_metadata`, `search_peer_messages`
 

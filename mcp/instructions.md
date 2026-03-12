@@ -53,6 +53,8 @@ Beyond the bespoke flow, Honcho exposes the full API for advanced use cases.
 
 | Tool | When to use |
 | --- | --- |
+| `inspect_workspace` | Inspect a single workspace's details |
+| `list_workspaces` | Enumerate available workspaces |
 | `search_workspace` | Find messages across all sessions and peers |
 | `get_workspace_metadata` | Read workspace-level settings |
 | `set_workspace_metadata` | Store workspace-level settings |
@@ -81,10 +83,12 @@ Beyond the bespoke flow, Honcho exposes the full API for advanced use cases.
 | `clone_session` | Fork a conversation (optionally up to a specific message) |
 | `add_peers_to_session` / `remove_peers_from_session` | Manage session participants |
 | `get_session_peers` | See who is in a session |
+| `inspect_session` | Inspect detailed session structure/metadata |
 | `add_messages_to_session` | Add messages from specific peers |
 | `get_session_messages` | Read conversation history |
 | `search_session_messages` | Semantic search within a session |
 | `get_session_context` | Get LLM-ready context (messages + summary) |
+| `get_session_summaries` | Retrieve session summaries (for overview/search) |
 | `get_session_representation` | Get a peer's session-scoped representation |
 | `get_session_metadata` / `set_session_metadata` | Custom attributes on a session |
 

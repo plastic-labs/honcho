@@ -14,17 +14,19 @@ export interface HonchoConfig {
  */
 export function parseConfig(request: Request): HonchoConfig {
   const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const trimmedAuthHeader = authHeader?.trim();
+  if (!trimmedAuthHeader?.startsWith("Bearer ")) {
     throw new Error(
       "Missing Authorization header. Provide 'Authorization: Bearer <your-honcho-key>'.",
     );
   }
-  const apiKey = authHeader.substring(7);
+  const apiKey = trimmedAuthHeader.substring(7).trim();
   if (!apiKey) {
     throw new Error("Authorization header is empty after 'Bearer '.");
   }
 
-  const userName = request.headers.get("X-Honcho-User-Name");
+  const rawUserName = request.headers.get("X-Honcho-User-Name");
+  const userName = rawUserName?.trim();
   if (!userName) {
     throw new Error(
       "Missing X-Honcho-User-Name header. Provide 'X-Honcho-User-Name: <your-name>'.",
@@ -35,7 +37,8 @@ export function parseConfig(request: Request): HonchoConfig {
     apiKey,
     userName,
     baseUrl:
-      request.headers.get("X-Honcho-Base-URL") || "https://api.honcho.dev",
+      request.headers.get("X-Honcho-Base-URL")?.trim() ||
+      "https://api.honcho.dev",
     workspaceId: request.headers.get("X-Honcho-Workspace-ID") || "default",
     assistantName:
       request.headers.get("X-Honcho-Assistant-Name") || "Assistant",
