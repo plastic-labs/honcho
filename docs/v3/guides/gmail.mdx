@@ -76,11 +76,11 @@ First, test without writing to Honcho:
 
 <CodeGroup>
 ```bash uv
-uv run gmail_to_honcho.py --dry-run --max-threads 5
+uv run honcho_gmail.py --dry-run --max-threads 5
 ```
 
 ```bash python
-python gmail_to_honcho.py --dry-run --max-threads 5
+python honcho_gmail.py --dry-run --max-threads 5
 ```
 </CodeGroup>
 
@@ -118,12 +118,12 @@ When ready, run without `--dry-run`:
 <CodeGroup>
 ```bash uv
 export HONCHO_API_KEY=your_api_key
-uv run gmail_to_honcho.py --workspace gmail-inbox --max-threads 20
+uv run honcho_gmail.py --workspace gmail-inbox --max-threads 20
 ```
 
 ```bash python
 export HONCHO_API_KEY=your_api_key
-python gmail_to_honcho.py --workspace gmail-inbox --max-threads 20
+python honcho_gmail.py --workspace gmail-inbox --max-threads 20
 ```
 </CodeGroup>
 
@@ -134,31 +134,31 @@ Use Gmail search syntax to filter which threads to load:
 <CodeGroup>
 ```bash uv
 # Only emails from a specific sender
-uv run gmail_to_honcho.py --query "from:alice@example.com"
+uv run honcho_gmail.py --query "from:alice@example.com"
 
 # Only emails with a label
-uv run gmail_to_honcho.py --label INBOX
+uv run honcho_gmail.py --label INBOX
 
 # Combine filters
-uv run gmail_to_honcho.py --query "after:2024/01/01 has:attachment" --max-threads 50
+uv run honcho_gmail.py --query "after:2024/01/01 has:attachment" --max-threads 50
 ```
 
 ```bash python
 # Only emails from a specific sender
-python gmail_to_honcho.py --query "from:alice@example.com"
+python honcho_gmail.py --query "from:alice@example.com"
 
 # Only emails with a label
-python gmail_to_honcho.py --label INBOX
+python honcho_gmail.py --label INBOX
 
 # Combine filters
-python gmail_to_honcho.py --query "after:2024/01/01 has:attachment" --max-threads 50
+python honcho_gmail.py --query "after:2024/01/01 has:attachment" --max-threads 50
 ```
 </CodeGroup>
 
 ## CLI Reference
 
 ```
-usage: gmail_to_honcho.py [-h] [--workspace WORKSPACE] [--query QUERY]
+usage: honcho_gmail.py [-h] [--workspace WORKSPACE] [--query QUERY]
                           [--label LABEL] [--max-threads N] [--dry-run]
                           [--credentials PATH] [--token PATH]
 
@@ -196,7 +196,7 @@ Use an AI assistant in your inbox? Want to parse out its messages differently? F
 
 ## Full Script
 
-<Accordion title="gmail_to_honcho.py">
+<Accordion title="honcho_gmail.py">
 ```python
 #!/usr/bin/env python3
 """Load Gmail messages into Honcho.

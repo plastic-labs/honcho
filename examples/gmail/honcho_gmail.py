@@ -30,6 +30,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+PEER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def find_credentials() -> str:
@@ -174,7 +175,14 @@ def parse_address_list(header: str) -> list[str]:
 
 def peer_id_from_email(email: str) -> str:
     """Convert email to a valid Honcho peer ID."""
-    return email.replace("@", "-").replace(".", "-")
+    peer_id = re.sub(r"[^A-Za-z0-9_-]+", "-", email).strip("-").lower()
+    peer_id = re.sub(r"-{2,}", "-", peer_id)
+    if not peer_id:
+        peer_id = "unknown-peer"
+
+    if not PEER_ID_PATTERN.fullmatch(peer_id):
+        raise ValueError(f"Generated peer ID is invalid: {peer_id!r}")
+    return peer_id
 
 
 def fetch_thread_messages(service, thread_id: str) -> list[dict]:
@@ -264,7 +272,7 @@ def main():
 
     # Summary
     total_msgs = sum(len(v) for v in all_thread_messages.values())
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Threads: {len(all_thread_messages)}")
     print(f"  Messages: {total_msgs}")
     print(f"  Unique participants: {len(seen_peers)}")
