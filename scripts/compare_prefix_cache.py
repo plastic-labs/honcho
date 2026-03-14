@@ -18,6 +18,7 @@ import argparse
 import json
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,8 @@ ROLLING_HISTORY_B = "\n".join(
 
 @dataclass
 class ProviderSpec:
+    """Provider label and model configuration for one comparison run."""
+
     label: str
     provider: str
     model: str
@@ -125,11 +128,14 @@ class ProviderSpec:
 
 @dataclass
 class VariantSpec:
+    """A named Honcho worktree variant used in the comparison."""
+
     label: str
     worktree: Path
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the cache comparison probe."""
     parser = argparse.ArgumentParser(
         description="Compare prompt-prefix cache behavior between two Honcho worktrees."
     )
@@ -176,6 +182,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def parse_provider_spec(raw: str) -> ProviderSpec:
+    """Parse a provider specification of the form label=provider:model."""
     if "=" not in raw or ":" not in raw:
         raise ValueError(
             f"Invalid provider spec {raw!r}. Expected label=provider:model"
@@ -186,12 +193,14 @@ def parse_provider_spec(raw: str) -> ProviderSpec:
 
 
 def add_namespace(namespace: str, content: str) -> str:
+    """Prefix prompt content with a cache namespace tag."""
     return f"<cache_namespace>{namespace}</cache_namespace>\n{content}"
 
 
 def build_messages(
     namespace: str, base_prefix: str, rolling_history: str, user_query: str
 ) -> list[dict[str, str]]:
+    """Build the system and user messages for a single probe call."""
     return [
         {"role": "system", "content": add_namespace(namespace, base_prefix)},
         {"role": "system", "content": add_namespace(namespace, rolling_history)},
@@ -200,6 +209,7 @@ def build_messages(
 
 
 def build_scenarios(selected: set[str] | None) -> list[dict[str, Any]]:
+    """Return the scenario definitions, optionally filtered by name."""
     scenario_defs = [
         {
             "name": "repeat_exact",
@@ -279,11 +289,33 @@ def build_scenarios(selected: set[str] | None) -> list[dict[str, Any]]:
     return [scenario for scenario in scenario_defs if scenario["name"] in selected]
 
 
+def build_cache_namespace(
+    variant: VariantSpec,
+    provider: ProviderSpec,
+    scenario_name: str,
+    invocation_salt: str,
+) -> str:
+    """Build a cache namespace that is stable within one run and unique across runs."""
+    return (
+        f"{variant.label}:{provider.label}:{scenario_name}:{invocation_salt}"
+    )
+
+
 def build_scenario_payload(
-    variant: VariantSpec, provider: ProviderSpec, scenario: dict[str, Any], max_tokens: int
+    variant: VariantSpec,
+    provider: ProviderSpec,
+    scenario: dict[str, Any],
+    max_tokens: int,
+    invocation_salt: str,
 ) -> dict[str, Any]:
-    namespace = f"{variant.label}:{provider.label}:{scenario['name']}"
-    calls = []
+    """Build the subprocess payload for one scenario probe."""
+    namespace = build_cache_namespace(
+        variant,
+        provider,
+        scenario["name"],
+        invocation_salt,
+    )
+    calls: list[dict[str, Any]] = []
     for label in ("prime", "transition", "steady"):
         call = scenario[label]
         calls.append(
@@ -311,8 +343,16 @@ def run_scenario_probe(
     provider: ProviderSpec,
     scenario: dict[str, Any],
     max_tokens: int,
+    invocation_salt: str,
 ) -> dict[str, Any]:
-    payload = build_scenario_payload(variant, provider, scenario, max_tokens)
+    """Execute one scenario probe in a subprocess for the given worktree."""
+    payload = build_scenario_payload(
+        variant,
+        provider,
+        scenario,
+        max_tokens,
+        invocation_salt,
+    )
     process = subprocess.run(
         [sys.executable, "-c", CHILD_CODE, json.dumps(payload)],
         cwd=variant.worktree,
@@ -322,9 +362,12 @@ def run_scenario_probe(
     )
     if process.returncode != 0:
         raise RuntimeError(
-            f"{variant.label} probe failed for {provider.label} ({scenario['name']}).\n"
-            f"stdout:\n{process.stdout}\n"
-            f"stderr:\n{process.stderr}"
+            (
+                f"{variant.label} probe failed for {provider.label} "
+                f"({scenario['name']}).\n"
+                f"stdout:\n{process.stdout}\n"
+                f"stderr:\n{process.stderr}"
+            )
         )
     return json.loads(process.stdout)
 
@@ -334,22 +377,32 @@ def run_probe(
     provider: ProviderSpec,
     scenarios: list[dict[str, Any]],
     max_tokens: int,
+    invocation_salt: str,
 ) -> dict[str, Any]:
+    """Run all requested scenarios for one worktree/provider combination."""
     return {
         "scenarios": [
-            run_scenario_probe(variant, provider, scenario, max_tokens)
+            run_scenario_probe(
+                variant,
+                provider,
+                scenario,
+                max_tokens,
+                invocation_salt,
+            )
             for scenario in scenarios
         ]
     }
 
 
 def format_metric(value: Any) -> str:
+    """Render numeric metrics in a stable human-readable form."""
     if isinstance(value, float):
         return f"{value:.2f}"
     return str(value)
 
 
 def cache_ratio_pct(call: dict[str, Any]) -> float:
+    """Compute the percent of input tokens served from cache for a call."""
     input_tokens = call["input_tokens"] or 0
     if input_tokens <= 0:
         return 0.0
@@ -357,18 +410,20 @@ def cache_ratio_pct(call: dict[str, Any]) -> float:
 
 
 def print_variant_result(variant: VariantSpec, result: dict[str, Any]) -> None:
+    """Print per-call cache metrics for one variant."""
     print(f"  {variant.label}")
     for scenario in result["scenarios"]:
         print(f"    [{scenario['name']}]")
         for call in scenario["calls"]:
             print(
-                "      "
-                f"{call['label']:<12} "
-                f"read={format_metric(call['cache_read_input_tokens']):>8} "
-                f"create={format_metric(call['cache_creation_input_tokens']):>8} "
-                f"input={format_metric(call['input_tokens']):>8} "
-                f"cached_pct={cache_ratio_pct(call):>7.1f} "
-                f"ms={format_metric(call['duration_ms']):>8}"
+                (
+                    f"      {call['label']:<12} "
+                    f"read={format_metric(call['cache_read_input_tokens']):>8} "
+                    f"create={format_metric(call['cache_creation_input_tokens']):>8} "
+                    f"input={format_metric(call['input_tokens']):>8} "
+                    f"cached_pct={cache_ratio_pct(call):>7.1f} "
+                    f"ms={format_metric(call['duration_ms']):>8}"
+                )
             )
 
 
@@ -376,6 +431,7 @@ def print_delta_summary(
     baseline: dict[str, Any],
     candidate: dict[str, Any],
 ) -> None:
+    """Print candidate-versus-baseline cache and latency deltas."""
     baseline_by_name = {scenario["name"]: scenario for scenario in baseline["scenarios"]}
     candidate_by_name = {scenario["name"]: scenario for scenario in candidate["scenarios"]}
     print("  delta summary (candidate - baseline)")
@@ -396,17 +452,20 @@ def print_delta_summary(
             ratio_delta = cache_ratio_pct(cand_call) - cache_ratio_pct(base_call)
             latency_delta = cand_call["duration_ms"] - base_call["duration_ms"]
             print(
-                "    "
-                f"{name}:{label:<11} "
-                f"read_delta={read_delta:+8.2f} "
-                f"create_delta={create_delta:+8.2f} "
-                f"cached_pct_delta={ratio_delta:+7.1f} "
-                f"latency_delta_ms={latency_delta:+8.2f}"
+                (
+                    f"    {name}:{label:<11} "
+                    f"read_delta={read_delta:+8.2f} "
+                    f"create_delta={create_delta:+8.2f} "
+                    f"cached_pct_delta={ratio_delta:+7.1f} "
+                    f"latency_delta_ms={latency_delta:+8.2f}"
+                )
             )
 
 
 def main() -> None:
+    """Run the cache comparison probe and optionally write JSON output."""
     args = parse_args()
+    invocation_salt = uuid.uuid4().hex
     providers = [parse_provider_spec(raw) for raw in args.provider]
     baseline = VariantSpec("baseline", args.baseline_worktree.resolve())
     candidate = VariantSpec("candidate", args.candidate_worktree.resolve())
@@ -418,8 +477,20 @@ def main() -> None:
         print("=" * 100)
         print(f"Provider {provider.label}: {provider.provider}/{provider.model}")
         print("=" * 100)
-        baseline_result = run_probe(baseline, provider, scenarios, args.max_tokens)
-        candidate_result = run_probe(candidate, provider, scenarios, args.max_tokens)
+        baseline_result = run_probe(
+            baseline,
+            provider,
+            scenarios,
+            args.max_tokens,
+            invocation_salt,
+        )
+        candidate_result = run_probe(
+            candidate,
+            provider,
+            scenarios,
+            args.max_tokens,
+            invocation_salt,
+        )
         print_variant_result(baseline, baseline_result)
         print_variant_result(candidate, candidate_result)
         print_delta_summary(baseline_result, candidate_result)
