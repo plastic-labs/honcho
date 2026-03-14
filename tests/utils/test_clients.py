@@ -905,6 +905,94 @@ class TestGoogleClient:
             "stable instructions\n\nrolling session context"
         )
 
+    async def test_google_preserves_non_text_content_blocks(self):
+        """Gemini should preserve tool context when converting content blocks."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_part = Mock()
+        mock_part.text = "ok"
+        mock_part.function_call = None
+        mock_content = Mock()
+        mock_content.parts = [mock_part]
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_candidate = Mock()
+        mock_candidate.content = mock_content
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 5
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-1.5-pro",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Tool call context"},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "search_memory",
+                                "input": {"query": "tea"},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": "Alice likes tea",
+                            }
+                        ],
+                    },
+                ],
+            )
+
+        call_args = mock_aio.models.generate_content.call_args
+        assert call_args is not None
+        assert call_args.kwargs["contents"] == [
+            {
+                "role": "model",
+                "parts": [
+                    {"text": "Tool call context"},
+                    {
+                        "function_call": {
+                            "name": "search_memory",
+                            "args": {"query": "tea"},
+                        }
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "name": "toolu_1",
+                            "response": {
+                                "result": "Alice likes tea",
+                                "is_error": False,
+                            },
+                        }
+                    }
+                ],
+            },
+        ]
+
     async def test_google_streaming(self):
         """Test Google/Gemini streaming response"""
         from google import genai

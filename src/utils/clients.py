@@ -159,12 +159,44 @@ def _build_gemini_contents_from_messages(
             continue
 
         if isinstance(msg.get("content"), list):
-            text_parts: list[dict[str, str]] = []
+            parts: list[dict[str, Any]] = []
             for block in cast(list[dict[str, Any]], msg["content"]):
-                if block.get("type") == "text" and isinstance(block.get("text"), str):
-                    text_parts.append({"text": block["text"]})
-            if text_parts:
-                gemini_contents.append({"role": role, "parts": text_parts})
+                block_type = block.get("type")
+
+                if block_type == "text" and isinstance(block.get("text"), str):
+                    parts.append({"text": block["text"]})
+                    continue
+
+                if block_type == "tool_use" and isinstance(block.get("name"), str):
+                    tool_args = block.get("input")
+                    parts.append(
+                        {
+                            "function_call": {
+                                "name": block["name"],
+                                "args": tool_args if isinstance(tool_args, dict) else {},
+                            }
+                        }
+                    )
+                    continue
+
+                if block_type == "tool_result":
+                    tool_result = block.get("content")
+                    if not isinstance(tool_result, str):
+                        tool_result = json.dumps(tool_result)
+                    parts.append(
+                        {
+                            "function_response": {
+                                "name": str(block.get("tool_use_id", "tool_result")),
+                                "response": {
+                                    "result": tool_result,
+                                    "is_error": bool(block.get("is_error", False)),
+                                },
+                            }
+                        }
+                    )
+
+            if parts:
+                gemini_contents.append({"role": role, "parts": parts})
 
     system_instruction = (
         "\n\n".join(system_instruction_parts) if system_instruction_parts else None
