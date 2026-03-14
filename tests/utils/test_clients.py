@@ -36,6 +36,7 @@ from src.utils.clients import (
     honcho_llm_call,
     honcho_llm_call_inner,
 )
+from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 
 
 class SampleTestModel(BaseModel):
@@ -782,6 +783,58 @@ class TestGoogleClient:
             assert config["response_mime_type"] == "application/json"
             assert config["response_schema"] == SampleTestModel
             assert config["max_output_tokens"] == 100
+
+    async def test_google_response_model_uses_messages_with_honcho_llm_call(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Structured Gemini calls should honor system+user messages when provided."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_response.parsed = PromptRepresentation(
+            explicit=[ExplicitObservationBase(content="Alice likes tea")]
+        )
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 12
+        mock_usage_metadata.candidates_token_count = 8
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        monkeypatch.setattr(settings.DERIVER, "PROVIDER", "google")
+        monkeypatch.setattr(settings.DERIVER, "MODEL", "gemini-1.5-pro")
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            response = await honcho_llm_call(
+                llm_settings=settings.DERIVER,
+                prompt="",
+                max_tokens=100,
+                response_model=PromptRepresentation,
+                messages=[
+                    {"role": "system", "content": "stable deriver instructions"},
+                    {"role": "user", "content": "Messages to analyze:\n<messages>hello</messages>"},
+                ],
+            )
+
+        assert isinstance(response, HonchoLLMCallResponse)
+        assert isinstance(response.content, PromptRepresentation)
+        assert response.content.explicit[0].content == "Alice likes tea"
+
+        call_args = mock_aio.models.generate_content.call_args
+        assert call_args is not None
+        assert call_args.kwargs["contents"] == [
+            {"role": "user", "parts": [{"text": "Messages to analyze:\n<messages>hello</messages>"}]}
+        ]
+        config = call_args.kwargs["config"]
+        assert config["system_instruction"] == "stable deriver instructions"
+        assert config["response_schema"] == PromptRepresentation
+        assert config["response_mime_type"] == "application/json"
 
     async def test_google_streaming(self):
         """Test Google/Gemini streaming response"""

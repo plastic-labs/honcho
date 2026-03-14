@@ -124,6 +124,48 @@ def _normalize_cacheable_system_content(content: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _build_gemini_contents_from_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[ContentListUnionDict, str | None]:
+    """Convert generic chat messages into Gemini contents and system instruction."""
+    system_instruction_parts: list[str] = []
+    gemini_contents: list[dict[str, Any]] = []
+
+    for msg in messages:
+        role = msg.get("role", "user")
+
+        if role == "system":
+            if isinstance(msg.get("content"), str):
+                system_instruction_parts.append(msg["content"])
+            continue
+
+        if role == "assistant":
+            role = "model"
+
+        if isinstance(msg.get("content"), str):
+            gemini_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+            continue
+
+        if isinstance(msg.get("parts"), list):
+            msg_copy: dict[str, Any] = dict(msg)
+            msg_copy["role"] = role
+            gemini_contents.append(msg_copy)
+            continue
+
+        if isinstance(msg.get("content"), list):
+            text_parts: list[dict[str, str]] = []
+            for block in cast(list[dict[str, Any]], msg["content"]):
+                if block.get("type") == "text" and isinstance(block.get("text"), str):
+                    text_parts.append({"text": block["text"]})
+            if text_parts:
+                gemini_contents.append({"role": role, "parts": text_parts})
+
+    system_instruction = (
+        "\n\n".join(system_instruction_parts) if system_instruction_parts else None
+    )
+    return cast(ContentListUnionDict, gemini_contents), system_instruction
+
+
 def _is_tool_use_message(msg: dict[str, Any]) -> bool:
     """Check if a message contains tool calls (any format)."""
     # Anthropic format: content is a list with tool_use blocks
@@ -2158,52 +2200,11 @@ async def honcho_llm_call_inner(
 
                 # Use messages if provided, otherwise use prompt
                 if messages:
-                    # Extract system messages for system_instruction parameter
-                    # Gemini doesn't support system role in contents - it causes
-                    # consecutive user messages which results in empty responses
-                    for msg in messages:
-                        if msg.get("role") == "system":
-                            if isinstance(msg.get("content"), str):
-                                system_messages.append(msg["content"])
-                        else:
-                            non_system_messages.append(msg)
-
-                    # Add system instruction if present
-                    if system_messages:
-                        gemini_config["system_instruction"] = "\n\n".join(
-                            system_messages
-                        )
-
-                    # Convert non-system messages to Google format
-                    gemini_contents: list[dict[str, Any]] = []
-                    for msg in non_system_messages:
-                        # Map roles to Google's expected values (user, model)
-                        role = msg.get("role", "user")
-                        if role == "assistant":
-                            role = "model"
-
-                        # Handle different content formats
-                        if isinstance(msg.get("content"), str):
-                            # Simple string content
-                            gemini_contents.append(
-                                {"role": role, "parts": [{"text": msg["content"]}]}
-                            )
-                        elif isinstance(msg.get("parts"), list):
-                            # Already in Google format (from tool calling loop)
-                            # But still need to ensure role is correct
-                            msg_copy = msg.copy()
-                            msg_copy["role"] = role
-                            gemini_contents.append(msg_copy)
-                        elif isinstance(msg.get("content"), list):
-                            # Content is a list of parts (Anthropic format) - skip for now
-                            # This shouldn't happen with Google provider in tool loop
-                            continue
-                        else:
-                            # Empty or unknown format, skip
-                            continue
-                    contents: ContentListUnionDict = cast(
-                        ContentListUnionDict, gemini_contents
+                    contents, system_instruction = _build_gemini_contents_from_messages(
+                        messages
                     )
+                    if system_instruction:
+                        gemini_config["system_instruction"] = system_instruction
                 else:
                     contents = prompt
 
@@ -2290,9 +2291,18 @@ async def honcho_llm_call_inner(
                 gemini_config["response_mime_type"] = "application/json"
                 gemini_config["response_schema"] = response_model
 
+                if messages:
+                    contents, system_instruction = _build_gemini_contents_from_messages(
+                        messages
+                    )
+                    if system_instruction:
+                        gemini_config["system_instruction"] = system_instruction
+                else:
+                    contents = prompt
+
                 gemini_response = await client.aio.models.generate_content(
                     model=model,
-                    contents=prompt,
+                    contents=contents,
                     config=cast(GenerateContentConfigDict, gemini_config),  # pyright: ignore[reportInvalidCast]
                 )
 

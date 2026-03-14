@@ -62,10 +62,7 @@ def minimal_deriver_prompt(
         f"""
 {minimal_deriver_system_prompt(peer_id)}
 
-Messages to analyze:
-<messages>
-{messages}
-</messages>
+{minimal_deriver_user_prompt(messages)}
 """
     )
 
