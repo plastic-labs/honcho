@@ -1,6 +1,5 @@
 import signal
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -234,12 +233,14 @@ class TestCustomInstructions:
             AsyncMock(),
         )
 
-        message = SimpleNamespace(
+        message = models.Message(
             id=1,
+            public_id="msg_1",
             content="I like tea.",
             created_at=datetime.now(timezone.utc),
             peer_name="alice",
             token_count=4,
+            seq_in_session=1,
             session_name="session-1",
             workspace_name="workspace-1",
         )
