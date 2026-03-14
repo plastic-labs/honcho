@@ -506,6 +506,23 @@ def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
     return cache_creation, cache_read
 
 
+def extract_gemini_cache_tokens(usage_metadata: Any) -> tuple[int, int]:
+    """
+    Extract cache token counts from Gemini usage metadata when available.
+
+    Gemini exposes `cached_content_token_count` on usage metadata when cached
+    content was reused for a request. Generate responses do not currently expose
+    a corresponding cache-creation count, so creation is reported as 0.
+    """
+    if not usage_metadata:
+        return 0, 0
+
+    cache_read = getattr(usage_metadata, "cached_content_token_count", 0)
+    if not isinstance(cache_read, int):
+        cache_read = 0
+    return 0, cache_read
+
+
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
     Response object for LLM calls.
@@ -2230,6 +2247,9 @@ async def honcho_llm_call_inner(
                     if gemini_response.usage_metadata
                     else 0
                 )
+                cache_creation_tokens, cache_read_tokens = extract_gemini_cache_tokens(
+                    gemini_response.usage_metadata
+                )
                 output_token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
                     if gemini_response.usage_metadata
@@ -2259,6 +2279,8 @@ async def honcho_llm_call_inner(
                     content=text_content,
                     input_tokens=input_token_count,
                     output_tokens=output_token_count,
+                    cache_creation_input_tokens=cache_creation_tokens,
+                    cache_read_input_tokens=cache_read_tokens,
                     finish_reasons=[finish_reason],
                     tool_calls_made=gemini_tool_calls,
                 )
@@ -2277,6 +2299,9 @@ async def honcho_llm_call_inner(
                     gemini_response.usage_metadata.prompt_token_count or 0
                     if gemini_response.usage_metadata
                     else 0
+                )
+                cache_creation_tokens, cache_read_tokens = extract_gemini_cache_tokens(
+                    gemini_response.usage_metadata
                 )
                 output_token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
@@ -2312,6 +2337,8 @@ async def honcho_llm_call_inner(
                     content=gemini_response.parsed,
                     input_tokens=input_token_count,
                     output_tokens=output_token_count,
+                    cache_creation_input_tokens=cache_creation_tokens,
+                    cache_read_input_tokens=cache_read_tokens,
                     finish_reasons=[finish_reason],
                     tool_calls_made=[],
                 )
