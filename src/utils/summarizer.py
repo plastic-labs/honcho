@@ -91,13 +91,9 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
-def short_summary_prompt(
-    formatted_messages: str,
-    output_words: int,
-    previous_summary_text: str,
-) -> str:
-    """Generate the short summary prompt."""
-    return c(f"""
+def short_summary_system_prompt() -> str:
+    """Generate cacheable instructions for short summaries."""
+    return c("""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
@@ -110,7 +106,71 @@ If there is a previous summary, ALWAYS make your new summary inclusive of both i
 Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+""")
 
+
+def short_summary_user_prompt(
+    formatted_messages: str,
+    output_words: int,
+    previous_summary_text: str,
+) -> str:
+    """Generate the per-request payload for short summaries."""
+    return c(f"""
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
+
+<conversation>
+{formatted_messages}
+</conversation>
+
+Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
+""")
+
+
+def short_summary_prompt(
+    formatted_messages: str,
+    output_words: int,
+    previous_summary_text: str,
+) -> str:
+    """Generate the combined short summary prompt."""
+    return "\n\n".join(
+        [
+            short_summary_system_prompt(),
+            short_summary_user_prompt(
+                formatted_messages, output_words, previous_summary_text
+            ),
+        ]
+    )
+
+
+def long_summary_system_prompt() -> str:
+    """Generate cacheable instructions for long summaries."""
+    return c("""
+You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
+
+1. Key facts and information shared (**Capture as many explicit facts as possible**)
+2. User preferences, opinions, and questions
+3. Important context and requests
+4. Core topics discussed in detail
+5. User's apparent emotional state and personality traits
+6. Important themes and patterns across the conversation
+
+If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
+
+Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
+
+Return only the summary without any explanation or meta-commentary.
+""")
+
+
+def long_summary_user_prompt(
+    formatted_messages: str,
+    output_words: int,
+    previous_summary_text: str,
+) -> str:
+    """Generate the per-request payload for long summaries."""
+    return c(f"""
 <previous_summary>
 {previous_summary_text}
 </previous_summary>
@@ -128,33 +188,15 @@ def long_summary_prompt(
     output_words: int,
     previous_summary_text: str,
 ) -> str:
-    """Generate the long summary prompt."""
-    return c(f"""
-You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
-
-1. Key facts and information shared (**Capture as many explicit facts as possible**)
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed in detail
-5. User's apparent emotional state and personality traits
-6. Important themes and patterns across the conversation
-
-If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
-
-Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
-
-Return only the summary without any explanation or meta-commentary.
-
-<previous_summary>
-{previous_summary_text}
-</previous_summary>
-
-<conversation>
-{formatted_messages}
-</conversation>
-
-Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
-""")
+    """Generate the combined long summary prompt."""
+    return "\n\n".join(
+        [
+            long_summary_system_prompt(),
+            long_summary_user_prompt(
+                formatted_messages, output_words, previous_summary_text
+            ),
+        ]
+    )
 
 
 @cache
@@ -162,10 +204,15 @@ def estimate_short_summary_prompt_tokens() -> int:
     """Estimate tokens for the short summary prompt (without messages/previous_summary)."""
     try:
         return estimate_tokens(
-            short_summary_prompt(
-                formatted_messages="",
-                output_words=0,
-                previous_summary_text="",
+            "\n\n".join(
+                [
+                    short_summary_system_prompt(),
+                    short_summary_user_prompt(
+                        formatted_messages="",
+                        output_words=0,
+                        previous_summary_text="",
+                    ),
+                ]
             )
         )
     except Exception:
@@ -178,10 +225,15 @@ def estimate_long_summary_prompt_tokens() -> int:
     """Estimate tokens for the long summary prompt (without messages/previous_summary)."""
     try:
         return estimate_tokens(
-            long_summary_prompt(
-                formatted_messages="",
-                output_words=0,
-                previous_summary_text="",
+            "\n\n".join(
+                [
+                    long_summary_system_prompt(),
+                    long_summary_user_prompt(
+                        formatted_messages="",
+                        output_words=0,
+                        previous_summary_text="",
+                    ),
+                ]
             )
         )
     except Exception:
@@ -207,14 +259,19 @@ async def create_short_summary(
     else:
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
-    prompt = short_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
-    )
-
     return await honcho_llm_call(
         llm_settings=settings.SUMMARY,
-        prompt=prompt,
+        prompt="",
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+        messages=[
+            {"role": "system", "content": short_summary_system_prompt()},
+            {
+                "role": "user",
+                "content": short_summary_user_prompt(
+                    formatted_messages, output_words, previous_summary_text
+                ),
+            },
+        ],
     )
 
 
@@ -232,14 +289,19 @@ async def create_long_summary(
     else:
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
-    prompt = long_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
-    )
-
     return await honcho_llm_call(
         llm_settings=settings.SUMMARY,
-        prompt=prompt,
+        prompt="",
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+        messages=[
+            {"role": "system", "content": long_summary_system_prompt()},
+            {
+                "role": "user",
+                "content": long_summary_user_prompt(
+                    formatted_messages, output_words, previous_summary_text
+                ),
+            },
+        ],
     )
 
 

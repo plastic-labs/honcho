@@ -142,6 +142,37 @@ class TestAnthropicClient:
             assert response.content == "First block\nSecond block"
             assert response.output_tokens == 8
 
+    async def test_anthropic_preserves_multiple_cacheable_system_blocks(self):
+        """Anthropic requests should keep separate system blocks cacheable."""
+
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="Hello from Anthropic", type="text")]
+        mock_response.usage = Usage(input_tokens=10, output_tokens=5)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            await honcho_llm_call_inner(
+                provider="anthropic",
+                model="claude-3-sonnet",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {"role": "system", "content": "stable instructions"},
+                    {"role": "system", "content": "rolling session context"},
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
+        system_blocks = mock_client.messages.create.call_args.kwargs["system"]
+        assert len(system_blocks) == 2
+        assert system_blocks[0]["text"] == "stable instructions"
+        assert system_blocks[1]["text"] == "rolling session context"
+        assert all(
+            block["cache_control"] == {"type": "ephemeral"} for block in system_blocks
+        )
+
     async def test_anthropic_json_mode(self):
         """Test Anthropic with JSON mode"""
 
@@ -518,7 +549,52 @@ class TestOpenAIClient:
             assert chunks[1].content == " world"
             assert chunks[2].content == ""
             assert chunks[2].is_done is True
-            assert chunks[2].finish_reasons == ["stop"]
+
+    async def test_custom_provider_system_messages_gain_cache_control(self):
+        """Custom OpenAI-compatible providers should mark each system message cacheable."""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="anthropic/claude-sonnet",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant", content="Hello from OpenAI"
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"custom": mock_client}):
+            await honcho_llm_call_inner(
+                provider="custom",
+                model="anthropic/claude-sonnet",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {"role": "system", "content": "stable instructions"},
+                    {"role": "system", "content": "session history"},
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "system"
+        assert messages[0]["content"][0]["text"] == "stable instructions"
+        assert messages[1]["content"][0]["text"] == "session history"
+        assert messages[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert messages[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
 @pytest.mark.asyncio

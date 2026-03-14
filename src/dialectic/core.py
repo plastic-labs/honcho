@@ -141,8 +141,9 @@ class DialecticAgent:
             "</session_history>"
         )
 
-        # Append session history to the system prompt
-        self.messages[0]["content"] += session_history_section
+        # Keep session history in its own system message so the stable base
+        # instructions can be cached independently of rolling session context.
+        self.messages.append({"role": "system", "content": session_history_section})
 
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
         """

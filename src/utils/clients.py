@@ -92,6 +92,37 @@ def count_message_tokens(messages: list[dict[str, Any]]) -> int:
     return total
 
 
+def _cacheable_text_block(text: str) -> dict[str, Any]:
+    """Create a text content block that participates in prompt caching."""
+    return {
+        "type": "text",
+        "text": text,
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def _normalize_cacheable_system_content(content: Any) -> list[dict[str, Any]]:
+    """Normalize system content into cacheable text blocks when possible."""
+    if isinstance(content, str):
+        return [_cacheable_text_block(content)]
+
+    if isinstance(content, list):
+        normalized_blocks: list[dict[str, Any]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+
+            normalized_block = dict(block)
+            if normalized_block.get("type") == "text":
+                normalized_block.setdefault(
+                    "cache_control", {"type": "ephemeral"}
+                )
+            normalized_blocks.append(normalized_block)
+        return normalized_blocks
+
+    return []
+
+
 def _is_tool_use_message(msg: dict[str, Any]) -> bool:
     """Check if a message contains tool calls (any format)."""
     # Anthropic format: content is a list with tool_use blocks
@@ -1678,7 +1709,7 @@ async def honcho_llm_call_inner(
     # Remove stream parameter for non-streaming calls as some providers don't accept it
     params.pop("stream", None)
 
-    system_messages: list[str] = []
+    system_messages: list[Any] = []
     non_system_messages: list[dict[str, Any]] = []
 
     match client:
@@ -1703,13 +1734,14 @@ async def honcho_llm_call_inner(
             # Add system parameter if there are system messages
             # Use cache_control for prompt caching
             if system_messages:
-                anthropic_params["system"] = [
-                    {
-                        "type": "text",
-                        "text": "\n\n".join(system_messages),
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
+                anthropic_system_blocks: list[dict[str, Any]] = []
+                for system_message in system_messages:
+                    anthropic_system_blocks.extend(
+                        _normalize_cacheable_system_content(system_message)
+                    )
+
+                if anthropic_system_blocks:
+                    anthropic_params["system"] = anthropic_system_blocks
 
             # Add tools if provided
             if tools:
@@ -1853,22 +1885,19 @@ async def honcho_llm_call_inner(
             if provider == "custom":
                 processed_messages = []
                 for msg in params["messages"]:
-                    if msg.get("role") == "system" and isinstance(
-                        msg.get("content"), str
-                    ):
-                        # Convert system message to content block format with cache_control
-                        processed_messages.append(
-                            {
-                                "role": "system",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": msg["content"],
-                                        "cache_control": {"type": "ephemeral"},
-                                    }
-                                ],
-                            }
+                    if msg.get("role") == "system":
+                        cacheable_content = _normalize_cacheable_system_content(
+                            msg.get("content")
                         )
+                        if cacheable_content:
+                            processed_messages.append(
+                                {
+                                    **msg,
+                                    "content": cacheable_content,
+                                }
+                            )
+                        else:
+                            processed_messages.append(msg)
                     else:
                         processed_messages.append(msg)
 
@@ -2373,22 +2402,19 @@ async def handle_streaming_response(
         case AsyncAnthropic():
             # Anthropic requires system messages as a top-level parameter
             messages = params["messages"]
-            system_content = "\n\n".join(
-                m["content"] for m in messages if m.get("role") == "system"
-            )
+            system_blocks: list[dict[str, Any]] = []
+            for message in messages:
+                if message.get("role") == "system":
+                    system_blocks.extend(
+                        _normalize_cacheable_system_content(message.get("content"))
+                    )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": [m for m in messages if m.get("role") != "system"],
             }
-            if system_content:
-                anthropic_params["system"] = [
-                    {
-                        "type": "text",
-                        "text": system_content,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
+            if system_blocks:
+                anthropic_params["system"] = system_blocks
 
             # For response models, we need to request JSON and parse manually
             # Note: Streaming with response_model is not ideal but we'll accumulate and parse at the end

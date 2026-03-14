@@ -15,6 +15,8 @@ from src.utils.summarizer import (
     Summary,
     SummaryType,
     _create_summary,  # pyright: ignore[reportPrivateUsage]
+    create_long_summary,
+    create_short_summary,
 )
 
 # Common test arguments for _create_summary
@@ -217,3 +219,71 @@ class TestCreateSummary:
         assert is_fallback is True
         assert summary["content"] == ""
         assert summary["token_count"] == 0
+
+
+@pytest.mark.asyncio
+class TestSummaryPromptCaching:
+    """Tests for cache-friendly summary prompt construction."""
+
+    async def test_create_short_summary_uses_system_and_user_messages(self):
+        """Short summaries should send stable instructions as a system message."""
+        mock_response = HonchoLLMCallResponse(
+            content="summary",
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_call:
+            response = await create_short_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                input_tokens=_INPUT_TOKENS,
+                previous_summary="earlier summary",
+            )
+
+        assert response is mock_response
+        call_kwargs = mock_call.await_args.kwargs
+        assert call_kwargs["prompt"] == ""
+        assert len(call_kwargs["messages"]) == 2
+        assert call_kwargs["messages"][0]["role"] == "system"
+        assert "summarizes parts of a conversation" in call_kwargs["messages"][0][
+            "content"
+        ]
+        assert call_kwargs["messages"][1]["role"] == "user"
+        assert "<previous_summary>" in call_kwargs["messages"][1]["content"]
+        assert "<conversation>" in call_kwargs["messages"][1]["content"]
+
+    async def test_create_long_summary_uses_system_and_user_messages(self):
+        """Long summaries should send stable instructions as a system message."""
+        mock_response = HonchoLLMCallResponse(
+            content="long summary",
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_call:
+            response = await create_long_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                previous_summary="earlier summary",
+            )
+
+        assert response is mock_response
+        call_kwargs = mock_call.await_args.kwargs
+        assert call_kwargs["prompt"] == ""
+        assert len(call_kwargs["messages"]) == 2
+        assert call_kwargs["messages"][0]["role"] == "system"
+        assert "creates thorough, comprehensive summaries" in call_kwargs[
+            "messages"
+        ][0]["content"]
+        assert call_kwargs["messages"][1]["role"] == "user"
+        assert "<previous_summary>" in call_kwargs["messages"][1]["content"]
+        assert "<conversation>" in call_kwargs["messages"][1]["content"]
