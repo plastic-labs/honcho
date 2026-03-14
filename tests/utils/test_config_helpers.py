@@ -1,12 +1,12 @@
-from types import SimpleNamespace
-
+from src import models
 from src.schemas import MessageConfiguration, ReasoningConfiguration
 from src.utils.config_helpers import get_configuration
 
 
 class TestGetConfiguration:
     def test_preserves_workspace_custom_instructions(self) -> None:
-        workspace = SimpleNamespace(
+        workspace = models.Workspace(
+            name="workspace-1",
             configuration={
                 "reasoning": {
                     "enabled": True,
@@ -21,10 +21,13 @@ class TestGetConfiguration:
         assert config.reasoning.custom_instructions == "Focus on durable preferences."
 
     def test_message_custom_instructions_override_session_and_workspace(self) -> None:
-        workspace = SimpleNamespace(
+        workspace = models.Workspace(
+            name="workspace-1",
             configuration={"reasoning": {"custom_instructions": "workspace scope"}}
         )
-        session = SimpleNamespace(
+        session = models.Session(
+            name="session-1",
+            workspace_name="workspace-1",
             configuration={"reasoning": {"custom_instructions": "session scope"}}
         )
         message = MessageConfiguration(
