@@ -22,7 +22,7 @@ from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import track_deriver_input_tokens
 
-from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
+from .prompts import estimate_deriver_prompt_tokens, minimal_deriver_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,8 @@ async def process_representation_tasks_batch(
     )
 
     # Track token usage - count only tokens from messages being processed
-    prompt_tokens = estimate_minimal_deriver_prompt_tokens()
+    custom_instructions = message_level_configuration.reasoning.custom_instructions
+    prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
     queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
@@ -108,7 +109,11 @@ async def process_representation_tasks_batch(
     )
 
     # Build prompt
-    prompt = minimal_deriver_prompt(peer_id=observed, messages=formatted_messages)
+    prompt = minimal_deriver_prompt(
+        peer_id=observed,
+        messages=formatted_messages,
+        custom_instructions=custom_instructions,
+    )
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(

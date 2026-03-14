@@ -11,9 +11,24 @@ from inspect import cleandoc as c
 from src.utils.tokens import estimate_tokens
 
 
+def _custom_instructions_section(custom_instructions: str | None) -> str:
+    """Render the optional custom instructions block for the deriver prompt."""
+    if not custom_instructions or not custom_instructions.strip():
+        return ""
+
+    return c(
+        f"""
+        CUSTOM INSTRUCTIONS:
+        {custom_instructions.strip()}
+        """
+    )
+
+
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
+    *,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Generate minimal prompt for fast observation extraction.
@@ -25,6 +40,8 @@ def minimal_deriver_prompt(
     Returns:
         Formatted prompt string for observation extraction.
     """
+    instructions_section = _custom_instructions_section(custom_instructions)
+
     return c(
         f"""
 Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
@@ -45,6 +62,8 @@ EXAMPLES:
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
 - EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
 
+{instructions_section}
+
 Messages to analyze:
 <messages>
 {messages}
@@ -64,3 +83,17 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
         return estimate_tokens(prompt)
     except Exception:
         return 300
+
+
+def estimate_deriver_prompt_tokens(custom_instructions: str | None = None) -> int:
+    """Estimate deriver prompt tokens, including optional custom instructions."""
+    if not custom_instructions or not custom_instructions.strip():
+        return estimate_minimal_deriver_prompt_tokens()
+
+    return estimate_tokens(
+        minimal_deriver_prompt(
+            peer_id="",
+            messages="",
+            custom_instructions=custom_instructions,
+        )
+    )
