@@ -127,6 +127,7 @@ class MessageConfiguration(BaseModel):
 
 class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
+    custom_instructions: str | None = None
 
 
 class ResolvedPeerCardConfiguration(BaseModel):

@@ -23,7 +23,7 @@ from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import track_deriver_input_tokens
 
 from .prompts import (
-    estimate_minimal_deriver_prompt_tokens,
+    estimate_deriver_prompt_tokens,
     minimal_deriver_system_prompt,
     minimal_deriver_user_prompt,
 )
@@ -98,7 +98,8 @@ async def process_representation_tasks_batch(
     )
 
     # Track token usage - count only tokens from messages being processed
-    prompt_tokens = estimate_minimal_deriver_prompt_tokens()
+    custom_instructions = message_level_configuration.reasoning.custom_instructions
+    prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
     queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
@@ -143,7 +144,11 @@ async def process_representation_tasks_batch(
             {"role": "system", "content": minimal_deriver_system_prompt()},
             {
                 "role": "user",
-                "content": minimal_deriver_user_prompt(observed, formatted_messages),
+                "content": minimal_deriver_user_prompt(
+                    observed,
+                    formatted_messages,
+                    custom_instructions=custom_instructions,
+                ),
             },
         ],
     )
