@@ -246,6 +246,7 @@ class TestSummaryPromptCaching:
             )
 
         assert response is mock_response
+        assert mock_call.await_args is not None
         call_kwargs = mock_call.await_args.kwargs
         assert call_kwargs["prompt"] == ""
         assert len(call_kwargs["messages"]) == 2
@@ -277,6 +278,7 @@ class TestSummaryPromptCaching:
             )
 
         assert response is mock_response
+        assert mock_call.await_args is not None
         call_kwargs = mock_call.await_args.kwargs
         assert call_kwargs["prompt"] == ""
         assert len(call_kwargs["messages"]) == 2
