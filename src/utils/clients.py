@@ -108,13 +108,14 @@ def _normalize_cacheable_system_content(content: Any) -> list[dict[str, Any]]:
 
     if isinstance(content, list):
         normalized_blocks: list[dict[str, Any]] = []
-        for block in content:
-            if not isinstance(block, dict):
+        for raw_block in cast(list[object], content):
+            if not isinstance(raw_block, dict):
                 continue
 
-            normalized_block = dict(block)
+            block = cast(dict[str, Any], raw_block)
+            normalized_block: dict[str, Any] = {**block}
             if normalized_block.get("type") == "text":
-                normalized_block.setdefault(
+                normalized_block["cache_control"] = normalized_block.get(
                     "cache_control", {"type": "ephemeral"}
                 )
             normalized_blocks.append(normalized_block)
