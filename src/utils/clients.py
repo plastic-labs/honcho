@@ -137,6 +137,12 @@ def _build_gemini_contents_from_messages(
         if role == "system":
             if isinstance(msg.get("content"), str):
                 system_instruction_parts.append(msg["content"])
+            elif isinstance(msg.get("content"), list):
+                for block in cast(list[dict[str, Any]], msg["content"]):
+                    if block.get("type") == "text" and isinstance(
+                        block.get("text"), str
+                    ):
+                        system_instruction_parts.append(block["text"])
             continue
 
         if role == "assistant":
@@ -1535,6 +1541,7 @@ async def honcho_llm_call(
                 True,  # type: ignore[arg-type]
                 converted_tools,
                 tool_choice,
+                messages,
             )
         else:
             return await honcho_llm_call_inner(
@@ -1552,6 +1559,7 @@ async def honcho_llm_call(
                 False,  # type: ignore[arg-type]
                 converted_tools,
                 tool_choice,
+                messages,
             )
 
     decorated = _call_with_provider_selection

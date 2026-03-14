@@ -20,6 +20,7 @@ Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
 [EXPLICIT] DEFINITION: Facts about {peer_id} that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
+   - Do not infer unstated background facts or implications
    - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
 
 RULES:
@@ -29,9 +30,9 @@ RULES:
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
-- EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
-- EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
+- EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id} celebrated their birthday last Saturday"
+- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} said they took their dog for a walk in NYC"
+- EXPLICIT: "{peer_id} attended college" → "{peer_id} said they attended college"
 """
     )
 
@@ -78,5 +79,5 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
             ]
         )
         return estimate_tokens(prompt)
-    except Exception:
+    except ValueError:
         return 300

@@ -101,6 +101,22 @@ class TestLLMCallResponse:
         assert cache_creation == 0
         assert cache_read == 321
 
+    def test_extract_gemini_cache_tokens_none_metadata(self):
+        """Missing Gemini usage metadata should return zero cache tokens."""
+        cache_creation, cache_read = extract_gemini_cache_tokens(None)
+
+        assert cache_creation == 0
+        assert cache_read == 0
+
+    def test_extract_gemini_cache_tokens_missing_attribute(self):
+        """Gemini usage metadata without the cached token field should return zeroes."""
+        usage_metadata = Mock(spec=[])
+
+        cache_creation, cache_read = extract_gemini_cache_tokens(usage_metadata)
+
+        assert cache_creation == 0
+        assert cache_read == 0
+
 
 @pytest.mark.asyncio
 class TestAnthropicClient:
@@ -835,6 +851,59 @@ class TestGoogleClient:
         assert config["system_instruction"] == "stable deriver instructions"
         assert config["response_schema"] == PromptRepresentation
         assert config["response_mime_type"] == "application/json"
+
+    async def test_google_preserves_list_form_system_messages(self):
+        """Gemini should preserve text blocks from list-form system content."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_part = Mock()
+        mock_part.text = "ok"
+        mock_part.function_call = None
+        mock_content = Mock()
+        mock_content.parts = [mock_part]
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_candidate = Mock()
+        mock_candidate.content = mock_content
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 5
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-1.5-pro",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "text", "text": "stable instructions"},
+                            {
+                                "type": "text",
+                                "text": "rolling session context",
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                        ],
+                    },
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
+        call_args = mock_aio.models.generate_content.call_args
+        assert call_args is not None
+        assert call_args.kwargs["config"]["system_instruction"] == (
+            "stable instructions\n\nrolling session context"
+        )
 
     async def test_google_streaming(self):
         """Test Google/Gemini streaming response"""

@@ -216,6 +216,18 @@ def parse_provider_spec(raw: str) -> ProviderSpec:
         )
     label, provider_model = raw.split("=", 1)
     provider, model = provider_model.split(":", 1)
+    if not label:
+        raise ValueError(
+            f"Invalid provider spec {raw!r}. Label must not be empty."
+        )
+    if not provider:
+        raise ValueError(
+            f"Invalid provider spec {raw!r}. Provider must not be empty."
+        )
+    if not model:
+        raise ValueError(
+            f"Invalid provider spec {raw!r}. Model must not be empty."
+        )
     return ProviderSpec(label=label, provider=provider, model=model)
 
 
