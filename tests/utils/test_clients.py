@@ -982,7 +982,7 @@ class TestGoogleClient:
                 "parts": [
                     {
                         "function_response": {
-                            "name": "toolu_1",
+                            "name": "search_memory",
                             "response": {
                                 "result": "Alice likes tea",
                                 "is_error": False,

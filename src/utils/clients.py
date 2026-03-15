@@ -130,6 +130,7 @@ def _build_gemini_contents_from_messages(
     """Convert generic chat messages into Gemini contents and system instruction."""
     system_instruction_parts: list[str] = []
     gemini_contents: list[dict[str, Any]] = []
+    tool_use_names: dict[str, str] = {}
 
     for msg in messages:
         role = msg.get("role", "user")
@@ -168,6 +169,9 @@ def _build_gemini_contents_from_messages(
                     continue
 
                 if block_type == "tool_use" and isinstance(block.get("name"), str):
+                    tool_use_id = block.get("id")
+                    if isinstance(tool_use_id, str):
+                        tool_use_names[tool_use_id] = block["name"]
                     tool_args = block.get("input")
                     parts.append(
                         {
@@ -183,10 +187,16 @@ def _build_gemini_contents_from_messages(
                     tool_result = block.get("content")
                     if not isinstance(tool_result, str):
                         tool_result = json.dumps(tool_result)
+                    tool_use_id = block.get("tool_use_id")
+                    function_name = (
+                        tool_use_names.get(tool_use_id)
+                        if isinstance(tool_use_id, str)
+                        else None
+                    )
                     parts.append(
                         {
                             "function_response": {
-                                "name": str(block.get("tool_use_id", "tool_result")),
+                                "name": function_name or "tool_result",
                                 "response": {
                                     "result": tool_result,
                                     "is_error": bool(block.get("is_error", False)),
