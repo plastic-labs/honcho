@@ -1,47 +1,23 @@
 ---
-title: "Gmail Tutorial"
+title: "Gmail"
 icon: 'envelope'
 description: "Load Gmail threads into Honcho to give your AI agents memory of email conversations."
 sidebarTitle: 'Gmail'
 ---
 
-> Example code is available on [GitHub](https://github.com/plastic-labs/honcho/tree/main/examples/gmail)
+In this tutorial, we'll walk through how to ingest your Gmail emails into Honcho. By the end, each email thread will be a Honcho session and each participant will be a peer — giving your agents memory of who said what across your email history.
 
-This tutorial shows how to ingest Gmail threads into Honcho using a Python script.
-Each email thread becomes a session, and each participant becomes a peer — enabling Honcho to reason about email history and relationships.
-It is tailored to the Gmail workspace, but the Honcho primitives are easily extended to other email/messaging platforms.
-
+This guide includes a ready-to-run Python script that handles everything: Gmail OAuth, thread fetching, participant extraction, and Honcho ingestion. You can run it as-is or use the full tutorial below to understand each piece as you go.
 
 <Note>
-**This is a developer-focused tutorial.** It requires creating a Google Cloud project and OAuth credentials.
+The full script is available on [GitHub](https://github.com/plastic-labs/honcho/tree/main/examples/gmail). This is a developer-focused tutorial — it requires creating a Google Cloud project and OAuth credentials.
 </Note>
 
-## Prerequisites
+## TL;DR
 
-- Python 3.10+
-- A [Honcho API key](https://app.honcho.dev)
-- A Google account with Gmail
-- Basic familiarity with [Honcho's architecture](/v3/documentation/core-concepts/architecture) (workspaces, sessions, peers, messages)
+If you just want to get your emails into Honcho, here's everything you need.
 
-## How It Works
-
-Key patterns:
-- **Thread → Session**: Each Gmail thread maps to a Honcho session with metadata
-- **Email → Peer**: Each participant is a peer, identified by their email address
-- **Message Attribution**: `peer.message()` preserves who said what
-- **Multi-Peer Sessions**: `session.add_peers()` links all participants to the conversation
-- **Timestamp Preservation**: `created_at` maintains the original email chronology
-- **Quoted Reply Stripping**: Only new content is stored per message, avoiding duplication
-
-The script:
-1. **Authenticates** with Gmail using OAuth (opens a browser on first run)
-2. **Fetches threads** based on your query/label filters
-3. **Extracts participants** from each email (From, To, Cc, Bcc)
-4. **Creates Honcho peers** for each unique email address
-5. **Creates a session** per thread with all participants attached
-6. **Stores messages** with sender attribution and timestamps
-
-## Step 1: Set Up Google Cloud Credentials
+### 1. Set Up Google Cloud Credentials
 
 Follow Google's official [Gmail API Python Quickstart](https://developers.google.com/gmail/api/quickstart/python) to:
 
@@ -50,11 +26,9 @@ Follow Google's official [Gmail API Python Quickstart](https://developers.google
 3. Create OAuth credentials (select **Desktop app** as the application type)
 4. Download the credentials JSON into the same directory as the script
 
-The script auto-detects Google's default `client_secret_*.json` filename, so no renaming needed. You can also pass a custom path with `--credentials`.
+The script auto-detects Google's default `client_secret_*.json` filename, so no renaming needed. The script only needs the `gmail.readonly` scope.
 
-The script only needs the `gmail.readonly` scope.
-
-## Step 2: Install Dependencies
+### 2. Install Dependencies
 
 <CodeGroup>
 ```bash uv
@@ -66,13 +40,7 @@ pip install google-api-python-client google-auth-oauthlib honcho-ai
 ```
 </CodeGroup>
 
-## Step 3: Run the Script
-
-Make sure your `client_secret_*.json` (from Step 1) is in the same directory as the script.
-
-### Dry Run (Preview)
-
-First, test without writing to Honcho:
+### 3. Preview with a Dry Run
 
 <CodeGroup>
 ```bash uv
@@ -84,36 +52,9 @@ python honcho_gmail.py --dry-run --max-threads 5
 ```
 </CodeGroup>
 
-On first run, a browser window opens for OAuth consent. After authorizing, a `token.json` file is created — future runs won't require browser interaction.
+On first run, a browser window opens for OAuth consent. After authorizing, a `token.json` file is created — future runs skip this step.
 
-Example output:
-
-```
-Authenticating with Gmail API...
-Opening browser for OAuth consent...
-Credentials saved to token.json
-  Authenticated successfully!
-
-Fetching up to 5 threads from Gmail...
-  Found 5 threads
-  Fetching thread 1/5: 18f2a3b4c5d6e7f8
-  Fetching thread 2/5: 18f1b2c3d4e5f6a7
-  ...
-
-Summary:
-  Threads: 5
-  Messages: 12
-  Unique participants: 8
-    alice-example-com (Alice Smith <alice@example.com>)
-    bob-company-co (Bob Jones <bob@company.co>)
-    ...
-
-[DRY RUN] Would create the above in Honcho.
-```
-
-### Load into Honcho
-
-When ready, run without `--dry-run`:
+### 4. Load into Honcho
 
 <CodeGroup>
 ```bash uv
@@ -127,33 +68,136 @@ python honcho_gmail.py --workspace gmail-inbox --max-threads 20
 ```
 </CodeGroup>
 
-### Filter by Query or Label
-
-Use Gmail search syntax to filter which threads to load:
+You can filter threads with Gmail search syntax:
 
 <CodeGroup>
 ```bash uv
-# Only emails from a specific sender
 uv run honcho_gmail.py --query "from:alice@example.com"
-
-# Only emails with a label
 uv run honcho_gmail.py --label INBOX
-
-# Combine filters
 uv run honcho_gmail.py --query "after:2024/01/01 has:attachment" --max-threads 50
 ```
 
 ```bash python
-# Only emails from a specific sender
 python honcho_gmail.py --query "from:alice@example.com"
-
-# Only emails with a label
 python honcho_gmail.py --label INBOX
-
-# Combine filters
 python honcho_gmail.py --query "after:2024/01/01 has:attachment" --max-threads 50
 ```
 </CodeGroup>
+
+That's it — your emails are now queryable in Honcho. Read on if you want to understand how the script works and the design decisions behind it.
+
+---
+
+## Full Tutorial
+
+### How Gmail Maps to Honcho
+
+The core idea is straightforward: each Gmail thread becomes a Honcho session, and each email participant becomes a peer. Here's the full mapping:
+
+| Gmail Concept | Honcho Concept | Details |
+|---------------|----------------|---------|
+| Your Gmail account | Workspace (`gmail`) | One workspace for all email data |
+| Email participant | Peer | Email address as ID for deduplication |
+| Email thread | Session (`gmail-thread-{id}`) | One session per thread, all participants attached |
+| Individual email | Message | Attributed to the sender with original timestamp |
+
+### Email as Peer ID
+
+The script normalizes email addresses into URL-safe peer IDs — `alice@example.com` becomes `alice-example-com`. This means the same person is automatically deduplicated across threads. If Alice emails you in 10 different threads, all of those conversations accumulate under a single peer.
+
+```python
+def peer_id_from_email(email: str) -> str:
+    """Convert email to a valid Honcho peer ID."""
+    return email.replace("@", "-").replace(".", "-")
+```
+
+This also means peers are consistent across data sources. If you import Granola meetings and Gmail threads for the same person, they merge under the same peer ID.
+
+### Extracting Participants
+
+Every email has a sender, recipients, and optionally CC/BCC addresses. The script extracts all of these to build a complete picture of who's involved in each thread:
+
+```python
+for m in msgs:
+    register_peer(m["from"])
+    for addr in parse_address_list(m["to"]):
+        register_peer(addr)
+    for addr in parse_address_list(m["cc"]):
+        register_peer(addr)
+    for addr in parse_address_list(m["bcc"]):
+        register_peer(addr)
+```
+
+Display names are extracted when available (e.g., `Alice Smith <alice@example.com>` → name: "Alice Smith"). When only an email is present, the script generates a name from the local part.
+
+### Message Attribution and Timestamps
+
+Each email becomes a message attributed to its sender via `peer.message()`. The original email timestamp is preserved using `created_at`, so Honcho sees the conversation in chronological order — not the order you imported it.
+
+```python
+honcho_msgs.append(peer.message(
+    content,
+    metadata={
+        "gmail_id": m["id"],
+        "subject": m["subject"],
+        "from": m["from"],
+        "to": m["to"],
+        "labels": m["labels"],
+    },
+    created_at=m["timestamp"],
+))
+```
+
+### Multi-Peer Sessions
+
+Each thread's session is linked to all participants using `session.add_peers()`. This means when you query Honcho about a peer, it has context not just from their messages but from the full conversations they participated in.
+
+```python
+session = honcho.session(session_id, metadata={
+    "gmail_thread_id": tid,
+    "subject": subject,
+    "source": "gmail",
+    "message_count": len(msgs),
+})
+session.add_peers(thread_peers)
+```
+
+### Stripping Quoted Replies
+
+Email threads are full of quoted replies — each message repeats everything above it. The script strips these out so only the new content is stored per message, avoiding duplication in Honcho's memory:
+
+```python
+def strip_quoted_replies(text: str) -> str:
+    """Strip quoted reply text, keeping only the new content."""
+    lines = text.split("\n")
+    clean_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^On .+wrote:\s*$", stripped):
+            break
+        if stripped.startswith(">"):
+            break
+        # ... other reply markers
+        clean_lines.append(line)
+    return "\n".join(clean_lines).rstrip()
+```
+
+### Querying After Import
+
+Once your emails are in Honcho, you can query any peer:
+
+```python
+import os
+from honcho import Honcho
+
+honcho = Honcho(workspace_id="gmail-inbox", api_key=os.environ["HONCHO_API_KEY"])
+
+alice = honcho.peer("alice-example-com")
+print(alice.chat("What has Alice been discussing with me?"))
+print(alice.chat("What action items has Alice mentioned?"))
+```
+
+---
 
 ## CLI Reference
 
@@ -176,7 +220,7 @@ options:
 
 ### "No client_secret*.json file found"
 
-Download OAuth credentials from Google Cloud Console (Step 1) and place the `client_secret_*.json` file in the same directory as the script.
+Download OAuth credentials from Google Cloud Console and place the `client_secret_*.json` file in the same directory as the script.
 
 ### "Access blocked: This app's request is invalid"
 
@@ -555,3 +599,13 @@ if __name__ == "__main__":
     main()
 ```
 </Accordion>
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Design Patterns" icon="cubes" href="/v3/documentation/core-concepts/design-patterns">
+    See how the Granola integration maps to common Honcho patterns.
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/honcho/tree/main/examples/gmail">
+    Source code and example script.
+  </Card>
+</CardGroup>
