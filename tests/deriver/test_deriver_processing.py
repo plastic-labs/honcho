@@ -1,9 +1,21 @@
 import signal
+from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from src import models
+from src.deriver.deriver import process_representation_tasks_batch
+from src.schemas import (
+    ResolvedConfiguration,
+    ResolvedDreamConfiguration,
+    ResolvedPeerCardConfiguration,
+    ResolvedReasoningConfiguration,
+    ResolvedSummaryConfiguration,
+)
+from src.utils.clients import HonchoLLMCallResponse
+from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.representation import Representation
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
@@ -182,6 +194,75 @@ class TestBackwardsCompatibility:
             observers = [legacy_observer] if legacy_observer else []
 
         assert observers == []
+
+
+@pytest.mark.asyncio
+class TestCustomInstructions:
+    async def test_deriver_passes_custom_instructions_into_prompt(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[ExplicitObservationBase(content="Alice likes tea")]
+            ),
+            output_tokens=5,
+            finish_reasons=["stop"],
+        )
+
+        mock_call = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr(
+            "src.deriver.deriver.honcho_llm_call",
+            mock_call,
+        )
+        monkeypatch.setattr(
+            "src.crud.representation.RepresentationManager.save_representation",
+            AsyncMock(),
+        )
+
+        message = models.Message(
+            id=1,
+            public_id="msg_1",
+            content="I like tea.",
+            created_at=datetime.now(timezone.utc),
+            peer_name="alice",
+            token_count=4,
+            seq_in_session=1,
+            session_name="session-1",
+            workspace_name="workspace-1",
+        )
+        configuration = ResolvedConfiguration(
+            reasoning=ResolvedReasoningConfiguration(
+                enabled=True,
+                custom_instructions="Focus on durable preferences only.",
+            ),
+            peer_card=ResolvedPeerCardConfiguration(use=True, create=True),
+            summary=ResolvedSummaryConfiguration(
+                enabled=True,
+                messages_per_short_summary=10,
+                messages_per_long_summary=20,
+            ),
+            dream=ResolvedDreamConfiguration(enabled=True),
+        )
+
+        await process_representation_tasks_batch(
+            messages=[message],
+            message_level_configuration=configuration,
+            observers=["alice"],
+            observed="alice",
+            queue_item_message_ids=[1],
+        )
+
+        assert mock_call.await_args is not None
+        call_messages = mock_call.await_args.kwargs["messages"]
+        assert call_messages[0]["role"] == "system"
+        assert "Analyze messages from alice" in call_messages[0]["content"]
+        assert call_messages[1]["role"] == "user"
+        assert "CUSTOM INSTRUCTIONS:" in call_messages[1]["content"]
+        assert (
+            "Focus on durable preferences only." in call_messages[1]["content"]
+        )
+        assert "I like tea." in call_messages[1]["content"]
 
     # async def test_representation_batch_uses_earliest_cutoff(
     #     self,
