@@ -100,6 +100,13 @@
                 ]
               },
               {
+                "group": "Community Integrations",
+                "pages": [
+                  "v3/guides/community/agent0",
+                  "v3/guides/community/hermes"
+                ]
+              },
+              {
                 "group": "Tutorials",
                 "pages": [
                   "v3/guides/discord",
@@ -107,13 +114,6 @@
                   "v3/guides/telegram",
                   "v3/guides/integrations/reachy-mini",
                   "v3/guides/gmail"
-                ]
-              },
-              {
-                "group": "Community Integrations",
-                "pages": [
-                  "v3/guides/community/agent0",
-                  "v3/guides/community/hermes"
                 ]
               },
               {
