@@ -11,6 +11,14 @@ Honcho uses a flexible configuration system that supports both TOML files and en
 3. `config.toml` file (base configuration)
 4. Default values
 
+`.env.template` is the canonical source of truth for local/self-hosted defaults.
+`config.toml.example` mirrors the same values in TOML form.
+The shipped defaults currently require `LLM_ANTHROPIC_API_KEY` and
+`LLM_GEMINI_API_KEY` to boot. `LLM_OPENAI_API_KEY` is also required if you keep
+the default embedding behavior (`EMBED_MESSAGES=true` and
+`LLM_EMBEDDING_PROVIDER=openai`). If you change provider settings, those key
+requirements change with them.
+
 ## Recommended Configuration Approaches
 
 ### Option 1: Environment Variables Only (Production)
@@ -44,7 +52,9 @@ Copy the example configuration file to get started:
 cp config.toml.example config.toml
 ```
 
-Then modify the values as needed. The TOML file is organized into sections:
+Then modify the values as needed. Use `.env.template` for the canonical default
+values and placeholders; `config.toml.example` mirrors those same settings in
+TOML form. The TOML file is organized into sections:
 
 - `[app]` - Application-level settings (log level, session limits, embedding settings, Langfuse integration, local metrics collection, namespace)
 - `[db]` - Database connection and pool settings (connection URI, pool size, timeouts, connection recycling)
@@ -80,6 +90,14 @@ Examples:
 - `DIALECTIC_LEVELS__minimal__PROVIDER` → `[dialectic.levels.minimal].PROVIDER`
 - `DREAM_SURPRISAL__ENABLED` → `[dream.surprisal].ENABLED`
 
+Canonical mappings used throughout the self-hosting docs:
+
+- `DB_CONNECTION_URI` ↔ `[db].CONNECTION_URI`
+- `CACHE_ENABLED` ↔ `[cache].ENABLED`
+- `CACHE_URL` ↔ `[cache].URL`
+- `METRICS_ENABLED` ↔ `[metrics].ENABLED`
+- `LLM_*` env vars ↔ `[llm]` keys
+
 ### Configuration Priority
 
 When a configuration value is set in multiple places, Honcho uses this priority:
@@ -101,14 +119,14 @@ If you have this in `config.toml`:
 
 ```toml
 [db]
-CONNECTION_URI = "postgresql://localhost/honcho_dev"
+CONNECTION_URI = "postgresql+psycopg://testuser:testpwd@localhost:5432/honcho"
 POOL_SIZE = 10
 ```
 
 You can override just the connection URI in production:
 
 ```bash
-export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
 ```
 
 The application will use the production connection URI while keeping the pool size from config.toml.
@@ -161,7 +179,7 @@ REASONING_TRACES_FILE=traces.jsonl
 DB_CONNECTION_URI=postgresql+psycopg://username:password@host:port/database
 
 # Example for local development
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://testuser:testpwd@localhost:5432/honcho
 
 # Example for production
 DB_CONNECTION_URI=postgresql+psycopg://honcho_user:secure_password@db.example.com:5432/honcho_prod
@@ -190,18 +208,22 @@ services:
   database:
     image: pgvector/pgvector:pg15
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpwd
       POSTGRES_DB: honcho
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
 
 volumes:
   postgres_data:
 ```
+
+When you use `docker-compose.yml.example`, keep `.env`/`config.toml` on the
+host-style `localhost` URI. Compose overrides only the hostname to `database`
+inside containers and enables stack-local caching/metrics there.
 
 ### Authentication Configuration
 
@@ -289,6 +311,41 @@ LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini, openrouter
 LLM_MAX_TOOL_OUTPUT_CHARS=10000  # ~2500 tokens at 4 chars/token
 LLM_MAX_MESSAGE_CONTENT_CHARS=2000  # Max chars per message in tool results
 ```
+
+### Current Provider Resolution Model
+
+Honcho currently has two different configuration paths for LLM usage:
+
+- Embeddings are configured through `[llm]` with `LLM_EMBEDDING_PROVIDER`.
+- Other LLM-backed features such as `summary`, `deriver`, `dream`, and
+  `dialectic` choose `PROVIDER` and `MODEL` in their own sections.
+
+This means the current behavior is:
+
+- `LLM_EMBEDDING_PROVIDER=openai` uses `LLM_OPENAI_API_KEY`
+- `LLM_EMBEDDING_PROVIDER=gemini` uses `LLM_GEMINI_API_KEY`
+- `LLM_EMBEDDING_PROVIDER=openrouter` uses
+  `LLM_OPENAI_COMPATIBLE_API_KEY` and `LLM_OPENAI_COMPATIBLE_BASE_URL`
+  (defaulting to OpenRouter's API URL if the base URL is omitted)
+- `SUMMARY.PROVIDER`, `DERIVER.PROVIDER`, `DREAM.PROVIDER`, and each
+  `DIALECTIC.LEVELS.*.PROVIDER` select from the shared provider pool built from
+  `[llm]`
+
+There is an important current limitation:
+
+- `custom` and `vllm` in feature-specific `PROVIDER` fields are not separate
+  per-feature providers. They are global OpenAI-compatible client slots backed
+  by one shared `[llm]` configuration each.
+- As a result, you cannot configure two different custom OpenAI-compatible
+  endpoints for two different features at the same time.
+- Similarly, if embeddings use `openrouter`, they consume the same
+  `LLM_OPENAI_COMPATIBLE_*` settings that a feature using `PROVIDER="custom"`
+  would use.
+
+`SupportedProviders` therefore represents a mix of provider identities
+(`anthropic`, `google`, `openai`, `groq`) and transport/client styles
+(`custom`, `vllm`). That is the current implementation contract, even though it
+is more constrained than a fully per-feature provider configuration model.
 
 ### Feature-Specific Model Configuration
 
@@ -615,7 +672,7 @@ EMBED_MESSAGES = false
 NAMESPACE = "honcho-dev"
 
 [db]
-CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/honcho_dev"
+CONNECTION_URI = "postgresql+psycopg://testuser:testpwd@localhost:5432/honcho"
 POOL_SIZE = 5
 
 [auth]
@@ -698,7 +755,7 @@ ENABLED = false
 ```bash
 # .env.development
 LOG_LEVEL=DEBUG
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho_dev
+DB_CONNECTION_URI=postgresql+psycopg://testuser:testpwd@localhost:5432/honcho
 AUTH_USE_AUTH=false
 CACHE_ENABLED=false
 
@@ -850,6 +907,10 @@ uv run alembic downgrade revision_id
 # Create new migration
 uv run alembic revision --autogenerate -m "Description of changes"
 ```
+
+Alembic uses Honcho's application settings for the database URL. Set
+`DB_CONNECTION_URI` or `[db].CONNECTION_URI`; do not rely on the placeholder
+value in `alembic.ini`.
 
 ## Troubleshooting
 

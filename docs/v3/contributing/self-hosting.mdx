@@ -51,15 +51,24 @@ Copy the example environment file and configure it:
 cp .env.template .env
 ```
 
-Edit `.env` and set your API keys (if using LLM features):
+`.env.template` is the canonical self-hosting template. If you prefer TOML, you
+can also copy `config.toml.example` to `config.toml`; it mirrors the same
+settings in TOML form.
+
+Edit `.env` and set the API keys required by the shipped defaults:
 
 ```bash
-# Optional API keys (required for LLM features)
-OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
+# Required to boot with the shipped defaults
+LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
+LLM_GEMINI_API_KEY=your-google-api-key
 
-# Database will be created automatically by Docker
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/honcho
+# Also required if you keep default embeddings enabled
+LLM_OPENAI_API_KEY=your-openai-api-key
+
+# Keep localhost here for host/manual runs.
+# docker-compose.yml.example overrides the hostname to the internal "database"
+# service automatically, so you do not need to edit this value for Docker.
+DB_CONNECTION_URI=postgresql+psycopg://testuser:testpwd@localhost:5432/honcho
 
 # Disable auth for local development
 AUTH_USE_AUTH=false
@@ -86,10 +95,19 @@ docker compose ps
 Test the Honcho API:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/openapi.json
 ```
 
-You should see a response indicating the service is healthy.
+You should see the OpenAPI document for the running server.
+
+If you change the default providers in `config.toml` or via environment
+variables, the required LLM keys change with them.
+
+Current limitation: embeddings use `LLM_EMBEDDING_PROVIDER`, but other LLM
+features use per-feature `PROVIDER`/`MODEL` values backed by shared global
+client settings in `[llm]`. That means `custom` and `vllm` each represent one
+global OpenAI-compatible endpoint at a time, not a separate endpoint per
+feature.
 
 ## Manual Setup
 
@@ -135,23 +153,21 @@ Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 ```bash
 docker run --name honcho-db \
   -e POSTGRES_DB=honcho \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_USER=testuser \
+  -e POSTGRES_PASSWORD=testpwd \
   -p 5432:5432 \
   -d pgvector/pgvector:pg15
 ```
 
 ### 3. Create Database and Enable Extensions
 
-Connect to PostgreSQL and set up the database:
+If you used the Docker command above, the `honcho` database and `testuser`
+role are created automatically. For a local PostgreSQL installation, create a
+matching role/database first or update `.env.template` and `config.toml`
+consistently. Then connect and enable extensions:
 
 ```bash
-# Connect to PostgreSQL
-psql -U postgres
-
-# Create database and enable extensions
-CREATE DATABASE honcho;
-\c honcho
+PGPASSWORD=testpwd psql -h localhost -p 5432 -U testuser -d honcho
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 \q
@@ -165,15 +181,21 @@ Create a `.env` file with your settings:
 cp .env.template .env
 ```
 
+You can alternatively copy `config.toml.example` to `config.toml`; it mirrors
+the same settings as `.env.template`.
+
 Edit `.env` with your configuration:
 
 ```bash
 # Database connection
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://testuser:testpwd@localhost:5432/honcho
 
-# Optional API keys (required for LLM features)
-OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
+# Required to boot with the shipped defaults
+LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
+LLM_GEMINI_API_KEY=your-google-api-key
+
+# Also required if you keep default embeddings enabled
+LLM_OPENAI_API_KEY=your-openai-api-key
 
 # Development settings
 AUTH_USE_AUTH=false
@@ -186,6 +208,10 @@ LOG_LEVEL=DEBUG
 # Run migrations to create tables
 uv run alembic upgrade head
 ```
+
+> Honcho's Alembic environment reads `DB_CONNECTION_URI` or
+> `[db].CONNECTION_URI` from the application config. `alembic.ini` is not the
+> effective source of truth for the database URL.
 
 ### 6. Start the Server
 
@@ -209,7 +235,8 @@ If you prefer to use a managed PostgreSQL service:
    CREATE EXTENSION IF NOT EXISTS pg_trgm;
    ```
 3. **Get your connection string** from Settings > Database
-4. **Update your `.env` file** with the connection string
+4. **Update your `.env` file** with the connection string or set the equivalent
+   `[db].CONNECTION_URI` value in `config.toml`
 
 ### Railway
 
@@ -226,7 +253,7 @@ Once your Honcho server is running, verify everything is working:
 ### 1. Health Check
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/openapi.json
 ```
 
 ### 2. API Documentation

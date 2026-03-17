@@ -22,7 +22,9 @@ NAMESPACE = "honcho"
 
 # Database settings
 [db]
-CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+# Keep localhost for host-based runs; docker-compose.yml.example overrides the
+# hostname to the "database" service inside containers.
+CONNECTION_URI = "postgresql+psycopg://testuser:testpwd@localhost:5432/honcho"
 SCHEMA = "public"
 POOL_CLASS = "default"
 POOL_PRE_PING = true
@@ -37,13 +39,13 @@ TRACING = false
 # Authentication settings
 [auth]
 USE_AUTH = false
-JWT_SECRET = "your-secret-key-here"  # Must be set if USE_AUTH is true
+# JWT_SECRET = "your-secret-key-here"  # Must be set if USE_AUTH is true
 
 # Sentry settings
 [sentry]
 ENABLED = false
-DSN = ""
-RELEASE = ""
+# DSN = "your-sentry-dsn-here"
+# RELEASE = "your-release-semver"
 ENVIRONMENT = "development"
 TRACES_SAMPLE_RATE = 0.1
 PROFILES_SAMPLE_RATE = 0.1
@@ -56,6 +58,11 @@ MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
 # API Keys for LLM providers
+# Required to boot with the shipped defaults:
+# - ANTHROPIC_API_KEY for anthropic-backed dialectic levels
+# - GEMINI_API_KEY for summary/deriver and Gemini-backed reasoning levels
+# OPENAI_API_KEY is additionally required if you keep the default embedding
+# behavior (EMBED_MESSAGES=true and EMBEDDING_PROVIDER="openai").
 # ANTHROPIC_API_KEY = "your-api-key"
 # OPENAI_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_API_KEY = "your-api-key"
@@ -66,6 +73,11 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # Separate vLLM endpoint (for local models)
 # VLLM_API_KEY = "your-api-key"
 # VLLM_BASE_URL = "your-base-url"
+
+# Current limitation: non-embedding LLM features choose PROVIDER/MODEL in their
+# own sections, but "custom" and "vllm" connection settings come from these
+# shared [llm] keys. You cannot configure two different custom OpenAI-compatible
+# endpoints for two different features at the same time.
 
 # Deriver settings
 [deriver]
@@ -121,6 +133,7 @@ MODEL = "claude-haiku-4-5"
 THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 # MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+# TOOL_CHOICE = "any"  # Optional: null/auto, "any", or "required"
 
 [dialectic.levels.high]
 PROVIDER = "anthropic"
@@ -185,7 +198,7 @@ INCLUDE_LEVELS = ["explicit", "deductive"]
 
 # Webhook settings
 [webhook]
-SECRET = ""
+# SECRET = "your-webhook-signing-secret"
 MAX_WORKSPACE_LIMIT = 10
 
 # Prometheus metrics settings (pull-based metrics)
@@ -219,7 +232,7 @@ DEFAULT_LOCK_TTL_SECONDS = 5
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
-NAMESPACE = "honcho"
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 DIMENSIONS = 1536
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"

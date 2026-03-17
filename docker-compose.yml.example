@@ -15,9 +15,15 @@ services:
     volumes:
       - .:/app
       - venv:/app/.venv
+    # .env.template remains the canonical host/manual configuration.
+    # Compose overrides service-local addresses and enables stack-local features.
     environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - DB_CONNECTION_URI=postgresql+psycopg://testuser:testpwd@database:5432/honcho
+      - CACHE_ENABLED=true
       - CACHE_URL=redis://redis:6379/0?suppress=true
+      - METRICS_ENABLED=true
+    # Provide required LLM_* keys through .env or the shell environment when
+    # using the default provider configuration.
     env_file:
       - path: .env
         required: false
@@ -35,9 +41,12 @@ services:
       - .:/app
       - venv:/app/.venv
     environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - DB_CONNECTION_URI=postgresql+psycopg://testuser:testpwd@database:5432/honcho
+      - CACHE_ENABLED=true
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - METRICS_ENABLED=true
+    # Provide required LLM_* keys through .env or the shell environment when
+    # using the default provider configuration.
     env_file:
       - path: .env
         required: false
@@ -48,16 +57,16 @@ services:
       - 5432:5432
     command: ["postgres", "-c", "max_connections=800"]
     environment:
-      - POSTGRES_DB=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=honcho
+      - POSTGRES_USER=testuser
+      - POSTGRES_PASSWORD=testpwd
       - POSTGRES_HOST_AUTH_METHOD=trust
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
       - pgdata:/var/lib/postgresql/data/
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U testuser -d honcho"]
       interval: 5s
       timeout: 5s
       retries: 5

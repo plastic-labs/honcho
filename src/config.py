@@ -16,9 +16,9 @@ from pydantic_settings import (
 
 from src.utils.types import SupportedProviders
 
-# Load .env file for local development.
-# Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
-load_dotenv(override=True)
+# Load .env file for local development without overriding explicit environment
+# variables from the process (for example Docker Compose container overrides).
+load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class DBSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
     CONNECTION_URI: str = (
-        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+        "postgresql+psycopg://testuser:testpwd@localhost:5432/honcho"
     )
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"

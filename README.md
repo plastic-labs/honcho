@@ -216,20 +216,30 @@ Honcho uses a `.env` file for managing runtime environment variables. A
 are not required and are only necessary for additional logging, monitoring, and
 security.
 
-Below are the required configurations:
+Below are the required configurations for the shipped defaults:
 
 ```env
 DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
 
-# LLM Provider API Keys (at least one required depending on your configuration)
-LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic by default)
-LLM_OPENAI_API_KEY= # API Key for OpenAI (optional, for embeddings if EMBED_MESSAGES=true)
-LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for summary/deriver by default)
+# LLM Provider API Keys
+LLM_ANTHROPIC_API_KEY= # Required to boot with default dialectic settings
+LLM_GEMINI_API_KEY= # Required to boot with default summary/deriver and dialectic minimal/low settings
+LLM_OPENAI_API_KEY= # Required if you keep the default embedding behavior (EMBED_MESSAGES=true and LLM_EMBEDDING_PROVIDER=openai)
 LLM_GROQ_API_KEY= # API Key for Groq (used for query generation by default)
 ```
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
 > function properly. This is a requirement brought by `sqlalchemy`
+>
+> If you change the default providers in `config.toml` or via environment
+> variables, the required LLM keys change with them.
+>
+> Current limitation: embeddings have their own provider selector
+> (`LLM_EMBEDDING_PROVIDER`), but other LLM features use per-feature
+> `PROVIDER`/`MODEL` fields backed by a shared global client pool. In
+> particular, `custom` and `vllm` are global OpenAI-compatible connection slots,
+> so you cannot point two different features at two different custom endpoints at
+> the same time.
 
 The template has the additional functionality disabled by default. To ensure
 that they are disabled you can verify the following environment variables are
@@ -265,6 +275,10 @@ uv run alembic upgrade head
 
 This will create all tables for Honcho including workspaces, peers, sessions,
 messages, and the queue system.
+
+> `uv run alembic ...` reads `DB_CONNECTION_URI` (or `[db].CONNECTION_URI` in
+> `config.toml`) through Honcho's settings loader. The placeholder URL in
+> `alembic.ini` is not the effective source of truth.
 
 6. **Launch Honcho**
 
@@ -347,8 +361,10 @@ As mentioned earlier a `docker-compose` template is included for running Honcho.
 As an alternative to running Honcho locally it can also be run with the compose
 template.
 
-The docker-compose template is set to use an environment file called `.env`.
-You can also copy the `.env.template` and fill with the appropriate values.
+The self-hosting setup treats `.env.template` as the canonical source of truth
+for local/manual defaults. `config.toml.example` mirrors the same settings in
+TOML form. The compose example keeps those defaults and only overrides
+container-local details such as service hostnames.
 
 Copy the template and update the appropriate environment variables before
 launching the service:
@@ -356,9 +372,17 @@ launching the service:
 ```bash
 cd honcho
 cp .env.template .env
-# update the file with openai key and other wanted environment variables
+# keep DB_CONNECTION_URI pointed at localhost; docker-compose overrides the host
+# to the internal "database" service automatically
+# update the file with LLM keys and any other wanted environment variables
 cp docker-compose.yml.example docker-compose.yml
 docker compose up
+```
+
+Once the stack is up, you can verify the API with:
+
+```bash
+curl http://localhost:8000/openapi.json
 ```
 
 ### Deploy on Fly
@@ -390,6 +414,9 @@ Honcho uses a flexible configuration system that supports both TOML files and en
 3. `config.toml` file
 4. Default values
 
+`.env.template` is the canonical setup template. `config.toml.example` is the
+equivalent TOML transcription of that template, not a separate set of defaults.
+
 ### Using config.toml
 
 Copy the example configuration file to get started:
@@ -398,7 +425,9 @@ Copy the example configuration file to get started:
 cp config.toml.example config.toml
 ```
 
-Then modify the values as needed. The TOML file is organized into sections:
+Then modify the values as needed. Use `.env.template` as the source of truth
+for placeholder values and required-vs-optional settings; `config.toml.example`
+mirrors those same values in TOML form. The TOML file is organized into sections:
 
 - `[app]` - Application-level settings (log level, session limits, embedding settings, namespace)
 - `[db]` - Database connection and pool settings
@@ -434,6 +463,14 @@ Examples:
 - `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry
 
+Canonical mappings used throughout the self-hosting docs:
+
+- `DB_CONNECTION_URI` ↔ `[db].CONNECTION_URI`
+- `CACHE_ENABLED` ↔ `[cache].ENABLED`
+- `CACHE_URL` ↔ `[cache].URL`
+- `METRICS_ENABLED` ↔ `[metrics].ENABLED`
+- `LLM_*` env vars ↔ `[llm]` keys
+
 ### Configuration Priority
 
 When a configuration value is set in multiple places, Honcho uses this priority:
@@ -455,14 +492,14 @@ If you have this in `config.toml`:
 
 ```toml
 [db]
-CONNECTION_URI = "postgresql://localhost/honcho_dev"
+CONNECTION_URI = "postgresql+psycopg://testuser:testpwd@localhost:5432/honcho"
 POOL_SIZE = 10
 ```
 
 You can override just the connection URI in production:
 
 ```bash
-export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
 ```
 
 The application will use the production connection URI while keeping the pool size from config.toml.
