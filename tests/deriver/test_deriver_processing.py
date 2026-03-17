@@ -202,19 +202,6 @@ class TestCustomInstructions:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_prompt(
-            peer_id: str,
-            messages: str,
-            *,
-            custom_instructions: str | None = None,
-        ) -> str:
-            captured["peer_id"] = peer_id
-            captured["messages"] = messages
-            captured["custom_instructions"] = custom_instructions
-            return "prompt"
-
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
                 explicit=[ExplicitObservationBase(content="Alice likes tea")]
@@ -223,10 +210,10 @@ class TestCustomInstructions:
             finish_reasons=["stop"],
         )
 
-        monkeypatch.setattr("src.deriver.deriver.minimal_deriver_prompt", fake_prompt)
+        mock_call = AsyncMock(return_value=mock_response)
         monkeypatch.setattr(
             "src.deriver.deriver.honcho_llm_call",
-            AsyncMock(return_value=mock_response),
+            mock_call,
         )
         monkeypatch.setattr(
             "src.crud.representation.RepresentationManager.save_representation",
@@ -266,9 +253,16 @@ class TestCustomInstructions:
             queue_item_message_ids=[1],
         )
 
-        assert captured["peer_id"] == "alice"
-        assert captured["custom_instructions"] == "Focus on durable preferences only."
-        assert "I like tea." in captured["messages"]
+        assert mock_call.await_args is not None
+        call_messages = mock_call.await_args.kwargs["messages"]
+        assert call_messages[0]["role"] == "system"
+        assert "Analyze messages from alice" in call_messages[0]["content"]
+        assert call_messages[1]["role"] == "user"
+        assert "CUSTOM INSTRUCTIONS:" in call_messages[1]["content"]
+        assert (
+            "Focus on durable preferences only." in call_messages[1]["content"]
+        )
+        assert "I like tea." in call_messages[1]["content"]
 
     # async def test_representation_batch_uses_earliest_cutoff(
     #     self,
