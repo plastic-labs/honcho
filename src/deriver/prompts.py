@@ -11,8 +11,6 @@ from inspect import cleandoc as c
 from src.utils.tokens import estimate_tokens
 
 
-def minimal_deriver_system_prompt(peer_id: str) -> str:
-    """Generate the cacheable instructions for observation extraction."""
 def _custom_instructions_section(custom_instructions: str | None) -> str:
     """Render the optional custom instructions block for the deriver prompt."""
     if not custom_instructions or not custom_instructions.strip():
