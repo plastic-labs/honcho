@@ -25,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["uv", "run", "python", "-m", "src.deriver"]
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
     depends_on:
       database:
         condition: service_healthy

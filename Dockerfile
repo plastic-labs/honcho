@@ -32,9 +32,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
+ENV HOME=/app
+ENV UV_CACHE_DIR=/tmp/uv-cache
 
 # Create non-root user and set ownership
-RUN addgroup --system app && adduser --system --group app && chown -R app:app /app
+RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-cache && chown -R app:app /app /tmp/uv-cache
 
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/
