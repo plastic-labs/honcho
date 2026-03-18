@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: honcho-api
+    static_configs:
+      - targets: ["api:8000"]
+  - job_name: honcho-deriver
+    static_configs:
+      - targets: ["deriver:9090"]
