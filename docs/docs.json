@@ -104,8 +104,10 @@
                 "group": "Tutorials",
                 "pages": [
                   "v3/guides/discord",
+                  "v3/guides/granola",
                   "v3/guides/telegram",
-                  "v3/guides/integrations/reachy-mini"
+                  "v3/guides/integrations/reachy-mini",
+                  "v3/guides/gmail"
                 ]
               },
               {
@@ -302,13 +304,12 @@
                 "pages": [
                   "v2/integrations/crewai",
                   "v2/integrations/langgraph",
-                  "v2/integrations/mcp",
-                  "v2/integrations/n8n"
+                  "v2/integrations/mcp"
                 ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+                "pages": ["v2/guides/discord", "v2/guides/n8n", "v2/guides/telegram"]
               }
             ]
           },
