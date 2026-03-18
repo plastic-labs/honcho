@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -46,7 +47,14 @@ def _safe_int(value: Any, default: int) -> int:
 # Module-level lock registry for thread-safe observation creation.
 # Keyed by (workspace_name, observer, observed) to ensure all tool executors
 # operating on the same data share the same lock.
-_observation_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+#
+# Uses WeakValueDictionary so entries are automatically removed when no
+# ToolContext holds a reference to the lock (i.e., all executors for that
+# key have finished and been garbage collected). This prevents unbounded
+# growth over the lifetime of a long-running deriver process.
+_observation_locks: weakref.WeakValueDictionary[tuple[str, str, str], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
 _registry_lock = asyncio.Lock()
 
 
@@ -59,6 +67,11 @@ async def get_observation_lock(
     This ensures that concurrent tool executors operating on the same observation
     space share a lock, preventing race conditions during document creation.
 
+    The lock is stored as a weak reference — it stays alive as long as at least
+    one ToolContext (via create_tool_executor) holds a strong reference. Once all
+    executors for a key finish and are garbage collected, the entry is
+    automatically removed from the registry.
+
     Args:
         workspace_name: Workspace identifier
         observer: The observing peer
@@ -69,9 +82,11 @@ async def get_observation_lock(
     """
     key = (workspace_name, observer, observed)
     async with _registry_lock:
-        if key not in _observation_locks:
-            _observation_locks[key] = asyncio.Lock()
-        return _observation_locks[key]
+        lock = _observation_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _observation_locks[key] = lock
+        return lock
 
 
 @dataclass
