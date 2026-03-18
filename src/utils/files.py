@@ -58,7 +58,11 @@ class JSONProcessor:
     async def extract_text(self, content: bytes) -> str:
         import json
 
-        data = json.loads(content.decode("utf-8"))
+        decoded_content = content.decode("utf-8")
+        if not decoded_content.strip():
+            return ""
+
+        data = json.loads(decoded_content)
         # Convert JSON to readable text format
         return json.dumps(data, ensure_ascii=False)
 
