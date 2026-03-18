@@ -295,33 +295,28 @@ def main():
     print(f"\nLoading into Honcho workspace '{args.workspace}'...")
     honcho = Honcho(workspace_id=args.workspace)
 
-    # Create peers
-    peers = {}
-    for i, (email, info) in enumerate(seen_peers.items()):
-        if i > 0 and i % 4 == 0:
-            time.sleep(1)
+    # Peers are created lazily and added to sessions as they first appear in each message.
+    # This preserves the join order so Honcho knows when each participant entered the thread.
+    peers = {}  # email -> Honcho peer object
+
+    def ensure_peer(email: str):
+        if email in peers:
+            return peers[email]
+        if email not in seen_peers:
+            return None
+        info = seen_peers[email]
         peers[email] = honcho.peer(info["peer_id"], metadata={
             "email": email,
             "name": info["name"],
             "source": "gmail",
         })
         print(f"  Peer: {info['peer_id']}")
+        return peers[email]
 
     # Create sessions and messages per thread
     for tid, msgs in all_thread_messages.items():
         subject = msgs[0]["subject"] if msgs else "No subject"
         session_id = f"gmail-thread-{tid}"
-
-        thread_peer_emails = set()
-        for m in msgs:
-            thread_peer_emails.add(extract_email(m["from"]))
-            for addr in parse_address_list(m["to"]):
-                thread_peer_emails.add(extract_email(addr))
-            for addr in parse_address_list(m["cc"]):
-                thread_peer_emails.add(extract_email(addr))
-            for addr in parse_address_list(m["bcc"]):
-                thread_peer_emails.add(extract_email(addr))
-        thread_peers = [peers[e] for e in thread_peer_emails if e in peers]
 
         session = honcho.session(session_id, metadata={
             "gmail_thread_id": tid,
@@ -329,18 +324,25 @@ def main():
             "source": "gmail",
             "message_count": len(msgs),
         })
-        session.add_peers(thread_peers)
 
-        honcho_msgs = []
-        for m in msgs:
-            email = extract_email(m["from"])
-            peer = peers.get(email)
+        msg_count = 0
+        for i, m in enumerate(msgs):
+            if i > 0 and i % 4 == 0:
+                time.sleep(1)
+            # Add all participants in this message — endpoint is idempotent
+            msg_addresses = [m["from"]] + parse_address_list(m["to"]) + parse_address_list(m["cc"]) + parse_address_list(m["bcc"])
+            msg_peers = [p for a in msg_addresses if a and (p := ensure_peer(extract_email(a)))]
+            if msg_peers:
+                session.add_peers(msg_peers)
+
+            sender_email = extract_email(m["from"])
+            peer = ensure_peer(sender_email) if sender_email else None
             if not peer:
                 continue
             content = m["body"] if m["body"] else m["snippet"]
             if not content:
                 continue
-            honcho_msgs.append(peer.message(
+            session.add_messages([peer.message(
                 content,
                 metadata={
                     "gmail_id": m["id"],
@@ -350,11 +352,11 @@ def main():
                     "labels": m["labels"],
                 },
                 created_at=m["timestamp"],
-            ))
+            )])
+            msg_count += 1
 
-        if honcho_msgs:
-            session.add_messages(honcho_msgs)
-            print(f"  Session {session_id}: {len(honcho_msgs)} messages — {subject[:60]}")
+        if msg_count:
+            print(f"  Session {session_id}: {msg_count} messages — {subject[:60]}")
 
     print(f"\nDone! Loaded {total_msgs} messages into workspace '{args.workspace}'.")
 

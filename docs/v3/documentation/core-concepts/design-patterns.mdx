@@ -138,6 +138,27 @@ Sessions define the temporal boundaries of an interaction. How you scope session
 - **New session** when the context resets (new conversation, new day, new topic)
 - **Reuse session** when context should accumulate (ongoing channel, persistent thread)
 
+**Peer join order matters**
+
+Peers don't have to be added to a session all at once. You can call `session.add_peers()` multiple times as participants appear — and Honcho will take join order into account when reasoning. A peer only has context from the point they joined, not from earlier in the session.
+
+This is particularly useful when importing multi-participant data like email threads or chat logs, where participants join at different points:
+
+```python
+session = honcho.session("email-thread-abc")
+
+# First message: just the two original participants
+session.add_peers([alice, bob])
+session.add_messages([alice.message("Hey, can you review this proposal?")])
+
+# Third message: charlie is CC'd in for the first time
+session.add_peers([charlie])
+session.add_messages([bob.message("Looping in Charlie who handles approvals.")])
+session.add_messages([charlie.message("On it — give me a day to review.")])
+```
+
+Honcho knows Charlie joined mid-thread and scopes his context accordingly. `add_peers()` is idempotent — safe to call on every message with all current participants without tracking who's already been added. The exception is if you've set custom peer configuration (e.g. `observe_me`, `observe_others`). Re-calling `add_peers()` will overwrite those settings, so you'll need to track peer configurations.
+
 ---
 
 ## Application Patterns
