@@ -22,6 +22,8 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from email.header import decode_header, make_header
+from email.utils import getaddresses, parseaddr
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -120,16 +122,21 @@ def get_thread(service, thread_id: str) -> dict:
         return {}
 
 
+def _decode_header_str(header: str) -> str:
+    """Decode an RFC 2047 encoded header string to plain Unicode."""
+    return str(make_header(decode_header(header)))
+
+
 def extract_email(from_header: str) -> str:
-    """Extract bare email from 'Name <email>' format."""
-    match = re.search(r"<([^>]+)>", from_header)
-    return match.group(1).lower() if match else from_header.lower().strip()
+    """Extract bare email from an RFC 5322 header value."""
+    _, addr = parseaddr(_decode_header_str(from_header))
+    return addr.lower().strip()
 
 
 def extract_name(from_header: str) -> str:
-    """Extract display name from 'Name <email>' format."""
-    match = re.match(r'^"?([^"<]+)"?\s*<', from_header)
-    return match.group(1).strip() if match else from_header.strip()
+    """Extract display name from an RFC 5322 header value."""
+    name, _ = parseaddr(_decode_header_str(from_header))
+    return name.strip() or from_header.strip()
 
 
 def decode_body(payload: dict) -> str:
@@ -169,8 +176,12 @@ def parse_address_list(header: str) -> list[str]:
     """Parse a comma-separated email header into individual addresses."""
     if not header.strip():
         return []
-    parts = re.split(r",(?![^<]*>)", header)
-    return [p.strip() for p in parts if p.strip()]
+    decoded = _decode_header_str(header)
+    return [
+        f"{name} <{addr}>" if name else addr
+        for name, addr in getaddresses([decoded])
+        if addr
+    ]
 
 
 def peer_id_from_email(email: str) -> str:
