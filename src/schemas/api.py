@@ -46,7 +46,7 @@ def _sanitize_value(v: Any) -> Any:
         return v.replace("\x00", "")
     if isinstance(v, dict):
         d = cast(dict[str, Any], v)
-        return {k: _sanitize_value(val) for k, val in d.items()}
+        return {_sanitize_value(k): _sanitize_value(val) for k, val in d.items()}
     if isinstance(v, list):
         lst = cast(list[Any], v)
         return [_sanitize_value(item) for item in lst]

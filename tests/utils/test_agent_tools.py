@@ -1211,20 +1211,23 @@ class TestObservationLockRegistry:
     async def test_lock_recreated_after_eviction(self):
         """A new lock is created for a key whose previous lock was evicted."""
         import gc
+        import weakref
 
         from src.utils.agent_tools import get_observation_lock
 
         key = ("ws_recreate", "obs_recreate", "peer_recreate")
         first_lock = await get_observation_lock(*key)
-        first_id = id(first_lock)
+        first_ref = weakref.ref(first_lock)
 
         # Evict
         del first_lock
         gc.collect()
 
+        # Confirm the old lock was garbage-collected
+        assert first_ref() is None
+
         # Recreate
         second_lock = await get_observation_lock(*key)
-        assert id(second_lock) != first_id
         assert isinstance(second_lock, asyncio.Lock)
 
     async def test_lock_survives_while_any_reference_held(self):
