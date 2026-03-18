@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
 from src.config import settings
-from src.exceptions import FileProcessingError, UnsupportedFileTypeError
+from src.exceptions import (
+    UnsupportedFileTypeError,
+    ValidationException,
+)
 from src.schemas import Message
 
 logger = logging.getLogger(__name__)
@@ -58,11 +61,19 @@ class JSONProcessor:
     async def extract_text(self, content: bytes) -> str:
         import json
 
-        decoded_content = content.decode("utf-8")
+        try:
+            decoded_content = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValidationException("JSON uploads must be UTF-8 encoded") from exc
+
         if not decoded_content.strip():
             return ""
 
-        data = json.loads(decoded_content)
+        try:
+            data = json.loads(decoded_content)
+        except json.JSONDecodeError as exc:
+            raise ValidationException("Uploaded JSON is invalid") from exc
+
         # Convert JSON to readable text format
         return json.dumps(data, ensure_ascii=False)
 
