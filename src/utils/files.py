@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import schemas
 from src.config import settings
 from src.exceptions import (
+    FileProcessingError,
     UnsupportedFileTypeError,
     ValidationException,
 )
