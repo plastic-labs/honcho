@@ -1,0 +1,177 @@
+---
+title: "SillyTavern"
+icon: 'comments'
+description: "Add persistent, personalized memory to SillyTavern AI characters with Honcho"
+sidebarTitle: 'SillyTavern'
+---
+
+Give your SillyTavern characters long-term memory. Honcho remembers who you are, what you've talked about, and how to talk to you -- across sessions, characters, and restarts.
+
+The extension has two parts: a **client extension** (browser) that hooks into SillyTavern events, and a **server plugin** (Node.js) that proxies requests to the Honcho API.
+
+## Quick Start
+
+### Step 1: Get Your Honcho API Key
+
+1. Go to **[app.honcho.dev](https://app.honcho.dev)**
+2. Sign up or log in
+3. Copy your API key
+
+### Step 2: Install
+
+From your **SillyTavern directory**:
+
+**macOS / Linux:**
+```bash
+bash <(curl -s https://raw.githubusercontent.com/plastic-labs/sillytavern-honcho/main/install.sh)
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/plastic-labs/sillytavern-honcho/main/install.ps1 | iex
+```
+
+<Note>
+Server plugins must be enabled. The installer checks for this, but if you haven't already, add `enableServerPlugins: true` to your `config.yaml`.
+</Note>
+
+The installer:
+1. Clones the extension into `public/scripts/extensions/third-party/sillytavern-honcho`
+2. Symlinks the server plugin to `plugins/honcho-proxy`
+3. Installs the `@honcho-ai/sdk` dependency
+4. Detects your `~/.honcho/config.json` if it exists
+
+### Step 3: Restart SillyTavern
+
+Stop and restart SillyTavern so the server plugin loads.
+
+### Step 4: Configure
+
+Open **Extensions** (puzzle piece icon) and expand **Honcho Memory**:
+
+1. Check **Enable Honcho Memory**
+2. Click the API key field to set your key
+3. Enter your workspace ID
+4. Status indicator should show **Ready**
+
+## Global Config (Multi-Tool Setups)
+
+If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the extension auto-populates settings from `~/.honcho/config.json`:
+
+```json
+{
+  "apiKey": "your-honcho-api-key",
+  "peerName": "your-name",
+  "workspace": "sillytavern",
+  "enabled": true
+}
+```
+
+Config reads fall back from `hosts.sillytavern` to root-level globals. Writes are always scoped to `hosts.sillytavern` -- the extension never mutates settings for other tools.
+
+```jsonc
+{
+  "apiKey": "hch-v2-...",
+  "peerName": "alice",
+  "hosts": {
+    "sillytavern": {
+      "workspace": "sillytavern",
+      "aiPeer": "Assistant"       // Updated automatically per character
+    },
+    "claude_code": { "..." : "..." },
+    "cursor": { "..." : "..." }
+  }
+}
+```
+
+## How It Works
+
+### Context Architecture
+
+Every generation injects a **base context layer** from `session.context()` -- the peer representation (what Honcho knows about you) and session summary. This uses stale-while-revalidate caching: the first turn blocks to populate the cache, then every subsequent turn serves the cached result instantly while refreshing in the background.
+
+The **enrichment mode** controls what layers on top of the base context:
+
+| Mode | Behavior |
+| --- | --- |
+| **Context only** | Base layer only -- peer representation + session summary |
+| **Reasoning** (default) | Base layer + dialectic `peer.chat()` queries on a configurable interval |
+| **Tool call** | Base layer + function tools the LLM can call on demand |
+
+Both the context and reasoning layers use stale-while-revalidate with configurable refresh intervals. After the first turn of a session, there is zero added latency.
+
+### Tool Call Mode
+
+In tool call mode, the extension registers three function tools that the LLM can invoke:
+
+| Tool | Description |
+| --- | --- |
+| `honcho_query_memory` | Dialectic chat query -- ask Honcho what it knows |
+| `honcho_save_observation` | Save an insight about the user to memory |
+| `honcho_search_history` | Semantic search across session messages |
+
+This mode works best with models that support function calling. The LLM decides when to query memory rather than firing on every turn.
+
+### Peer Modes
+
+| Mode | Behavior |
+| --- | --- |
+| **Single peer** | One user peer shared across all characters |
+| **Per-persona** | Each character gets its own isolated memory |
+
+### Session Naming
+
+| Mode | Behavior |
+| --- | --- |
+| **Auto** | Per-chat hash (unique per conversation) |
+| **Per-character** | One session per character (persistent) |
+| **Custom** | User-defined session name |
+
+### Event Flow
+
+| SillyTavern Event | Action |
+| --- | --- |
+| Chat opened | Creates or retrieves Honcho session + peers |
+| Before generation | Injects memory context into the prompt |
+| User sends message | Stores message in Honcho session |
+| AI responds | Stores response in Honcho session |
+
+## Architecture
+
+```
+Browser (Client Extension)              Server (Plugin)
++-----------------------+               +------------------------------+
+| index.js              |  fetch()      | plugin/index.js              |
+|                       | ------------> |                              |
+| - Settings UI         | /api/plugins/ | - Express router (7 routes)  |
+| - Event hooks         |  honcho-proxy | - Honcho SDK (@honcho-ai/sdk)|
+| - Prompt injection    |               | - API key from ST secrets or |
+| - Tool registration   |               |   ~/.honcho/config.json      |
++-----------------------+               +------------------------------+
+```
+
+The server plugin reads API credentials from SillyTavern's secrets store first, falling back to `~/.honcho/config.json`. It re-reads the global config before every write to prevent race conditions with concurrent tools.
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| No "Honcho Memory" in Extensions | Check symlink exists: `ls public/scripts/extensions/third-party/sillytavern-honcho/manifest.json` |
+| Plugin not initializing | Ensure `enableServerPlugins: true` in `config.yaml`, then restart ST |
+| 403 on plugin requests | Set Honcho API key in extension settings or `~/.honcho/config.json` |
+| SDK import error | Run `cd plugins/honcho-proxy && npm install` |
+| Extension loads but nothing happens | Enable the checkbox and ensure workspace ID is set |
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/sillytavern-honcho">
+    Source code, issues, and install scripts.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>
