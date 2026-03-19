@@ -28,6 +28,10 @@ def workspace_schedule_dream(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/schedule_dream"
 
 
+def workspace_chat(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/chat"
+
+
 # Peer routes
 def peers(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/peers"

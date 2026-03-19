@@ -407,6 +407,65 @@ class HonchoAio(AsyncMetadataConfigMixin):
             },
         )
 
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+    ) -> str | None:
+        """Query the workspace's collective knowledge asynchronously."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+
+        body: dict[str, Any] = {"query": query, "stream": False}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+
+        data = await self._honcho._async_http_client.post(
+            routes.workspace_chat(self._honcho.workspace_id),
+            body=body,
+        )
+        content = data.get("content")
+        if not content:
+            return None
+        return content
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat_stream(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+    ) -> AsyncDialecticStreamResponse:
+        """Query the workspace's collective knowledge with streaming asynchronously."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+
+        body: dict[str, Any] = {"query": query, "stream": True}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+
+        async def stream_response() -> AsyncGenerator[str, None]:
+            async for content in parse_sse_astream(
+                self._honcho._async_http_client.stream(
+                    "POST",
+                    routes.workspace_chat(self._honcho.workspace_id),
+                    body=body,
+                )
+            ):
+                yield content
+
+        return AsyncDialecticStreamResponse(stream_response())
+
 
 class PeerAio(AsyncMetadataConfigMixin):
     """

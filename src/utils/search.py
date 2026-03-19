@@ -313,7 +313,9 @@ async def search(
     *,
     filters: dict[str, Any] | None = None,
     limit: int = 10,
-) -> list[models.Message]:
+    context_window: int = 0,
+    semantic_only: bool = False,
+) -> list[models.Message] | list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search across message content using a hybrid approach with Reciprocal Rank Fusion (RRF).
 
@@ -327,9 +329,14 @@ async def search(
             Special filter 'peer_perspective' will search across all messages from sessions that the peer is/was a member of,
             filtered by the time window when they were actually in the session.
         limit: Maximum number of results to return
+        context_window: Number of messages before/after each match to include as context.
+            If 0 (default), returns flat list. If > 0, returns snippets with context.
+        semantic_only: If True, skip full-text search and only use semantic search.
+            Useful for performance when only semantic relevance is needed.
 
     Returns:
-        list of messages that match the search query, ordered by RRF relevance or individual search relevance
+        If context_window == 0: list of messages ordered by relevance
+        If context_window > 0: list of (matched_messages, context_messages) tuples
 
     Raises:
         ValidationException: If query exceeds maximum token limit for embeddings
@@ -394,13 +401,14 @@ async def search(
 
         search_results.append(semantic_results)
 
-    # Perform full-text search
-    # Get more results for fusion
-    fulltext_limit = limit * 2
-    fulltext_results = await _fulltext_search(
-        db=db, query=query, stmt=stmt, limit=fulltext_limit
-    )
-    search_results.append(fulltext_results)
+    # Perform full-text search (unless semantic_only mode)
+    if not semantic_only:
+        # Get more results for fusion
+        fulltext_limit = limit * 2
+        fulltext_results = await _fulltext_search(
+            db=db, query=query, stmt=stmt, limit=fulltext_limit
+        )
+        search_results.append(fulltext_results)
 
     # Combine results using RRF if we have multiple search methods
     if len(search_results) > 1:
@@ -413,5 +421,24 @@ async def search(
     else:
         # No search results
         combined_results = []
+
+    # If context_window requested, build conversation snippets
+    if context_window > 0 and combined_results:
+        # Import here to avoid circular dependency
+        from src.crud.message import (
+            _build_merged_snippets,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        workspace_name = filters.get("workspace_id") if filters else None
+        peer_perspective_name = filters.get("peer_perspective") if filters else None
+
+        if workspace_name:
+            return await _build_merged_snippets(
+                db,
+                workspace_name,
+                combined_results,
+                context_window,
+                peer_perspective_name,
+            )
 
     return combined_results
