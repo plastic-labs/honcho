@@ -131,7 +131,7 @@ When you run the harness, it will start:
 
 The harness uses environment variables to configure Honcho's database connection:
 
-- `DB_CONNECTION_URI`: Set to `postgresql+psycopg://testuser:testpwd@localhost:{port}/honcho`
+- `DB_CONNECTION_URI`: Derived from the database credentials in `docker-compose.yml.example` (e.g. `postgresql+psycopg://postgres:postgres@localhost:{port}/postgres`)
 
 The script will print the actual configuration that Honcho is using after the FastAPI server starts. This gives you complete visibility into how Honcho's configuration system resolved the settings from environment variables, config files, and defaults.
 
