@@ -22,6 +22,12 @@ async def get_queue_status(
     """
     Get the processing queue status, optionally filtered by observer, sender, and/or session.
 
+    Only tracks user-facing task types: representation, summary, and dream.
+    Internal infrastructure tasks (reconciler, webhook, deletion) are excluded.
+
+    Note: completed_work_units reflects items since the last periodic queue
+    cleanup, not lifetime totals.
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
@@ -67,6 +73,10 @@ async def get_deriver_status(
         observer=observer,
         observed=observed,
     )
+
+
+# Task types surfaced by the queue status endpoint.
+_TRACKED_TASK_TYPES = ("representation", "summary", "dream")
 
 
 def _build_queue_status_query(
@@ -118,6 +128,9 @@ def _build_queue_status_query(
     )
 
     stmt = stmt.where(models.QueueItem.workspace_name == workspace_name)
+
+    # Only include user-facing task types
+    stmt = stmt.where(models.QueueItem.task_type.in_(_TRACKED_TASK_TYPES))
 
     if session_name is not None:
         stmt = stmt.join(

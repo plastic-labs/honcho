@@ -61,7 +61,9 @@ class BaseSpecialist(ABC):
 
     name: str = "base"
     # Subclasses can override to customize the peer card update instruction
-    peer_card_update_instruction: str = "Update this with `update_peer_card` if needed."
+    peer_card_update_instruction: str = (
+        "Only update this with durable profile facts via `update_peer_card`."
+    )
 
     @abstractmethod
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
@@ -108,6 +110,7 @@ class BaseSpecialist(ABC):
 {facts}
 
 {self.peer_card_update_instruction}
+If you update it, send the full deduplicated list and remove stale entries.
 
 """
 
@@ -289,7 +292,7 @@ class DeductionSpecialist(BaseSpecialist):
     """
 
     name: str = "deduction"
-    peer_card_update_instruction: str = "Update this with `update_peer_card` if you discover new biographical information."
+    peer_card_update_instruction: str = "Update this with `update_peer_card` only for stable biographical/profile facts."
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -324,13 +327,16 @@ The peer card is a summary of stable biographical facts. You MUST update it when
 - Standing instructions ("call me X", "don't mention Y")
 - Core preferences and traits
 
+Never add temporary event summaries, one-off conclusions, reasoning traces, or contradiction notes.
+
 Format entries as:
 - Plain facts: "Name: Alice", "Works at Google", "Lives in NYC"
 - `INSTRUCTION: ...` for standing instructions
 - `PREFERENCE: ...` for preferences
 - `TRAIT: ...` for personality traits
 
-Call `update_peer_card` with the complete updated list when you have new biographical info."""
+Call `update_peer_card` with the complete updated list when you have new biographical info.
+Keep it concise (max 40 entries), deduplicated, and current."""
 
         return f"""You are a deductive reasoning agent analyzing observations about {observed}.
 
@@ -429,9 +435,7 @@ class InductionSpecialist(BaseSpecialist):
     """
 
     name: str = "induction"
-    peer_card_update_instruction: str = (
-        "Update this with `update_peer_card` if you identify new patterns or traits."
-    )
+    peer_card_update_instruction: str = "Only add highly stable profile traits/preferences; do not copy transient conclusions."
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -460,12 +464,14 @@ class InductionSpecialist(BaseSpecialist):
 
 ## PEER CARD (REQUIRED)
 
-After identifying patterns, update the peer card with high-confidence traits and tendencies:
+After identifying patterns, only update the peer card for durable profile-level traits/preferences:
 - `TRAIT: Analytical thinker`
 - `TRAIT: Tends to reschedule when stressed`
 - `PREFERENCE: Prefers detailed explanations`
 
-Call `update_peer_card` with the complete list when you identify new patterns."""
+Do NOT add temporary patterns, episode-specific conclusions, or reasoning summaries.
+Call `update_peer_card` with the complete deduplicated list only when a durable profile update is warranted.
+Keep it concise (max 40 entries)."""
 
         return f"""You are an inductive reasoning agent identifying patterns about {observed}.
 

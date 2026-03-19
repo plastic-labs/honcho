@@ -135,6 +135,33 @@ async def test_create_messages_with_json_file(
 
 
 @pytest.mark.asyncio
+async def test_create_messages_with_empty_json_file(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test that empty JSON uploads do not crash and create empty content."""
+    test_workspace, test_peer = sample_data
+
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"")
+    files = {"file": ("empty.json", file_data, "application/json")}
+    form_data = {"peer_id": test_peer.name}
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == ""
+    assert data[0]["peer_id"] == test_peer.name
+    assert data[0]["session_id"] == session_name
+
+
+@pytest.mark.asyncio
 async def test_create_messages_with_unsupported_file_type(
     client: TestClient,
     db_session: AsyncSession,

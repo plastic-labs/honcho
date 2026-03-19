@@ -630,7 +630,7 @@ class CoverageJudge:
 
         # Format for LLM
         gold_text = "\n".join(
-            f"{i+1}. [{gf.importance.value.upper()}] {gf.content}"
+            f"{i + 1}. [{gf.importance.value.upper()}] {gf.content}"
             for i, gf in enumerate(gold_facts)
         )
 
@@ -651,9 +651,11 @@ class CoverageJudge:
         )
 
         matches: list[CoverageMatch] = []
+        matched_indices: set[int] = set()
         for item in cast(list[dict[str, Any]], result.get("matches", [])):
             idx = cast(int, item.get("gold_index", 1)) - 1
             if 0 <= idx < len(gold_facts):
+                matched_indices.add(idx)
                 try:
                     matches.append(
                         CoverageMatch(
@@ -677,9 +679,6 @@ class CoverageJudge:
                     )
 
         # Ensure all gold facts have a match result
-        matched_indices = {
-            gold_facts.index(m.gold_fact) for m in matches if m.gold_fact in gold_facts
-        }
         for i, gf in enumerate(gold_facts):
             if i not in matched_indices:
                 matches.append(
@@ -785,7 +784,7 @@ class CoverageJudge:
             },
         }
 
-        questions_text = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
+        questions_text = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
         extracted_text = (
             "\n".join(f"- {f}" for f in extracted_facts)
             if extracted_facts
@@ -849,7 +848,9 @@ class CoverageJudge:
             if msg.get("speaker", "user") == "user"
         )
 
-        extracted_text = "\n".join(f"{i+1}. {f}" for i, f in enumerate(extracted_facts))
+        extracted_text = "\n".join(
+            f"{i + 1}. {f}" for i, f in enumerate(extracted_facts)
+        )
 
         result = await self._call_llm(
             (

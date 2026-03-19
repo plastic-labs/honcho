@@ -256,6 +256,64 @@ class TestDeriverStatusEndpoint:
         )
         assert session_totals == [1, 2, 3]
 
+    async def test_get_queue_status_excludes_internal_task_types(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that internal task types (reconciler, webhook, deletion) are excluded from counts"""
+        workspace, peer = sample_data
+        session = models.Session(workspace_name=workspace.name, name="test_session")
+        db_session.add(session)
+        await db_session.commit()
+        await db_session.refresh(session)
+
+        # Add one representation item (should be counted)
+        rep_payload = {
+            "observed": peer.name,
+            "observer": peer.name,
+            "task_type": "representation",
+            "workspace_name": workspace.name,
+            "session_name": session.name,
+        }
+        db_session.add(
+            models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=construct_work_unit_key(workspace.name, rep_payload),
+                payload=rep_payload,
+                processed=False,
+                workspace_name=workspace.name,
+            )
+        )
+
+        # Add internal task types (should NOT be counted)
+        for task_type in ("reconciler", "webhook", "deletion"):
+            internal_payload = {
+                "task_type": task_type,
+                "workspace_name": workspace.name,
+            }
+            db_session.add(
+                models.QueueItem(
+                    session_id=None,
+                    task_type=task_type,
+                    work_unit_key=f"{task_type}:{workspace.name}:internal",
+                    payload=internal_payload,
+                    processed=False,
+                    workspace_name=workspace.name,
+                )
+            )
+
+        await db_session.commit()
+
+        response = client.get(f"/v3/workspaces/{workspace.name}/queue/status")
+        assert response.status_code == 200
+        json_response = response.json()
+        # Only the representation item should appear
+        assert json_response["total_work_units"] == 1
+        assert json_response["pending_work_units"] == 1
+
     async def test_get_deriver_status_empty_parameters(
         self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
     ):

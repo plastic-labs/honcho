@@ -17,7 +17,10 @@ async def get_db():
     db: AsyncSession = SessionLocal()
     try:
         if settings.DB.TRACING:
-            await db.execute(text(f"SET application_name = '{context}'"))
+            await db.execute(
+                text("SELECT set_config('application_name', :name, false)"),
+                {"name": context},
+            )
         yield db
     except Exception:
         await db.rollback()
@@ -45,7 +48,8 @@ async def tracked_db(operation_name: str | None = None):
     try:
         if settings.DB.TRACING:
             await db.execute(
-                text(f"SET application_name = '{context or f'task:{operation_name}'}'")
+                text("SELECT set_config('application_name', :name, false)"),
+                {"name": context or f"task:{operation_name}"},
             )
 
         yield db

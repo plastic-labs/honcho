@@ -64,6 +64,16 @@ The reasoning outputs--conclusions, summaries, peer cards--are stored as part of
 
 The diagram above shows how agents write messages to Honcho, which triggers reasoning that updates peer representations. Agents can then query representations to get additional context for their next response.
 
+### Token Batching
+
+Rather than running inference on every individual message, Honcho accumulates messages in the queue and processes them as a batch once the total token count of pending messages for a given peer representation crosses a threshold--roughly **1,000 tokens** at the current batch size. This keeps ingestion costs down, since Honcho charges based on reasoning passes, and ensures each pass has a meaningful amount of context to work with. At ~1,000 tokens the batch comfortably fits in the context window of any modern LLM, so no content is lost.
+
+If a user sends several short messages in a row (e.g., "yes", "ok", "sounds good"), those messages sit in the queue until enough content has accumulated. Once the threshold is met, the full batch is processed together in a single reasoning call.
+
+<Note>
+This batching only applies to **representation** tasks (conclusion extraction). Summary and dream tasks have their own scheduling logic and are not subject to the token threshold.
+</Note>
+
 ## Balances & Design Choices
 
 Off-the-shelf LLMs can perform formal logical reasoning, but they aren't optimized for it. Honcho uses custom models trained specifically for logical rigor (following formal reasoning rules rather than plausible-sounding text), structured output (consistent JSON schema with premises and conclusions), and efficiency (smaller, faster models tuned for this specific task). This allows Honcho to reason more reliably and at lower cost than general-purpose frontier LLMs.
