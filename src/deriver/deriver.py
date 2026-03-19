@@ -22,7 +22,11 @@ from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import track_deriver_input_tokens
 
-from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
+from .prompts import (
+    estimate_minimal_deriver_prompt_tokens,
+    minimal_deriver_system_prompt,
+    minimal_deriver_user_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +111,6 @@ async def process_representation_tasks_batch(
         },
     )
 
-    # Build prompt
-    prompt = minimal_deriver_prompt(peer_id=observed, messages=formatted_messages)
-
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
         f"minimal_deriver_{latest_message.id}_{observed}",
@@ -125,7 +126,7 @@ async def process_representation_tasks_batch(
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
         llm_settings=settings.DERIVER,
-        prompt=prompt,
+        prompt="",
         max_tokens=max_tokens,
         track_name="Minimal Deriver",
         response_model=PromptRepresentation,
@@ -138,6 +139,13 @@ async def process_representation_tasks_batch(
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",
+        messages=[
+            {"role": "system", "content": minimal_deriver_system_prompt(observed)},
+            {
+                "role": "user",
+                "content": minimal_deriver_user_prompt(formatted_messages),
+            },
+        ],
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
 

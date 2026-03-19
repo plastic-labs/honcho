@@ -92,6 +92,128 @@ def count_message_tokens(messages: list[dict[str, Any]]) -> int:
     return total
 
 
+def _cacheable_text_block(text: str) -> dict[str, Any]:
+    """Create a text content block that participates in prompt caching."""
+    return {
+        "type": "text",
+        "text": text,
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def _normalize_cacheable_system_content(content: Any) -> list[dict[str, Any]]:
+    """Normalize system content into cacheable text blocks when possible."""
+    if isinstance(content, str):
+        return [_cacheable_text_block(content)]
+
+    if isinstance(content, list):
+        normalized_blocks: list[dict[str, Any]] = []
+        for raw_block in cast(list[object], content):
+            if not isinstance(raw_block, dict):
+                continue
+
+            block = cast(dict[str, Any], raw_block)
+            normalized_block: dict[str, Any] = {**block}
+            if normalized_block.get("type") == "text":
+                normalized_block["cache_control"] = normalized_block.get(
+                    "cache_control", {"type": "ephemeral"}
+                )
+            normalized_blocks.append(normalized_block)
+        return normalized_blocks
+
+    return []
+
+
+def _build_gemini_contents_from_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[ContentListUnionDict, str | None]:
+    """Convert generic chat messages into Gemini contents and system instruction."""
+    system_instruction_parts: list[str] = []
+    gemini_contents: list[dict[str, Any]] = []
+    tool_use_names: dict[str, str] = {}
+
+    for msg in messages:
+        role = msg.get("role", "user")
+
+        if role == "system":
+            if isinstance(msg.get("content"), str):
+                system_instruction_parts.append(msg["content"])
+            elif isinstance(msg.get("content"), list):
+                for block in cast(list[dict[str, Any]], msg["content"]):
+                    if block.get("type") == "text" and isinstance(
+                        block.get("text"), str
+                    ):
+                        system_instruction_parts.append(block["text"])
+            continue
+
+        if role == "assistant":
+            role = "model"
+
+        if isinstance(msg.get("content"), str):
+            gemini_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+            continue
+
+        if isinstance(msg.get("parts"), list):
+            msg_copy: dict[str, Any] = dict(msg)
+            msg_copy["role"] = role
+            gemini_contents.append(msg_copy)
+            continue
+
+        if isinstance(msg.get("content"), list):
+            parts: list[dict[str, Any]] = []
+            for block in cast(list[dict[str, Any]], msg["content"]):
+                block_type = block.get("type")
+
+                if block_type == "text" and isinstance(block.get("text"), str):
+                    parts.append({"text": block["text"]})
+                    continue
+
+                if block_type == "tool_use" and isinstance(block.get("name"), str):
+                    tool_use_id = block.get("id")
+                    if isinstance(tool_use_id, str):
+                        tool_use_names[tool_use_id] = block["name"]
+                    tool_args = block.get("input")
+                    parts.append(
+                        {
+                            "function_call": {
+                                "name": block["name"],
+                                "args": tool_args if isinstance(tool_args, dict) else {},
+                            }
+                        }
+                    )
+                    continue
+
+                if block_type == "tool_result":
+                    tool_result = block.get("content")
+                    if not isinstance(tool_result, str):
+                        tool_result = json.dumps(tool_result)
+                    tool_use_id = block.get("tool_use_id")
+                    function_name = (
+                        tool_use_names.get(tool_use_id)
+                        if isinstance(tool_use_id, str)
+                        else None
+                    )
+                    parts.append(
+                        {
+                            "function_response": {
+                                "name": function_name or "tool_result",
+                                "response": {
+                                    "result": tool_result,
+                                    "is_error": bool(block.get("is_error", False)),
+                                },
+                            }
+                        }
+                    )
+
+            if parts:
+                gemini_contents.append({"role": role, "parts": parts})
+
+    system_instruction = (
+        "\n\n".join(system_instruction_parts) if system_instruction_parts else None
+    )
+    return cast(ContentListUnionDict, gemini_contents), system_instruction
+
+
 def _is_tool_use_message(msg: dict[str, Any]) -> bool:
     """Check if a message contains tool calls (any format)."""
     # Anthropic format: content is a list with tool_use blocks
@@ -473,6 +595,23 @@ def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
         cache_creation = usage.cache_creation_input_tokens
 
     return cache_creation, cache_read
+
+
+def extract_gemini_cache_tokens(usage_metadata: Any) -> tuple[int, int]:
+    """
+    Extract cache token counts from Gemini usage metadata when available.
+
+    Gemini exposes `cached_content_token_count` on usage metadata when cached
+    content was reused for a request. Generate responses do not currently expose
+    a corresponding cache-creation count, so creation is reported as 0.
+    """
+    if not usage_metadata:
+        return 0, 0
+
+    cache_read = getattr(usage_metadata, "cached_content_token_count", 0)
+    if not isinstance(cache_read, int):
+        cache_read = 0
+    return 0, cache_read
 
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
@@ -1444,6 +1583,7 @@ async def honcho_llm_call(
                 True,  # type: ignore[arg-type]
                 converted_tools,
                 tool_choice,
+                messages,
             )
         else:
             return await honcho_llm_call_inner(
@@ -1461,6 +1601,7 @@ async def honcho_llm_call(
                 False,  # type: ignore[arg-type]
                 converted_tools,
                 tool_choice,
+                messages,
             )
 
     decorated = _call_with_provider_selection
@@ -1678,7 +1819,7 @@ async def honcho_llm_call_inner(
     # Remove stream parameter for non-streaming calls as some providers don't accept it
     params.pop("stream", None)
 
-    system_messages: list[str] = []
+    system_messages: list[Any] = []
     non_system_messages: list[dict[str, Any]] = []
 
     match client:
@@ -1703,13 +1844,14 @@ async def honcho_llm_call_inner(
             # Add system parameter if there are system messages
             # Use cache_control for prompt caching
             if system_messages:
-                anthropic_params["system"] = [
-                    {
-                        "type": "text",
-                        "text": "\n\n".join(system_messages),
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
+                anthropic_system_blocks: list[dict[str, Any]] = []
+                for system_message in system_messages:
+                    anthropic_system_blocks.extend(
+                        _normalize_cacheable_system_content(system_message)
+                    )
+
+                if anthropic_system_blocks:
+                    anthropic_params["system"] = anthropic_system_blocks
 
             # Add tools if provided
             if tools:
@@ -1853,22 +1995,19 @@ async def honcho_llm_call_inner(
             if provider == "custom":
                 processed_messages = []
                 for msg in params["messages"]:
-                    if msg.get("role") == "system" and isinstance(
-                        msg.get("content"), str
-                    ):
-                        # Convert system message to content block format with cache_control
-                        processed_messages.append(
-                            {
-                                "role": "system",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": msg["content"],
-                                        "cache_control": {"type": "ephemeral"},
-                                    }
-                                ],
-                            }
+                    if msg.get("role") == "system":
+                        cacheable_content = _normalize_cacheable_system_content(
+                            msg.get("content")
                         )
+                        if cacheable_content:
+                            processed_messages.append(
+                                {
+                                    **msg,
+                                    "content": cacheable_content,
+                                }
+                            )
+                        else:
+                            processed_messages.append(msg)
                     else:
                         processed_messages.append(msg)
 
@@ -2111,52 +2250,11 @@ async def honcho_llm_call_inner(
 
                 # Use messages if provided, otherwise use prompt
                 if messages:
-                    # Extract system messages for system_instruction parameter
-                    # Gemini doesn't support system role in contents - it causes
-                    # consecutive user messages which results in empty responses
-                    for msg in messages:
-                        if msg.get("role") == "system":
-                            if isinstance(msg.get("content"), str):
-                                system_messages.append(msg["content"])
-                        else:
-                            non_system_messages.append(msg)
-
-                    # Add system instruction if present
-                    if system_messages:
-                        gemini_config["system_instruction"] = "\n\n".join(
-                            system_messages
-                        )
-
-                    # Convert non-system messages to Google format
-                    gemini_contents: list[dict[str, Any]] = []
-                    for msg in non_system_messages:
-                        # Map roles to Google's expected values (user, model)
-                        role = msg.get("role", "user")
-                        if role == "assistant":
-                            role = "model"
-
-                        # Handle different content formats
-                        if isinstance(msg.get("content"), str):
-                            # Simple string content
-                            gemini_contents.append(
-                                {"role": role, "parts": [{"text": msg["content"]}]}
-                            )
-                        elif isinstance(msg.get("parts"), list):
-                            # Already in Google format (from tool calling loop)
-                            # But still need to ensure role is correct
-                            msg_copy = msg.copy()
-                            msg_copy["role"] = role
-                            gemini_contents.append(msg_copy)
-                        elif isinstance(msg.get("content"), list):
-                            # Content is a list of parts (Anthropic format) - skip for now
-                            # This shouldn't happen with Google provider in tool loop
-                            continue
-                        else:
-                            # Empty or unknown format, skip
-                            continue
-                    contents: ContentListUnionDict = cast(
-                        ContentListUnionDict, gemini_contents
+                    contents, system_instruction = _build_gemini_contents_from_messages(
+                        messages
                     )
+                    if system_instruction:
+                        gemini_config["system_instruction"] = system_instruction
                 else:
                     contents = prompt
 
@@ -2201,6 +2299,9 @@ async def honcho_llm_call_inner(
                     if gemini_response.usage_metadata
                     else 0
                 )
+                cache_creation_tokens, cache_read_tokens = extract_gemini_cache_tokens(
+                    gemini_response.usage_metadata
+                )
                 output_token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
                     if gemini_response.usage_metadata
@@ -2230,6 +2331,8 @@ async def honcho_llm_call_inner(
                     content=text_content,
                     input_tokens=input_token_count,
                     output_tokens=output_token_count,
+                    cache_creation_input_tokens=cache_creation_tokens,
+                    cache_read_input_tokens=cache_read_tokens,
                     finish_reasons=[finish_reason],
                     tool_calls_made=gemini_tool_calls,
                 )
@@ -2238,9 +2341,18 @@ async def honcho_llm_call_inner(
                 gemini_config["response_mime_type"] = "application/json"
                 gemini_config["response_schema"] = response_model
 
+                if messages:
+                    contents, system_instruction = _build_gemini_contents_from_messages(
+                        messages
+                    )
+                    if system_instruction:
+                        gemini_config["system_instruction"] = system_instruction
+                else:
+                    contents = prompt
+
                 gemini_response = await client.aio.models.generate_content(
                     model=model,
-                    contents=prompt,
+                    contents=contents,
                     config=cast(GenerateContentConfigDict, gemini_config),  # pyright: ignore[reportInvalidCast]
                 )
 
@@ -2248,6 +2360,9 @@ async def honcho_llm_call_inner(
                     gemini_response.usage_metadata.prompt_token_count or 0
                     if gemini_response.usage_metadata
                     else 0
+                )
+                cache_creation_tokens, cache_read_tokens = extract_gemini_cache_tokens(
+                    gemini_response.usage_metadata
                 )
                 output_token_count = (
                     gemini_response.usage_metadata.candidates_token_count or 0
@@ -2283,6 +2398,8 @@ async def honcho_llm_call_inner(
                     content=gemini_response.parsed,
                     input_tokens=input_token_count,
                     output_tokens=output_token_count,
+                    cache_creation_input_tokens=cache_creation_tokens,
+                    cache_read_input_tokens=cache_read_tokens,
                     finish_reasons=[finish_reason],
                     tool_calls_made=[],
                 )
@@ -2373,22 +2490,19 @@ async def handle_streaming_response(
         case AsyncAnthropic():
             # Anthropic requires system messages as a top-level parameter
             messages = params["messages"]
-            system_content = "\n\n".join(
-                m["content"] for m in messages if m.get("role") == "system"
-            )
+            system_blocks: list[dict[str, Any]] = []
+            for message in messages:
+                if message.get("role") == "system":
+                    system_blocks.extend(
+                        _normalize_cacheable_system_content(message.get("content"))
+                    )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": [m for m in messages if m.get("role") != "system"],
             }
-            if system_content:
-                anthropic_params["system"] = [
-                    {
-                        "type": "text",
-                        "text": system_content,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
+            if system_blocks:
+                anthropic_params["system"] = system_blocks
 
             # For response models, we need to request JSON and parse manually
             # Note: Streaming with response_model is not ideal but we'll accumulate and parse at the end
