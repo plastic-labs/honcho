@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -59,6 +60,35 @@ class HonchoHarness:
         self.processes: list[tuple[str, subprocess.Popen[str]]] = []
         self.env_file_backup: Path | None = None
         self.output_threads: list[threading.Thread] = []
+        # DB credentials — populated from docker-compose.yml.example in create_temp_docker_compose
+        self.db_user: str = "postgres"
+        self.db_password: str = "postgres"
+        self.db_name: str = "postgres"
+
+    def _extract_db_credentials(self, compose_data: dict[str, Any]) -> None:
+        """Extract POSTGRES_USER/PASSWORD/DB from the database service environment."""
+        services: dict[str, Any] = compose_data.get("services", {})
+        database: dict[str, Any] = services.get("database", {})
+        db_env: list[Any] = database.get("environment", [])
+        env_map: dict[str, str] = {}
+        for entry in db_env:
+            if isinstance(entry, str) and "=" in entry:
+                # Handle "- KEY=VALUE" format
+                key, _, value = entry.partition("=")
+                env_map[key.strip()] = value.strip()
+        self.db_user = env_map.get("POSTGRES_USER", self.db_user)
+        self.db_password = env_map.get("POSTGRES_PASSWORD", self.db_password)
+        self.db_name = env_map.get("POSTGRES_DB", self.db_name)
+
+    @property
+    def db_connection_uri(self) -> str:
+        """SQLAlchemy-style connection URI for the test database."""
+        return f"postgresql+psycopg://{self.db_user}:{self.db_password}@localhost:{self.db_port}/{self.db_name}"
+
+    @property
+    def db_connection_uri_plain(self) -> str:
+        """Plain psycopg connection URI (no +psycopg driver prefix)."""
+        return f"postgresql://{self.db_user}:{self.db_password}@localhost:{self.db_port}/{self.db_name}"
 
     def create_temp_docker_compose(self) -> Path:
         """
@@ -71,6 +101,9 @@ class HonchoHarness:
         example_file = self.project_root / "docker-compose.yml.example"
         with open(example_file) as f:
             compose_data = yaml.safe_load(f)
+
+        # Extract DB credentials from the compose file so the harness stays in sync
+        self._extract_db_credentials(compose_data)
 
         # Update the database port
         compose_data["services"]["database"]["ports"] = [f"{self.db_port}:5432"]
@@ -165,7 +198,7 @@ class HonchoHarness:
             Dictionary of environment variables for database connection, cache, and API keys
         """
         return {
-            "DB_CONNECTION_URI": f"postgresql+psycopg://testuser:testpwd@localhost:{self.db_port}/honcho",
+            "DB_CONNECTION_URI": self.db_connection_uri,
             "CACHE_ENABLED": "true",
             "CACHE_URL": f"redis://localhost:{self.redis_port}/0",
         }
@@ -336,7 +369,7 @@ class HonchoHarness:
                         "-p",
                         str(self.db_port),
                         "-U",
-                        "testuser",
+                        self.db_user,
                     ],
                     capture_output=True,
                     text=True,
@@ -354,9 +387,7 @@ class HonchoHarness:
                 try:
                     import psycopg
 
-                    conn = psycopg.connect(
-                        f"postgresql://testuser:testpwd@localhost:{self.db_port}/honcho"
-                    )
+                    conn = psycopg.connect(self.db_connection_uri_plain)
                     conn.close()
                     print("Database is ready!")
                     return True
@@ -401,9 +432,7 @@ class HonchoHarness:
             import psycopg
 
             # Connect to the database using instance-specific connection string
-            conn_string = (
-                f"postgresql://testuser:testpwd@localhost:{self.db_port}/honcho"
-            )
+            conn_string = self.db_connection_uri_plain
             conn = psycopg.connect(conn_string)
 
             with conn.cursor() as cursor:
