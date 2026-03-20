@@ -42,20 +42,21 @@ export function register(server: McpServer, ctx: ToolContext) {
     "list_peers",
     {
       description: [
-        "List all peers in the current workspace.",
+        "List peers in the current workspace (paginated).",
         "Use this to discover which users and agents exist.",
-        "Returns an array of peer IDs.",
+        "Returns peer IDs with pagination metadata.",
       ].join("\n"),
       inputSchema: {},
     },
     async () => {
       try {
         const page = await ctx.honcho.peers();
-        const peers: { id: string }[] = [];
-        for await (const peer of page) {
-          peers.push({ id: peer.id });
-        }
-        return textResult(peers);
+        return textResult({
+          peers: page.items.map((p) => ({ id: p.id })),
+          total: page.total,
+          page: page.page,
+          pages: page.pages,
+        });
       } catch (e) {
         return errorResult(
           `Failed to list peers: ${e instanceof Error ? e.message : String(e)}`,

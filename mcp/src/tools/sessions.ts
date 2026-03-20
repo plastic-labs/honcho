@@ -41,20 +41,21 @@ export function register(server: McpServer, ctx: ToolContext) {
     "list_sessions",
     {
       description: [
-        "List all sessions in the current workspace.",
+        "List sessions in the current workspace (paginated).",
         "Use this to discover existing conversations.",
-        "Returns an array of session IDs.",
+        "Returns session IDs with pagination metadata.",
       ].join("\n"),
       inputSchema: {},
     },
     async () => {
       try {
         const page = await ctx.honcho.sessions();
-        const sessions: { id: string }[] = [];
-        for await (const session of page) {
-          sessions.push({ id: session.id });
-        }
-        return textResult(sessions);
+        return textResult({
+          sessions: page.items.map((s) => ({ id: s.id })),
+          total: page.total,
+          page: page.page,
+          pages: page.pages,
+        });
       } catch (e) {
         return errorResult(
           `Failed to list sessions: ${e instanceof Error ? e.message : String(e)}`,
@@ -320,9 +321,9 @@ export function register(server: McpServer, ctx: ToolContext) {
     "get_session_messages",
     {
       description: [
-        "Get all messages from a session, with optional metadata filtering.",
+        "Get messages from a session (paginated), with optional metadata filtering.",
         "Use this to read the conversation history.",
-        "Returns a paginated array of messages.",
+        "Returns the first page of messages with pagination metadata.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to get messages from."),
@@ -336,11 +337,12 @@ export function register(server: McpServer, ctx: ToolContext) {
       try {
         const session = await ctx.honcho.session(session_id);
         const page = await session.messages(filters);
-        const messages = [];
-        for await (const msg of page) {
-          messages.push(msg);
-        }
-        return textResult(formatMessages(messages));
+        return textResult({
+          messages: formatMessages(page.items),
+          total: page.total,
+          page: page.page,
+          pages: page.pages,
+        });
       } catch (e) {
         return errorResult(
           `Failed to get messages: ${e instanceof Error ? e.message : String(e)}`,

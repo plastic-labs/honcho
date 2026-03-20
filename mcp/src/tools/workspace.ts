@@ -11,7 +11,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Inspect the current workspace at a glance.",
         "Aggregates workspace metadata, configuration, peer IDs, and session IDs.",
-        "Returns a single JSON object.",
+        "Returns the first page of peers/sessions with total counts.",
       ].join("\n"),
       inputSchema: {},
     },
@@ -24,22 +24,14 @@ export function register(server: McpServer, ctx: ToolContext) {
           ctx.honcho.sessions(),
         ]);
 
-        const peers: { id: string }[] = [];
-        for await (const peer of peerPage) {
-          peers.push({ id: peer.id });
-        }
-
-        const sessions: { id: string }[] = [];
-        for await (const session of sessionPage) {
-          sessions.push({ id: session.id });
-        }
-
         return textResult({
           workspace_id: ctx.honcho.workspaceId,
           metadata,
           configuration,
-          peers,
-          sessions,
+          peer_count: peerPage.total,
+          peers: peerPage.items.map((p) => ({ id: p.id })),
+          session_count: sessionPage.total,
+          sessions: sessionPage.items.map((s) => ({ id: s.id })),
         });
       } catch (e) {
         return errorResult(
@@ -54,20 +46,21 @@ export function register(server: McpServer, ctx: ToolContext) {
     "list_workspaces",
     {
       description: [
-        "List all workspaces accessible to the current credentials.",
+        "List workspaces accessible to the current credentials (paginated).",
         "Use this to discover available workspaces before selecting or switching context.",
-        "Returns an array of workspace IDs.",
+        "Returns workspace IDs with pagination metadata.",
       ].join("\n"),
       inputSchema: {},
     },
     async () => {
       try {
         const page = await ctx.honcho.workspaces();
-        const workspaces: { id: string }[] = [];
-        for await (const workspace of page) {
-          workspaces.push({ id: workspace });
-        }
-        return textResult(workspaces);
+        return textResult({
+          workspaces: page.items.map((id) => ({ id })),
+          total: page.total,
+          page: page.page,
+          pages: page.pages,
+        });
       } catch (e) {
         return errorResult(
           `Failed to list workspaces: ${e instanceof Error ? e.message : String(e)}`,

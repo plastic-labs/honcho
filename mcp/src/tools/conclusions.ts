@@ -9,9 +9,9 @@ export function register(server: McpServer, ctx: ToolContext) {
     "list_conclusions",
     {
       description: [
-        "List conclusions (facts and observations) that Honcho has derived about a peer.",
+        "List conclusions (facts and observations) that Honcho has derived about a peer (paginated).",
         "Use this to see what Honcho has learned. If no target is given, returns self-conclusions.",
-        "Returns an array of conclusion objects with id, content, observer/observed IDs, and timestamps.",
+        "Returns conclusion objects with pagination metadata.",
       ].join("\n"),
       inputSchema: {
         peer_id: z.string().describe("The observer peer."),
@@ -30,18 +30,19 @@ export function register(server: McpServer, ctx: ToolContext) {
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
         const page = await scope.list();
-        const conclusions: Record<string, unknown>[] = [];
-        for await (const c of page) {
-          conclusions.push({
+        return textResult({
+          conclusions: page.items.map((c) => ({
             id: c.id,
             content: c.content,
             observer_id: c.observerId,
             observed_id: c.observedId,
             session_id: c.sessionId,
             created_at: c.createdAt,
-          });
-        }
-        return textResult(conclusions);
+          })),
+          total: page.total,
+          page: page.page,
+          pages: page.pages,
+        });
       } catch (e) {
         return errorResult(
           `Failed to list conclusions: ${e instanceof Error ? e.message : String(e)}`,
