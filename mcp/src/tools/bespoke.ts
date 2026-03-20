@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nanoid } from "nanoid";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import { textResult, errorResult } from "../types.js";
@@ -23,7 +24,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           { configuration: { observeMe: false } },
         );
 
-        const sessionId = crypto.randomUUID();
+        const sessionId = nanoid();
         const session = await ctx.honcho.session(sessionId, { metadata: {} });
 
         await session.addPeers([
