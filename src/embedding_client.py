@@ -2,9 +2,10 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import tiktoken
+import voyageai
 from google import genai
 from openai import AsyncOpenAI
 
@@ -23,23 +24,55 @@ class BatchItem(NamedTuple):
 
 class _EmbeddingClient:
     """
-    Embedding client supporting OpenAI and Gemini with chunking and batching support.
+    Embedding client supporting OpenAI, Gemini, Voyage, and OpenRouter
+    with chunking and batching support.
     """
+
+    # Supported output dimensions per provider.  Used for startup validation
+    # so operators get an immediate error instead of a cryptic API failure.
+    _SUPPORTED_DIMENSIONS: dict[str, list[int] | None] = {
+        "openai": None,        # text-embedding-3-small supports arbitrary dims
+        "gemini": None,        # gemini-embedding-001 supports arbitrary dims
+        "openrouter": None,    # proxied OpenAI, same as above
+        "voyage": [256, 512, 1024, 2048],
+    }
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+        # Use the vector store dimensions setting as the single source of truth.
+        # All providers that support configurable output dimensions will request
+        # this many.  Default is 1536 (matching the pgvector column definition).
+        self.output_dimensions: int = settings.VECTOR_STORE.DIMENSIONS
+
+        # Validate dimensions against provider constraints at startup.
+        supported = self._SUPPORTED_DIMENSIONS.get(self.provider)
+        if supported is not None and self.output_dimensions not in supported:
+            raise ValueError(
+                f"VECTOR_STORE_DIMENSIONS={self.output_dimensions} is not supported "
+                f"by the '{self.provider}' embedding provider. "
+                f"Supported values: {supported}"
+            )
 
         if self.provider == "gemini":
             if api_key is None:
                 api_key = settings.LLM.GEMINI_API_KEY
             if not api_key:
                 raise ValueError("Gemini API key is required")
-            self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
+            self.client: genai.Client | AsyncOpenAI | voyageai.AsyncClient = genai.Client(api_key=api_key)
             self.model: str = "gemini-embedding-001"
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
+        elif self.provider == "voyage":
+            if api_key is None:
+                api_key = settings.LLM.VOYAGE_API_KEY
+            if not api_key:
+                raise ValueError("Voyage AI API key (LLM_VOYAGE_API_KEY) is required")
+            self.client = voyageai.AsyncClient(api_key=api_key)
+            self.model = "voyage-4"
+            self.max_embedding_tokens = min(settings.MAX_EMBEDDING_TOKENS, 32000)
+            self.max_batch_size = 128  # Voyage batch limit
         elif self.provider == "openrouter":
             if api_key is None:
                 api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
@@ -78,18 +111,27 @@ class _EmbeddingClient:
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        if isinstance(self.client, genai.Client):
+        if isinstance(self.client, voyageai.AsyncClient):
+            response = await self.client.embed(
+                texts=[query],
+                model=self.model,
+                output_dimension=self.output_dimensions,
+            )
+            if not response.embeddings:
+                raise ValueError("No embedding returned from Voyage AI API")
+            return cast(list[float], response.embeddings[0])
+        elif isinstance(self.client, genai.Client):
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": self.output_dimensions},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
             return response.embeddings[0].values
-        else:  # openai
+        else:  # openai / openrouter
             response = await self.client.embeddings.create(
-                model=self.model, input=query
+                model=self.model, input=query, dimensions=self.output_dimensions
             )
             return response.data[0].embedding
 
@@ -111,21 +153,29 @@ class _EmbeddingClient:
         for i in range(0, len(texts), self.max_batch_size):
             batch = texts[i : i + self.max_batch_size]
             try:
-                if isinstance(self.client, genai.Client):
+                if isinstance(self.client, voyageai.AsyncClient):
+                    response = await self.client.embed(
+                        texts=batch,
+                        model=self.model,
+                        output_dimension=self.output_dimensions,
+                    )
+                    embeddings.extend(cast(list[list[float]], response.embeddings))
+                elif isinstance(self.client, genai.Client):
                     # Type cast needed due to genai type signature complexity
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": self.output_dimensions},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
                             if emb.values:
                                 embeddings.append(emb.values)
-                else:  # openai
+                else:  # openai / openrouter
                     response = await self.client.embeddings.create(
                         input=batch,
                         model=self.model,
+                        dimensions=self.output_dimensions,
                     )
                     embeddings.extend([data.embedding for data in response.data])
             except Exception as e:
@@ -248,11 +298,21 @@ class _EmbeddingClient:
                 # Organize embeddings by text_id and chunk_index
                 result: dict[str, dict[int, list[float]]] = defaultdict(dict)
 
-                if isinstance(self.client, genai.Client):
+                if isinstance(self.client, voyageai.AsyncClient):
+                    response = await self.client.embed(
+                        texts=[item.text for item in batch],
+                        model=self.model,
+                        output_dimension=self.output_dimensions,
+                    )
+                    for item, embedding in zip(
+                        batch, response.embeddings, strict=True
+                    ):
+                        result[item.text_id][item.chunk_index] = cast(list[float], embedding)
+                elif isinstance(self.client, genai.Client):
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": self.output_dimensions},
                     )
                     if response.embeddings:
                         for item, embedding in zip(
@@ -264,7 +324,9 @@ class _EmbeddingClient:
                                 )
                 else:  # openai / openrouter
                     response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
+                        model=self.model,
+                        input=[item.text for item in batch],
+                        dimensions=self.output_dimensions,
                     )
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
@@ -378,7 +440,9 @@ class EmbeddingClient:
             with self._lock:
                 if self._instance is None:
                     provider = settings.LLM.EMBEDDING_PROVIDER
-                    if provider == "gemini":
+                    if provider == "voyage":
+                        api_key = settings.LLM.VOYAGE_API_KEY
+                    elif provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
@@ -422,6 +486,11 @@ class EmbeddingClient:
     def max_embedding_tokens(self) -> int:
         """Get the maximum embedding tokens."""
         return self._get_client().max_embedding_tokens
+
+    @property
+    def output_dimensions(self) -> int:
+        """Get the output embedding dimensions."""
+        return self._get_client().output_dimensions
 
     @property
     def encoding(self) -> tiktoken.Encoding:
