@@ -33,27 +33,16 @@ A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://m
 
 | Header | Default | Description |
 | --- | --- | --- |
-| `X-Honcho-Assistant-Name` | `"Assistant"` | Name for the assistant peer |
 | `X-Honcho-Workspace-ID` | `"default"` | Workspace to operate in |
 | `X-Honcho-Base-URL` | `https://api.honcho.dev` | Custom API base URL |
 
 ## Available Tools
 
-### Bespoke Flow (Simple)
+**Workspace:** `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `list_workspaces` (enumerates accessible workspaces), `search` (semantic search scoped by optional peer/session params), `get_metadata`, `set_metadata`
 
-| Tool | Description |
-| --- | --- |
-| `start_conversation` | Start a new conversation, returns a session ID |
-| `get_personalization_insights` | Ask Honcho about the user for personalized responses |
-| `add_turn` | Record user + assistant messages |
+**Peers:** `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`
 
-### General Tools
-
-**Workspace:** `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `list_workspaces` (enumerates accessible workspaces), `search_workspace`, `get_workspace_metadata`, `set_workspace_metadata`
-
-**Peers:** `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`, `get_peer_metadata`, `set_peer_metadata`, `search_peer_messages`
-
-**Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `add_messages_to_session`, `get_session_messages`, `search_session_messages`, `get_session_context`, `get_session_representation`, `get_session_metadata`, `set_session_metadata`
+**Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
 
 **Conclusions:** `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
 
@@ -68,10 +57,9 @@ src/
   config.ts             # HonchoConfig, parseConfig(), createClient()
   types.ts              # ToolContext, result helpers
   tools/
-    bespoke.ts          # start_conversation, add_turn, get_personalization_insights
-    workspace.ts        # search, metadata
-    peers.ts            # CRUD, chat, card, context, representation, search
-    sessions.ts         # CRUD, peers, messages, context, representation, clone
+    workspace.ts        # inspect, list, search, metadata
+    peers.ts            # CRUD, chat, card, context, representation
+    sessions.ts         # CRUD, peers, messages, inspect, context, clone
     conclusions.ts      # list, query, create, delete
     system.ts           # dream, queue status
 ```

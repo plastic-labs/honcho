@@ -5,7 +5,6 @@ export interface HonchoConfig {
   userName: string;
   baseUrl: string;
   workspaceId: string;
-  assistantName: string;
 }
 
 /**
@@ -40,8 +39,6 @@ export function parseConfig(request: Request): HonchoConfig {
       request.headers.get("X-Honcho-Base-URL")?.trim() ||
       "https://api.honcho.dev",
     workspaceId: request.headers.get("X-Honcho-Workspace-ID")?.trim() || "default",
-    assistantName:
-      request.headers.get("X-Honcho-Assistant-Name")?.trim() || "Assistant",
   };
 }
 
