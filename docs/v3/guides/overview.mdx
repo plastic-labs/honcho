@@ -1,74 +1,35 @@
 ---
 title: "Guides, Cookbooks, and Integrations"
 sidebarTitle: 'Overview'
-description: 'Comprehensive guides and integration patterns for building with Honcho'
-icon: 'hat-wizard'
+description: 'Helpful guides and design patterns for building with Honcho'
+icon: 'puzzle-piece'
 ---
 
-<Note> Before starting any guide, complete the [Quickstart](/v3/documentation/introduction/quickstart) to set up Honcho in your preferred language. </Note>
+Honcho plugs into whatever you're already building. Add memory to an AI assistant, connect an external data source, wire Honcho into your agent framework, or migrate from another provider.
 
-These guides provide concrete examples and implementation patterns for building with Honcho. Whether you're integrating Honcho into existing platforms, exploring advanced features, or building from scratch, you'll find working code and clear patterns to adapt to your needs.
-
-Each guide focuses on a specific integration or use case with practical, tested examples. The goal is to get you from concept to working prototype quickly, then provide the depth needed for production deployment.
-
-## Quick Start Integrations
-
-Drop-in integrations to get up and running immediately:
+## AI Assistants
+Add persistent memory to AI assistants and agents:
 
 <CardGroup cols={2}>
-  <Card title="MCP Integration" icon="link" href="/v3/guides/integrations/mcp">
-    Get Honcho running with a single prompt in Claude Code
+  <Card title="Claude Code" icon="terminal" href="/v3/guides/integrations/claude-code">
+    Long-term memory that survives context wipes, session restarts, and project switches
   </Card>
-  <Card title="Claude Code Plugin" icon="code" href="/v3/guides/integrations/claude-code">
-    Native Claude Code integration with persistent memory
+  <Card title="MCP Server" icon="star-of-life" href="/v3/guides/integrations/mcp">
+    Add Honcho memory to Claude Desktop, Cursor, Windsurf, Cline, and any MCP client
   </Card>
-</CardGroup>
-
-## Agent Frameworks
-
-Add persistent memory to popular AI agent frameworks:
-
-<CardGroup cols={2}>
-  <Card title="LangGraph" icon="diagram-project" href="/v3/guides/integrations/langgraph">
-    Add persistent memory and theory of mind to LangGraph agents
-  </Card>
-  <Card title="CrewAI" icon="users" href="/v3/guides/integrations/crewai">
-    Give CrewAI agents persistent memory across missions
-  </Card>
-</CardGroup>
-
-## Platform Integrations
-
-Connect Honcho to major platforms and services:
-
-<CardGroup cols={3}>
-  <Card title="OpenClaw" icon="lobster" href="/v3/guides/integrations/openclaw">
-    Multi-channel AI agent with memory across all platforms
-  </Card>
-  <Card title="n8n" icon="workflow" href="/v3/guides/integrations/n8n">
-    No-code Honcho workflows and automations
-  </Card>
-  <Card title="Reachy Mini" icon="robot" href="/v3/guides/integrations/reachy-mini">
-    Embodied voice robot that remembers users across sessions
-  </Card>
-</CardGroup>
-
-## Community Agents
-
-Open-source AI agents with Honcho integration:
-
-<CardGroup cols={2}>
   <Card title="Hermes Agent" icon="bolt" href="/v3/guides/community/hermes">
-    Terminal AI agent with skills system and cross-platform deployment
+    Cross-session memory for Nous Research's Hermes agent
+  </Card>
+  <Card title="OpenClaw" icon="lobster" href="/v3/guides/integrations/openclaw">
+    Memory across every channel — WhatsApp, Telegram, Discord, Slack, and more
   </Card>
   <Card title="Agent Zero" icon="triangle" href="/v3/guides/community/agent0">
-    Plugin-based general AI agent framework
+    Persistent memory plugin for the Agent Zero framework
   </Card>
 </CardGroup>
 
-## Communication Platforms
-
-Create AI bots with persistent memory for chat platforms:
+## Platform Connectors
+Connect external platforms to Honcho — real-time chat bots or batch data ingestion:
 
 <CardGroup cols={2}>
   <Card title="Discord Bot" icon="discord" href="/v3/guides/discord">
@@ -77,89 +38,37 @@ Create AI bots with persistent memory for chat platforms:
   <Card title="Telegram Bot" icon="telegram" href="/v3/guides/telegram">
     Create a Telegram bot with persistent user understanding
   </Card>
+  <Card title="Gmail" icon="envelope" href="/v3/guides/gmail">
+    Import email threads into Honcho — peers, sessions, and messages from your inbox
+  </Card>
+  <Card title="Granola" icon="calendar" href="/v3/guides/granola">
+    Ingest meeting transcripts with speaker turns and participant data
+  </Card>
+  <Card title="Reachy Mini" icon="robot" href="/v3/guides/integrations/reachy-mini">
+    Build an embodied voice robot with long-term memory
+  </Card>
 </CardGroup>
 
-## Data Import Workflows
-
-Import existing conversation data into Honcho:
+## Agent Frameworks
+Use Honcho as a memory layer in your agent orchestration stack:
 
 <CardGroup cols={2}>
-  <Card title="Gmail Import" icon="envelope" href="/v3/guides/gmail">
-    Load Gmail threads into Honcho for AI agent email memory
+  <Card title="LangGraph" icon="diagram-project" href="/v3/guides/integrations/langgraph">
+    Add persistent memory and theory of mind to your LangGraph agents
   </Card>
-  <Card title="Granola Import" icon="microphone" href="/v3/guides/granola">
-    Import meeting notes and transcripts from Granola
+  <Card title="CrewAI" icon="users-gear" href="/v3/guides/integrations/crewai">
+    Give CrewAI agents memory that persists across sessions
   </Card>
-</CardGroup>
-
-## Migration Guides
-
-Migrate from other memory systems to Honcho:
-
-<CardGroup cols={1}>
-  <Card title="From Mem0" icon="arrow-right" href="/v3/guides/migrations/mem0">
-    Migrate existing Mem0 implementations to Honcho
+  <Card title="n8n" icon="share-nodes" href="/v3/guides/integrations/n8n">
+    Build intelligent automation workflows with persistent memory
   </Card>
 </CardGroup>
 
----
+## Migrations
+Coming from another memory provider?
 
-## Integration Categories
-
-### **Instant Setup** (< 5 minutes)
-- **MCP Integration**: Single prompt setup in Claude Code
-- **Claude Code Plugin**: Native integration with zero configuration
-
-### **Agent Frameworks** (10-30 minutes)
-- **LangGraph**: Persistent memory layer for multi-agent systems
-- **CrewAI**: Cross-mission agent memory and coordination
-- **OpenClaw**: Multi-channel deployment with unified memory
-- **Hermes Agent**: Terminal agent with advanced tool capabilities
-- **Agent Zero**: Plugin-based modular agent architecture
-
-### **Platform Bots** (30-60 minutes)
-- **Discord/Telegram**: Chat bots with user memory and context
-- **n8n**: No-code workflow integration and automation
-- **Reachy Mini**: Embodied robotics with voice and memory
-
-### **Data Migration** (1-2 hours)
-- **Gmail Import**: Bulk email history ingestion
-- **Granola Import**: Meeting transcript and participant mapping
-- **Mem0 Migration**: System migration from existing memory backends
-
----
-
-## Key Features by Integration
-
-| Integration | Theory of Mind | Multi-User | Reasoning | Real-time | Self-hosted |
-|-------------|----------------|------------|-----------|-----------|-------------|
-| MCP         | ✅              | ✅          | ✅         | ✅         | ✅           |
-| Claude Code | ✅              | ✅          | ✅         | ✅         | ✅           |
-| LangGraph   | ✅              | ✅          | ✅         | ✅         | ✅           |
-| CrewAI      | ✅              | ✅          | ✅         | ✅         | ✅           |
-| OpenClaw    | ✅              | ✅          | ✅         | ✅         | ✅           |
-| Hermes      | ✅              | ✅          | ✅         | ✅         | ✅           |
-| Agent Zero  | ✅              | ✅          | ✅         | ✅         | ✅           |
-| Discord     | ✅              | ✅          | ✅         | ✅         | ✅           |
-| Telegram    | ✅              | ✅          | ✅         | ✅         | ✅           |
-| n8n         | ✅              | ✅          | ✅         | ⚡         | ✅           |
-| Reachy Mini | ✅              | ✅          | ✅         | ✅         | ✅           |
-| Gmail       | ✅              | ✅          | ✅         | ❌         | ✅           |
-| Granola     | ✅              | ✅          | ✅         | ❌         | ✅           |
-
-**Legend:**
-- ✅ **Full Support**: Complete feature implementation
-- ⚡ **Workflow**: Supported through automation/scheduling
-- ❌ **Batch Only**: Import/migration workflow, not real-time
-
----
-
-## Next Steps
-
-1. **Start with [Quickstart](/v3/documentation/introduction/quickstart)** to set up your Honcho workspace
-2. **Choose an integration** based on your existing stack or target platform
-3. **Follow the specific guide** for step-by-step implementation
-4. **Explore advanced features** in the [core concepts](/v3/documentation/core-concepts/architecture) documentation
-5. **Join the community** for support and to share your implementations
-
-Need help choosing? The **MCP Integration** is the fastest way to see Honcho in action, while **LangGraph** or **CrewAI** are ideal starting points for building production AI systems.
+<CardGroup cols={2}>
+  <Card title="Migrate from Mem0" icon="arrow-right-arrow-left" href="/v3/guides/migrations/mem0">
+    Transfer your data and update your integration code
+  </Card>
+</CardGroup>
