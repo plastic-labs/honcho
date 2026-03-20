@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, formatMessages } from "../types.js";
+import { textResult, errorResult } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── create_peer ─────────────────────────────────────────────────────
@@ -272,85 +272,6 @@ export function register(server: McpServer, ctx: ToolContext) {
       } catch (e) {
         return errorResult(
           `Failed to get representation: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── get_peer_metadata ───────────────────────────────────────────────
-  server.registerTool(
-    "get_peer_metadata",
-    {
-      description: [
-        "Get metadata for a peer.",
-      ].join("\n"),
-      inputSchema: {
-        peer_id: z.string().describe("The peer to get metadata for."),
-      },
-    },
-    async ({ peer_id }) => {
-      try {
-        const peer = await ctx.honcho.peer(peer_id);
-        const metadata = await peer.getMetadata();
-        return textResult(metadata);
-      } catch (e) {
-        return errorResult(
-          `Failed to get peer metadata: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── set_peer_metadata ───────────────────────────────────────────────
-  server.registerTool(
-    "set_peer_metadata",
-    {
-      description: [
-        "Set metadata for a peer.",
-        "Overwrites existing metadata.",
-      ].join("\n"),
-      inputSchema: {
-        peer_id: z.string().describe("The peer to set metadata for."),
-        metadata: z
-          .record(z.string(), z.unknown())
-          .describe("Key-value pairs to set."),
-      },
-    },
-    async ({ peer_id, metadata }) => {
-      try {
-        const peer = await ctx.honcho.peer(peer_id);
-        await peer.setMetadata(metadata);
-        return textResult("Peer metadata set successfully");
-      } catch (e) {
-        return errorResult(
-          `Failed to set peer metadata: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── search_peer_messages ────────────────────────────────────────────
-  server.registerTool(
-    "search_peer_messages",
-    {
-      description: [
-        "Semantic search across all messages authored by a specific peer.",
-        "Use this to find what a particular peer has said across all sessions.",
-        "Returns an array of matching messages.",
-      ].join("\n"),
-      inputSchema: {
-        peer_id: z.string().describe("The peer whose messages to search."),
-        query: z.string().describe("Search query."),
-      },
-    },
-    async ({ peer_id, query }) => {
-      try {
-        const peer = await ctx.honcho.peer(peer_id);
-        const messages = await peer.search(query);
-        return textResult(formatMessages(messages));
-      } catch (e) {
-        return errorResult(
-          `Search failed: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     },

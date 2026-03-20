@@ -270,8 +270,8 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       description: [
         "Add messages to a session from specific peers.",
-        "Use this for multi-peer conversations where you need to attribute messages to specific peers.",
-        "For the simple user/assistant flow, use add_turn instead.",
+        "Use this to record conversation turns. Each message must specify the peer_id of the author.",
+        "For the bespoke flow, use start_conversation first to get the user_peer_id and assistant_peer_id.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to add messages to."),
@@ -391,33 +391,6 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
   );
 
-  // ── search_session_messages ─────────────────────────────────────────
-  server.registerTool(
-    "search_session_messages",
-    {
-      description: [
-        "Semantic search across messages in a specific session.",
-        "Use this to find relevant messages within a single conversation.",
-        "Returns an array of matching messages.",
-      ].join("\n"),
-      inputSchema: {
-        session_id: z.string().describe("The session to search in."),
-        query: z.string().describe("Search query."),
-      },
-    },
-    async ({ session_id, query }) => {
-      try {
-        const session = await ctx.honcho.session(session_id);
-        const messages = await session.search(query);
-        return textResult(formatMessages(messages));
-      } catch (e) {
-        return errorResult(
-          `Search failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
   // ── get_session_context ─────────────────────────────────────────────
   server.registerTool(
     "get_session_context",
@@ -452,121 +425,6 @@ export function register(server: McpServer, ctx: ToolContext) {
       } catch (e) {
         return errorResult(
           `Failed to get context: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── get_session_summaries ───────────────────────────────────────────
-  server.registerTool(
-    "get_session_summaries",
-    {
-      description: [
-        "Get the short and long summaries available for a session.",
-        "Use this when you want Honcho's generated rollups of the conversation so far.",
-        "Returns the session ID plus short and long summary objects when available.",
-      ].join("\n"),
-      inputSchema: {
-        session_id: z.string().describe("The session to get summaries for."),
-      },
-    },
-    async ({ session_id }) => {
-      try {
-        const session = await ctx.honcho.session(session_id);
-        const summaries = await session.summaries();
-        return textResult(formatSessionSummaries(summaries));
-      } catch (e) {
-        return errorResult(
-          `Failed to get session summaries: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── get_session_representation ──────────────────────────────────────
-  server.registerTool(
-    "get_session_representation",
-    {
-      description: [
-        "Get a peer's representation scoped to a specific session.",
-        "Use this to see what Honcho has learned about a peer from a single conversation.",
-        "Returns a formatted string of session-scoped conclusions.",
-      ].join("\n"),
-      inputSchema: {
-        session_id: z.string().describe("The session to scope to."),
-        peer_id: z
-          .string()
-          .describe("The peer to get the representation for."),
-        target_peer_id: z
-          .string()
-          .optional()
-          .describe(
-            "Optional: get what peer_id knows about target_peer_id in this session.",
-          ),
-      },
-    },
-    async ({ session_id, peer_id, target_peer_id }) => {
-      try {
-        const session = await ctx.honcho.session(session_id);
-        const rep = await session.representation(peer_id, {
-          target: target_peer_id,
-        });
-        return textResult(rep);
-      } catch (e) {
-        return errorResult(
-          `Failed to get representation: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── get_session_metadata ────────────────────────────────────────────
-  server.registerTool(
-    "get_session_metadata",
-    {
-      description: [
-        "Get metadata for a session.",
-      ].join("\n"),
-      inputSchema: {
-        session_id: z.string().describe("The session to get metadata for."),
-      },
-    },
-    async ({ session_id }) => {
-      try {
-        const session = await ctx.honcho.session(session_id);
-        const metadata = await session.getMetadata();
-        return textResult(metadata);
-      } catch (e) {
-        return errorResult(
-          `Failed to get session metadata: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    },
-  );
-
-  // ── set_session_metadata ────────────────────────────────────────────
-  server.registerTool(
-    "set_session_metadata",
-    {
-      description: [
-        "Set metadata for a session.",
-        "Overwrites existing metadata.",
-      ].join("\n"),
-      inputSchema: {
-        session_id: z.string().describe("The session to set metadata for."),
-        metadata: z
-          .record(z.string(), z.unknown())
-          .describe("Key-value pairs to set."),
-      },
-    },
-    async ({ session_id, metadata }) => {
-      try {
-        const session = await ctx.honcho.session(session_id);
-        await session.setMetadata(metadata);
-        return textResult("Session metadata set successfully");
-      } catch (e) {
-        return errorResult(
-          `Failed to set session metadata: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     },

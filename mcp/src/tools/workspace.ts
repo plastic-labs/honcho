@@ -69,22 +69,41 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
   );
 
-  // ── search_workspace ────────────────────────────────────────────────
+  // ── search ────────────────────────────────────────────────────────
   server.registerTool(
-    "search_workspace",
+    "search",
     {
       description: [
-        "Semantic search across all messages in the workspace.",
-        "Use this to find past conversations or messages from any peer/session.",
+        "Semantic search across messages. Scope is determined by which optional params are provided:",
+        "- No scope params: search all messages in the workspace.",
+        "- peer_id only: search messages authored by that peer across all sessions.",
+        "- session_id only: search messages within that session.",
         "Returns an array of matching messages with their content, peer, and session info.",
       ].join("\n"),
       inputSchema: {
         query: z.string().describe("Search query."),
+        peer_id: z
+          .string()
+          .optional()
+          .describe("Optional: scope search to messages by this peer."),
+        session_id: z
+          .string()
+          .optional()
+          .describe("Optional: scope search to messages in this session."),
       },
     },
-    async ({ query }) => {
+    async ({ query, peer_id, session_id }) => {
       try {
-        const messages = await ctx.honcho.search(query);
+        let messages;
+        if (session_id) {
+          const session = await ctx.honcho.session(session_id);
+          messages = await session.search(query);
+        } else if (peer_id) {
+          const peer = await ctx.honcho.peer(peer_id);
+          messages = await peer.search(query);
+        } else {
+          messages = await ctx.honcho.search(query);
+        }
         return textResult(formatMessages(messages));
       } catch (e) {
         return errorResult(
@@ -94,18 +113,39 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
   );
 
-  // ── get_workspace_metadata ──────────────────────────────────────────
+  // ── get_metadata ──────────────────────────────────────────────────
   server.registerTool(
-    "get_workspace_metadata",
+    "get_metadata",
     {
       description: [
-        "Get metadata for the current workspace.",
+        "Get metadata for a resource. Scope is determined by which optional params are provided:",
+        "- No scope params: get workspace metadata.",
+        "- peer_id only: get peer metadata.",
+        "- session_id only: get session metadata.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: {
+        peer_id: z
+          .string()
+          .optional()
+          .describe("Optional: get metadata for this peer."),
+        session_id: z
+          .string()
+          .optional()
+          .describe("Optional: get metadata for this session."),
+      },
     },
-    async () => {
+    async ({ peer_id, session_id }) => {
       try {
-        const metadata = await ctx.honcho.getMetadata();
+        let metadata;
+        if (session_id) {
+          const session = await ctx.honcho.session(session_id);
+          metadata = await session.getMetadata();
+        } else if (peer_id) {
+          const peer = await ctx.honcho.peer(peer_id);
+          metadata = await peer.getMetadata();
+        } else {
+          metadata = await ctx.honcho.getMetadata();
+        }
         return textResult(metadata);
       } catch (e) {
         return errorResult(
@@ -115,24 +155,45 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
   );
 
-  // ── set_workspace_metadata ──────────────────────────────────────────
+  // ── set_metadata ──────────────────────────────────────────────────
   server.registerTool(
-    "set_workspace_metadata",
+    "set_metadata",
     {
       description: [
-        "Set metadata for the current workspace.",
-        "Overwrites existing metadata.",
+        "Set metadata for a resource. Overwrites existing metadata.",
+        "Scope is determined by which optional params are provided:",
+        "- No scope params: set workspace metadata.",
+        "- peer_id only: set peer metadata.",
+        "- session_id only: set session metadata.",
       ].join("\n"),
       inputSchema: {
         metadata: z
           .record(z.string(), z.unknown())
-          .describe("Key-value pairs to set as workspace metadata."),
+          .describe("Key-value pairs to set as metadata."),
+        peer_id: z
+          .string()
+          .optional()
+          .describe("Optional: set metadata for this peer."),
+        session_id: z
+          .string()
+          .optional()
+          .describe("Optional: set metadata for this session."),
       },
     },
-    async ({ metadata }) => {
+    async ({ metadata, peer_id, session_id }) => {
       try {
-        await ctx.honcho.setMetadata(metadata);
-        return textResult("Workspace metadata set successfully");
+        if (session_id) {
+          const session = await ctx.honcho.session(session_id);
+          await session.setMetadata(metadata);
+          return textResult("Session metadata set successfully");
+        } else if (peer_id) {
+          const peer = await ctx.honcho.peer(peer_id);
+          await peer.setMetadata(metadata);
+          return textResult("Peer metadata set successfully");
+        } else {
+          await ctx.honcho.setMetadata(metadata);
+          return textResult("Workspace metadata set successfully");
+        }
       } catch (e) {
         return errorResult(
           `Failed to set metadata: ${e instanceof Error ? e.message : String(e)}`,
