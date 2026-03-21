@@ -524,7 +524,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.0.2 (Current)">
+        ### Changed
+
+        - All input models now reject unknown fields via strict Pydantic validation (`extra="forbid"`). Previously, misspelled or extraneous fields were silently ignored. Now a `ValidationError` is raised with the unrecognized field name.
+        </Update>
+        <Update label="v2.0.1">
             ### Added
 
         - `set_peer_card` method
@@ -638,7 +643,18 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.0.2 (Current)">
+        ### Changed
+
+        - Client constructor now rejects unknown options via `.strict()` Zod validation. Previously, misspelled options (e.g., `baseUrl` instead of `baseURL`) were silently ignored, causing the SDK to fall back to defaults. Now a `ZodError` is thrown with the unrecognized key name.
+        - All input schemas now use `.strict()` validation to reject unknown fields.
+        - `FileUploadSchema.configuration` now uses `MessageConfigurationSchema` instead of open record type.
+
+        ### Fixed
+
+        - README example used `baseUrl` instead of `baseURL`.
+        </Update>
+        <Update label="v2.0.1">
         ### Added
 
         - `setPeerCard` method
