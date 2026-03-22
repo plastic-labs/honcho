@@ -338,7 +338,7 @@ async def fetch_all_meetings(
 def parse_participants(participants_str: str) -> ParsedParticipants:
     """Parse Granola's participant string into structured participants.
 
-    Warns on unparseable entries instead of silently dropping them.
+    Warns on unparsable entries instead of silently dropping them.
     """
     result = ParsedParticipants()
     if not participants_str:

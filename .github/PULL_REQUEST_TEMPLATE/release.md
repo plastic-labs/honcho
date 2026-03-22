@@ -31,7 +31,7 @@ For more information on closing issues using keywords, please check https://docs
 ## **Changelog**
 
 <!-- 📛📛📛📛
-Log of changes introduced in this release in the style fo https://keepachangelog.com/en/1.1.0/
+Log of changes introduced in this release in the style of https://keepachangelog.com/en/1.1.0/
 📛📛📛📛 -->
 
 ### **Added**
