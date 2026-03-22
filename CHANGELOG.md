@@ -467,7 +467,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 
 - `/list` endpoints to not require a request body
-- `metamessage_type` to `label` with backwards compatability
+- `metamessage_type` to `label` with backwards compatibility
 - Database Provisioning to rely on alembic
 - Database Session Manager to explicitly rollback transactions before closing
   the connection
@@ -641,7 +641,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Authentication Middleware now implemented using built-in FastAPI Security
   module
 - Get by name routes for users and collections now include "name" in slug
-- Python SDK moved to separate [respository](https://github.com/plastic-labs/honcho-python)
+- Python SDK moved to separate [repository](https://github.com/plastic-labs/honcho-python)
 
 ### Fixed
 
@@ -712,7 +712,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 
 - session_data is now metadata
-- session_data is a JSON field used python `dict` for compatability
+- session_data is a JSON field used python `dict` for compatibility
 
 ## [0.0.2] — 2024-02-01
 
