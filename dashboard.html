@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Honcho Memory System - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #666;
+        }
+        .status {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .status-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+        .status-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+        }
+        .status-card.success .value {
+            color: #10b981;
+        }
+        .status-card.error .value {
+            color: #ef4444;
+        }
+        .panel {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        .log {
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-left: 3px solid #667eea;
+            padding-left: 10px;
+        }
+        .endpoints {
+            display: grid;
+            gap: 10px;
+        }
+        .endpoint {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+        .endpoint code {
+            background: #e5e7eb;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧠 Honcho Memory System</h1>
+            <p>Self-hosted memory and context management for AI agents</p>
+        </div>
+
+        <div class="status">
+            <div class="status-card success">
+                <h3>API Status</h3>
+                <div class="value" id="api-status">●</div>
+            </div>
+            <div class="status-card">
+                <h3>Workspaces</h3>
+                <div class="value" id="workspace-count">-</div>
+            </div>
+            <div class="status-card">
+                <h3>Peers</h3>
+                <div class="value" id="peer-count">-</div>
+            </div>
+            <div class="status-card">
+                <h3>Sessions</h3>
+                <div class="value" id="session-count">-</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>🔗 API Endpoints</h2>
+            <div class="endpoints">
+                <div class="endpoint">
+                    <strong>API Documentation:</strong> 
+                    <a href="http://localhost:8000/docs" target="_blank">
+                        <code>http://localhost:8000/docs</code>
+                    </a>
+                </div>
+                <div class="endpoint">
+                    <strong>API Base URL:</strong> 
+                    <code>http://localhost:8000/v3/</code>
+                </div>
+                <div class="endpoint">
+                    <strong>Health Check:</strong> 
+                    <code>GET http://localhost:8000/health</code>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>🛠️ Quick Actions</h2>
+            <button onclick="refreshStatus()">🔄 Refresh Status</button>
+            <button onclick="openDocs()">📚 API Docs</button>
+            <button onclick="viewLogs()">📋 View Logs</button>
+            <button onclick="createWorkspace()">➕ Create Workspace</button>
+        </div>
+
+        <div class="panel">
+            <h2>📊 Recent Activity</h2>
+            <div class="log" id="activity-log">
+                <div class="log-entry">Honcho dashboard loaded successfully</div>
+                <div class="log-entry">Checking API connection...</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>📖 Integration Guide</h2>
+            <p>To integrate Honcho memory with your Hermes agent:</p>
+            <pre style="background: #f3f4f6; padding: 15px; border-radius: 5px; overflow-x: auto;">
+# Python example
+import requests
+
+# Create workspace
+workspace = requests.post('http://localhost:8000/v1/workspaces', 
+    json={'name': 'klimashift'}).json()
+
+# Create peer (user/agent)
+peer = requests.post(f'http://localhost:8000/v1/workspaces/{workspace["id"]}/peers',
+    json={'name': 'user_123'}).json()
+
+# Create session
+session = requests.post(f'http://localhost:8000/v1/workspaces/{workspace["id"]}/peers/{peer["id"]}/sessions',
+    json={'name': 'conversation_1'}).json()
+
+# Add message with memory
+message = requests.post(f'http://localhost:8000/v1/workspaces/{workspace["id"]}/sessions/{session["id"]}/messages',
+    json={'role': 'user', 'content': 'Hello!'}).json()
+            </pre>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function addLog(message) {
+            const log = document.getElementById('activity-log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            log.insertBefore(entry, log.firstChild);
+        }
+
+        async function refreshStatus() {
+            addLog('Refreshing status...');
+            try {
+                // Check API health by testing docs endpoint
+                const health = await fetch(`${API_BASE}/docs`).then(r => r.ok).catch(() => false);
+                document.getElementById('api-status').textContent = health ? '●' : '○';
+                
+                if (health) {
+                    addLog('✅ API is healthy');
+                    
+                    // Get workspaces count (using v3 API)
+                    const workspaces = await fetch(`${API_BASE}/v3/workspaces`).then(r => r.json()).catch(() => ({items: []}));
+                    document.getElementById('workspace-count').textContent = workspaces.items?.length || 0;
+                    
+                    addLog(`Found ${workspaces.items?.length || 0} workspaces`);
+                } else {
+                    addLog('❌ API is not responding');
+                }
+            } catch (error) {
+                addLog(`❌ Error: ${error.message}`);
+            }
+        }
+
+        function openDocs() {
+            window.open('http://localhost:8000/docs', '_blank');
+            addLog('Opened API documentation');
+        }
+
+        function viewLogs() {
+            addLog('To view Honcho logs, run: cd honcho-server && docker compose logs -f');
+            alert('Run in terminal:\ncd honcho-server && docker compose logs -f');
+        }
+
+        async function createWorkspace() {
+            const name = prompt('Enter workspace name:', 'klimashift');
+            if (!name) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/v3/workspaces`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name})
+                });
+                
+                if (response.ok) {
+                    const workspace = await response.json();
+                    addLog(`✅ Created workspace: ${workspace.name} (ID: ${workspace.id})`);
+                    refreshStatus();
+                } else {
+                    addLog(`❌ Failed to create workspace: ${response.statusText}`);
+                }
+            } catch (error) {
+                addLog(`❌ Error: ${error.message}`);
+            }
+        }
+
+        // Auto-refresh status on load
+        window.addEventListener('load', () => {
+            setTimeout(refreshStatus, 1000);
+        });
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshStatus, 30000);
+    </script>
+</body>
+</html>
