@@ -5,7 +5,8 @@ _PROMPTS_PATH = Path(__file__).resolve().parents[2] / "src" / "deriver" / "promp
 _PROMPTS_SPEC = importlib.util.spec_from_file_location(
     "deriver_prompts", _PROMPTS_PATH
 )
-assert _PROMPTS_SPEC is not None and _PROMPTS_SPEC.loader is not None
+if _PROMPTS_SPEC is None or _PROMPTS_SPEC.loader is None:
+    raise RuntimeError(f"Unable to load deriver prompts module from {_PROMPTS_PATH}")
 _PROMPTS_MODULE = importlib.util.module_from_spec(_PROMPTS_SPEC)
 _PROMPTS_SPEC.loader.exec_module(_PROMPTS_MODULE)
 
