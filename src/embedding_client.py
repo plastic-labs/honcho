@@ -48,11 +48,16 @@ class _EmbeddingClient:
                     "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
                 )
             base_url = (
-                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                settings.LLM.EMBEDDING_BASE_URL
+                or settings.LLM.OPENAI_COMPATIBLE_BASE_URL
                 or "https://openrouter.ai/api/v1"
             )
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            # Use configurable model if set (e.g., google/gemini-embedding-001), otherwise default
+            self.model = (
+                settings.LLM.OPENAI_COMPATIBLE_EMBEDDING_MODEL
+                or "openai/text-embedding-3-small"
+            )
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai

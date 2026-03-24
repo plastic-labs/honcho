@@ -203,6 +203,8 @@ class LLMSettings(HonchoSettings):
 
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
+    # Base URL for Anthropic-compatible endpoints (e.g., MiniMax: https://api.minimax.io/anthropic)
+    ANTHROPIC_BASE_URL: str | None = None
     OPENAI_API_KEY: str | None = None
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
@@ -212,6 +214,10 @@ class LLMSettings(HonchoSettings):
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
+    # Embedding model when using OpenRouter provider (e.g., google/gemini-embedding-001)
+    OPENAI_COMPATIBLE_EMBEDDING_MODEL: str | None = None
+    # Separate base URL for embedding provider (overrides OPENAI_COMPATIBLE_BASE_URL for embeddings)
+    EMBEDDING_BASE_URL: str | None = None
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
 
@@ -256,7 +262,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     DEDUPLICATE: bool = True
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, ge=0, le=5000)] = 1024
 
     LOG_OBSERVATIONS: bool = False
 

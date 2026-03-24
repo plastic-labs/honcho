@@ -251,10 +251,13 @@ CLIENTS: dict[
 ] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
-    anthropic = AsyncAnthropic(
-        api_key=settings.LLM.ANTHROPIC_API_KEY,
-        timeout=600.0,  # 10 minutes timeout for long-running operations
-    )
+    anthropic_kwargs = {
+        "api_key": settings.LLM.ANTHROPIC_API_KEY,
+        "timeout": 600.0,  # 10 minutes timeout for long-running operations
+    }
+    if settings.LLM.ANTHROPIC_BASE_URL:
+        anthropic_kwargs["base_url"] = settings.LLM.ANTHROPIC_BASE_URL
+    anthropic = AsyncAnthropic(**anthropic_kwargs)
     CLIENTS["anthropic"] = anthropic
 
 if settings.LLM.OPENAI_API_KEY:
@@ -1737,14 +1740,19 @@ async def honcho_llm_call_inner(
             # For response models, we need to request JSON and parse manually
             # Note: tools and response_model should not be used together
             if response_model or json_mode:
-                # Add JSON schema instructions to the prompt if using response_model
+                # Add JSON schema instructions to system prompt (more reliable than user message)
+                # especially for MiniMax which sometimes echoes schema when it's in user message
                 if response_model:
                     schema_json = json.dumps(
                         response_model.model_json_schema(), indent=2
                     )
-                    anthropic_params["messages"][-1]["content"] += (
+                    schema_instruction = (
                         f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
                     )
+                    if "system" in anthropic_params and anthropic_params["system"]:
+                        anthropic_params["system"] += schema_instruction
+                    else:
+                        anthropic_params["system"] = schema_instruction.strip()
                 anthropic_params["messages"].append(
                     {"role": "assistant", "content": "{"}
                 )
@@ -1813,9 +1821,33 @@ async def honcho_llm_call_inner(
             # If using response_model, parse the JSON response
             if response_model:
                 try:
-                    # Add back the opening brace that we prefilled
-                    json_content = "{" + text_content
-                    parsed_json = json.loads(json_content)
+                    # Strip markdown code fences that some providers (e.g. MiniMax) add around JSON
+                    cleaned_content = text_content.strip()
+                    if cleaned_content.startswith("```json"):
+                        # Remove leading ```json\n and trailing ```
+                        lines = cleaned_content.split("\n")
+                        if lines and lines[0].strip() in ("```json", "```json\n", "```"):
+                            lines = lines[1:]
+                        if lines and lines[-1].strip() == "```":
+                            lines = lines[:-1]
+                        cleaned_content = "\n".join(lines).strip()
+
+                    # Some providers (e.g. MiniMax Anthropic endpoint) return the full schema JSON
+                    # as content instead of respecting response_model for structured output.
+                    # Detect: if cleaned_content looks like the schema (has "$defs" or "model_config")
+                    # rather than actual PromptRepresentation data, skip response_model validation.
+                    if '"$defs"' in cleaned_content or '"model_config"' in cleaned_content:
+                        # MiniMax returned the schema itself - fall back to plain JSON parsing
+                        # without response_model validation
+                        logger.warning(
+                            f"MiniMax returned schema JSON instead of structured output; "
+                            f"falling back to plain JSON parse of text content"
+                        )
+                        text_for_plain_parse = cleaned_content
+                    else:
+                        text_for_plain_parse = "{" + cleaned_content if not cleaned_content.startswith("{") else cleaned_content
+
+                    parsed_json = json.loads(text_for_plain_parse)
                     parsed_content = response_model.model_validate(parsed_json)
 
                     return HonchoLLMCallResponse(
@@ -1927,6 +1959,17 @@ async def honcho_llm_call_inner(
                     test_rep = ""
                     if vllm_response.choices[0].message.content is not None:
                         test_rep = vllm_response.choices[0].message.content
+
+                    # Strip thinking tags that some providers (e.g. MiniMax OpenAI endpoint)
+                    # inject into the content as <thinking>...</thinking>
+                    import re as regex_module
+                    test_rep = regex_module.sub(
+                        r"<thinking>.*?</thinking>", "", test_rep, flags=regex_module.DOTALL
+                    )
+                    # Also strip remaining HTML/XML style thinking tags
+                    test_rep = regex_module.sub(
+                        r"<think>.*?</think>", "", test_rep, flags=regex_module.DOTALL
+                    )
 
                     final = validate_and_repair_json(test_rep)
 
