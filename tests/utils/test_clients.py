@@ -1051,6 +1051,66 @@ class TestGoogleClient:
             call_args = mock_aio.models.generate_content_stream.call_args
             assert call_args.kwargs["config"]["max_output_tokens"] == 100
 
+    async def test_google_streaming_uses_system_and_user_messages(self):
+        """Gemini streaming should preserve split system and user messages."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_usage_metadata = Mock(candidates_token_count=12)
+        mock_chunks = [
+            Mock(text="ok"),
+            Mock(
+                text="",
+                candidates=[Mock(finish_reason=mock_finish_reason)],
+                usage_metadata=mock_usage_metadata,
+            ),
+        ]
+
+        async def async_chunk_iterator():
+            for chunk in mock_chunks:
+                yield chunk
+
+        mock_aio = Mock()
+        mock_aio.models.generate_content_stream = AsyncMock(
+            return_value=async_chunk_iterator()
+        )
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            chunks: list[HonchoLLMCallStreamChunk] = []
+            async for chunk in handle_streaming_response(
+                client=mock_client,
+                params={
+                    "model": "gemini-1.5-pro",
+                    "max_tokens": 100,
+                    "messages": [
+                        {"role": "system", "content": "stable instructions"},
+                        {"role": "system", "content": "session history"},
+                        {"role": "user", "content": "Hello"},
+                    ],
+                },
+                json_mode=False,
+                thinking_budget_tokens=None,
+            ):
+                chunks.append(chunk)
+
+        assert len(chunks) == 2
+        assert chunks[0].content == "ok"
+        assert chunks[1].is_done is True
+
+        call_args = mock_aio.models.generate_content_stream.call_args
+        assert call_args is not None
+        assert call_args.kwargs["contents"] == [
+            {"role": "user", "parts": [{"text": "Hello"}]}
+        ]
+        assert call_args.kwargs["config"]["system_instruction"] == (
+            "stable instructions\n\nsession history"
+        )
+        assert call_args.kwargs["config"]["max_output_tokens"] == 100
+
     async def test_google_no_candidates_fallback(self):
         """Test Google/Gemini fallback when no candidates"""
         from google import genai

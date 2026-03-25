@@ -140,10 +140,10 @@ async def process_representation_tasks_batch(
         retry_attempts=3,
         trace_name="minimal_deriver",
         messages=[
-            {"role": "system", "content": minimal_deriver_system_prompt(observed)},
+            {"role": "system", "content": minimal_deriver_system_prompt()},
             {
                 "role": "user",
-                "content": minimal_deriver_user_prompt(formatted_messages),
+                "content": minimal_deriver_user_prompt(observed, formatted_messages),
             },
         ],
     )

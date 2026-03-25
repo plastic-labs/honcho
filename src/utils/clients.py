@@ -2601,17 +2601,25 @@ async def handle_streaming_response(
                 )
 
         case genai.Client():
-            prompt_text = params["messages"][0]["content"] if params["messages"] else ""
             stream_config: GenerateContentConfigDict = {
                 "max_output_tokens": cast(int, params["max_tokens"]),
             }
+            raw_messages = params.get("messages")
+            if isinstance(raw_messages, list):
+                contents, system_instruction = _build_gemini_contents_from_messages(
+                    cast(list[dict[str, Any]], raw_messages)
+                )
+                if system_instruction:
+                    stream_config["system_instruction"] = system_instruction
+            else:
+                contents = cast(str, params.get("prompt", ""))
 
             if response_model is not None:
                 stream_config["response_mime_type"] = "application/json"
                 stream_config["response_schema"] = response_model
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
-                    contents=prompt_text,
+                    contents=contents,
                     config=stream_config,
                 )
             else:
@@ -2619,7 +2627,7 @@ async def handle_streaming_response(
                     stream_config["response_mime_type"] = "application/json"
                 response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
-                    contents=prompt_text,
+                    contents=contents,
                     config=stream_config,
                 )
 
