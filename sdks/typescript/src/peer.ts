@@ -39,6 +39,7 @@ import {
   peerConfigToApi,
   RepresentationOptionsSchema,
   SearchQuerySchema,
+  sessionConfigFromApi,
 } from './validation'
 
 /**
@@ -530,7 +531,7 @@ export class Peer {
           this.workspaceId,
           this._http,
           session.metadata ?? undefined,
-          session.configuration ?? undefined
+          sessionConfigFromApi(session.configuration) ?? undefined
         ),
       fetchNextPage
     )
