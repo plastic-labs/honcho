@@ -28,6 +28,8 @@ import {
   MessageConfigurationSchema,
   MessageContentSchema,
   MessageMetadataSchema,
+  normalizeListOptions,
+  normalizeSearchQuery,
   PeerCardContentSchema,
   type PeerConfig,
   PeerConfigSchema,
@@ -35,6 +37,7 @@ import {
   PeerMetadataSchema,
   peerConfigFromApi,
   peerConfigToApi,
+  RepresentationOptionsSchema,
   SearchQuerySchema,
 } from './validation'
 
@@ -474,24 +477,36 @@ export class Peer {
    * Makes an API call to retrieve all sessions where this peer is an active participant.
    * Sessions are created when peers are added to them or send messages to them.
    *
-   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @param options - Either a legacy raw filter object or an options object with
+   *                  `filters`, `page`, `size`, and `reverse`. See
+   *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a paginated list of Session objects this peer belongs to.
    *          Returns an empty list if the peer is not a member of any sessions
    */
-  async sessions(options?: {
-    filters?: Filters
-    page?: number
-    size?: number
-    reverse?: boolean
-  }): Promise<Page<Session, SessionResponse>> {
-    const validatedFilter = options?.filters
-      ? FilterSchema.parse(options.filters)
+  async sessions(
+    options?:
+      | Filters
+      | {
+          filters?: Filters
+          page?: number
+          size?: number
+          reverse?: boolean
+        }
+  ): Promise<Page<Session, SessionResponse>> {
+    const normalizedOptions = normalizeListOptions(options, [
+      'filters',
+      'page',
+      'size',
+      'reverse',
+    ])
+    const validatedFilter = normalizedOptions.filters
+      ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
-    const reverse = options?.reverse
+    const reverse = normalizedOptions.reverse
     const sessionsPage = await this._listSessions({
       filters: validatedFilter,
-      page: options?.page,
-      size: options?.size,
+      page: normalizedOptions.page,
+      size: normalizedOptions.size,
       reverse,
     })
 
@@ -780,16 +795,12 @@ export class Peer {
     includeMostFrequent?: boolean
     maxConclusions?: number
   }): Promise<string> {
-    const rawSearchQuery = options?.searchQuery
-    const searchQueryText =
-      typeof rawSearchQuery === 'string'
-        ? rawSearchQuery
-        : rawSearchQuery?.content
+    const searchQuery = normalizeSearchQuery(options?.searchQuery)
     const getRepresentationParams = PeerGetRepresentationParamsSchema.parse({
       session: options?.session,
       target: options?.target,
       options: {
-        searchQuery: searchQueryText,
+        searchQuery,
         searchTopK: options?.searchTopK,
         searchMaxDistance: options?.searchMaxDistance,
         includeMostFrequent: options?.includeMostFrequent,
@@ -810,10 +821,7 @@ export class Peer {
     const response = await this._getRepresentation({
       session_id: sessionId,
       target: targetId,
-      search_query:
-        typeof getRepresentationParams.options?.searchQuery === 'string'
-          ? getRepresentationParams.options.searchQuery
-          : getRepresentationParams.options?.searchQuery?.content,
+      search_query: searchQuery,
       search_top_k: getRepresentationParams.options?.searchTopK,
       search_max_distance: getRepresentationParams.options?.searchMaxDistance,
       include_most_frequent:
@@ -868,14 +876,25 @@ export class Peer {
         ? options.target
         : options.target.id
       : undefined
+    const searchQuery =
+      options?.searchQuery === undefined
+        ? undefined
+        : SearchQuerySchema.parse(options.searchQuery)
+    const validatedOptions = RepresentationOptionsSchema.parse({
+      searchQuery,
+      searchTopK: options?.searchTopK,
+      searchMaxDistance: options?.searchMaxDistance,
+      includeMostFrequent: options?.includeMostFrequent,
+      maxConclusions: options?.maxConclusions,
+    })
 
     const response = await this._getContext({
       target: targetId,
-      search_query: options?.searchQuery,
-      search_top_k: options?.searchTopK,
-      search_max_distance: options?.searchMaxDistance,
-      include_most_frequent: options?.includeMostFrequent,
-      max_conclusions: options?.maxConclusions,
+      search_query: searchQuery,
+      search_top_k: validatedOptions.searchTopK,
+      search_max_distance: validatedOptions.searchMaxDistance,
+      include_most_frequent: validatedOptions.includeMostFrequent,
+      max_conclusions: validatedOptions.maxConclusions,
     })
 
     return PeerContext.fromApiResponse(response)

@@ -21,6 +21,7 @@ import {
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
+  normalizeListOptions,
   type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
@@ -413,24 +414,36 @@ export class Honcho {
    * Makes an API call to retrieve all peers that have been created or used
    * within the current workspace. Returns a paginated result.
    *
-   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @param options - Either a legacy raw filter object or an options object with
+   *                  `filters`, `page`, `size`, and `reverse`. See
+   *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async peers(options?: {
-    filters?: Filters
-    page?: number
-    size?: number
-    reverse?: boolean
-  }): Promise<Page<Peer, PeerResponse>> {
+  async peers(
+    options?:
+      | Filters
+      | {
+          filters?: Filters
+          page?: number
+          size?: number
+          reverse?: boolean
+        }
+  ): Promise<Page<Peer, PeerResponse>> {
     await this._ensureWorkspace()
-    const validatedFilter = options?.filters
-      ? FilterSchema.parse(options.filters)
+    const normalizedOptions = normalizeListOptions(options, [
+      'filters',
+      'page',
+      'size',
+      'reverse',
+    ])
+    const validatedFilter = normalizedOptions.filters
+      ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
-    const reverse = options?.reverse
+    const reverse = normalizedOptions.reverse
     const peersPage = await this._listPeers(this.workspaceId, {
       filters: validatedFilter,
-      page: options?.page,
-      size: options?.size,
+      page: normalizedOptions.page,
+      size: normalizedOptions.size,
       reverse,
     })
 
@@ -522,25 +535,37 @@ export class Honcho {
    * Makes an API call to retrieve all sessions that have been created within
    * the current workspace.
    *
-   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @param options - Either a legacy raw filter object or an options object with
+   *                  `filters`, `page`, `size`, and `reverse`. See
+   *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async sessions(options?: {
-    filters?: Filters
-    page?: number
-    size?: number
-    reverse?: boolean
-  }): Promise<Page<Session, SessionResponse>> {
+  async sessions(
+    options?:
+      | Filters
+      | {
+          filters?: Filters
+          page?: number
+          size?: number
+          reverse?: boolean
+        }
+  ): Promise<Page<Session, SessionResponse>> {
     await this._ensureWorkspace()
-    const validatedFilter = options?.filters
-      ? FilterSchema.parse(options.filters)
+    const normalizedOptions = normalizeListOptions(options, [
+      'filters',
+      'page',
+      'size',
+      'reverse',
+    ])
+    const validatedFilter = normalizedOptions.filters
+      ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
-    const reverse = options?.reverse
+    const reverse = normalizedOptions.reverse
     const sessionsPage = await this._listSessions(this.workspaceId, {
       filters: validatedFilter,
-      page: options?.page,
-      size: options?.size,
+      page: normalizedOptions.page,
+      size: normalizedOptions.size,
       reverse,
     })
 
@@ -665,22 +690,33 @@ export class Honcho {
    * Makes an API call to retrieve all workspace IDs that the authenticated
    * user has access to.
    *
-   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @param options - Either a legacy raw filter object or an options object with
+   *                  `filters`, `page`, and `size`. See
+   *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of workspace ID strings. Returns an empty
    *          page if no workspaces are accessible or none exist
    */
-  async workspaces(options?: {
-    filters?: Filters
-    page?: number
-    size?: number
-  }): Promise<Page<string, WorkspaceResponse>> {
-    const validatedFilter = options?.filters
-      ? FilterSchema.parse(options.filters)
+  async workspaces(
+    options?:
+      | Filters
+      | {
+          filters?: Filters
+          page?: number
+          size?: number
+        }
+  ): Promise<Page<string, WorkspaceResponse>> {
+    const normalizedOptions = normalizeListOptions(options, [
+      'filters',
+      'page',
+      'size',
+    ])
+    const validatedFilter = normalizedOptions.filters
+      ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
     const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
-      page: options?.page,
-      size: options?.size,
+      page: normalizedOptions.page,
+      size: normalizedOptions.size,
     })
 
     const fetchNextPage = async (

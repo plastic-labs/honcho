@@ -243,6 +243,22 @@ describe('Messages', () => {
       expect(page.items.length).toBe(1)
       expect(page.items[0].metadata.category).toBe('important')
     })
+
+    test('accepts legacy raw filter objects', async () => {
+      const session = await client.session('legacy-filter-msg-session', { metadata: {} })
+      const alice = await client.peer('legacy-filter-alice')
+      const bob = await client.peer('legacy-filter-bob')
+      await session.addPeers([alice.id, bob.id])
+      await session.addMessages([
+        alice.message('Legacy Alice'),
+        bob.message('Legacy Bob'),
+      ])
+
+      const page = await session.messages({ peer_id: alice.id })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].peerId).toBe(alice.id)
+    })
   })
 
   // ===========================================================================
@@ -382,8 +398,8 @@ describe('Messages', () => {
       expect(typeof message.tokenCount).toBe('number')
 
       // Validate date format
-      expect(() => new Date(message.createdAt)).not.toThrow()
       const date = new Date(message.createdAt)
+      expect(Number.isNaN(date.getTime())).toBe(false)
       expect(date.getTime()).toBeGreaterThan(0)
     })
 

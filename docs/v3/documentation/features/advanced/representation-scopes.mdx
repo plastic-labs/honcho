@@ -277,7 +277,7 @@ This means:
 - Similarly, if a peer leaves a session, they stop being included as an observer for any messages sent after their departure.
 
 <Warning>
-There is no retroactive reasoning. If your application needs an observer peer to reason about prior conversation history, add the peer to the session **before** messages are sent. Alternatively use the .chat() endpoint to include the conversation history in the agent's context, regardless of if they were reasoned against or not
+There is no retroactive reasoning. If your application needs an observer peer to reason about prior conversation history, add the peer to the session **before** messages are sent. Alternatively, use `peer.chat()` to include conversation history in the agent's context whether or not those messages were previously reasoned over.
 </Warning>
 
 <Note>

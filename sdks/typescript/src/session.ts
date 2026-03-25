@@ -28,6 +28,9 @@ import {
   type MessageAddition,
   MessageAdditionToApiSchema,
   MessageMetadataSchema,
+  messageConfigToApi,
+  normalizeListOptions,
+  normalizeSearchQuery,
   type PeerAddition,
   PeerAdditionToApiSchema,
   type PeerRemoval,
@@ -146,6 +149,13 @@ export class Session {
     this._ensureWorkspace = ensureWorkspace
     this._createdAt = createdAt
     this._isActive = isActive
+  }
+
+  private _applySessionResponse(session: SessionResponse): void {
+    this._metadata = session.metadata || {}
+    this._configuration = sessionConfigFromApi(session.configuration) || {}
+    this._createdAt = session.created_at
+    this._isActive = session.is_active
   }
 
   // ===========================================================================
@@ -571,24 +581,35 @@ export class Session {
    *
    * Makes an API call to retrieve messages in the session, with optional filtering.
    *
-   * @param filters - Optional filter criteria for messages. See
+   * @param options - Either a legacy raw filter object or an options object with
+   *                  `filters`, `page`, `size`, and `reverse`. See
    *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a paginated Page of Message objects
    */
-  async messages(options?: {
-    filters?: Filters
-    page?: number
-    size?: number
-    reverse?: boolean
-  }): Promise<Page<Message, MessageResponse>> {
-    const validatedFilter = options?.filters
-      ? FilterSchema.parse(options.filters)
+  async messages(
+    options?:
+      | Filters
+      | {
+          filters?: Filters
+          page?: number
+          size?: number
+          reverse?: boolean
+        }
+  ): Promise<Page<Message, MessageResponse>> {
+    const normalizedOptions = normalizeListOptions(options, [
+      'filters',
+      'page',
+      'size',
+      'reverse',
+    ])
+    const validatedFilter = normalizedOptions.filters
+      ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
-    const reverse = options?.reverse
+    const reverse = normalizedOptions.reverse
     const messagesPage = await this._listMessages({
       filters: validatedFilter,
-      page: options?.page,
-      size: options?.size,
+      page: normalizedOptions.page,
+      size: normalizedOptions.size,
       reverse,
     })
 
@@ -618,8 +639,8 @@ export class Session {
    */
   async getMetadata(): Promise<Record<string, unknown>> {
     const session = await this._getOrCreate({ id: this.id })
-    this._metadata = session.metadata || {}
-    return this._metadata
+    this._applySessionResponse(session)
+    return this._metadata ?? {}
   }
 
   /**
@@ -649,8 +670,8 @@ export class Session {
    */
   async getConfiguration(): Promise<SessionConfig> {
     const session = await this._getOrCreate({ id: this.id })
-    this._configuration = sessionConfigFromApi(session.configuration) || {}
-    return this._configuration
+    this._applySessionResponse(session)
+    return this._configuration ?? {}
   }
 
   /**
@@ -677,8 +698,7 @@ export class Session {
    */
   async refresh(): Promise<void> {
     const session = await this._getOrCreate({ id: this.id })
-    this._metadata = session.metadata || {}
-    this._configuration = sessionConfigFromApi(session.configuration) || {}
+    this._applySessionResponse(session)
   }
 
   /**
@@ -764,12 +784,9 @@ export class Session {
         ? opts.peerPerspective.id
         : opts.peerPerspective
 
-    // Resolve searchQuery from representationOptions (supports string | Message)
-    const rawSearchQuery = opts.representationOptions?.searchQuery
-    const searchQueryText =
-      typeof rawSearchQuery === 'string'
-        ? rawSearchQuery
-        : rawSearchQuery?.content
+    const searchQuery = normalizeSearchQuery(
+      opts.representationOptions?.searchQuery
+    )
 
     const contextParams = ContextParamsSchema.parse({
       summary: opts.summary,
@@ -780,7 +797,7 @@ export class Session {
       representationOptions: opts.representationOptions
         ? {
             ...opts.representationOptions,
-            searchQuery: searchQueryText,
+            searchQuery,
           }
         : undefined,
     })
@@ -788,10 +805,7 @@ export class Session {
     const context = await this._getContext({
       tokens: contextParams.tokens,
       summary: contextParams.summary,
-      search_query:
-        typeof contextParams.representationOptions?.searchQuery === 'string'
-          ? contextParams.representationOptions.searchQuery
-          : contextParams.representationOptions?.searchQuery?.content,
+      search_query: searchQuery,
       peer_target: contextParams.peerTarget,
       peer_perspective: contextParams.peerPerspective,
       limit_to_session: contextParams.limitToSession,
@@ -950,14 +964,15 @@ export class Session {
     })
 
     const formData = new FormData()
+    const uploadFile = uploadParams.file
 
-    if (file instanceof File || file instanceof Blob) {
-      formData.append('file', file)
+    if (uploadFile instanceof Blob) {
+      formData.append('file', uploadFile)
     } else {
       // Convert to Uint8Array for Blob compatibility
-      const content = new Uint8Array(file.content)
-      const blob = new Blob([content], { type: file.content_type })
-      formData.append('file', blob, file.filename)
+      const content = new Uint8Array(uploadFile.content)
+      const blob = new Blob([content], { type: uploadFile.content_type })
+      formData.append('file', blob, uploadFile.filename)
     }
 
     formData.append('peer_id', resolvedPeerId)
@@ -968,10 +983,8 @@ export class Session {
       uploadParams.configuration !== undefined &&
       uploadParams.configuration !== null
     ) {
-      formData.append(
-        'configuration',
-        JSON.stringify(uploadParams.configuration)
-      )
+      const apiConfiguration = messageConfigToApi(uploadParams.configuration)
+      formData.append('configuration', JSON.stringify(apiConfiguration))
     }
     if (
       uploadParams.createdAt !== undefined &&
@@ -1011,16 +1024,12 @@ export class Session {
       maxConclusions?: number
     }
   ): Promise<string> {
-    const rawSearchQuery = options?.searchQuery
-    const searchQueryText =
-      typeof rawSearchQuery === 'string'
-        ? rawSearchQuery
-        : rawSearchQuery?.content
+    const searchQuery = normalizeSearchQuery(options?.searchQuery)
     const getRepresentationParams = GetRepresentationParamsSchema.parse({
       peer,
       target: options?.target,
       options: {
-        searchQuery: searchQueryText,
+        searchQuery,
         searchTopK: options?.searchTopK,
         searchMaxDistance: options?.searchMaxDistance,
         includeMostFrequent: options?.includeMostFrequent,
@@ -1040,10 +1049,7 @@ export class Session {
     const response = await this._getRepresentation(peerId, {
       session_id: this.id,
       target: targetId,
-      search_query:
-        typeof getRepresentationParams.options?.searchQuery === 'string'
-          ? getRepresentationParams.options.searchQuery
-          : getRepresentationParams.options?.searchQuery?.content,
+      search_query: searchQuery,
       search_top_k: getRepresentationParams.options?.searchTopK,
       search_max_distance: getRepresentationParams.options?.searchMaxDistance,
       include_most_frequent:

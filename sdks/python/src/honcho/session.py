@@ -109,6 +109,30 @@ class Session(SessionBase, MetadataConfigMixin):
             exclude_none=True
         )
 
+    def _apply_session_response(self, session: SessionResponse) -> None:
+        self._metadata = session.metadata or {}
+        self._configuration = SessionConfiguration.model_validate(
+            session.configuration.model_dump()
+        )
+        self._created_at = session.created_at
+        self._is_active = session.is_active
+
+    def get_metadata(self) -> dict[str, object]:
+        """
+        Get metadata from the server and update the cache.
+
+        Returns:
+            A dictionary containing the metadata. Returns an empty dictionary
+            if no metadata is set.
+        """
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        session = SessionResponse.model_validate(data)
+        self._apply_session_response(session)
+        return self._metadata or {}
+
     def get_configuration(self) -> SessionConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
         """
         Get configuration from the server and update the cache.
@@ -121,11 +145,19 @@ class Session(SessionBase, MetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         session = SessionResponse.model_validate(data)
-        self._metadata = session.metadata or {}
-        self._configuration = SessionConfiguration.model_validate(
-            session.configuration.model_dump()
+        self._apply_session_response(session)
+        return self._configuration or SessionConfiguration()
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata, configuration, and session status from the server.
+        """
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
         )
-        return self._configuration
+        session = SessionResponse.model_validate(data)
+        self._apply_session_response(session)
 
     @validate_call
     def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]

@@ -143,6 +143,27 @@ describe('Honcho Client', () => {
         await testClient.deleteWorkspace(testClient.workspaceId)
       }
     })
+
+    test('workspaces with options.filters narrows results', async () => {
+      const uniqueValue = `filter-options-${Date.now()}`
+      const testClient = new Honcho({
+        baseURL: TEST_CONFIG.baseURL,
+        apiKey: TEST_CONFIG.apiKey,
+        workspaceId: generateWorkspaceId('filter-options'),
+      })
+
+      try {
+        await testClient.setMetadata({ filterKey: uniqueValue })
+
+        const page = await client.workspaces({
+          filters: { metadata: { filterKey: uniqueValue } },
+        })
+
+        expect(page.items).toContain(testClient.workspaceId)
+      } finally {
+        await testClient.deleteWorkspace(testClient.workspaceId)
+      }
+    })
   })
 
   // ===========================================================================

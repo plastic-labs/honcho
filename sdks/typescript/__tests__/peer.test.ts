@@ -62,7 +62,8 @@ describe('Peer', () => {
 
       expect(peer.createdAt).toBeDefined()
       expect(typeof peer.createdAt).toBe('string')
-      expect(() => new Date(peer.createdAt!)).not.toThrow()
+      const createdAt = new Date(peer.createdAt!)
+      expect(Number.isNaN(createdAt.getTime())).toBe(false)
     })
 
     test('creates peer with metadata', async () => {
@@ -131,6 +132,18 @@ describe('Peer', () => {
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-peer')
+    })
+
+    test('peers accept legacy raw filter objects', async () => {
+      const uniqueTag = `legacy-tag-${Date.now()}`
+      await client.peer(`legacy-filtered-peer-${Date.now()}`, {
+        metadata: { uniqueTag },
+      })
+
+      const page = await client.peers({ metadata: { uniqueTag } })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].metadata.uniqueTag).toBe(uniqueTag)
     })
 
     test('Page is async iterable', async () => {
@@ -227,6 +240,20 @@ describe('Peer', () => {
       const sessions = await peer.sessions({ filters: { metadata: { category: 'special' } } })
 
       expect(sessions.items.length).toBeGreaterThanOrEqual(1)
+    })
+
+    test('sessions accept legacy raw filter objects', async () => {
+      const category = `legacy-category-${Date.now()}`
+      const peer = await client.peer(`legacy-filter-sessions-peer-${Date.now()}`)
+      const session = await client.session(`legacy-filterable-session-${Date.now()}`, {
+        metadata: { category },
+      })
+      await session.addPeers([peer.id])
+
+      const sessions = await peer.sessions({ metadata: { category } })
+
+      expect(sessions.items.length).toBeGreaterThanOrEqual(1)
+      expect(sessions.items[0].metadata.category).toBe(category)
     })
   })
 

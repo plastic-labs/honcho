@@ -65,7 +65,8 @@ describe('Session', () => {
 
       expect(session.createdAt).toBeDefined()
       expect(typeof session.createdAt).toBe('string')
-      expect(() => new Date(session.createdAt!)).not.toThrow()
+      const createdAt = new Date(session.createdAt!)
+      expect(Number.isNaN(createdAt.getTime())).toBe(false)
       expect(session.isActive).toBe(true)
     })
 
@@ -121,6 +122,18 @@ describe('Session', () => {
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-session')
+    })
+
+    test('sessions accept legacy raw filter objects', async () => {
+      const tag = `legacy-tag-${Date.now()}`
+      await client.session(`legacy-filtered-session-${Date.now()}`, {
+        metadata: { tag },
+      })
+
+      const page = await client.sessions({ metadata: { tag } })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].metadata.tag).toBe(tag)
     })
   })
 

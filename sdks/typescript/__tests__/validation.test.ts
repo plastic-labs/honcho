@@ -281,7 +281,7 @@ describe('RepresentationOptionsSchema', () => {
     expect(result.searchQuery).toBe('hello')
   })
 
-  test('MessageResponse object searchQuery passes', () => {
+  test('content-like object searchQuery passes', () => {
     const result = RepresentationOptionsSchema.parse({
       searchQuery: {
         id: 'msg-1',
@@ -297,11 +297,109 @@ describe('RepresentationOptionsSchema', () => {
     expect(result.searchQuery).toBeDefined()
   })
 
+  test('whitespace-only string searchQuery throws', () => {
+    expect(() =>
+      RepresentationOptionsSchema.parse({ searchQuery: '   ' })
+    ).toThrow(ZodError)
+  })
+
+  test('whitespace-only object content searchQuery throws', () => {
+    expect(() =>
+      RepresentationOptionsSchema.parse({
+        searchQuery: { content: '   ' },
+      })
+    ).toThrow(ZodError)
+  })
+
+  test('invalid object searchQuery throws', () => {
+    expect(() =>
+      RepresentationOptionsSchema.parse({
+        searchQuery: { foo: 'bar' },
+      })
+    ).toThrow(ZodError)
+  })
+
+  test('numeric searchQuery throws', () => {
+    expect(() =>
+      RepresentationOptionsSchema.parse({
+        searchQuery: 42,
+      })
+    ).toThrow(ZodError)
+  })
+
   test('unknown field throws (strict)', () => {
     expect(() =>
       RepresentationOptionsSchema.parse({
         searchQuery: 'hello',
         typo: true,
+      })
+    ).toThrow(ZodError)
+  })
+})
+
+// =============================================================================
+// FileUploadSchema
+// =============================================================================
+
+describe('FileUploadSchema', () => {
+  test('Blob upload passes', () => {
+    const result = FileUploadSchema.parse({
+      file: new Blob(['hello'], { type: 'text/plain' }),
+      peer: 'peer-1',
+    })
+
+    expect(result.file).toBeInstanceOf(Blob)
+  })
+
+  test('custom upload object passes', () => {
+    const result = FileUploadSchema.parse({
+      file: {
+        filename: 'test.txt',
+        content: new TextEncoder().encode('hello'),
+        content_type: 'text/plain',
+      },
+      peer: 'peer-1',
+    })
+
+    expect(result.file).toBeDefined()
+  })
+
+  test('custom upload object accepts Buffer content', () => {
+    const result = FileUploadSchema.parse({
+      file: {
+        filename: 'test.txt',
+        content: Buffer.from('hello'),
+        content_type: 'text/plain',
+      },
+      peer: 'peer-1',
+    })
+
+    expect(result.file).toBeDefined()
+  })
+
+  test('top-level Uint8Array throws', () => {
+    expect(() =>
+      FileUploadSchema.parse({
+        file: new Uint8Array([1, 2, 3]),
+        peer: 'peer-1',
+      })
+    ).toThrow(ZodError)
+  })
+
+  test('top-level Buffer throws', () => {
+    expect(() =>
+      FileUploadSchema.parse({
+        file: Buffer.from('hello'),
+        peer: 'peer-1',
+      })
+    ).toThrow(ZodError)
+  })
+
+  test('arbitrary object throws', () => {
+    expect(() =>
+      FileUploadSchema.parse({
+        file: { filename: 'test.txt' },
+        peer: 'peer-1',
       })
     ).toThrow(ZodError)
   })

@@ -8,6 +8,7 @@ import type {
   RepresentationOptions,
   RepresentationResponse,
 } from './types/api'
+import { normalizeSearchQuery, RepresentationOptionsSchema } from './validation'
 
 /**
  * Parameters for creating a conclusion.
@@ -285,16 +286,22 @@ export class ConclusionScope {
    * Get the computed representation for this scope.
    */
   async representation(options?: RepresentationOptions): Promise<string> {
+    const searchQuery = normalizeSearchQuery(options?.searchQuery)
+    const validatedOptions = RepresentationOptionsSchema.parse({
+      searchQuery,
+      searchTopK: options?.searchTopK,
+      searchMaxDistance: options?.searchMaxDistance,
+      includeMostFrequent: options?.includeMostFrequent,
+      maxConclusions: options?.maxConclusions,
+    })
+
     const response = await this._getRepresentation(this.observer, {
       target: this.observed,
-      search_query:
-        typeof options?.searchQuery === 'string'
-          ? options.searchQuery
-          : options?.searchQuery?.content,
-      search_top_k: options?.searchTopK,
-      search_max_distance: options?.searchMaxDistance,
-      include_most_frequent: options?.includeMostFrequent,
-      max_conclusions: options?.maxConclusions,
+      search_query: searchQuery,
+      search_top_k: validatedOptions.searchTopK,
+      search_max_distance: validatedOptions.searchMaxDistance,
+      include_most_frequent: validatedOptions.includeMostFrequent,
+      max_conclusions: validatedOptions.maxConclusions,
     })
     return response.representation
   }

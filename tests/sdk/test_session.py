@@ -37,6 +37,62 @@ async def test_session_metadata(client_fixture: tuple[Honcho, str]):
 
 
 @pytest.mark.asyncio
+async def test_session_fetch_methods_refresh_cached_status_fields(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests that fetch-style session methods populate created_at and is_active.
+    """
+    honcho_client, client_type = client_fixture
+    session_id = "test-session-refresh-cache"
+
+    if client_type == "async":
+        await honcho_client.aio.session(id=session_id)
+        session = Session(session_id, honcho_client)
+
+        assert session.created_at is None
+        assert session.is_active is None
+
+        metadata = await session.aio.get_metadata()
+        assert metadata == {}
+        assert session.created_at is not None
+        assert session.is_active is True
+
+        session = Session(session_id, honcho_client)
+        await session.aio.refresh()
+        assert session.created_at is not None
+        assert session.is_active is True
+
+        session = Session(session_id, honcho_client)
+        configuration = await session.aio.get_configuration()
+        assert configuration is not None
+        assert session.created_at is not None
+        assert session.is_active is True
+    else:
+        honcho_client.session(id=session_id)
+        session = Session(session_id, honcho_client)
+
+        assert session.created_at is None
+        assert session.is_active is None
+
+        metadata = session.get_metadata()
+        assert metadata == {}
+        assert session.created_at is not None
+        assert session.is_active is True
+
+        session = Session(session_id, honcho_client)
+        session.refresh()
+        assert session.created_at is not None
+        assert session.is_active is True
+
+        session = Session(session_id, honcho_client)
+        configuration = session.get_configuration()
+        assert configuration is not None
+        assert session.created_at is not None
+        assert session.is_active is True
+
+
+@pytest.mark.asyncio
 async def test_session_peer_management(
     client_fixture: tuple[Honcho, str],
 ):

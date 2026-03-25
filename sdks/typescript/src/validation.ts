@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import type { MessageResponse } from './types/api'
 
 /**
  * Validation schemas for the Honcho TypeScript SDK.
@@ -224,9 +223,65 @@ export const SearchQuerySchema = z
   )
 
 /**
+ * Schema for content-like search query objects.
+ * Accepts SDK Message instances and other objects with a valid content field.
+ */
+export const SearchQueryObjectSchema = z
+  .object({
+    content: SearchQuerySchema,
+  })
+  .passthrough()
+
+/**
+ * Schema for search query inputs that can be normalized to a string.
+ */
+export const SearchQueryLikeSchema = z.union([
+  SearchQuerySchema,
+  SearchQueryObjectSchema,
+])
+
+/**
+ * Normalize a supported search query input to plain text.
+ */
+export function normalizeSearchQuery(searchQuery: unknown): string | undefined {
+  if (searchQuery === undefined) {
+    return undefined
+  }
+
+  const validatedSearchQuery = SearchQueryLikeSchema.parse(searchQuery)
+  return typeof validatedSearchQuery === 'string'
+    ? validatedSearchQuery
+    : validatedSearchQuery.content
+}
+
+/**
  * Schema for filter objects.
  */
 export const FilterSchema = z.record(z.string(), z.unknown()).optional()
+
+/**
+ * Normalize list-method input so legacy raw filters and the new options object
+ * shape are both accepted.
+ */
+export function normalizeListOptions<T extends { filters?: Filters }>(
+  input: Filters | T | undefined,
+  optionKeys: string[]
+): T {
+  if (input === undefined) {
+    return {} as T
+  }
+
+  if (
+    typeof input === 'object' &&
+    input !== null &&
+    !Array.isArray(input) &&
+    optionKeys.some((key) => key in input)
+  ) {
+    return input as T
+  }
+
+  return { filters: input as Filters } as T
+}
 
 /**
  * Schema for chat query parameters.
@@ -253,30 +308,11 @@ export const ChatQuerySchema = z
   .strict()
 
 /**
- * Schema for validating Message API responses (snake_case).
- */
-const MessageResponseSchema: z.ZodType<MessageResponse> = z.object({
-  id: z.string(),
-  content: z.string(),
-  created_at: z.string(),
-  peer_id: PeerIdSchema,
-  session_id: SessionIdSchema,
-  token_count: z.number(),
-  workspace_id: WorkspaceIdSchema,
-  metadata: z.record(z.string(), z.unknown()),
-}) as z.ZodType<MessageResponse>
-
-/**
  * Schema for representation options.
  */
 export const RepresentationOptionsSchema = z
   .object({
-    searchQuery: z
-      .union([
-        z.string().min(1, 'searchQuery must be a non-empty string'),
-        MessageResponseSchema,
-      ])
-      .optional(),
+    searchQuery: SearchQueryLikeSchema.optional(),
     searchTopK: z
       .number()
       .int()
@@ -346,34 +382,23 @@ export const QueueStatusOptionsSchema = z
 
 /**
  * Schema for file upload parameters.
- * Supports File objects (browser), Buffer, Uint8Array, and custom uploadable objects.
+ * Supports Blob/File objects and custom uploadable objects with binary content.
  */
 export const FileUploadSchema = z
   .object({
     file: z.union([
-      // Browser File object
-      z.instanceof(File),
-      // Node.js Buffer
-      z.instanceof(Buffer),
-      // Uint8Array
-      z.instanceof(Uint8Array),
+      // Browser/File API objects
+      z.instanceof(Blob),
       // Custom uploadable object with filename, content, and content_type
       z
         .object({
           filename: z.string().min(1, 'Filename must be a non-empty string'),
-          content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
+          content: z.instanceof(Uint8Array),
           content_type: z
             .string()
             .min(1, 'Content type must be a non-empty string'),
         })
         .strict(),
-      // Fallback for any other uploadable type
-      z
-        .any()
-        .refine(
-          (val) => val !== null && val !== undefined,
-          'File must not be null or undefined'
-        ),
     ]),
     peer: z.union([PeerIdSchema, PeerIdObjectSchema]),
     metadata: MessageMetadataSchema,
@@ -925,6 +950,7 @@ export type MessageInput = z.infer<typeof MessageInputSchema>
 export type Filters = z.infer<typeof FilterSchema>
 export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>
+export type SearchQueryLike = z.infer<typeof SearchQueryLikeSchema>
 export type QueueStatusOptions = z.infer<typeof QueueStatusOptionsSchema>
 export type FileUpload = z.infer<typeof FileUploadSchema>
 export type GetRepresentationParams = z.infer<

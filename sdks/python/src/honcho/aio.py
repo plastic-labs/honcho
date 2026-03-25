@@ -821,6 +821,24 @@ class SessionAio(AsyncMetadataConfigMixin):
             return {}
         return self._session._configuration.model_dump(exclude_none=True)
 
+    def _apply_session_response(self, session: SessionResponse) -> None:
+        self._session._metadata = session.metadata or {}
+        self._session._configuration = SessionConfiguration.model_validate(
+            session.configuration.model_dump()
+        )
+        self._session._created_at = session.created_at
+        self._session._is_active = session.is_active
+
+    async def get_metadata(self) -> dict[str, object]:
+        """Get metadata from the server asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        session = SessionResponse.model_validate(data)
+        self._apply_session_response(session)
+        return self._get_metadata()
+
     async def get_configuration(self) -> SessionConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Get configuration from the server asynchronously."""
         await self._session._honcho._ensure_workspace_async()
@@ -828,11 +846,17 @@ class SessionAio(AsyncMetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         session = SessionResponse.model_validate(data)
-        self._session._metadata = session.metadata or {}
-        self._session._configuration = SessionConfiguration.model_validate(
-            session.configuration.model_dump()
+        self._apply_session_response(session)
+        return self._session._configuration or SessionConfiguration()
+
+    async def refresh(self) -> None:
+        """Refresh cached metadata, configuration, and session status asynchronously."""
+        await self._session._honcho._ensure_workspace_async()
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
         )
-        return self._session._configuration
+        session = SessionResponse.model_validate(data)
+        self._apply_session_response(session)
 
     async def set_configuration(self, configuration: SessionConfiguration) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Set configuration on the server asynchronously."""
