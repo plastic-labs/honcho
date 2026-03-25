@@ -186,6 +186,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 self._honcho,
                 metadata=peer_data.metadata,
                 configuration=peer_data.configuration,
+                created_at=peer_data.created_at,
             )
 
         return Peer(id, self._honcho, metadata=metadata, configuration=configuration)
@@ -211,6 +212,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 self._honcho,
                 metadata=peer.metadata,
                 configuration=peer.configuration,
+                created_at=peer.created_at,
             )
 
         async def fetch_next(page: int) -> AsyncPage[PeerResponse, Peer]:
@@ -258,6 +260,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 self._honcho,
                 metadata=session_data.metadata,
                 configuration=session_data.configuration,
+                created_at=session_data.created_at,
+                is_active=session_data.is_active,
             )
 
         return Session(id, self._honcho, metadata=metadata, configuration=configuration)
@@ -283,6 +287,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 self._honcho,
                 metadata=session.metadata,
                 configuration=session.configuration,
+                created_at=session.created_at,
+                is_active=session.is_active,
             )
 
         async def fetch_next(page: int) -> AsyncPage[SessionResponse, Session]:
@@ -785,7 +791,9 @@ class SessionAio(AsyncMetadataConfigMixin):
         )
         session = SessionResponse.model_validate(data)
         self._session._metadata = session.metadata or {}
-        self._session._configuration = session.configuration
+        self._session._configuration = SessionConfiguration.model_validate(
+            session.configuration.model_dump()
+        )
         return self._session._configuration
 
     async def set_configuration(self, configuration: SessionConfiguration) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -966,6 +974,8 @@ class SessionAio(AsyncMetadataConfigMixin):
             self._session._honcho,
             metadata=cloned.metadata,
             configuration=cloned.configuration,
+            created_at=cloned.created_at,
+            is_active=cloned.is_active,
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -1247,6 +1257,21 @@ class SessionAio(AsyncMetadataConfigMixin):
             query=query,
         )
         return QueueStatusResponse.model_validate(data)
+
+    async def get_message(self, message_id: str) -> Message:
+        """Get a single message by ID from this session asynchronously.
+
+        Args:
+            message_id: The ID of the message to retrieve
+
+        Returns:
+            The Message object
+        """
+        await self._session._honcho._ensure_workspace_async()
+        data = await self._session._honcho._async_http_client.get(
+            routes.message(self._session.workspace_id, self._session.id, message_id)
+        )
+        return Message.from_api_response(MessageResponse.model_validate(data))
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def update_message(

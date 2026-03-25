@@ -57,6 +57,7 @@ class Peer(PeerBase, MetadataConfigMixin):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: PeerConfig | None = PrivateAttr(default=None)
+    _created_at: datetime.datetime | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -68,6 +69,11 @@ class Peer(PeerBase, MetadataConfigMixin):
     def configuration(self) -> PeerConfig | None:
         """Cached configuration for this peer. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
+
+    @property
+    def created_at(self) -> datetime.datetime | None:
+        """Timestamp when this peer was created. Only available if fetched from the API."""
+        return self._created_at
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
@@ -163,6 +169,10 @@ class Peer(PeerBase, MetadataConfigMixin):
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
+        created_at: datetime.datetime | None = Field(
+            None,
+            description="Timestamp when this peer was created.",
+        ),
     ) -> None:
         """
         Initialize a new Peer.
@@ -185,6 +195,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         self._honcho = honcho
         self._metadata = metadata
         self._configuration = configuration
+        self._created_at = created_at
 
         if configuration is not None or metadata is not None:
             self._honcho._ensure_workspace()
@@ -199,6 +210,7 @@ class Peer(PeerBase, MetadataConfigMixin):
             # Update cached values with API response
             self._metadata = peer_data.metadata
             self._configuration = peer_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._created_at = peer_data.created_at
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def chat(

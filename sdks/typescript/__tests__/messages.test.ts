@@ -403,4 +403,39 @@ describe('Messages', () => {
       expect(uniqueIds.size).toBe(ids.length)
     })
   })
+
+  // ===========================================================================
+  // Get Single Message (GET /messages/:id)
+  // ===========================================================================
+
+  describe('GET /messages/:id (getMessage)', () => {
+    test('getMessage returns message by ID', async () => {
+      const session = await client.session('get-msg-session', { metadata: {} })
+      const peer = await client.peer('get-msg-peer')
+      await session.addPeers([peer.id])
+
+      const [created] = await session.addMessages(peer.message('Retrievable'))
+      const fetched = await session.getMessage(created.id)
+
+      expect(fetched.id).toBe(created.id)
+      expect(fetched.content).toBe('Retrievable')
+      expect(fetched.peerId).toBe(peer.id)
+      expect(fetched.sessionId).toBe(session.id)
+    })
+
+    test('getMessage preserves metadata', async () => {
+      const session = await client.session('get-msg-meta-session', {
+        metadata: {},
+      })
+      const peer = await client.peer('get-msg-meta-peer')
+      await session.addPeers([peer.id])
+
+      const [created] = await session.addMessages(
+        peer.message('With metadata', { metadata: { key: 'value' } })
+      )
+      const fetched = await session.getMessage(created.id)
+
+      expect(fetched.metadata).toEqual({ key: 'value' })
+    })
+  })
 })

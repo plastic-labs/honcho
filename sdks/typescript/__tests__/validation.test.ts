@@ -8,9 +8,11 @@ import { describe, test, expect } from 'bun:test'
 import { ZodError } from 'zod'
 import {
   ChatQuerySchema,
+  ContextParamsSchema,
   HonchoConfigSchema,
   MessageInputSchema,
   FileUploadSchema,
+  RepresentationOptionsSchema,
 } from '../src/validation'
 
 // =============================================================================
@@ -200,6 +202,106 @@ describe('MessageInputSchema (strict)', () => {
         peerId: 'peer-1',
         content: 'hello',
         role: 'user',
+      })
+    ).toThrow(ZodError)
+  })
+})
+
+// =============================================================================
+// ContextParamsSchema (searchQuery in representationOptions)
+// =============================================================================
+
+describe('ContextParamsSchema', () => {
+  test('top-level searchQuery throws (strict)', () => {
+    expect(() =>
+      ContextParamsSchema.parse({
+        peerTarget: 'peer-1',
+        searchQuery: 'hello',
+      })
+    ).toThrow(ZodError)
+  })
+
+  test('searchQuery inside representationOptions passes', () => {
+    const result = ContextParamsSchema.parse({
+      peerTarget: 'peer-1',
+      representationOptions: { searchQuery: 'hello' },
+    })
+    expect(result.representationOptions?.searchQuery).toBe('hello')
+  })
+
+  test('representationOptions.searchQuery requires peerTarget', () => {
+    expect(() =>
+      ContextParamsSchema.parse({
+        representationOptions: { searchQuery: 'hello' },
+      })
+    ).toThrow(ZodError)
+  })
+
+  test('minimal valid context params', () => {
+    const result = ContextParamsSchema.parse({})
+    expect(result.summary).toBeUndefined()
+    expect(result.peerTarget).toBeUndefined()
+  })
+
+  test('all valid options', () => {
+    const result = ContextParamsSchema.parse({
+      summary: true,
+      tokens: 1000,
+      peerTarget: 'peer-1',
+      peerPerspective: 'peer-2',
+      limitToSession: true,
+      representationOptions: {
+        searchQuery: 'preferences',
+        searchTopK: 10,
+        searchMaxDistance: 0.5,
+        includeMostFrequent: true,
+        maxConclusions: 25,
+      },
+    })
+    expect(result.summary).toBe(true)
+    expect(result.peerTarget).toBe('peer-1')
+    expect(result.representationOptions?.searchQuery).toBe('preferences')
+    expect(result.representationOptions?.searchTopK).toBe(10)
+  })
+
+  test('peerPerspective without peerTarget throws', () => {
+    expect(() =>
+      ContextParamsSchema.parse({ peerPerspective: 'peer-2' })
+    ).toThrow(ZodError)
+  })
+})
+
+// =============================================================================
+// RepresentationOptionsSchema
+// =============================================================================
+
+describe('RepresentationOptionsSchema', () => {
+  test('string searchQuery passes', () => {
+    const result = RepresentationOptionsSchema.parse({ searchQuery: 'hello' })
+    expect(result.searchQuery).toBe('hello')
+  })
+
+  test('MessageResponse object searchQuery passes', () => {
+    const result = RepresentationOptionsSchema.parse({
+      searchQuery: {
+        id: 'msg-1',
+        content: 'hello world',
+        created_at: '2024-01-01T00:00:00Z',
+        peer_id: 'peer-1',
+        session_id: 'session-1',
+        token_count: 2,
+        workspace_id: 'ws-1',
+        metadata: {},
+      },
+    })
+    expect(result.searchQuery).toBeDefined()
+  })
+
+  test('unknown field throws (strict)', () => {
+    expect(() =>
+      RepresentationOptionsSchema.parse({
+        searchQuery: 'hello',
+        typo: true,
       })
     ).toThrow(ZodError)
   })

@@ -62,6 +62,8 @@ class Session(SessionBase, MetadataConfigMixin):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: SessionConfiguration | None = PrivateAttr(default=None)
+    _created_at: datetime | None = PrivateAttr(default=None)
+    _is_active: bool | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -73,6 +75,16 @@ class Session(SessionBase, MetadataConfigMixin):
     def configuration(self) -> SessionConfiguration | None:
         """Cached configuration for this session. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
+
+    @property
+    def created_at(self) -> datetime | None:
+        """Timestamp when this session was created. Only available if fetched from the API."""
+        return self._created_at
+
+    @property
+    def is_active(self) -> bool | None:
+        """Whether this session is active. Only available if fetched from the API."""
+        return self._is_active
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
@@ -110,7 +122,9 @@ class Session(SessionBase, MetadataConfigMixin):
         )
         session = SessionResponse.model_validate(data)
         self._metadata = session.metadata or {}
-        self._configuration = session.configuration
+        self._configuration = SessionConfiguration.model_validate(
+            session.configuration.model_dump()
+        )
         return self._configuration
 
     @validate_call
@@ -171,6 +185,14 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
+        created_at: datetime | None = Field(
+            None,
+            description="Timestamp when this session was created.",
+        ),
+        is_active: bool | None = Field(
+            None,
+            description="Whether this session is active.",
+        ),
     ) -> None:
         """
         Initialize a new Session.
@@ -193,6 +215,8 @@ class Session(SessionBase, MetadataConfigMixin):
         self._honcho = honcho
         self._metadata = metadata
         self._configuration = configuration
+        self._created_at = created_at
+        self._is_active = is_active
 
         if configuration is not None or metadata is not None:
             self._honcho._ensure_workspace()
@@ -207,6 +231,8 @@ class Session(SessionBase, MetadataConfigMixin):
             # Update cached values with API response
             self._metadata = session_data.metadata
             self._configuration = session_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._created_at = session_data.created_at
+            self._is_active = session_data.is_active
 
     def add_peers(
         self,
@@ -503,6 +529,8 @@ class Session(SessionBase, MetadataConfigMixin):
             self._honcho,
             metadata=cloned.metadata,
             configuration=cloned.configuration,
+            created_at=cloned.created_at,
+            is_active=cloned.is_active,
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -918,6 +946,21 @@ class Session(SessionBase, MetadataConfigMixin):
             query=query,
         )
         return QueueStatusResponse.model_validate(data)
+
+    def get_message(self, message_id: str) -> Message:
+        """Get a single message by ID from this session.
+
+        Args:
+            message_id: The ID of the message to retrieve
+
+        Returns:
+            The Message object
+        """
+        self._honcho._ensure_workspace()
+        data = self._honcho._http.get(
+            routes.message(self.workspace_id, self.id, message_id)
+        )
+        return Message.from_api_response(MessageResponse.model_validate(data))
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def update_message(

@@ -393,7 +393,8 @@ export class Honcho {
         this._http,
         peerData.metadata ?? undefined,
         peerConfigFromApi(peerData.configuration) ?? undefined,
-        () => this._ensureWorkspace()
+        () => this._ensureWorkspace(),
+        peerData.created_at
       )
     }
 
@@ -443,7 +444,8 @@ export class Honcho {
           this._http,
           peer.metadata ?? undefined,
           peerConfigFromApi(peer.configuration) ?? undefined,
-          () => this._ensureWorkspace()
+          () => this._ensureWorkspace(),
+          peer.created_at
         ),
       fetchNextPage
     )
@@ -498,7 +500,9 @@ export class Honcho {
         this._http,
         sessionData.metadata ?? undefined,
         sessionConfigFromApi(sessionData.configuration) ?? undefined,
-        () => this._ensureWorkspace()
+        () => this._ensureWorkspace(),
+        sessionData.created_at,
+        sessionData.is_active
       )
     }
 
@@ -549,7 +553,9 @@ export class Honcho {
           this._http,
           session.metadata ?? undefined,
           sessionConfigFromApi(session.configuration) ?? undefined,
-          () => this._ensureWorkspace()
+          () => this._ensureWorkspace(),
+          session.created_at,
+          session.is_active
         ),
       fetchNextPage
     )

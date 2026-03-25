@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.0] - 2026-03-25
+
+### Added
+
+- `createdAt` property on `Peer` and `Session` wrapper objects
+- `isActive` property on `Session` wrapper objects
+- `getMessage(messageId)` method on `Session` to fetch a single message by ID
+- `Peer.representation()`, `Session.representation()`, and `Session.context()` now accept `Message` objects for `searchQuery` (extracts `.content` automatically)
+
+### Changed
+
+- **Breaking**: `searchQuery` removed from top-level `context()` options. Use `representationOptions.searchQuery` instead — this eliminates the duplicate parameter and is consistent with the API structure.
+- `RepresentationOptionsSchema` now accepts `string | MessageResponse` for `searchQuery`
+- Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
+- Reusable `PeerIdObjectSchema` and `SessionIdObjectSchema` helpers for union validation
+- Moved `@types/node` from `dependencies` to `devDependencies`
+
 ## [2.0.2] - 2026-03-10
 
 ### Changed

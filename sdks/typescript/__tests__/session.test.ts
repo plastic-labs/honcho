@@ -56,6 +56,17 @@ describe('Session', () => {
       expect(session.workspaceId).toBe(client.workspaceId)
     })
 
+    test('session created with metadata exposes createdAt and isActive', async () => {
+      const session = await client.session('session-timestamps', {
+        metadata: { test: true },
+      })
+
+      expect(session.createdAt).toBeDefined()
+      expect(typeof session.createdAt).toBe('string')
+      expect(() => new Date(session.createdAt!)).not.toThrow()
+      expect(session.isActive).toBe(true)
+    })
+
     test('creates session with metadata', async () => {
       const metadata = testMetadata({ topic: 'testing' })
       const session = await client.session('session-with-meta', { metadata })

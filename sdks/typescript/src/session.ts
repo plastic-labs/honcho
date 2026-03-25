@@ -79,6 +79,8 @@ export class Session {
   private _http: HonchoHTTPClient
   private _metadata?: Record<string, unknown>
   private _configuration?: SessionConfig
+  private _createdAt?: string
+  private _isActive?: boolean
   private _ensureWorkspace: () => Promise<void>
 
   /**
@@ -104,6 +106,20 @@ export class Session {
   }
 
   /**
+   * Timestamp when this session was created. Only available if fetched from the API.
+   */
+  get createdAt(): string | undefined {
+    return this._createdAt
+  }
+
+  /**
+   * Whether this session is active. Only available if fetched from the API.
+   */
+  get isActive(): boolean | undefined {
+    return this._isActive
+  }
+
+  /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
    *
    * @param id - Unique identifier for this session within the workspace
@@ -118,7 +134,9 @@ export class Session {
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
     configuration?: SessionConfig,
-    ensureWorkspace: () => Promise<void> = async () => undefined
+    ensureWorkspace: () => Promise<void> = async () => undefined,
+    createdAt?: string,
+    isActive?: boolean
   ) {
     this.id = id
     this.workspaceId = workspaceId
@@ -126,6 +144,8 @@ export class Session {
     this._metadata = metadata
     this._configuration = configuration
     this._ensureWorkspace = ensureWorkspace
+    this._createdAt = createdAt
+    this._isActive = isActive
   }
 
   // ===========================================================================
@@ -355,6 +375,13 @@ export class Session {
     return this._http.post<RepresentationResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${peerId}/representation`,
       { body: params }
+    )
+  }
+
+  private async _getMessage(messageId: string): Promise<MessageResponse> {
+    await this._ensureWorkspace()
+    return this._http.get<MessageResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/messages/${messageId}`
     )
   }
 
@@ -662,7 +689,9 @@ export class Session {
       this._http,
       clonedSessionData.metadata ?? undefined,
       sessionConfigFromApi(clonedSessionData.configuration) ?? undefined,
-      () => this._ensureWorkspace()
+      () => this._ensureWorkspace(),
+      clonedSessionData.created_at,
+      clonedSessionData.is_active
     )
   }
 
@@ -999,6 +1028,17 @@ export class Session {
       max_conclusions: getRepresentationParams.options?.maxConclusions,
     })
     return response.representation
+  }
+
+  /**
+   * Get a single message by ID from this session.
+   *
+   * @param messageId - The ID of the message to retrieve
+   * @returns Promise resolving to the Message object
+   */
+  async getMessage(messageId: string): Promise<Message> {
+    const response = await this._getMessage(messageId)
+    return Message.fromApiResponse(response)
   }
 
   /**

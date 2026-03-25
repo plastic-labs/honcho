@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.0] - 2026-03-25
+
+### Added
+
+- `created_at` property on `Peer` and `Session` objects
+- `is_active` property on `Session` objects
+- `get_message(message_id)` method on `Session` (sync and async) to fetch a single message by ID
+
+### Changed
+
+- Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
+
 ## [2.0.2] - 2026-03-10
 
 ### Changed

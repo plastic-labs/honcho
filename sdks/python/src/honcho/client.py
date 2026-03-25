@@ -351,6 +351,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 self,
                 metadata=peer.metadata,
                 configuration=peer.configuration,
+                created_at=peer.created_at,
             )
 
         def fetch_next(page: int) -> SyncPage[PeerResponse, Peer]:
@@ -429,6 +430,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 self,
                 metadata=session.metadata,
                 configuration=session.configuration,
+                created_at=session.created_at,
+                is_active=session.is_active,
             )
 
         def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:

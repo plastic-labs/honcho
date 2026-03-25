@@ -120,6 +120,7 @@ export class Peer {
    * Private cached configuration for this peer.
    */
   private _configuration?: PeerConfig
+  private _createdAt?: string
 
   /**
    * Cached metadata for this peer. May be stale if the peer
@@ -144,6 +145,13 @@ export class Peer {
   }
 
   /**
+   * Timestamp when this peer was created. Only available if fetched from the API.
+   */
+  get createdAt(): string | undefined {
+    return this._createdAt
+  }
+
+  /**
    * Initialize a new Peer. **Do not call this directly, use the client.peer() method instead.**
    *
    * @param id - Unique identifier for this peer within the workspace
@@ -158,7 +166,8 @@ export class Peer {
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
     configuration?: PeerConfig,
-    ensureWorkspace: () => Promise<void> = async () => undefined
+    ensureWorkspace: () => Promise<void> = async () => undefined,
+    createdAt?: string
   ) {
     this.id = id
     this.workspaceId = workspaceId
@@ -166,6 +175,7 @@ export class Peer {
     this._metadata = metadata
     this._configuration = configuration
     this._ensureWorkspace = ensureWorkspace
+    this._createdAt = createdAt
   }
 
   // ===========================================================================

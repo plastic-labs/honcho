@@ -54,6 +54,16 @@ describe('Peer', () => {
       expect(peer.workspaceId).toBe(client.workspaceId)
     })
 
+    test('peer created with metadata exposes createdAt', async () => {
+      const peer = await client.peer('peer-created-at', {
+        metadata: { test: true },
+      })
+
+      expect(peer.createdAt).toBeDefined()
+      expect(typeof peer.createdAt).toBe('string')
+      expect(() => new Date(peer.createdAt!)).not.toThrow()
+    })
+
     test('creates peer with metadata', async () => {
       const metadata = testMetadata({ name: 'Alice' })
       const peer = await client.peer('peer-with-meta', { metadata })
