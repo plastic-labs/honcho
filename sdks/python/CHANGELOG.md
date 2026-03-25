@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - **Breaking**: `peer()` and `session()` now always make a get-or-create API call. Previously, calling without metadata/configuration returned a lazy object with no API call. All Peer/Session objects now have `created_at` populated immediately.
 - Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
 
+### Fixed
+
+- Sync and async `Session.get_metadata()`, `get_configuration()`, and `refresh()` now refresh cached `created_at` and `is_active` values along with metadata and configuration.
+- `honcho.__version__` now derives from package metadata, with a `pyproject.toml` fallback in source checkouts, so it stays aligned with SDK releases.
+
 ## [2.0.2] - 2026-03-10
 
 ### Changed

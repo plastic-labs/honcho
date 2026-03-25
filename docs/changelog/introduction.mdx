@@ -523,6 +523,11 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
         - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
         - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
+
+        ### Fixed
+
+        - Sync and async `Session.get_metadata()`, `get_configuration()`, and `refresh()` now refresh cached `created_at` and `is_active` values along with metadata and configuration
+        - `honcho.__version__` now derives from package metadata, with a source-checkout fallback, so it stays aligned with released package versions
         </Update>
         <Update label="v2.0.2">
         ### Changed
@@ -655,10 +660,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         ### Changed
 
         - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead
-        - **Breaking**: List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) now take an options object instead of a raw filter
+        - List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) support both the new options object and the legacy raw-filter form
+        - Representation search options now accept strings and content-like objects, including `Message` instances, while rejecting whitespace-only or invalid runtime inputs
         - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
         - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
         - Moved `@types/node` from `dependencies` to `devDependencies`
+
+        ### Fixed
+
+        - `uploadFile()` now rejects unsupported top-level binary/object inputs and only validates inputs the serializer can actually upload
+        - `uploadFile()` now serializes message configuration using API field names, matching `addMessages()`
+        - Session fetch methods now refresh cached `createdAt` and `isActive` values alongside metadata and configuration
         </Update>
         <Update label="v2.0.2">
         ### Changed

@@ -37,6 +37,10 @@ Usage:
         print(p.id)
 """
 
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+import re
+
 from .aio import ConclusionScopeAio, HonchoAio, PeerAio, SessionAio
 from .api_types import MessageCreateParams
 from .base import PeerBase, SessionBase
@@ -66,7 +70,20 @@ from .types import (
     DialecticStreamResponse,
 )
 
-__version__ = "2.0.1"
+
+def _detect_version() -> str:
+    try:
+        return version("honcho-ai")
+    except PackageNotFoundError:
+        pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+        pyproject_text = pyproject_path.read_text(encoding="utf-8")
+        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+        if match:
+            return match.group(1)
+        return "0.0.0"
+
+
+__version__ = _detect_version()
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 

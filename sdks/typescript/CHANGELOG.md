@@ -19,11 +19,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - **Breaking**: `searchQuery` removed from top-level `context()` options. Use `representationOptions.searchQuery` instead — this eliminates the duplicate parameter and is consistent with the API structure.
 - List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) support both the new options object and the legacy raw-filter form: `peers({ filters, page, size, reverse })` and `peers(filters)`.
-- `RepresentationOptionsSchema` now accepts `string | MessageResponse` for `searchQuery`
+- Representation search options now accept strings and content-like objects (including `Message` instances) while rejecting whitespace-only or invalid runtime inputs.
 - **Breaking**: `peer()` and `session()` now always make a get-or-create API call. Previously, calling without metadata/configuration returned a lazy object with no API call. All Peer/Session objects now have `createdAt` populated immediately.
 - Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
 - Reusable `PeerIdObjectSchema` and `SessionIdObjectSchema` helpers for union validation
 - Moved `@types/node` from `dependencies` to `devDependencies`
+
+### Fixed
+
+- `uploadFile()` now rejects unsupported top-level binary/object inputs and only validates inputs the serializer can actually upload.
+- `uploadFile()` now serializes message configuration using API field names, matching `addMessages()`.
+- Session fetch methods now refresh cached `createdAt` and `isActive` values alongside metadata and configuration.
 
 ## [2.0.2] - 2026-03-10
 
