@@ -272,12 +272,10 @@ const MessageResponseSchema: z.ZodType<MessageResponse> = z.object({
 export const RepresentationOptionsSchema = z
   .object({
     searchQuery: z
-      .string()
-      .min(1, 'searchQuery must be a non-empty string')
-      .refine(
-        (query: string) => query.trim().length > 0,
-        'searchQuery cannot be only whitespace'
-      )
+      .union([
+        z.string().min(1, 'searchQuery must be a non-empty string'),
+        MessageResponseSchema,
+      ])
       .optional(),
     searchTopK: z
       .number()
@@ -307,12 +305,6 @@ export const ContextParamsSchema = z
   .object({
     summary: z.boolean().optional(),
     tokens: z.int('Token limit must be an integer').optional(),
-    searchQuery: z
-      .union([
-        z.string().min(1, 'Search query must be a non-empty string'),
-        MessageResponseSchema,
-      ])
-      .optional(),
     peerTarget: PeerIdSchema.optional(),
     peerPerspective: PeerIdSchema.optional(),
     limitToSession: z.boolean().optional(),
@@ -320,11 +312,11 @@ export const ContextParamsSchema = z
   })
   .strict()
   .superRefine((data, ctx) => {
-    if (data.searchQuery && !data.peerTarget) {
+    if (data.representationOptions?.searchQuery && !data.peerTarget) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'peerTarget is required when searchQuery is provided',
-        path: ['searchQuery'],
+        path: ['representationOptions', 'searchQuery'],
       })
     }
 

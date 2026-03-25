@@ -279,7 +279,10 @@ export class ConclusionScope {
   async representation(options?: RepresentationOptions): Promise<string> {
     const response = await this._getRepresentation(this.observer, {
       target: this.observed,
-      search_query: options?.searchQuery,
+      search_query:
+        typeof options?.searchQuery === 'string'
+          ? options.searchQuery
+          : options?.searchQuery?.content,
       search_top_k: options?.searchTopK,
       search_max_distance: options?.searchMaxDistance,
       include_most_frequent: options?.includeMostFrequent,

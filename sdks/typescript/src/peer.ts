@@ -741,17 +741,22 @@ export class Peer {
   async representation(options?: {
     session?: string | Session
     target?: string | Peer
-    searchQuery?: string
+    searchQuery?: string | Message
     searchTopK?: number
     searchMaxDistance?: number
     includeMostFrequent?: boolean
     maxConclusions?: number
   }): Promise<string> {
+    const rawSearchQuery = options?.searchQuery
+    const searchQueryText =
+      typeof rawSearchQuery === 'string'
+        ? rawSearchQuery
+        : rawSearchQuery?.content
     const getRepresentationParams = PeerGetRepresentationParamsSchema.parse({
       session: options?.session,
       target: options?.target,
       options: {
-        searchQuery: options?.searchQuery,
+        searchQuery: searchQueryText,
         searchTopK: options?.searchTopK,
         searchMaxDistance: options?.searchMaxDistance,
         includeMostFrequent: options?.includeMostFrequent,
@@ -772,7 +777,10 @@ export class Peer {
     const response = await this._getRepresentation({
       session_id: sessionId,
       target: targetId,
-      search_query: getRepresentationParams.options?.searchQuery,
+      search_query:
+        typeof getRepresentationParams.options?.searchQuery === 'string'
+          ? getRepresentationParams.options.searchQuery
+          : getRepresentationParams.options?.searchQuery?.content,
       search_top_k: getRepresentationParams.options?.searchTopK,
       search_max_distance: getRepresentationParams.options?.searchMaxDistance,
       include_most_frequent:

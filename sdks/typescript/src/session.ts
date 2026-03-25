@@ -677,10 +677,9 @@ export class Session {
    * @param options.summary - Whether to include a summary of earlier messages
    * @param options.tokens - Target token count for the context window
    * @param options.peerTarget - The peer to get representation for
-   * @param options.lastUserMessage - Message text (string) or Message object whose content will be used for semantic search
    * @param options.peerPerspective - The peer whose perspective to use for representation
    * @param options.limitToSession - Whether to limit representation to this session only
-   * @param options.representationOptions - Options for representation retrieval
+   * @param options.representationOptions - Options for representation retrieval (searchQuery, searchTopK, etc.)
    * @returns Promise resolving to a SessionContext with messages, summary, and representation
    *
    * @example
@@ -699,7 +698,6 @@ export class Session {
     summary?: boolean
     tokens?: number
     peerTarget?: string | Peer
-    searchQuery?: string | Message
     peerPerspective?: string | Peer
     limitToSession?: boolean
     representationOptions?: RepresentationOptions
@@ -713,30 +711,35 @@ export class Session {
       typeof opts.peerPerspective === 'object'
         ? opts.peerPerspective.id
         : opts.peerPerspective
+
+    // Resolve searchQuery from representationOptions (supports string | Message)
+    const rawSearchQuery = opts.representationOptions?.searchQuery
     const searchQueryText =
-      typeof opts.searchQuery === 'string'
-        ? opts.searchQuery
-        : opts.searchQuery?.content
+      typeof rawSearchQuery === 'string'
+        ? rawSearchQuery
+        : rawSearchQuery?.content
 
     const contextParams = ContextParamsSchema.parse({
       summary: opts.summary,
       tokens: opts.tokens,
       peerTarget: peerTargetId,
-      searchQuery: searchQueryText,
       peerPerspective: peerPerspectiveId,
       limitToSession: opts.limitToSession,
-      representationOptions: opts.representationOptions,
+      representationOptions: opts.representationOptions
+        ? {
+            ...opts.representationOptions,
+            searchQuery: searchQueryText,
+          }
+        : undefined,
     })
-
-    const searchQueryParsed =
-      typeof contextParams.searchQuery === 'string'
-        ? contextParams.searchQuery
-        : contextParams.searchQuery?.content
 
     const context = await this._getContext({
       tokens: contextParams.tokens,
       summary: contextParams.summary,
-      search_query: searchQueryParsed,
+      search_query:
+        typeof contextParams.representationOptions?.searchQuery === 'string'
+          ? contextParams.representationOptions.searchQuery
+          : contextParams.representationOptions?.searchQuery?.content,
       peer_target: contextParams.peerTarget,
       peer_perspective: contextParams.peerPerspective,
       limit_to_session: contextParams.limitToSession,
@@ -949,18 +952,23 @@ export class Session {
     peer: string | Peer,
     options?: {
       target?: string | Peer
-      searchQuery?: string
+      searchQuery?: string | Message
       searchTopK?: number
       searchMaxDistance?: number
       includeMostFrequent?: boolean
       maxConclusions?: number
     }
   ): Promise<string> {
+    const rawSearchQuery = options?.searchQuery
+    const searchQueryText =
+      typeof rawSearchQuery === 'string'
+        ? rawSearchQuery
+        : rawSearchQuery?.content
     const getRepresentationParams = GetRepresentationParamsSchema.parse({
       peer,
       target: options?.target,
       options: {
-        searchQuery: options?.searchQuery,
+        searchQuery: searchQueryText,
         searchTopK: options?.searchTopK,
         searchMaxDistance: options?.searchMaxDistance,
         includeMostFrequent: options?.includeMostFrequent,
@@ -980,7 +988,10 @@ export class Session {
     const response = await this._getRepresentation(peerId, {
       session_id: this.id,
       target: targetId,
-      search_query: getRepresentationParams.options?.searchQuery,
+      search_query:
+        typeof getRepresentationParams.options?.searchQuery === 'string'
+          ? getRepresentationParams.options.searchQuery
+          : getRepresentationParams.options?.searchQuery?.content,
       search_top_k: getRepresentationParams.options?.searchTopK,
       search_max_distance: getRepresentationParams.options?.searchMaxDistance,
       include_most_frequent:
