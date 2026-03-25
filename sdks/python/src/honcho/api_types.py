@@ -68,6 +68,18 @@ class SessionConfiguration(WorkspaceConfiguration):
     pass
 
 
+class WorkspaceConfigurationResponse(WorkspaceConfiguration):
+    """Workspace configuration for response parsing — tolerates unknown fields from newer servers."""
+
+    model_config = ConfigDict(extra="ignore")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+
+class SessionConfigurationResponse(SessionConfiguration):
+    """Session configuration for response parsing — tolerates unknown fields from newer servers."""
+
+    model_config = ConfigDict(extra="ignore")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+
 class MessageConfiguration(BaseModel):
     """Message-level configuration options."""
 
@@ -117,8 +129,8 @@ class WorkspaceResponse(BaseModel):
 
     id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: WorkspaceConfiguration = Field(
-        default_factory=WorkspaceConfiguration
+    configuration: WorkspaceConfigurationResponse = Field(
+        default_factory=WorkspaceConfigurationResponse
     )
     created_at: datetime.datetime
 
@@ -245,7 +257,9 @@ class SessionResponse(BaseModel):
     is_active: bool
     workspace_id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: SessionConfiguration = Field(default_factory=SessionConfiguration)
+    configuration: SessionConfigurationResponse = Field(
+        default_factory=SessionConfigurationResponse
+    )
     created_at: datetime.datetime
 
 

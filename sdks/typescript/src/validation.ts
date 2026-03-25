@@ -73,6 +73,11 @@ export const PeerIdSchema = z
   .max(100, 'Peer ID can be at most 100 characters')
 
 /**
+ * Strict helper: peer ID as object.
+ */
+const PeerIdObjectSchema = z.object({ id: PeerIdSchema })
+
+/**
  * Schema for session metadata.
  */
 export const SessionMetadataSchema = z.record(z.string(), z.unknown())
@@ -151,6 +156,11 @@ export const SessionIdSchema = z
   .max(100, 'Session ID can be at most 100 characters')
 
 /**
+ * Strict helper: session ID as object.
+ */
+const SessionIdObjectSchema = z.object({ id: SessionIdSchema })
+
+/**
  * Schema for session peer configuration.
  */
 export const SessionPeerConfigSchema = z
@@ -225,13 +235,13 @@ export const ChatQuerySchema = z
   .object({
     query: SearchQuerySchema,
     target: z
-      .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
+      .union([PeerIdSchema, PeerIdObjectSchema])
       .optional()
       .transform((val) =>
         val ? (typeof val === 'string' ? val : val.id) : undefined
       ),
     session: z
-      .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
+      .union([SessionIdSchema, SessionIdObjectSchema])
       .optional()
       .transform((val) =>
         val ? (typeof val === 'string' ? val : val.id) : undefined
@@ -332,13 +342,9 @@ export const ContextParamsSchema = z
  */
 export const QueueStatusOptionsSchema = z
   .object({
-    observer: z
-      .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
-      .optional(),
-    sender: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
-    session: z
-      .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
-      .optional(),
+    observer: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
+    sender: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
+    session: z.union([SessionIdSchema, SessionIdObjectSchema]).optional(),
     timeout: z
       .number()
       .positive('Timeout must be a positive number')
@@ -360,13 +366,15 @@ export const FileUploadSchema = z
       // Uint8Array
       z.instanceof(Uint8Array),
       // Custom uploadable object with filename, content, and content_type
-      z.object({
-        filename: z.string().min(1, 'Filename must be a non-empty string'),
-        content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
-        content_type: z
-          .string()
-          .min(1, 'Content type must be a non-empty string'),
-      }),
+      z
+        .object({
+          filename: z.string().min(1, 'Filename must be a non-empty string'),
+          content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
+          content_type: z
+            .string()
+            .min(1, 'Content type must be a non-empty string'),
+        })
+        .strict(),
       // Fallback for any other uploadable type
       z
         .any()
@@ -375,7 +383,7 @@ export const FileUploadSchema = z
           'File must not be null or undefined'
         ),
     ]),
-    peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
+    peer: z.union([PeerIdSchema, PeerIdObjectSchema]),
     metadata: MessageMetadataSchema,
     configuration: MessageConfigurationSchema,
     createdAt: z.string().nullable().optional(),
@@ -387,8 +395,8 @@ export const FileUploadSchema = z
  */
 export const GetRepresentationParamsSchema = z
   .object({
-    peer: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
-    target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+    peer: z.union([PeerIdSchema, PeerIdObjectSchema]),
+    target: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
     options: RepresentationOptionsSchema.optional(),
   })
   .strict()
@@ -398,10 +406,8 @@ export const GetRepresentationParamsSchema = z
  */
 export const PeerGetRepresentationParamsSchema = z
   .object({
-    session: z
-      .union([SessionIdSchema, z.object({ id: SessionIdSchema })])
-      .optional(),
-    target: z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]).optional(),
+    session: z.union([SessionIdSchema, SessionIdObjectSchema]).optional(),
+    target: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
     options: RepresentationOptionsSchema.optional(),
   })
   .strict()
@@ -410,7 +416,7 @@ export const PeerGetRepresentationParamsSchema = z
  * Schema for peer card target parameter.
  */
 export const CardTargetSchema = z
-  .union([PeerIdSchema, z.object({ id: PeerIdSchema })])
+  .union([PeerIdSchema, PeerIdObjectSchema])
   .optional()
   .transform((val) =>
     val ? (typeof val === 'string' ? val : val.id) : undefined
@@ -426,19 +432,19 @@ export const PeerCardContentSchema = z.array(z.string())
  */
 export const PeerAdditionSchema = z.union([
   PeerIdSchema,
-  z.object({ id: PeerIdSchema }),
+  PeerIdObjectSchema,
   z.array(
     z.union([
       PeerIdSchema,
-      z.object({ id: PeerIdSchema }),
+      PeerIdObjectSchema,
       z.tuple([
-        z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
+        z.union([PeerIdSchema, PeerIdObjectSchema]),
         SessionPeerConfigSchema,
       ]),
     ])
   ),
   z.tuple([
-    z.union([PeerIdSchema, z.object({ id: PeerIdSchema })]),
+    z.union([PeerIdSchema, PeerIdObjectSchema]),
     SessionPeerConfigSchema,
   ]),
 ])
@@ -838,8 +844,8 @@ export const PeerAdditionToApiSchema = PeerAdditionSchema.transform(
  */
 export const PeerRemovalSchema = z.union([
   PeerIdSchema,
-  z.object({ id: PeerIdSchema }),
-  z.array(z.union([PeerIdSchema, z.object({ id: PeerIdSchema })])),
+  PeerIdObjectSchema,
+  z.array(z.union([PeerIdSchema, PeerIdObjectSchema])),
 ])
 
 /**
