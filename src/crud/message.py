@@ -4,6 +4,7 @@ from typing import Any
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
@@ -203,17 +204,40 @@ async def create_messages(
             seq_in_session=message_seq_in_session,
         )
         message_objects.append(message_obj)
-
-    db.add_all(message_objects)
+    # Build encoded_message_lookup before insert (maps public_id -> encoded_message)
+    # This must be done here while message_objects still corresponds 1:1 with messages
+    encoded_message_lookup: dict[str, list[int]] = {
+        obj.public_id: orig_msg.encoded_message
+        for obj, orig_msg in zip(message_objects, messages, strict=True)
+    }
+    public_ids = [obj.public_id for obj in message_objects]
+    stmt = pg_insert(models.Message).values(
+        [
+            {
+                "session_name": obj.session_name,
+                "peer_name": obj.peer_name,
+                "content": obj.content,
+                "h_metadata": obj.h_metadata,
+                "workspace_name": obj.workspace_name,
+                "public_id": obj.public_id,
+                "token_count": obj.token_count,
+                "created_at": obj.created_at,
+                "seq_in_session": obj.seq_in_session,
+            }
+            for obj in message_objects
+        ]
+    ).on_conflict_do_nothing(constraint="uq_messages_session_seq")
+    await db.execute(stmt)
+    # Fetch inserted rows back so message_objects have DB-assigned IDs
+    result = await db.execute(
+        select(models.Message).where(models.Message.public_id.in_(public_ids))
+    )
+    message_objects = list(result.scalars().all())
 
     # Commit here to release the advisory lock before generating embeddings
     await db.commit()
     try:
         if settings.EMBED_MESSAGES:
-            encoded_message_lookup = {
-                msg.public_id: orig_msg.encoded_message
-                for msg, orig_msg in zip(message_objects, messages, strict=True)
-            }
             id_resource_dict = {
                 message.public_id: (
                     message.content,
