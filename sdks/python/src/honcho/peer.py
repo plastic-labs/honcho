@@ -194,23 +194,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         )
         self._honcho = honcho
         self._metadata = metadata
-        self._configuration = configuration
+        self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
         self._created_at = created_at
-
-        if configuration is not None or metadata is not None:
-            self._honcho._ensure_workspace()
-            body: dict[str, Any] = {"id": peer_id}
-            if metadata is not None:
-                body["metadata"] = metadata
-            if configuration is not None:
-                body["configuration"] = configuration.model_dump(exclude_none=True)
-
-            data = honcho._http.post(routes.peers(honcho.workspace_id), body=body)
-            peer_data = PeerResponse.model_validate(data)
-            # Update cached values with API response
-            self._metadata = peer_data.metadata
-            self._configuration = peer_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._created_at = peer_data.created_at
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def chat(

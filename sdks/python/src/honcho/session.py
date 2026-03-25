@@ -214,25 +214,9 @@ class Session(SessionBase, MetadataConfigMixin):
         )
         self._honcho = honcho
         self._metadata = metadata
-        self._configuration = configuration
+        self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
         self._created_at = created_at
         self._is_active = is_active
-
-        if configuration is not None or metadata is not None:
-            self._honcho._ensure_workspace()
-            body: dict[str, Any] = {"id": session_id}
-            if metadata is not None:
-                body["metadata"] = metadata
-            if configuration is not None:
-                body["configuration"] = configuration.model_dump(exclude_none=True)
-
-            data = honcho._http.post(routes.sessions(honcho.workspace_id), body=body)
-            session_data = SessionResponse.model_validate(data)
-            # Update cached values with API response
-            self._metadata = session_data.metadata
-            self._configuration = session_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._created_at = session_data.created_at
-            self._is_active = session_data.is_active
 
     def add_peers(
         self,

@@ -52,6 +52,7 @@ describe('Peer', () => {
       expect(peer).toBeInstanceOf(Peer)
       expect(peer.id).toBe('simple-peer')
       expect(peer.workspaceId).toBe(client.workspaceId)
+      expect(peer.createdAt).toBeDefined()
     })
 
     test('peer created with metadata exposes createdAt', async () => {

@@ -391,30 +391,19 @@ export class Honcho {
       ? PeerConfigSchema.parse(options.configuration)
       : undefined
 
-    if (validatedConfiguration || validatedMetadata) {
-      const peerData = await this._getOrCreatePeer(this.workspaceId, {
-        id: validatedId,
-        configuration: peerConfigToApi(validatedConfiguration),
-        metadata: validatedMetadata,
-      })
-      return new Peer(
-        validatedId,
-        this.workspaceId,
-        this._http,
-        peerData.metadata ?? undefined,
-        peerConfigFromApi(peerData.configuration) ?? undefined,
-        () => this._ensureWorkspace(),
-        peerData.created_at
-      )
-    }
-
+    const peerData = await this._getOrCreatePeer(this.workspaceId, {
+      id: validatedId,
+      configuration: peerConfigToApi(validatedConfiguration),
+      metadata: validatedMetadata,
+    })
     return new Peer(
       validatedId,
       this.workspaceId,
       this._http,
-      undefined,
-      undefined,
-      () => this._ensureWorkspace()
+      peerData.metadata ?? undefined,
+      peerConfigFromApi(peerData.configuration) ?? undefined,
+      () => this._ensureWorkspace(),
+      peerData.created_at
     )
   }
 
@@ -510,31 +499,20 @@ export class Honcho {
       ? SessionConfigSchema.parse(options.configuration)
       : undefined
 
-    if (validatedConfiguration || validatedMetadata) {
-      const sessionData = await this._getOrCreateSession(this.workspaceId, {
-        id: validatedId,
-        configuration: validatedConfiguration,
-        metadata: validatedMetadata,
-      })
-      return new Session(
-        validatedId,
-        this.workspaceId,
-        this._http,
-        sessionData.metadata ?? undefined,
-        sessionConfigFromApi(sessionData.configuration) ?? undefined,
-        () => this._ensureWorkspace(),
-        sessionData.created_at,
-        sessionData.is_active
-      )
-    }
-
+    const sessionData = await this._getOrCreateSession(this.workspaceId, {
+      id: validatedId,
+      configuration: validatedConfiguration,
+      metadata: validatedMetadata,
+    })
     return new Session(
       validatedId,
       this.workspaceId,
       this._http,
-      undefined,
-      undefined,
-      () => this._ensureWorkspace()
+      sessionData.metadata ?? undefined,
+      sessionConfigFromApi(sessionData.configuration) ?? undefined,
+      () => this._ensureWorkspace(),
+      sessionData.created_at,
+      sessionData.is_active
     )
   }
 

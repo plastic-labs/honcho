@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - **Breaking**: `searchQuery` removed from top-level `context()` options. Use `representationOptions.searchQuery` instead — this eliminates the duplicate parameter and is consistent with the API structure.
 - **Breaking**: List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) now take an options object instead of a raw filter: `peers({ filters, page, size, reverse })` instead of `peers(filters)`.
 - `RepresentationOptionsSchema` now accepts `string | MessageResponse` for `searchQuery`
+- **Breaking**: `peer()` and `session()` now always make a get-or-create API call. Previously, calling without metadata/configuration returned a lazy object with no API call. All Peer/Session objects now have `createdAt` populated immediately.
 - Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
 - Reusable `PeerIdObjectSchema` and `SessionIdObjectSchema` helpers for union validation
 - Moved `@types/node` from `dependencies` to `devDependencies`

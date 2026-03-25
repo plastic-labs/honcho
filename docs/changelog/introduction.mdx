@@ -521,6 +521,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
         ### Changed
 
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
         - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
         </Update>
         <Update label="v2.0.2">
@@ -655,6 +656,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
         - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead
         - **Breaking**: List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) now take an options object instead of a raw filter
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
         - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
         - Moved `@types/node` from `dependencies` to `devDependencies`
         </Update>

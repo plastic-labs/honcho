@@ -167,29 +167,26 @@ class HonchoAio(AsyncMetadataConfigMixin):
             configuration: Optional configuration to set for this peer.
 
         Returns:
-            A Peer object
+            A Peer object with cached values from the API response.
         """
-        if configuration is not None or metadata is not None:
-            await self._honcho._ensure_workspace_async()
-            body: dict[str, Any] = {"id": id}
-            if metadata is not None:
-                body["metadata"] = metadata
-            if configuration is not None:
-                body["configuration"] = configuration.model_dump(exclude_none=True)
+        await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"id": id}
+        if metadata is not None:
+            body["metadata"] = metadata
+        if configuration is not None:
+            body["configuration"] = configuration.model_dump(exclude_none=True)
 
-            data = await self._honcho._async_http_client.post(
-                routes.peers(self._honcho.workspace_id), body=body
-            )
-            peer_data = PeerResponse.model_validate(data)
-            return Peer(
-                id,
-                self._honcho,
-                metadata=peer_data.metadata,
-                configuration=peer_data.configuration,
-                created_at=peer_data.created_at,
-            )
-
-        return Peer(id, self._honcho, metadata=metadata, configuration=configuration)
+        data = await self._honcho._async_http_client.post(
+            routes.peers(self._honcho.workspace_id), body=body
+        )
+        peer_data = PeerResponse.model_validate(data)
+        return Peer(
+            id,
+            self._honcho,
+            metadata=peer_data.metadata,
+            configuration=peer_data.configuration,
+            created_at=peer_data.created_at,
+        )
 
     async def peers(
         self,
@@ -256,30 +253,29 @@ class HonchoAio(AsyncMetadataConfigMixin):
             configuration: Optional configuration to set for this session.
 
         Returns:
-            A Session object
+            A Session object with cached values from the API response.
         """
-        if configuration is not None or metadata is not None:
-            await self._honcho._ensure_workspace_async()
-            body: dict[str, Any] = {"id": id}
-            if metadata is not None:
-                body["metadata"] = metadata
-            if configuration is not None:
-                body["configuration"] = configuration.model_dump(exclude_none=True)
+        await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"id": id}
+        if metadata is not None:
+            body["metadata"] = metadata
+        if configuration is not None:
+            body["configuration"] = configuration.model_dump(exclude_none=True)
 
-            data = await self._honcho._async_http_client.post(
-                routes.sessions(self._honcho.workspace_id), body=body
-            )
-            session_data = SessionResponse.model_validate(data)
-            return Session(
-                id,
-                self._honcho,
-                metadata=session_data.metadata,
-                configuration=session_data.configuration,
-                created_at=session_data.created_at,
-                is_active=session_data.is_active,
-            )
-
-        return Session(id, self._honcho, metadata=metadata, configuration=configuration)
+        data = await self._honcho._async_http_client.post(
+            routes.sessions(self._honcho.workspace_id), body=body
+        )
+        session_data = SessionResponse.model_validate(data)
+        return Session(
+            id,
+            self._honcho,
+            metadata=session_data.metadata,
+            configuration=SessionConfiguration.model_validate(
+                session_data.configuration.model_dump()
+            ),
+            created_at=session_data.created_at,
+            is_active=session_data.is_active,
+        )
 
     async def sessions(
         self,

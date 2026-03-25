@@ -242,7 +242,7 @@ const workspaces = await honcho.workspaces();
 </CodeGroup>
 
 <Info>
-Peer and session creation is **lazy** - no API calls are made until you actually use the peer or session.
+`peer()` and `session()` always make a get-or-create API call, returning objects with cached metadata, configuration, and timestamps.
 </Info>
 
 ### Peer
@@ -251,7 +251,7 @@ Represents an entity that can participate in conversations:
 
 <CodeGroup>
 ```python Python
-# Create peers (lazy creation - no API call yet)
+# Create peers (get-or-create API call)
 alice = honcho.peer("alice")
 assistant = honcho.peer("assistant")
 
@@ -561,7 +561,7 @@ Manages multi-party conversations:
 
 <CodeGroup>
 ```python Python
-# Create session (like peers, lazy creation)
+# Create session (get-or-create API call)
 session = honcho.session("conversation-1")
 
 # Create with immediate configuration
@@ -1093,8 +1093,8 @@ const supportAgent = await honcho.peer(`agent-${agentId}`);
 
 <CodeGroup>
 ```python Python
-# Lazy creation - no API calls until needed
-peers = [honcho.peer(f"user-{i}") for i in range(100)]  # Fast
+# Create peers (each makes a get-or-create call)
+peers = [honcho.peer(f"user-{i}") for i in range(100)]
 
 # Batch operations when possible
 session.add_messages([peer.message(f"Message {i}") for i, peer in enumerate(peers)])
@@ -1104,7 +1104,7 @@ context = session.context(tokens=1500)  # Limit context size
 ```
 
 ```typescript TypeScript
-// Lazy creation - no API calls until needed
+// Create peers (each makes a get-or-create call)
 const peers = await Promise.all(
   Array.from({ length: 100 }, (_, i) => honcho.peer(`user-${i}`))
 );

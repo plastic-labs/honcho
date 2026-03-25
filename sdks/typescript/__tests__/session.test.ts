@@ -54,6 +54,8 @@ describe('Session', () => {
       expect(session).toBeInstanceOf(Session)
       expect(session.id).toBe('simple-session')
       expect(session.workspaceId).toBe(client.workspaceId)
+      expect(session.createdAt).toBeDefined()
+      expect(session.isActive).toBe(true)
     })
 
     test('session created with metadata exposes createdAt and isActive', async () => {
