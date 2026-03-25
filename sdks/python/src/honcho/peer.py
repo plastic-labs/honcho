@@ -321,35 +321,49 @@ class Peer(PeerBase, MetadataConfigMixin):
         return DialecticStreamResponse(stream_response())
 
     def sessions(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[SessionResponse, "Session"]:
         """
         Get all sessions this peer is a member of.
 
-        Makes an API call to retrieve all sessions where this peer is an active participant.
-        Sessions are created when peers are added to them or send messages to them.
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
-            A paginated list of Session objects this peer belongs to. Returns an empty
-            list if the peer is not a member of any sessions
+            A paginated list of Session objects this peer belongs to.
         """
         self._honcho._ensure_workspace()
         # Import here to avoid circular import (session.py imports Peer)
         from .session import Session
 
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._honcho._http.post(
             routes.peer_sessions_list(self.workspace_id, self.id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(session: SessionResponse) -> Session:
             return Session(session.id, self._honcho)
 
-        def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
+        def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._honcho._http.post(
                 routes.peer_sessions_list(self.workspace_id, self.id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, SessionResponse, transform, fetch_next)
 

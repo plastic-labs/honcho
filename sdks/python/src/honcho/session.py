@@ -431,38 +431,43 @@ class Session(SessionBase, MetadataConfigMixin):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[MessageResponse, Message]:
         """
         Get messages from this session with optional filtering.
 
-        Makes an API call to retrieve messages from this session. Results can be
-        filtered based on various criteria.
-
         Args:
-            filters: Dictionary of filter criteria. Supported filters include:
-                    - peer_id: Filter messages by the peer who created them
-                    - metadata: Filter messages by metadata key-value pairs
-                    - timestamp_start: Filter messages after a specific timestamp
-                    - timestamp_end: Filter messages before a specific timestamp
+            filters: Dictionary of filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, returns messages in reverse chronological order. Default: False.
 
         Returns:
-            A list of Message objects matching the specified criteria, ordered by
-            creation time (most recent first)
+            A paginated result of Message objects.
         """
         self._honcho._ensure_workspace()
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._honcho._http.post(
             routes.messages_list(self.workspace_id, self.id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(response: MessageResponse) -> Message:
             return Message.from_api_response(response)
 
-        def fetch_next(page: int) -> SyncPage[MessageResponse, Message]:
+        def fetch_next(next_page: int) -> SyncPage[MessageResponse, Message]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._honcho._http.post(
                 routes.messages_list(self.workspace_id, self.id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, MessageResponse, transform, fetch_next)
 

@@ -327,22 +327,33 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         return Peer(id, self, configuration=configuration, metadata=metadata)
 
     def peers(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[PeerResponse, Peer]:
         """
         Get all peers in the current workspace.
 
-        Makes an API call to retrieve all peers that have been created or used
-        within the current workspace. Returns a paginated result that transforms
-        inner client Peer objects to SDK Peer objects as they are consumed.
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             A SyncPage of Peer objects representing all peers in the workspace
         """
         self._ensure_workspace()
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._http.post(
             routes.peers_list(self.workspace_id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(peer: PeerResponse) -> Peer:
@@ -354,11 +365,14 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 created_at=peer.created_at,
             )
 
-        def fetch_next(page: int) -> SyncPage[PeerResponse, Peer]:
+        def fetch_next(next_page: int) -> SyncPage[PeerResponse, Peer]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._http.post(
                 routes.peers_list(self.workspace_id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, PeerResponse, transform, fetch_next)
 
@@ -406,22 +420,33 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         return Session(id, self, configuration=configuration, metadata=metadata)
 
     def sessions(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace.
 
-        Makes an API call to retrieve all sessions that have been created within
-        the current workspace.
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             A SyncPage of Session objects representing all sessions in the workspace.
-            Returns an empty page if no sessions exist
         """
         self._ensure_workspace()
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._http.post(
             routes.sessions_list(self.workspace_id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(session: SessionResponse) -> Session:
@@ -434,11 +459,14 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 is_active=session.is_active,
             )
 
-        def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
+        def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._http.post(
                 routes.sessions_list(self.workspace_id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, SessionResponse, transform, fetch_next)
 

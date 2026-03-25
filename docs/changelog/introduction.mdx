@@ -517,6 +517,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         - `created_at` property on `Peer` and `Session` objects
         - `is_active` property on `Session` objects
         - `get_message(message_id)` method on `Session` (sync and async) to fetch a single message by ID
+        - `page`, `size`, and `reverse` pagination parameters on all list methods
 
         ### Changed
 
@@ -648,10 +649,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         - `isActive` property on `Session` wrapper objects
         - `getMessage(messageId)` method on `Session` to fetch a single message by ID
         - `Peer.representation()`, `Session.representation()`, and `Session.context()` now accept `Message` objects for `searchQuery`
+        - `page`, `size`, and `reverse` pagination controls on all list methods
 
         ### Changed
 
         - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead
+        - **Breaking**: List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) now take an options object instead of a raw filter
         - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
         - Moved `@types/node` from `dependencies` to `devDependencies`
         </Update>

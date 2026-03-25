@@ -101,13 +101,18 @@ export class ConclusionScope {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    reverse?: boolean
   }): Promise<PageResponse<ConclusionResponse>> {
     await this._ensureWorkspace()
     return this._http.post<PageResponse<ConclusionResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/list`,
       {
         body: { filters: params.filters },
-        query: { page: params.page, size: params.size },
+        query: {
+          page: params.page,
+          size: params.size,
+          reverse: params.reverse ? 'true' : undefined,
+        },
       }
     )
   }
@@ -182,6 +187,7 @@ export class ConclusionScope {
     page?: number
     size?: number
     session?: string | Session
+    reverse?: boolean
   }): Promise<Page<Conclusion, ConclusionResponse>> {
     const resolvedSessionId = options?.session
       ? typeof options.session === 'string'
@@ -195,18 +201,20 @@ export class ConclusionScope {
     if (resolvedSessionId) {
       filters.session_id = resolvedSessionId
     }
+    const reverse = options?.reverse
 
     const response = await this._list({
       filters,
       page: options?.page ?? 1,
       size: options?.size ?? 50,
+      reverse,
     })
 
     const fetchNextPage = async (
       page: number,
       size: number
     ): Promise<PageResponse<ConclusionResponse>> => {
-      return this._list({ filters, page, size })
+      return this._list({ filters, page, size, reverse })
     }
 
     return new Page(

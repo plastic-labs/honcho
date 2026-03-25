@@ -209,13 +209,18 @@ export class Peer {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    reverse?: boolean
   }): Promise<PageResponse<SessionResponse>> {
     await this._ensureWorkspace()
     return this._http.post<PageResponse<SessionResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/sessions`,
       {
         body: { filters: params?.filters },
-        query: { page: params?.page, size: params?.size },
+        query: {
+          page: params?.page,
+          size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
+        },
       }
     )
   }
@@ -473,15 +478,33 @@ export class Peer {
    * @returns Promise resolving to a paginated list of Session objects this peer belongs to.
    *          Returns an empty list if the peer is not a member of any sessions
    */
-  async sessions(filters?: Filters): Promise<Page<Session, SessionResponse>> {
-    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const sessionsPage = await this._listSessions({ filters: validatedFilter })
+  async sessions(options?: {
+    filters?: Filters
+    page?: number
+    size?: number
+    reverse?: boolean
+  }): Promise<Page<Session, SessionResponse>> {
+    const validatedFilter = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const reverse = options?.reverse
+    const sessionsPage = await this._listSessions({
+      filters: validatedFilter,
+      page: options?.page,
+      size: options?.size,
+      reverse,
+    })
 
     const fetchNextPage = async (
       page: number,
       size: number
     ): Promise<PageResponse<SessionResponse>> => {
-      return this._listSessions({ filters: validatedFilter, page, size })
+      return this._listSessions({
+        filters: validatedFilter,
+        page,
+        size,
+        reverse,
+      })
     }
 
     return new Page(

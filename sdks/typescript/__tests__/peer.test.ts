@@ -126,7 +126,7 @@ describe('Peer', () => {
         metadata: { uniqueTag },
       })
 
-      const page = await client.peers({ metadata: { uniqueTag } })
+      const page = await client.peers({ filters: { metadata: { uniqueTag } } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-peer')
@@ -223,7 +223,7 @@ describe('Peer', () => {
       })
       await session.addPeers([peer.id])
 
-      const sessions = await peer.sessions({ metadata: { category: 'special' } })
+      const sessions = await peer.sessions({ filters: { metadata: { category: 'special' } } })
 
       expect(sessions.items.length).toBeGreaterThanOrEqual(1)
     })
@@ -645,6 +645,34 @@ describe('Peer', () => {
       const str = peer.toString()
 
       expect(str).toBe("Peer(id='tostring-peer')")
+    })
+  })
+
+  // ===========================================================================
+  // Pagination Controls
+  // ===========================================================================
+
+  describe('Pagination controls', () => {
+    test('peers with custom page size', async () => {
+      // Create peers with unique metadata
+      await client.peer('page-peer-1', { metadata: { group: 'page-test' } })
+      await client.peer('page-peer-2', { metadata: { group: 'page-test' } })
+      await client.peer('page-peer-3', { metadata: { group: 'page-test' } })
+
+      const page = await client.peers({
+        filters: { metadata: { group: 'page-test' } },
+        size: 2,
+      })
+      expect(page.items.length).toBe(2)
+    })
+
+    test('peers with explicit page number', async () => {
+      const page2 = await client.peers({
+        filters: { metadata: { group: 'page-test' } },
+        page: 2,
+        size: 2,
+      })
+      expect(page2.items.length).toBe(1)
     })
   })
 })

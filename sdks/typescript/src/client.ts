@@ -279,13 +279,18 @@ export class Honcho {
       filters?: Record<string, unknown>
       page?: number
       size?: number
+      reverse?: boolean
     }
   ): Promise<PageResponse<PeerResponse>> {
     return this._http.post<PageResponse<PeerResponse>>(
       `/${API_VERSION}/workspaces/${workspaceId}/peers/list`,
       {
         body: { filters: params?.filters },
-        query: { page: params?.page, size: params?.size },
+        query: {
+          page: params?.page,
+          size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
+        },
       }
     )
   }
@@ -310,13 +315,18 @@ export class Honcho {
       filters?: Record<string, unknown>
       page?: number
       size?: number
+      reverse?: boolean
     }
   ): Promise<PageResponse<SessionResponse>> {
     return this._http.post<PageResponse<SessionResponse>>(
       `/${API_VERSION}/workspaces/${workspaceId}/sessions/list`,
       {
         body: { filters: params?.filters },
-        query: { page: params?.page, size: params?.size },
+        query: {
+          page: params?.page,
+          size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
+        },
       }
     )
   }
@@ -417,11 +427,22 @@ export class Honcho {
    * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async peers(filters?: Filters): Promise<Page<Peer, PeerResponse>> {
+  async peers(options?: {
+    filters?: Filters
+    page?: number
+    size?: number
+    reverse?: boolean
+  }): Promise<Page<Peer, PeerResponse>> {
     await this._ensureWorkspace()
-    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
+    const validatedFilter = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const reverse = options?.reverse
     const peersPage = await this._listPeers(this.workspaceId, {
       filters: validatedFilter,
+      page: options?.page,
+      size: options?.size,
+      reverse,
     })
 
     const fetchNextPage = async (
@@ -432,6 +453,7 @@ export class Honcho {
         filters: validatedFilter,
         page,
         size,
+        reverse,
       })
     }
 
@@ -526,11 +548,22 @@ export class Honcho {
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async sessions(filters?: Filters): Promise<Page<Session, SessionResponse>> {
+  async sessions(options?: {
+    filters?: Filters
+    page?: number
+    size?: number
+    reverse?: boolean
+  }): Promise<Page<Session, SessionResponse>> {
     await this._ensureWorkspace()
-    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
+    const validatedFilter = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const reverse = options?.reverse
     const sessionsPage = await this._listSessions(this.workspaceId, {
       filters: validatedFilter,
+      page: options?.page,
+      size: options?.size,
+      reverse,
     })
 
     const fetchNextPage = async (
@@ -541,6 +574,7 @@ export class Honcho {
         filters: validatedFilter,
         page,
         size,
+        reverse,
       })
     }
 
@@ -657,12 +691,18 @@ export class Honcho {
    * @returns Promise resolving to a Page of workspace ID strings. Returns an empty
    *          page if no workspaces are accessible or none exist
    */
-  async workspaces(
+  async workspaces(options?: {
     filters?: Filters
-  ): Promise<Page<string, WorkspaceResponse>> {
-    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
+    page?: number
+    size?: number
+  }): Promise<Page<string, WorkspaceResponse>> {
+    const validatedFilter = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
     const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
+      page: options?.page,
+      size: options?.size,
     })
 
     const fetchNextPage = async (

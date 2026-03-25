@@ -218,6 +218,14 @@ const session = await honcho.session(id);
 // List all peers in workspace (returns Page<Peer>)
 const peers = await honcho.peers();
 
+// List with pagination and filtering
+const filtered = await honcho.peers({
+  filters: { metadata: { role: "user" } },
+  page: 1,
+  size: 25,
+  reverse: true
+});
+
 // List all sessions in workspace (returns Page<Session>)
 const sessions = await honcho.sessions();
 
@@ -254,6 +262,7 @@ alice = honcho.peer("bob", config={"role": "user", "active": True}, metadata={"l
 # Peer properties
 print(f"Peer ID: {alice.id}")
 print(f"Workspace: {alice.workspace_id}")
+print(f"Created: {alice.created_at}")  # Available after API fetch
 
 # Chat with peer's representations (supports streaming)
 response = alice.chat("What did I have for breakfast?")
@@ -305,6 +314,7 @@ const assistant = await honcho.peer("assistant");
 
 // Peer properties
 console.log(`Peer ID: ${alice.id}`);
+console.log(`Created: ${alice.createdAt}`);  // Available after API fetch
 
 // Chat with peer's representations (supports streaming)
 const response = await alice.chat("What did I have for breakfast?");
@@ -561,6 +571,8 @@ session = honcho.session("meeting-1", config={"type": "meeting", "max_peers": 10
 # Session properties
 print(f"Session ID: {session.id}")
 print(f"Workspace: {session.workspace_id}")
+print(f"Created: {session.created_at}")  # Available after API fetch
+print(f"Active: {session.is_active}")    # Available after API fetch
 
 # Peer management
 session.add_peers([alice, assistant])
@@ -579,8 +591,12 @@ session.add_messages([
     assistant.message("Hi Alice! How can I help today?")
 ])
 
-# Get messages
+# Get messages (with optional pagination)
 messages = session.messages()
+messages = session.messages(page=1, size=100, reverse=True)
+
+# Get a single message by ID
+message = session.get_message("message-id")
 
 # Get conversation context
 context = session.context(summary=True, tokens=2000)
@@ -641,6 +657,8 @@ const session = await honcho.session("conversation-1");
 
 // Session properties
 console.log(`Session ID: ${session.id}`);
+console.log(`Created: ${session.createdAt}`);  // Available after API fetch
+console.log(`Active: ${session.isActive}`);    // Available after API fetch
 
 // Peer management
 await session.addPeers([alice, assistant]);
@@ -658,8 +676,12 @@ await session.addMessages([
   assistant.message("Hi Alice! How can I help today?")
 ]);
 
-// Get messages
+// Get messages (with optional pagination)
 const messages = await session.messages();
+const paged = await session.messages({ page: 1, size: 100, reverse: true });
+
+// Get a single message by ID
+const message = await session.getMessage("message-id");
 
 // Get conversation context
 const context = await session.context({ summary: true, tokens: 2000 });
@@ -668,10 +690,10 @@ const context = await session.context({ summary: true, tokens: 2000 });
 const richContext = await session.context({
   tokens: 2000,
   peerTarget: "user",
-  searchQuery: "What are my preferences?",
   peerPerspective: "assistant",
   limitToSession: true,
   representationOptions: {
+    searchQuery: "What are my preferences?",
     searchTopK: 10,
     searchMaxDistance: 0.8,
     includeMostFrequent: true,
@@ -811,12 +833,12 @@ The SessionContext object has the following structure:
 | `tokens` | `int` | Maximum tokens to include |
 | `peer_target` | `str` | Peer ID to get representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
-| `search_query` | `str` or `Message` | Query string or Message object for semantic search |
 | `limit_to_session` | `bool` | Limit representation to session only |
-| `search_top_k` | `int` | Number of semantic search results (1-100) |
-| `search_max_distance` | `float` | Max semantic distance (0.0-1.0) |
-| `include_most_frequent` | `bool` | Include most frequent conclusions |
-| `max_conclusions` | `int` | Max conclusions to include (1-100) |
+| `representationOptions.searchQuery` | `str` or `Message` | Query string or Message object for semantic search |
+| `representationOptions.searchTopK` | `int` | Number of semantic search results (1-100) |
+| `representationOptions.searchMaxDistance` | `float` | Max semantic distance (0.0-1.0) |
+| `representationOptions.includeMostFrequent` | `bool` | Include most frequent conclusions |
+| `representationOptions.maxConclusions` | `int` | Max conclusions to include (1-100) |
 
 ## Advanced Usage
 
@@ -988,23 +1010,46 @@ const actionItems = await session.messages({
 
 ### Pagination
 
+All list methods support `page`, `size`, and `reverse` parameters:
+
 <CodeGroup>
 ```python Python
-# Iterate through all sessions
+# Default pagination (page 1, size 50)
 for session in honcho.sessions():
     print(f"Session: {session.id}")
 
-    # Iterate through session messages
-    for message in session.messages():
-        print(f"  {message.peer_id}: {message.content}")
+# Custom page size
+for message in session.messages(size=100):
+    print(f"  {message.peer_id}: {message.content}")
+
+# Start at a specific page
+page3 = session.messages(page=3, size=25)
+
+# Reverse ordering
+recent_first = session.messages(reverse=True)
+
+# Combine with filters
+filtered = session.messages(filters={"peer_id": "alice"}, size=10)
 ```
 
 ```typescript TypeScript
-// Get paginated results
+// Default pagination (page 1, size 50)
 const peersPage = await honcho.peers();
 
-// Iterate through all items
-for await (const peer of peersPage) {
+// Custom page size and filtering
+const filtered = await honcho.peers({
+  filters: { metadata: { role: "user" } },
+  size: 25
+});
+
+// Start at a specific page
+const page3 = await session.messages({ page: 3, size: 25 });
+
+// Reverse ordering
+const recent = await session.messages({ reverse: true });
+
+// Iterate through all items (auto-paginates)
+for await (const peer of await honcho.peers()) {
   console.log(`Peer: ${peer.id}`);
 }
 

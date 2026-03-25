@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `created_at` property on `Peer` and `Session` objects
 - `is_active` property on `Session` objects
 - `get_message(message_id)` method on `Session` (sync and async) to fetch a single message by ID
+- `page`, `size`, and `reverse` pagination parameters on all list methods: `peers()`, `sessions()`, `messages()`, and `conclusions.list()`
 
 ### Changed
 

@@ -325,13 +325,18 @@ export class Session {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    reverse?: boolean
   }): Promise<PageResponse<MessageResponse>> {
     await this._ensureWorkspace()
     return this._http.post<PageResponse<MessageResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/sessions/${this.id}/messages/list`,
       {
         body: { filters: params?.filters },
-        query: { page: params?.page, size: params?.size },
+        query: {
+          page: params?.page,
+          size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
+        },
       }
     )
   }
@@ -570,15 +575,33 @@ export class Session {
    *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a paginated Page of Message objects
    */
-  async messages(filters?: Filters): Promise<Page<Message, MessageResponse>> {
-    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
-    const messagesPage = await this._listMessages({ filters: validatedFilter })
+  async messages(options?: {
+    filters?: Filters
+    page?: number
+    size?: number
+    reverse?: boolean
+  }): Promise<Page<Message, MessageResponse>> {
+    const validatedFilter = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const reverse = options?.reverse
+    const messagesPage = await this._listMessages({
+      filters: validatedFilter,
+      page: options?.page,
+      size: options?.size,
+      reverse,
+    })
 
     const fetchNextPage = async (
       page: number,
       size: number
     ): Promise<PageResponse<MessageResponse>> => {
-      return this._listMessages({ filters: validatedFilter, page, size })
+      return this._listMessages({
+        filters: validatedFilter,
+        page,
+        size,
+        reverse,
+      })
     }
 
     return new Page(messagesPage, Message.fromApiResponse, fetchNextPage)

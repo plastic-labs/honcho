@@ -13,10 +13,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `isActive` property on `Session` wrapper objects
 - `getMessage(messageId)` method on `Session` to fetch a single message by ID
 - `Peer.representation()`, `Session.representation()`, and `Session.context()` now accept `Message` objects for `searchQuery` (extracts `.content` automatically)
+- `page`, `size`, and `reverse` pagination controls on all list methods: `peers()`, `sessions()`, `messages()`, `workspaces()`, and `conclusions.list()`
 
 ### Changed
 
 - **Breaking**: `searchQuery` removed from top-level `context()` options. Use `representationOptions.searchQuery` instead — this eliminates the duplicate parameter and is consistent with the API structure.
+- **Breaking**: List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) now take an options object instead of a raw filter: `peers({ filters, page, size, reverse })` instead of `peers(filters)`.
 - `RepresentationOptionsSchema` now accepts `string | MessageResponse` for `searchQuery`
 - Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
 - Reusable `PeerIdObjectSchema` and `SessionIdObjectSchema` helpers for union validation
