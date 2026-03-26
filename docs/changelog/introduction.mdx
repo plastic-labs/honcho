@@ -659,10 +659,22 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
         ### Changed
 
-        - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead
+        - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead:
+          ```typescript
+          // Before (v2.0.x)
+          await session.context({ searchQuery: "..." });
+          // After (v2.1.0)
+          await session.context({ representationOptions: { searchQuery: "..." } });
+          ```
         - List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) support both the new options object and the legacy raw-filter form
         - Representation search options now accept strings and content-like objects, including `Message` instances, while rejecting whitespace-only or invalid runtime inputs
-        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization. If you relied on constructing SDK objects without triggering a network request, note that every `peer()` and `session()` call now hits the API:
+          ```typescript
+          // Before (v2.0.x) — no API call
+          const session = honcho.session("my-session");
+          // After (v2.1.0) — makes a get-or-create API call
+          const session = await honcho.session("my-session");
+          ```
         - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
         - Moved `@types/node` from `dependencies` to `devDependencies`
 
