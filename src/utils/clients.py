@@ -16,7 +16,7 @@ from google.genai.types import (
     GenerateContentResponse,
 )
 from groq import AsyncGroq
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, LengthFinishReasonError
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
@@ -606,7 +606,7 @@ async def _stream_final_response(
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
-        thinking_budget_tokens: Anthropic thinking budget
+        thinking_budget_tokens: Anthropic / Gemini thinking budget
 
     Yields:
         HonchoLLMCallStreamChunk objects containing the streaming response
@@ -693,7 +693,7 @@ async def _execute_tool_loop(
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
-        thinking_budget_tokens: Anthropic thinking budget
+        thinking_budget_tokens: Anthropic / Gemini thinking budget
         enable_retry: Whether to enable retry with exponential backoff
         retry_attempts: Number of retry attempts
         max_input_tokens: Maximum input tokens (for truncation)
@@ -1322,7 +1322,7 @@ async def honcho_llm_call(
         stop_seqs: Stop sequences
         reasoning_effort: OpenAI reasoning effort (GPT-5 only)
         verbosity: OpenAI verbosity (GPT-5 only)
-        thinking_budget_tokens: Anthropic thinking budget
+        thinking_budget_tokens: Anthropic / Gemini thinking budget
         enable_retry: Whether to enable retry with exponential backoff
         retry_attempts: Number of retry attempts
         stream: Whether to stream the response
@@ -1382,7 +1382,7 @@ async def honcho_llm_call(
             gpt5_verbosity = verbosity
 
             # Filter out incompatible parameters when using backup
-            if provider != "anthropic" and thinking_budget:
+            if provider not in ("anthropic", "google") and thinking_budget:
                 logger.warning(
                     f"thinking_budget_tokens not supported by {provider}, ignoring"
                 )
@@ -1565,6 +1565,68 @@ async def honcho_llm_call(
     return result
 
 
+def _repair_response_model_json(
+    raw_content: str,
+    response_model: type[BaseModel],
+    model: str,
+) -> BaseModel:
+    """Attempt to repair truncated/malformed JSON and validate against response_model.
+
+    Used by all provider paths when structured output parsing fails.
+    For PromptRepresentation, falls back to an empty instance.
+    For other models, re-raises ValidationError.
+    """
+    try:
+        final = validate_and_repair_json(raw_content)
+        repaired_data = json.loads(final)
+
+        # Schema-aware repair for PromptRepresentation
+        if (
+            response_model is PromptRepresentation
+            and "deductive" in repaired_data
+            and isinstance(repaired_data["deductive"], list)
+        ):
+            for i, item in enumerate(repaired_data["deductive"]):
+                if isinstance(item, dict):
+                    if "conclusion" not in item and "premises" in item:
+                        logger.warning(
+                            f"Deductive observation {i} missing conclusion, adding placeholder"
+                        )
+                        if item["premises"]:
+                            item["conclusion"] = (
+                                f"[Incomplete reasoning from premises: {item['premises'][0][:100]}...]"
+                            )
+                        else:
+                            item["conclusion"] = (
+                                "[Incomplete reasoning - conclusion missing]"
+                            )
+                    if "premises" not in item:
+                        item["premises"] = []
+
+        final = json.dumps(repaired_data)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as repair_err:
+        final = ""
+        logger.warning(
+            f"Could not perform JSON repair on truncated output from {model}: {repair_err}"
+        )
+
+    try:
+        return response_model.model_validate_json(final)
+    except ValidationError as ve:
+        logger.error(
+            f"Validation error after repair of truncated output from {model}: {ve}"
+        )
+        logger.debug(f"Problematic JSON: {final}")
+
+        if response_model is PromptRepresentation:
+            logger.warning(
+                "Using fallback empty Representation due to truncated output"
+            )
+            return PromptRepresentation(explicit=[])
+        else:
+            raise
+
+
 @overload
 async def honcho_llm_call_inner(
     provider: SupportedProviders,
@@ -1578,7 +1640,7 @@ async def honcho_llm_call_inner(
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
-    thinking_budget_tokens: int | None = None,  # Anthropic only
+    thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
@@ -1599,7 +1661,7 @@ async def honcho_llm_call_inner(
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
-    thinking_budget_tokens: int | None = None,  # Anthropic only
+    thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
@@ -1620,7 +1682,7 @@ async def honcho_llm_call_inner(
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
-    thinking_budget_tokens: int | None = None,  # Anthropic only
+    thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[True] = ...,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
@@ -1640,7 +1702,7 @@ async def honcho_llm_call_inner(
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
-    thinking_budget_tokens: int | None = None,  # Anthropic only
+    thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: bool = False,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
@@ -1829,10 +1891,26 @@ async def honcho_llm_call_inner(
                         thinking_content=thinking_content,
                         thinking_blocks=thinking_full_blocks,
                     )
-                except (json.JSONDecodeError, ValidationError, ValueError) as e:
-                    raise ValueError(
-                        f"Failed to parse Anthropic response as {response_model}: {e}. Raw content: {text_content}"
-                    ) from e
+                except (json.JSONDecodeError, ValidationError, ValueError):
+                    # Attempt JSON repair on truncated/malformed output
+                    logger.warning(
+                        f"Anthropic response_model parse failed for {model}, attempting JSON repair"
+                    )
+                    raw_content = "{" + text_content
+                    repaired_obj = _repair_response_model_json(
+                        raw_content, response_model, model
+                    )
+                    return HonchoLLMCallResponse(
+                        content=repaired_obj,
+                        input_tokens=total_input_tokens,
+                        output_tokens=usage.output_tokens if usage else 0,
+                        cache_creation_input_tokens=cache_creation_tokens,
+                        cache_read_input_tokens=cache_read_tokens,
+                        finish_reasons=[stop_reason] if stop_reason else [],
+                        tool_calls_made=[],
+                        thinking_content=thinking_content,
+                        thinking_blocks=thinking_full_blocks,
+                    )
 
             return HonchoLLMCallResponse(
                 content=text_content,
@@ -1989,9 +2067,39 @@ async def honcho_llm_call_inner(
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
-                response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                    **openai_params
-                )
+                try:
+                    response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
+                        **openai_params
+                    )
+                except LengthFinishReasonError as e:
+                    # The LLM hit the max token limit before completing valid JSON.
+                    # Extract the truncated content and attempt repair.
+                    logger.warning(
+                        f"LengthFinishReasonError for {model}: attempting JSON repair on truncated output"
+                    )
+                    truncated_completion = e.completion
+                    raw_content = truncated_completion.choices[0].message.content or ""
+                    usage = truncated_completion.usage
+                    finish_reason = truncated_completion.choices[0].finish_reason
+
+                    repaired_obj = _repair_response_model_json(
+                        raw_content, response_model, model
+                    )
+
+                    cache_creation, cache_read = extract_openai_cache_tokens(usage)
+                    return HonchoLLMCallResponse(
+                        content=repaired_obj,
+                        input_tokens=usage.prompt_tokens if usage else 0,
+                        output_tokens=usage.completion_tokens if usage else 0,
+                        cache_creation_input_tokens=cache_creation,
+                        cache_read_input_tokens=cache_read,
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                        tool_calls_made=[],
+                        thinking_content=extract_openai_reasoning_content(
+                            truncated_completion
+                        ),
+                    )
+
                 # Extract the parsed object for structured output
                 parsed_content = response.choices[0].message.parsed
                 if parsed_content is None:
@@ -2104,6 +2212,12 @@ async def honcho_llm_call_inner(
                                 "allowed_function_names": [tool_choice["name"]],
                             }
                         }
+
+            # Add thinking config for Gemini 2.5 models
+            if thinking_budget_tokens:
+                gemini_config["thinking_config"] = {
+                    "thinking_budget": thinking_budget_tokens,
+                }
 
             if response_model is None:
                 if json_mode and not tools:
@@ -2273,14 +2387,31 @@ async def honcho_llm_call_inner(
                         finish_reason=finish_reason,
                     )
 
-                # Validate that parsed content matches the response model
-                if not isinstance(gemini_response.parsed, response_model):
-                    raise ValueError(
-                        f"Parsed content does not match the response model: {gemini_response.parsed} != {response_model}"
+                # If parsed content is valid and matches model, return directly
+                if isinstance(gemini_response.parsed, response_model):
+                    return HonchoLLMCallResponse(
+                        content=gemini_response.parsed,
+                        input_tokens=input_token_count,
+                        output_tokens=output_token_count,
+                        finish_reasons=[finish_reason],
+                        tool_calls_made=[],
                     )
 
+                # Parsed content missing or wrong type — attempt JSON repair on raw text
+                logger.warning(
+                    f"Gemini response_model parse failed for {model} (finish_reason={finish_reason}), attempting JSON repair"
+                )
+                raw_text = ""
+                if gemini_response.candidates and gemini_response.candidates[0].content:
+                    for part in gemini_response.candidates[0].content.parts or []:
+                        if hasattr(part, "text") and part.text:
+                            raw_text += part.text
+
+                repaired_obj = _repair_response_model_json(
+                    raw_text, response_model, model
+                )
                 return HonchoLLMCallResponse(
-                    content=gemini_response.parsed,
+                    content=repaired_obj,
                     input_tokens=input_token_count,
                     output_tokens=output_token_count,
                     finish_reasons=[finish_reason],
@@ -2329,10 +2460,24 @@ async def honcho_llm_call_inner(
                         finish_reasons=[finish_reason] if finish_reason else [],
                         tool_calls_made=[],
                     )
-                except (json.JSONDecodeError, ValidationError, ValueError) as e:
-                    raise ValueError(
-                        f"Failed to parse Groq response as {response_model}: {e}. Raw content: {response.choices[0].message.content}"  # pyright: ignore
-                    ) from e
+                except (json.JSONDecodeError, ValidationError, ValueError):
+                    # Attempt JSON repair on truncated/malformed output
+                    logger.warning(
+                        f"Groq response_model parse failed for {model}, attempting JSON repair"
+                    )
+                    raw_content = str(response.choices[0].message.content or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                    repaired_obj = _repair_response_model_json(
+                        raw_content, response_model, model
+                    )
+                    return HonchoLLMCallResponse(
+                        content=repaired_obj,
+                        input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
+                        output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                        cache_creation_input_tokens=cache_creation,
+                        cache_read_input_tokens=cache_read,
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                        tool_calls_made=[],
+                    )
             else:
                 return HonchoLLMCallResponse(
                     content=response.choices[0].message.content,  # pyright: ignore
@@ -2361,7 +2506,7 @@ async def handle_streaming_response(
         client: The LLM client instance
         params: Request parameters including stream=True
         json_mode: Whether to use JSON mode
-        thinking_budget_tokens: Anthropic thinking budget tokens
+        thinking_budget_tokens: Anthropic / Gemini thinking budget tokens
         response_model: Pydantic model for structured output
         reasoning_effort: OpenAI reasoning effort level (GPT-5 only)
         verbosity: OpenAI verbosity level (GPT-5 only)
@@ -2491,6 +2636,12 @@ async def handle_streaming_response(
             stream_config: GenerateContentConfigDict = {
                 "max_output_tokens": cast(int, params["max_tokens"]),
             }
+
+            # Add thinking config for Gemini 2.5 models (streaming)
+            if thinking_budget_tokens:
+                stream_config["thinking_config"] = {
+                    "thinking_budget": thinking_budget_tokens,
+                }
 
             if response_model is not None:
                 stream_config["response_mime_type"] = "application/json"
