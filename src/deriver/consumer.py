@@ -356,16 +356,16 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
 
     elif reconciler_type == ReconcilerType.CLEANUP_QUEUE:
         logger.debug("Processing cleanup_queue task")
-        await cleanup_queue_items()
+        deleted_count = await cleanup_queue_items()
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Emit telemetry event for cleanup stale items
-        emit(
-            CleanupStaleItemsCompletedEvent(
-                total_duration_ms=duration_ms,
+        if deleted_count > 0:
+            # Emit telemetry event for cleanup stale items
+            emit(
+                CleanupStaleItemsCompletedEvent(
+                    total_duration_ms=duration_ms,
+                )
             )
-        )
-
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")
