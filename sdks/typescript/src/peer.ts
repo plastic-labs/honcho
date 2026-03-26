@@ -673,6 +673,7 @@ export class Peer {
     const peer = await this._getOrCreate({ id: this.id })
     this._metadata = peer.metadata || {}
     this._configuration = peerConfigFromApi(peer.configuration) || {}
+    this._createdAt = peer.created_at
   }
 
   /**

@@ -35,6 +35,7 @@ import {
   PeerAdditionToApiSchema,
   type PeerRemoval,
   PeerRemovalSchema,
+  peerConfigFromApi,
   type QueueStatusOptions,
   SearchQuerySchema,
   type SessionConfig,
@@ -492,9 +493,10 @@ export class Session {
           peer.id,
           this.workspaceId,
           this._http,
-          undefined,
-          undefined,
-          () => this._ensureWorkspace()
+          peer.metadata ?? undefined,
+          peerConfigFromApi(peer.configuration) ?? undefined,
+          () => this._ensureWorkspace(),
+          peer.created_at
         )
     )
   }
