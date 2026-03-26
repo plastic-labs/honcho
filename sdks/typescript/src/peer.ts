@@ -531,7 +531,10 @@ export class Peer {
           this.workspaceId,
           this._http,
           session.metadata ?? undefined,
-          sessionConfigFromApi(session.configuration) ?? undefined
+          sessionConfigFromApi(session.configuration) ?? undefined,
+          () => this._ensureWorkspace(),
+          session.created_at,
+          session.is_active
         ),
       fetchNextPage
     )
