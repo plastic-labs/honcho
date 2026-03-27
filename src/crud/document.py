@@ -909,9 +909,69 @@ async def cleanup_soft_deleted_documents(
     if not documents:
         return 0
 
+    # Phase 1: Triage superseded documents
+    # Superseded docs with live dependents are preserved as tombstones (embedding NULLed).
+    # Superseded docs without dependents and non-superseded docs are hard-deleted.
+    preserve_ids: list[str] = []
+    delete_candidates: list[models.Document] = []
+
+    for doc in documents:
+        if doc.superseded_by is not None:
+            # Check if this tombstone has live dependents
+            children = await get_child_observations(
+                db,
+                doc.workspace_name,
+                doc.id,
+                observer=doc.observer,
+                observed=doc.observed,
+            )
+            if children:
+                preserve_ids.append(doc.id)
+            else:
+                delete_candidates.append(doc)
+        else:
+            delete_candidates.append(doc)
+
+    # NULL embeddings on preserved tombstones and delete from vector store
+    if preserve_ids:
+        # Delete vectors for preserved tombstones (they won't need them)
+        preserve_by_namespace: dict[str, list[str]] = {}
+        for doc in documents:
+            if doc.id in preserve_ids:
+                namespace = external_vector_store.get_vector_namespace(
+                    "document",
+                    doc.workspace_name,
+                    doc.observer,
+                    doc.observed,
+                )
+                preserve_by_namespace.setdefault(namespace, []).append(doc.id)
+
+        for namespace, ids in preserve_by_namespace.items():
+            try:
+                await external_vector_store.delete_many(namespace, ids)
+            except Exception as e:
+                logger.warning(f"Failed to delete vectors for preserved tombstones from {namespace}: {e}")
+
+        await db.execute(
+            update(models.Document)
+            .where(models.Document.id.in_(preserve_ids))
+            .values(embedding=None)
+        )
+        logger.debug(
+            f"Preserved {len(preserve_ids)} superseded tombstones (NULLed embeddings)"
+        )
+
+    # Phase 2: Hard-delete documents that should be removed
+    if not delete_candidates:
+        if preserve_ids:
+            await db.commit()
+            return len(preserve_ids)
+        await db.rollback()
+        return 0
+
     # Group by namespace for batch vector deletion
     by_namespace: dict[str, list[str]] = {}
-    for doc in documents:
+    for doc in delete_candidates:
         namespace = external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
@@ -938,13 +998,17 @@ async def cleanup_soft_deleted_documents(
                 models.Document.id.in_(successfully_deleted_ids)
             )
         )
+
+    total_processed = len(preserve_ids) + len(successfully_deleted_ids)
+    if total_processed > 0:
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents, "
+            f"preserved {len(preserve_ids)} superseded tombstones"
         )
-        return len(successfully_deleted_ids)
+        return total_processed
 
-    # No documents were successfully deleted from vector store
+    # No documents were successfully processed
     # Release FOR UPDATE locks by rolling back the transaction
     await db.rollback()
     return 0

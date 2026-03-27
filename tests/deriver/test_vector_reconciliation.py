@@ -593,6 +593,239 @@ class TestSoftDeleteCleanup:
         assert len(ready_for_cleanup) == 1
         assert ready_for_cleanup[0].id == old_doc.id
 
+    async def test_cleanup_preserves_superseded_with_children(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Superseded doc with live dependents survives cleanup, embedding is NULLed."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+        )
+        db_session.add(collection)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # Create parent doc: superseded, soft-deleted, past grace period
+        parent = models.Document(
+            content="Old fact",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10),
+            superseded_by="replacement_id",
+        )
+        db_session.add(parent)
+        await db_session.flush()
+
+        # Create child doc that references the parent via source_ids
+        child = models.Document(
+            content="Derived from old fact",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.2] * 1536,
+            source_ids=[parent.id],
+        )
+        db_session.add(child)
+        await db_session.commit()
+
+        mock_vector_store = MagicMock(spec=VectorStore)
+        mock_vector_store.get_vector_namespace = MagicMock(return_value="test.ns")
+        mock_vector_store.delete_many = AsyncMock()
+
+        count = await cleanup_soft_deleted_documents(
+            db_session, mock_vector_store, older_than_minutes=5
+        )
+
+        assert count > 0
+
+        # Parent should still exist but with NULL embedding
+        stmt = select(models.Document).where(models.Document.id == parent.id)
+        preserved = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert preserved is not None
+        assert preserved.embedding is None
+        assert preserved.superseded_by == "replacement_id"
+        assert preserved.content == "Old fact"
+
+    async def test_cleanup_deletes_superseded_without_children(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Superseded doc without dependents is hard-deleted normally."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+        )
+        db_session.add(collection)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # Create superseded doc with NO children
+        orphan = models.Document(
+            content="Superseded but alone",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10),
+            superseded_by="some_replacement",
+        )
+        db_session.add(orphan)
+        await db_session.commit()
+        orphan_id = orphan.id
+
+        mock_vector_store = MagicMock(spec=VectorStore)
+        mock_vector_store.get_vector_namespace = MagicMock(return_value="test.ns")
+        mock_vector_store.delete_many = AsyncMock()
+
+        await cleanup_soft_deleted_documents(
+            db_session, mock_vector_store, older_than_minutes=5
+        )
+
+        # Should be hard-deleted
+        stmt = select(models.Document).where(models.Document.id == orphan_id)
+        result = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert result is None
+
+    async def test_cleanup_hard_deletes_non_superseded(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Non-superseded soft-deleted docs are hard-deleted as before."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+        )
+        db_session.add(collection)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # Create non-superseded soft-deleted doc
+        doc = models.Document(
+            content="Just deleted",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10),
+        )
+        db_session.add(doc)
+        await db_session.commit()
+        doc_id = doc.id
+
+        mock_vector_store = MagicMock(spec=VectorStore)
+        mock_vector_store.get_vector_namespace = MagicMock(return_value="test.ns")
+        mock_vector_store.delete_many = AsyncMock()
+
+        await cleanup_soft_deleted_documents(
+            db_session, mock_vector_store, older_than_minutes=5
+        )
+
+        # Should be hard-deleted
+        stmt = select(models.Document).where(models.Document.id == doc_id)
+        result = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert result is None
+
+    async def test_tombstone_preserves_content_and_links(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Preserved tombstone retains content, source_ids, superseded_by; embedding is NULL."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+        )
+        db_session.add(collection)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        parent = models.Document(
+            content="Fact with sources",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.3] * 1536,
+            source_ids=["premise_a", "premise_b"],
+            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10),
+            superseded_by="new_fact_id",
+        )
+        db_session.add(parent)
+        await db_session.flush()
+
+        child = models.Document(
+            content="Depends on parent",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.4] * 1536,
+            source_ids=[parent.id],
+        )
+        db_session.add(child)
+        await db_session.commit()
+
+        mock_vector_store = MagicMock(spec=VectorStore)
+        mock_vector_store.get_vector_namespace = MagicMock(return_value="test.ns")
+        mock_vector_store.delete_many = AsyncMock()
+
+        await cleanup_soft_deleted_documents(
+            db_session, mock_vector_store, older_than_minutes=5
+        )
+
+        stmt = select(models.Document).where(models.Document.id == parent.id)
+        tombstone = (await db_session.execute(stmt)).scalar_one()
+        assert tombstone.content == "Fact with sources"
+        assert tombstone.source_ids == ["premise_a", "premise_b"]
+        assert tombstone.superseded_by == "new_fact_id"
+        assert tombstone.embedding is None
+
 
 @pytest.mark.asyncio
 class TestMetricsTracking:
