@@ -338,14 +338,17 @@ async def create_documents(
     honcho_documents: list[models.Document] = []
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
+    # Store (replaced_doc_id, new_doc) pairs for supersession linkage after flush
+    supersession_links: list[tuple[str, models.Document]] = []
 
     for doc in documents:
         try:
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
+            replaced_doc_id: str | None = None
             if deduplicate:
-                is_duplicate = await is_rejected_duplicate(
+                is_duplicate, replaced_doc_id = await is_rejected_duplicate(
                     db, doc, workspace_name, observer=observer, observed=observed
                 )
                 if is_duplicate:
@@ -392,6 +395,10 @@ async def create_documents(
                 new_doc.sync_state = "pending"
             honcho_documents.append(new_doc)
 
+            # Track supersession link (applied after flush when IDs are available)
+            if replaced_doc_id:
+                supersession_links.append((replaced_doc_id, new_doc))
+
             # Track embedding for vector store (ID will be available after commit)
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
@@ -404,6 +411,17 @@ async def create_documents(
 
     try:
         db.add_all(honcho_documents)
+
+        # Set superseded_by links now that new doc IDs are available after flush
+        if supersession_links:
+            await db.flush()
+            for old_id, new_doc in supersession_links:
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id == old_id)
+                    .values(superseded_by=new_doc.id)
+                )
+
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
         # documents will be left in sync_state='pending' with NULL embeddings.
@@ -792,20 +810,18 @@ async def is_rejected_duplicate(
     *,
     observer: str,
     observed: str,
-) -> bool:
+) -> tuple[bool, str | None]:
     """
     Check if a document is a duplicate of an existing document.
 
     Uses: 1) Cosine similarity (>=0.95), 2) Token diff for retention.
 
-    Returns True if both:
-    - the document is deemed a duplicate of an existing document
-    - the existing document is deemed a superior duplicate
-
-    If the document is not a duplicate, returns False.
-
-    If the document is a duplicate AND the new document is superior,
-    deletes the existing document and returns False.
+    Returns:
+        (True, None) if the new document is rejected (existing is superior).
+        (False, replaced_doc_id) if the existing document was soft-deleted
+            in favor of the new one. The caller should set superseded_by
+            on the old document.
+        (False, None) if no duplicate was found.
     """
     # Step 1: Find potential duplicates using cosine similarity
     similar_docs = await query_documents(
@@ -820,7 +836,7 @@ async def is_rejected_duplicate(
     )
 
     if not similar_docs:
-        return False
+        return False, None
 
     existing_doc = similar_docs[0]
 
@@ -842,13 +858,13 @@ async def is_rejected_duplicate(
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
-        return False  # Don't reject the new document
+        return False, existing_doc.id  # Caller sets superseded_by on old doc
 
     # Existing document has more information, reject the new one
     logger.warning(
         f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
     )
-    return True
+    return True, None
 
 
 async def cleanup_soft_deleted_documents(
