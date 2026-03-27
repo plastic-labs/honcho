@@ -1007,8 +1007,7 @@ async def cleanup_soft_deleted_documents(
     if total_processed > 0:
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents, "
-            f"preserved {len(preserve_ids)} superseded tombstones"
+            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents, preserved {len(preserve_ids)} superseded tombstones"
         )
         return total_processed
 

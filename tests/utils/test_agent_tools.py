@@ -382,7 +382,7 @@ class TestCreateObservations:
         make_tool_context: Callable[..., ToolContext],
     ):
         """Response string includes [id:xxx] for each created observation."""
-        workspace, peer1, peer2, _session, _messages, _ = tool_test_data
+        _workspace, _peer1, _peer2, _session, _messages, _ = tool_test_data
         ctx = make_tool_context(current_messages=None)
 
         result = await _handle_create_observations(
