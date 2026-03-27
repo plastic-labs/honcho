@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -518,6 +518,7 @@ async def delete_document(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    superseded_by: str | None = None,
 ) -> None:
     """
     Soft-delete a document by ID.
@@ -532,6 +533,7 @@ async def delete_document(
         observer: Name of the observing peer (for authorization)
         observed: Name of the observed peer (for authorization)
         session_name: Optional session name to verify document belongs to session
+        superseded_by: Optional ID of the replacement document for supersession tracking
 
     Raises:
         ResourceNotFoundException: If document not found or doesn't match criteria
@@ -546,9 +548,11 @@ async def delete_document(
     if session_name is not None:
         conditions.append(models.Document.session_name == session_name)
 
-    update_stmt = (
-        update(models.Document).where(*conditions).values(deleted_at=func.now())
-    )
+    values: dict[str, Any] = {"deleted_at": func.now()}
+    if superseded_by is not None:
+        values["superseded_by"] = superseded_by
+
+    update_stmt = update(models.Document).where(*conditions).values(**values)
     result = cast(CursorResult[Any], await db.execute(update_stmt))
 
     if result.rowcount == 0:
@@ -1041,6 +1045,31 @@ async def get_documents_by_ids(
         models.Document.workspace_name == workspace_name,
         models.Document.id.in_(document_ids),
         models.Document.deleted_at.is_(None),
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_documents_by_ids_include_superseded(
+    db: AsyncSession,
+    workspace_name: str,
+    document_ids: list[str],
+) -> Sequence[models.Document]:
+    """Get documents by ID, including superseded tombstones.
+
+    Used by chain traversal to follow supersession links.
+    Returns docs that are either not deleted or deleted with
+    superseded_by set (preserved tombstones).
+    """
+    if not document_ids:
+        return []
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.id.in_(document_ids),
+        or_(
+            models.Document.deleted_at.is_(None),
+            models.Document.superseded_by.is_not(None),
+        ),
     )
     result = await db.execute(stmt)
     return result.scalars().all()
