@@ -187,7 +187,7 @@ class TestCreateObservations:
         )
 
         assert "Created 2 observations" in result
-        assert "2 explicit" in result
+        assert "[id:" in result  # Response now includes document IDs
 
         # Verify DB state
         stmt = select(models.Document).where(
@@ -224,7 +224,8 @@ class TestCreateObservations:
         )
 
         assert "Created 1 observations" in result
-        assert "1 deductive" in result
+        assert "[id:" in result
+        assert "(deductive)" in result
 
         # Verify the document was created as deductive with source_ids
         stmt = select(models.Document).where(
@@ -271,10 +272,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> int:
+        ) -> list[str]:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return len(documents)
+            return [f"fake_id_{i}" for i in range(len(documents))]
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -334,10 +335,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> int:
+        ) -> list[str]:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return len(documents)
+            return [f"fake_id_{i}" for i in range(len(documents))]
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -372,6 +373,60 @@ class TestCreateObservations:
         assert "Embedding failed" in result.failed[0].error
         assert len(created_documents) == 1
         assert created_documents[0].content == "Embeds fine"
+
+    async def test_create_observations_returns_ids_in_response(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Response string includes [id:xxx] for each created observation."""
+        workspace, peer1, peer2, _session, _messages, _ = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Deductive observation with ID",
+                        "level": "deductive",
+                        "source_ids": ["src1"],
+                        "premises": ["premise1"],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "[id:" in result
+        assert "(deductive)" in result
+
+        # Verify the ID in the response matches the actual document
+        stmt = select(models.Document).where(
+            models.Document.content == "Deductive observation with ID"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert f"[id:{doc.id}]" in result
+
+    async def test_create_observations_no_ids_when_all_fail_validation(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Response has no [id:] tokens when all observations fail validation."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {"content": "", "level": "deductive"},  # Empty content fails validation
+                ]
+            },
+        )
+
+        assert "[id:" not in result
 
 
 @pytest.mark.asyncio

@@ -102,6 +102,7 @@ class ObservationsCreatedResult:
     """Result of a batch create_observations call."""
 
     created_count: int
+    created_ids: list[str]
     created_levels: list[str]
     failed: list[ObservationFailure]
 
@@ -642,7 +643,7 @@ async def create_observations(
     """
     if not observations:
         logger.warning("create_observations called with empty list")
-        return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
+        return ObservationsCreatedResult(created_count=0, created_ids=[], created_levels=[], failed=[])
 
     # Get or create collection
     await crud.get_or_create_collection(
@@ -722,8 +723,9 @@ async def create_observations(
         documents.append(doc)
 
     # Bulk create all documents
+    created_ids: list[str] = []
     if documents:
-        await crud.create_documents(
+        created_ids = await crud.create_documents(
             db,
             documents=documents,
             workspace_name=workspace_name,
@@ -733,14 +735,15 @@ async def create_observations(
         )
         logger.info(
             "Created %d observations in %s/%s/%s",
-            len(documents),
+            len(created_ids),
             workspace_name,
             observer,
             observed,
         )
 
     return ObservationsCreatedResult(
-        created_count=len(documents),
+        created_count=len(created_ids),
+        created_ids=created_ids,
         created_levels=[doc.level for doc in documents],
         failed=failed,
     )
@@ -1104,11 +1107,21 @@ async def _handle_create_observations(
             )
         )
 
-    response = (
-        f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer} "
-        f"({explicit_count} explicit, {deductive_count} deductive, "
-        f"{inductive_count} inductive, {contradiction_count} contradiction)"
-    )
+    if result.created_ids:
+        id_details = ", ".join(
+            f"[id:{doc_id}] ({level})"
+            for doc_id, level in zip(result.created_ids, result.created_levels)
+        )
+        response = (
+            f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer}: "
+            f"{id_details}"
+        )
+    else:
+        response = (
+            f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer} "
+            f"({explicit_count} explicit, {deductive_count} deductive, "
+            f"{inductive_count} inductive, {contradiction_count} contradiction)"
+        )
 
     if all_failures:
         failure_details = "; ".join(
