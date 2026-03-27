@@ -37,6 +37,8 @@ from src.utils.clients import (
     honcho_llm_call,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.prompt_cache_layouts import build_system_messages
+from src.utils.types import SupportedProviders
 
 logger = logging.getLogger(__name__)
 
@@ -85,21 +87,40 @@ class DialecticAgent:
         self.observed_peer_card: list[str] | None = observed_peer_card
         self.metric_key: str | None = metric_key
         self.reasoning_level: ReasoningLevel = reasoning_level
+        self._provider: SupportedProviders = settings.DIALECTIC.LEVELS[
+            self.reasoning_level
+        ].PROVIDER
+        self._base_system_prompt: str = prompts.agent_system_prompt(
+            observer, observed, observer_peer_card, observed_peer_card
+        )
 
         # Initialize conversation history with system prompt
-        self.messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": prompts.agent_system_prompt(
-                    observer, observed, observer_peer_card, observed_peer_card
-                ),
-            }
-        ]
+        self.messages: list[dict[str, str]] = self._build_system_messages()
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
         self._run_id: str = str(uuid.uuid4())[
             :8
         ]  # Always generate for event correlation
+
+    def _build_system_messages(
+        self,
+        session_history_section: str | None = None,
+    ) -> list[dict[str, str]]:
+        """Build provider-aware system messages for the dialectic prompt prefix."""
+        return build_system_messages(
+            self._provider,
+            self._base_system_prompt,
+            session_history_section,
+            wrapper_tag="rolling_history",
+        )
+
+    def _set_system_messages(self, session_history_section: str | None = None) -> None:
+        """Update system messages without disturbing conversation state."""
+        conversation_messages = [
+            message for message in self.messages if message.get("role") != "system"
+        ]
+        self.messages = self._build_system_messages(session_history_section)
+        self.messages.extend(conversation_messages)
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -141,9 +162,7 @@ class DialecticAgent:
             "</session_history>"
         )
 
-        # Keep session history in its own system message so the stable base
-        # instructions can be cached independently of rolling session context.
-        self.messages.append({"role": "system", "content": session_history_section})
+        self._set_system_messages(session_history_section)
 
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
         """
