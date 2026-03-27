@@ -1896,6 +1896,20 @@ async def honcho_llm_call_inner(
                     openai_params["tool_choice"] = tool_choice
 
             if json_mode and provider != "vllm":
+                if provider == "custom" and "qwen" in model.lower():
+                    has_json_hint = any(
+                        isinstance(m.get("content"), str)
+                        and "json" in m["content"].lower()
+                        for m in openai_params["messages"]
+                    )
+                    if not has_json_hint:
+                        openai_params["messages"] = [
+                            {
+                                "role": "system",
+                                "content": "Return valid JSON only. The output must be a JSON object.",
+                            },
+                            *openai_params["messages"],
+                        ]
                 openai_params["response_format"] = {"type": "json_object"}
 
             # custom shim for vLLM response model formatting
@@ -2453,6 +2467,20 @@ async def handle_streaming_response(
             if response_model:
                 openai_params["response_format"] = response_model
             elif json_mode:
+                if provider == "custom" and "qwen" in model.lower():
+                    has_json_hint = any(
+                        isinstance(m.get("content"), str)
+                        and "json" in m["content"].lower()
+                        for m in openai_params["messages"]
+                    )
+                    if not has_json_hint:
+                        openai_params["messages"] = [
+                            {
+                                "role": "system",
+                                "content": "Return valid JSON only. The output must be a JSON object.",
+                            },
+                            *openai_params["messages"],
+                        ]
                 openai_params["response_format"] = {"type": "json_object"}
 
             openai_stream = await client.chat.completions.create(**openai_params)  # pyright: ignore
