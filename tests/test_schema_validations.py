@@ -4,9 +4,12 @@ import pytest
 from pydantic import ValidationError
 
 from src.schemas import (
+    ConclusionCreate,
+    DialecticOptions,
     DocumentCreate,
     DocumentMetadata,
     MessageCreate,
+    ObservationInput,
     PeerCreate,
     ResolvedConfiguration,
     SessionCreate,
@@ -40,6 +43,14 @@ class TestWorkspaceValidations:
             )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "dict_type"
+
+    def test_app_metadata_rejects_deeply_nested_lists(self):
+        nested_metadata = {"a": [[[[["too deep"]]]]]}
+
+        with pytest.raises(ValidationError) as exc_info:
+            WorkspaceCreate(name="test", metadata=nested_metadata)
+
+        assert "Metadata nesting exceeds maximum depth" in str(exc_info.value)
 
 
 class TestPeerValidations:
@@ -203,3 +214,33 @@ class TestResolvedConfigurationMigration:
             ResolvedConfiguration.model_validate(payload)
 
         assert any(e["loc"] == ("reasoning",) for e in exc_info.value.errors())
+
+
+class TestSanitizedRequiredFields:
+    def test_conclusion_content_rejects_nul_only_input(self):
+        with pytest.raises(ValidationError) as exc_info:
+            ConclusionCreate(
+                content="\x00",
+                observer_id="observer",
+                observed_id="observed",
+            )
+
+        error_dict = exc_info.value.errors()[0]
+        assert error_dict["loc"] == ("content",)
+        assert error_dict["type"] == "string_too_short"
+
+    def test_dialectic_query_rejects_nul_only_input(self):
+        with pytest.raises(ValidationError) as exc_info:
+            DialecticOptions.model_validate({"query": "\x00"})
+
+        error_dict = exc_info.value.errors()[0]
+        assert error_dict["loc"] == ("query",)
+        assert error_dict["type"] == "string_too_short"
+
+    def test_observation_content_rejects_nul_only_input(self):
+        with pytest.raises(ValidationError) as exc_info:
+            ObservationInput(content="\x00")
+
+        error_dict = exc_info.value.errors()[0]
+        assert error_dict["loc"] == ("content",)
+        assert error_dict["type"] == "string_too_short"
