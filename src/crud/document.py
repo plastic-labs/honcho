@@ -321,7 +321,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
-) -> int:
+) -> list[str]:
     """
     Create multiple documents with optional duplicate detection.
 
@@ -333,7 +333,7 @@ async def create_documents(
         observed: Name of the observed peer
 
     Returns:
-        Count of new documents
+        List of created document IDs
     """
     honcho_documents: list[models.Document] = []
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
@@ -489,7 +489,7 @@ async def create_documents(
             "Failed to create documents due to integrity constraint violation"
         ) from e
 
-    return len(honcho_documents)
+    return [doc.id for doc in honcho_documents]
 
 
 async def delete_document(
