@@ -1176,6 +1176,141 @@ class TestMainLLMCallFunction:
             assert response.content == "No retry response"
 
 
+@pytest.mark.asyncio
+class TestCustomProviderQwen:
+    """Tests for custom provider (Qwen/ModelScope) JSON mode handling"""
+
+    async def test_qwen_json_mode_adds_system_message(self):
+        """Test that Qwen models get a JSON hint system message when json_mode=True"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="qwen3.5-plus",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant", content='{"result": "success"}'
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"custom": mock_client}):
+            _response = await honcho_llm_call_inner(
+                provider="custom",
+                model="qwen3.5-plus",
+                prompt="Generate JSON",
+                max_tokens=100,
+                json_mode=True,
+            )
+
+            # Verify JSON mode was enabled
+            mock_client.chat.completions.create.assert_called_once()
+            call_args = mock_client.chat.completions.create.call_args
+            assert call_args.kwargs["response_format"] == {"type": "json_object"}
+
+            # Verify system message with JSON hint was added
+            messages = call_args.kwargs["messages"]
+            assert messages[0]["role"] == "system"
+            assert "Return valid JSON only" in messages[0]["content"]
+            assert "JSON object" in messages[0]["content"]
+
+    async def test_qwen_json_mode_not_added_when_hint_exists(self):
+        """Test that Qwen doesn't duplicate JSON hint if one already exists"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="qwen3.5-plus",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant", content='{"result": "success"}'
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"custom": mock_client}):
+            _response = await honcho_llm_call_inner(
+                provider="custom",
+                model="qwen3.5-plus",
+                prompt="Generate JSON. Return valid JSON only.",  # Already has JSON hint
+                max_tokens=100,
+                json_mode=True,
+            )
+
+            # Verify system message was NOT added (hint already exists in prompt)
+            call_args = mock_client.chat.completions.create.call_args
+            messages = call_args.kwargs["messages"]
+            # Should only have user message, no extra system message
+            assert not any(
+                msg.get("role") == "system" and "Return valid JSON only" in msg.get("content", "")
+                for msg in messages
+            )
+
+    async def test_non_qwen_custom_provider_no_system_message(self):
+        """Test that non-Qwen custom providers don't get the JSON hint"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="llama-3-70b",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant", content='{"result": "success"}'
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"custom": mock_client}):
+            _response = await honcho_llm_call_inner(
+                provider="custom",
+                model="llama-3-70b",  # Not a Qwen model
+                prompt="Generate JSON",
+                max_tokens=100,
+                json_mode=True,
+            )
+
+            # Verify no Qwen-specific system message was added
+            call_args = mock_client.chat.completions.create.call_args
+            messages = call_args.kwargs["messages"]
+            assert not any(
+                msg.get("role") == "system" and "Return valid JSON only" in msg.get("content", "")
+                for msg in messages
+            )
+
+
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions"""
 
