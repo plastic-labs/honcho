@@ -55,7 +55,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             recently fetched. Call get_configuration() for fresh data.
     """
 
-    model_config = ConfigDict(extra="allow")  # pyright: ignore
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore
 
     workspace_id: str = Field(
         ...,
@@ -305,44 +305,62 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         Get or create a peer with the given ID.
 
-        Creates a Peer object that can be used to interact with the specified peer.
-        This method does not make an API call unless `configuration` or `metadata` is
-        provided.
+        Makes an API call to get or create the peer, then returns a Peer object
+        with cached values from the response.
 
         Args:
-            id: Unique identifier for the peer within the workspace. Should be a
-                stable identifier that can be used consistently across sessions.
+            id: Unique identifier for the peer within the workspace.
             metadata: Optional metadata dictionary to associate with this peer.
-                If set, will get/create peer immediately with metadata.
             configuration: Optional configuration to set for this peer.
-                If set, will get/create peer immediately with flags.
 
         Returns:
-            A Peer object that can be used to send messages, join sessions, and
-            query the peer's knowledge representations
-
-        Raises:
-            ValidationError: If the peer ID is empty or invalid
+            A Peer object with cached metadata, configuration, and created_at.
         """
-        return Peer(id, self, configuration=configuration, metadata=metadata)
+        self._ensure_workspace()
+        body: dict[str, Any] = {"id": id}
+        if metadata is not None:
+            body["metadata"] = metadata
+        if configuration is not None:
+            body["configuration"] = configuration.model_dump(exclude_none=True)
+
+        data = self._http.post(routes.peers(self.workspace_id), body=body)
+        peer_data = PeerResponse.model_validate(data)
+        return Peer(
+            id,
+            self,
+            metadata=peer_data.metadata,
+            configuration=peer_data.configuration,
+            created_at=peer_data.created_at,
+        )
 
     def peers(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[PeerResponse, Peer]:
         """
         Get all peers in the current workspace.
 
-        Makes an API call to retrieve all peers that have been created or used
-        within the current workspace. Returns a paginated result that transforms
-        inner client Peer objects to SDK Peer objects as they are consumed.
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             A SyncPage of Peer objects representing all peers in the workspace
         """
         self._ensure_workspace()
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._http.post(
             routes.peers_list(self.workspace_id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(peer: PeerResponse) -> Peer:
@@ -351,13 +369,17 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 self,
                 metadata=peer.metadata,
                 configuration=peer.configuration,
+                created_at=peer.created_at,
             )
 
-        def fetch_next(page: int) -> SyncPage[PeerResponse, Peer]:
+        def fetch_next(next_page: int) -> SyncPage[PeerResponse, Peer]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._http.post(
                 routes.peers_list(self.workspace_id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, PeerResponse, transform, fetch_next)
 
@@ -382,45 +404,65 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         Get or create a session with the given ID.
 
-        Creates a Session object that can be used to manage conversations between
-        multiple peers. This method does not make an API call unless `configuration` or
-        `metadata` is provided.
+        Makes an API call to get or create the session, then returns a Session object
+        with cached values from the response.
 
         Args:
-            id: Unique identifier for the session within the workspace. Should be a
-                stable identifier that can be used consistently to reference the
-                same conversation
+            id: Unique identifier for the session within the workspace.
             metadata: Optional metadata dictionary to associate with this session.
-                If set, will get/create session immediately with metadata.
             configuration: Optional configuration to set for this session.
-                If set, will get/create session immediately with flags.
 
         Returns:
-            A Session object that can be used to add peers, send messages, and
-            manage conversation context
-
-        Raises:
-            ValidationError: If the session ID is empty or invalid
+            A Session object with cached metadata, configuration, created_at, and is_active.
         """
-        return Session(id, self, configuration=configuration, metadata=metadata)
+        self._ensure_workspace()
+        body: dict[str, Any] = {"id": id}
+        if metadata is not None:
+            body["metadata"] = metadata
+        if configuration is not None:
+            body["configuration"] = configuration.model_dump(exclude_none=True)
+
+        data = self._http.post(routes.sessions(self.workspace_id), body=body)
+        session_data = SessionResponse.model_validate(data)
+        return Session(
+            id,
+            self,
+            metadata=session_data.metadata,
+            configuration=SessionConfiguration.model_validate(
+                session_data.configuration.model_dump()
+            ),
+            created_at=session_data.created_at,
+            is_active=session_data.is_active,
+        )
 
     def sessions(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace.
 
-        Makes an API call to retrieve all sessions that have been created within
-        the current workspace.
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             A SyncPage of Session objects representing all sessions in the workspace.
-            Returns an empty page if no sessions exist
         """
         self._ensure_workspace()
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._http.post(
             routes.sessions_list(self.workspace_id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(session: SessionResponse) -> Session:
@@ -429,13 +471,18 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 self,
                 metadata=session.metadata,
                 configuration=session.configuration,
+                created_at=session.created_at,
+                is_active=session.is_active,
             )
 
-        def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
+        def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._http.post(
                 routes.sessions_list(self.workspace_id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, SessionResponse, transform, fetch_next)
 

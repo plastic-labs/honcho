@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class ReasoningConfiguration(BaseModel):
     """Configuration for reasoning functionality."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     enabled: bool | None = None
     custom_instructions: str | None = None
 
@@ -25,12 +27,16 @@ class ReasoningConfiguration(BaseModel):
 class PeerCardConfiguration(BaseModel):
     """Configuration for peer card functionality."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     use: bool | None = None
     create: bool | None = None
 
 
 class SummaryConfiguration(BaseModel):
     """Configuration for summary functionality."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     enabled: bool | None = None
     messages_per_short_summary: int | None = None
@@ -40,13 +46,15 @@ class SummaryConfiguration(BaseModel):
 class DreamConfiguration(BaseModel):
     """Configuration for dream functionality."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     enabled: bool | None = None
 
 
 class WorkspaceConfiguration(BaseModel):
     """Workspace-level configuration options."""
 
-    model_config = ConfigDict(extra="allow")  # pyright: ignore[reportUnannotatedClassAttribute]
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     reasoning: ReasoningConfiguration | None = None
     peer_card: PeerCardConfiguration | None = None
@@ -60,8 +68,22 @@ class SessionConfiguration(WorkspaceConfiguration):
     pass
 
 
+class WorkspaceConfigurationResponse(WorkspaceConfiguration):
+    """Workspace configuration for response parsing — tolerates unknown fields from newer servers."""
+
+    model_config = ConfigDict(extra="ignore")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+
+class SessionConfigurationResponse(SessionConfiguration):
+    """Session configuration for response parsing — tolerates unknown fields from newer servers."""
+
+    model_config = ConfigDict(extra="ignore")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+
 class MessageConfiguration(BaseModel):
     """Message-level configuration options."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     reasoning: ReasoningConfiguration | None = None
 
@@ -74,12 +96,16 @@ class MessageConfiguration(BaseModel):
 class PeerConfig(BaseModel):
     """Configuration for peer-level settings."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     observe_me: bool | None = None
     """Whether Honcho will use reasoning to form a representation of this peer."""
 
 
 class SessionPeerConfig(BaseModel):
     """Configuration for a peer within a session."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     observe_others: bool | None = Field(
         None,
@@ -103,14 +129,16 @@ class WorkspaceResponse(BaseModel):
 
     id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: WorkspaceConfiguration = Field(
-        default_factory=WorkspaceConfiguration
+    configuration: WorkspaceConfigurationResponse = Field(
+        default_factory=WorkspaceConfigurationResponse
     )
     created_at: datetime.datetime
 
 
 class WorkspaceCreateParams(BaseModel):
     """Parameters for creating a workspace."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     id: str = Field(min_length=1, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -122,12 +150,16 @@ class WorkspaceCreateParams(BaseModel):
 class WorkspaceUpdateParams(BaseModel):
     """Parameters for updating a workspace."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     metadata: dict[str, Any] | None = None
     configuration: WorkspaceConfiguration | None = None
 
 
 class WorkspaceListParams(BaseModel):
     """Parameters for listing workspaces."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     filters: dict[str, Any] | None = None
 
@@ -152,6 +184,8 @@ class PeerResponse(BaseModel):
 class PeerCreateParams(BaseModel):
     """Parameters for creating a peer."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     id: str = Field(min_length=1, max_length=100)
     metadata: dict[str, Any] | None = None
     configuration: PeerConfig | None = None
@@ -160,6 +194,8 @@ class PeerCreateParams(BaseModel):
 class PeerUpdateParams(BaseModel):
     """Parameters for updating a peer."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     metadata: dict[str, Any] | None = None
     configuration: PeerConfig | None = None
 
@@ -167,11 +203,15 @@ class PeerUpdateParams(BaseModel):
 class PeerListParams(BaseModel):
     """Parameters for listing peers."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     filters: dict[str, Any] | None = None
 
 
 class PeerRepresentationParams(BaseModel):
     """Parameters for getting peer representation."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     session_id: str | None = None
     target: str | None = None
@@ -217,12 +257,16 @@ class SessionResponse(BaseModel):
     is_active: bool
     workspace_id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    configuration: SessionConfiguration = Field(default_factory=SessionConfiguration)
+    configuration: SessionConfigurationResponse = Field(
+        default_factory=SessionConfigurationResponse
+    )
     created_at: datetime.datetime
 
 
 class SessionCreateParams(BaseModel):
     """Parameters for creating a session."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     id: str = Field(min_length=1, max_length=100)
     metadata: dict[str, Any] | None = None
@@ -233,12 +277,16 @@ class SessionCreateParams(BaseModel):
 class SessionUpdateParams(BaseModel):
     """Parameters for updating a session."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     metadata: dict[str, Any] | None = None
     configuration: SessionConfiguration | None = None
 
 
 class SessionListParams(BaseModel):
     """Parameters for listing sessions."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     filters: dict[str, Any] | None = None
 
@@ -308,6 +356,8 @@ class MessageResponse(BaseModel):
 class MessageCreateParams(BaseModel):
     """Parameters for creating a message."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     content: str
     peer_id: str
     metadata: dict[str, Any] | None = None
@@ -318,11 +368,15 @@ class MessageCreateParams(BaseModel):
 class MessageBatchCreateParams(BaseModel):
     """Parameters for batch message creation."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     messages: list[MessageCreateParams] = Field(min_length=1, max_length=100)
 
 
 class MessageUpdateParams(BaseModel):
     """Parameters for updating a message."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     metadata: dict[str, Any] | None = None
 
@@ -330,11 +384,15 @@ class MessageUpdateParams(BaseModel):
 class MessageListParams(BaseModel):
     """Parameters for listing messages."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     filters: dict[str, Any] | None = None
 
 
 class MessageSearchParams(BaseModel):
     """Parameters for searching messages."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     query: str
     filters: dict[str, Any] | None = None
@@ -362,6 +420,8 @@ class ConclusionResponse(BaseModel):
 class ConclusionCreateParams(BaseModel):
     """Parameters for creating a conclusion."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     content: str = Field(min_length=1, max_length=65535)
     observer_id: str
     observed_id: str
@@ -371,17 +431,23 @@ class ConclusionCreateParams(BaseModel):
 class ConclusionBatchCreateParams(BaseModel):
     """Parameters for batch conclusion creation."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     conclusions: list[ConclusionCreateParams] = Field(min_length=1, max_length=100)
 
 
 class ConclusionListParams(BaseModel):
     """Parameters for listing conclusions."""
 
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
     filters: dict[str, Any] | None = None
 
 
 class ConclusionQueryParams(BaseModel):
     """Parameters for querying conclusions."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     query: str
     top_k: int = Field(default=10, ge=1, le=100)
@@ -424,6 +490,8 @@ ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 
 class DialecticParams(BaseModel):
     """Parameters for dialectic chat."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     session_id: str | None = None
     target: str | None = None
@@ -473,6 +541,8 @@ class PageResponse(BaseModel):
 
 class MessageUploadParams(BaseModel):
     """Parameters for file upload message creation."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     peer_id: str
     metadata: dict[str, Any] | None = None

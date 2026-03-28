@@ -19,6 +19,7 @@ from .api_types import (
     PeerContextResponse,
     PeerResponse,
     RepresentationResponse,
+    SessionConfiguration,
     SessionResponse,
 )
 from .base import PeerBase, SessionBase
@@ -57,6 +58,7 @@ class Peer(PeerBase, MetadataConfigMixin):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: PeerConfig | None = PrivateAttr(default=None)
+    _created_at: datetime.datetime | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -68,6 +70,11 @@ class Peer(PeerBase, MetadataConfigMixin):
     def configuration(self) -> PeerConfig | None:
         """Cached configuration for this peer. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
+
+    @property
+    def created_at(self) -> datetime.datetime | None:
+        """Timestamp when this peer was created. Only available if fetched from the API."""
+        return self._created_at
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
@@ -90,6 +97,21 @@ class Peer(PeerBase, MetadataConfigMixin):
         # Return configuration as dict for mixin compatibility
         return peer.metadata or {}, peer.configuration.model_dump(exclude_none=True)
 
+    def _apply_peer_response(self, peer: PeerResponse) -> None:
+        self._metadata = peer.metadata or {}
+        self._configuration = peer.configuration
+        self._created_at = peer.created_at
+
+    def get_metadata(self) -> dict[str, object]:
+        """Get metadata from the server and update the cache."""
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._apply_peer_response(peer)
+        return self._metadata or {}
+
     def get_configuration(self) -> PeerConfig:  # pyright: ignore[reportIncompatibleMethodOverride]
         """
         Get configuration from the server and update the cache.
@@ -102,9 +124,17 @@ class Peer(PeerBase, MetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         peer = PeerResponse.model_validate(data)
-        self._metadata = peer.metadata or {}
-        self._configuration = peer.configuration
-        return self._configuration
+        self._apply_peer_response(peer)
+        return self._configuration or PeerConfig()
+
+    def refresh(self) -> None:
+        """Refresh cached metadata, configuration, and created_at from the server."""
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._apply_peer_response(peer)
 
     @validate_call
     def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -163,6 +193,10 @@ class Peer(PeerBase, MetadataConfigMixin):
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
+        created_at: datetime.datetime | None = Field(
+            None,
+            description="Timestamp when this peer was created.",
+        ),
     ) -> None:
         """
         Initialize a new Peer.
@@ -184,21 +218,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         )
         self._honcho = honcho
         self._metadata = metadata
-        self._configuration = configuration
-
-        if configuration is not None or metadata is not None:
-            self._honcho._ensure_workspace()
-            body: dict[str, Any] = {"id": peer_id}
-            if metadata is not None:
-                body["metadata"] = metadata
-            if configuration is not None:
-                body["configuration"] = configuration.model_dump(exclude_none=True)
-
-            data = honcho._http.post(routes.peers(honcho.workspace_id), body=body)
-            peer_data = PeerResponse.model_validate(data)
-            # Update cached values with API response
-            self._metadata = peer_data.metadata
-            self._configuration = peer_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+        self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+        self._created_at = created_at
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def chat(
@@ -309,35 +330,58 @@ class Peer(PeerBase, MetadataConfigMixin):
         return DialecticStreamResponse(stream_response())
 
     def sessions(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[SessionResponse, "Session"]:
         """
         Get all sessions this peer is a member of.
 
-        Makes an API call to retrieve all sessions where this peer is an active participant.
-        Sessions are created when peers are added to them or send messages to them.
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
-            A paginated list of Session objects this peer belongs to. Returns an empty
-            list if the peer is not a member of any sessions
+            A paginated list of Session objects this peer belongs to.
         """
         self._honcho._ensure_workspace()
         # Import here to avoid circular import (session.py imports Peer)
         from .session import Session
 
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._honcho._http.post(
             routes.peer_sessions_list(self.workspace_id, self.id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(session: SessionResponse) -> Session:
-            return Session(session.id, self._honcho)
+            return Session(
+                session.id,
+                self._honcho,
+                metadata=session.metadata,
+                configuration=SessionConfiguration.model_validate(
+                    session.configuration.model_dump()
+                ),
+                created_at=session.created_at,
+                is_active=session.is_active,
+            )
 
-        def fetch_next(page: int) -> SyncPage[SessionResponse, Session]:
+        def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._honcho._http.post(
                 routes.peer_sessions_list(self.workspace_id, self.id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, SessionResponse, transform, fetch_next)
 

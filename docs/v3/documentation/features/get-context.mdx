@@ -165,8 +165,8 @@ context = session.context(
     const context = await session.context({
       tokens: 2000,
       peerTarget: "user-123",
-      searchQuery: "What are my coding preferences?",
       representationOptions: {
+        searchQuery: "What are my coding preferences?",
         searchTopK: 10,           // Number of relevant conclusions to fetch
         searchMaxDistance: 0.8,   // Max semantic distance (0.0-1.0)
         includeMostFrequent: true, // Include most frequent conclusions

@@ -15,7 +15,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 const honcho = new Honcho({
   apiKey: process.env.HONCHO_API_KEY,
-  baseUrl: "http://localhost:8000",
+  baseURL: "http://localhost:8000",
   workspaceId: "test",
 });
 

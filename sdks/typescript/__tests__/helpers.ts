@@ -14,6 +14,11 @@ import type {
   PageResponse,
 } from '../src/types/api'
 
+function expectValidDateString(value: string): void {
+  const parsedDate = new Date(value)
+  expect(Number.isNaN(parsedDate.getTime())).toBe(false)
+}
+
 // =============================================================================
 // Response Shape Assertions
 // =============================================================================
@@ -28,8 +33,7 @@ export function assertWorkspaceShape(workspace: WorkspaceResponse): void {
   expect(typeof workspace.metadata).toBe('object')
   expect(typeof workspace.configuration).toBe('object')
   expect(typeof workspace.created_at).toBe('string')
-  // Validate ISO 8601 date format
-  expect(() => new Date(workspace.created_at)).not.toThrow()
+  expectValidDateString(workspace.created_at)
 }
 
 /**
@@ -43,7 +47,7 @@ export function assertPeerShape(peer: PeerResponse): void {
   expect(typeof peer.metadata).toBe('object')
   expect(typeof peer.configuration).toBe('object')
   expect(typeof peer.created_at).toBe('string')
-  expect(() => new Date(peer.created_at)).not.toThrow()
+  expectValidDateString(peer.created_at)
 }
 
 /**
@@ -58,7 +62,7 @@ export function assertSessionShape(session: SessionResponse): void {
   expect(typeof session.metadata).toBe('object')
   expect(typeof session.configuration).toBe('object')
   expect(typeof session.created_at).toBe('string')
-  expect(() => new Date(session.created_at)).not.toThrow()
+  expectValidDateString(session.created_at)
 }
 
 /**
@@ -76,7 +80,7 @@ export function assertMessageShape(message: Message): void {
   expect(typeof message.createdAt).toBe('string')
   expect(typeof message.tokenCount).toBe('number')
   expect(message.tokenCount).toBeGreaterThanOrEqual(0)
-  expect(() => new Date(message.createdAt)).not.toThrow()
+  expectValidDateString(message.createdAt)
 }
 
 /**
@@ -91,7 +95,7 @@ export function assertConclusionShape(conclusion: ConclusionResponse): void {
   expect(typeof conclusion.observed_id).toBe('string')
   expect(typeof conclusion.session_id).toBe('string')
   expect(typeof conclusion.created_at).toBe('string')
-  expect(() => new Date(conclusion.created_at)).not.toThrow()
+  expectValidDateString(conclusion.created_at)
 }
 
 /**

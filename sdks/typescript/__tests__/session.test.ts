@@ -54,6 +54,20 @@ describe('Session', () => {
       expect(session).toBeInstanceOf(Session)
       expect(session.id).toBe('simple-session')
       expect(session.workspaceId).toBe(client.workspaceId)
+      expect(session.createdAt).toBeDefined()
+      expect(session.isActive).toBe(true)
+    })
+
+    test('session created with metadata exposes createdAt and isActive', async () => {
+      const session = await client.session('session-timestamps', {
+        metadata: { test: true },
+      })
+
+      expect(session.createdAt).toBeDefined()
+      expect(typeof session.createdAt).toBe('string')
+      const createdAt = new Date(session.createdAt!)
+      expect(Number.isNaN(createdAt.getTime())).toBe(false)
+      expect(session.isActive).toBe(true)
     })
 
     test('creates session with metadata', async () => {
@@ -104,10 +118,22 @@ describe('Session', () => {
       const tag = `tag-${Date.now()}`
       await client.session('filtered-session', { metadata: { tag } })
 
-      const page = await client.sessions({ metadata: { tag } })
+      const page = await client.sessions({ filters: { metadata: { tag } } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-session')
+    })
+
+    test('sessions accept legacy raw filter objects', async () => {
+      const tag = `legacy-tag-${Date.now()}`
+      await client.session(`legacy-filtered-session-${Date.now()}`, {
+        metadata: { tag },
+      })
+
+      const page = await client.sessions({ metadata: { tag } })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].metadata.tag).toBe(tag)
     })
   })
 
@@ -446,7 +472,7 @@ describe('Session', () => {
           peer.message('Not this one'),
         ])
 
-        const page = await session.messages({ metadata: { tag: 'special' } })
+        const page = await session.messages({ filters: { metadata: { tag: 'special' } } })
 
         expect(page.items.length).toBe(1)
         expect(page.items[0].metadata.tag).toBe('special')
@@ -608,6 +634,36 @@ describe('Session', () => {
       const str = session.toString()
 
       expect(str).toBe("Session(id='tostring-session')")
+    })
+  })
+
+  // ===========================================================================
+  // Pagination Controls
+  // ===========================================================================
+
+  describe('Pagination controls', () => {
+    test('sessions with custom page size', async () => {
+      // Create 3 sessions
+      await client.session('page-test-1', { metadata: { group: 'page-test' } })
+      await client.session('page-test-2', { metadata: { group: 'page-test' } })
+      await client.session('page-test-3', { metadata: { group: 'page-test' } })
+
+      const page = await client.sessions({
+        filters: { metadata: { group: 'page-test' } },
+        size: 2,
+      })
+      // First page should have 2 items
+      expect(page.items.length).toBe(2)
+    })
+
+    test('sessions with explicit page number', async () => {
+      const page2 = await client.sessions({
+        filters: { metadata: { group: 'page-test' } },
+        page: 2,
+        size: 2,
+      })
+      // Page 2 should have the remaining item
+      expect(page2.items.length).toBe(1)
     })
   })
 })

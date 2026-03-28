@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.0] - 2026-03-25
+
+### Added
+
+- `created_at` property on `Peer` and `Session` objects
+- `is_active` property on `Session` objects
+- `get_message(message_id)` method on `Session` (sync and async) to fetch a single message by ID
+- `page`, `size`, and `reverse` pagination parameters on all list methods: `peers()`, `sessions()`, `messages()`, and `conclusions.list()`
+
+### Changed
+
+- **Breaking**: `peer()` and `session()` now always make a get-or-create API call. Previously, calling without metadata/configuration returned a lazy object with no API call. All Peer/Session objects now have `created_at` populated immediately.
+- Response configuration models (`WorkspaceConfigurationResponse`, `SessionConfigurationResponse`) now tolerate unknown fields from newer servers for forward compatibility
+
+### Fixed
+
+- Sync and async `Session.get_metadata()`, `get_configuration()`, and `refresh()` now refresh cached `created_at` and `is_active` values along with metadata and configuration.
+- `honcho.__version__` now derives from package metadata, with a `pyproject.toml` fallback in source checkouts, so it stays aligned with SDK releases.
+
+## [2.0.2] - 2026-03-10
+
+### Changed
+
+- All input models now reject unknown fields via `extra="forbid"` Pydantic validation. Previously, misspelled or extraneous fields were silently ignored. Now a `ValidationError` is raised with the unrecognized field name.
+
 ## [2.0.1] - 2026-02-09
 
 ### Added
