@@ -162,8 +162,8 @@ Server.
 
 Honcho is developed using [python](https://www.python.org/) and [uv](https://docs.astral.sh/uv/).
 
-The minimum python version is `3.9`
-The minimum uv version is `0.4.9`
+The minimum python version is `3.10`
+The minimum uv version is `0.5.0`
 
 ### Setup
 
@@ -221,11 +221,11 @@ Below are the required configurations:
 ```env
 DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
 
-# LLM Provider API Keys (at least one required depending on your configuration)
-LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic by default)
-LLM_OPENAI_API_KEY= # API Key for OpenAI (optional, for embeddings if EMBED_MESSAGES=true)
-LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for summary/deriver by default)
-LLM_GROQ_API_KEY= # API Key for Groq (used for query generation by default)
+# LLM Provider API Keys
+LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and dialectic minimal/low by default)
+LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
+LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
+LLM_GROQ_API_KEY= # API Key for Groq (optional)
 ```
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
