@@ -247,7 +247,9 @@ class TestSummaryCallerMigration:
         if await_args is None:
             raise AssertionError("Expected summary LLM call")
         kwargs = await_args.kwargs
-        expected_config = settings.SUMMARY.to_model_config()
+        expected_config = settings.SUMMARY.MODEL_CONFIG
+        if expected_config is None:
+            raise AssertionError("Expected SUMMARY MODEL_CONFIG to be resolved")
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert "llm_settings" not in kwargs
@@ -274,7 +276,9 @@ class TestSummaryCallerMigration:
         if await_args is None:
             raise AssertionError("Expected summary LLM call")
         kwargs = await_args.kwargs
-        expected_config = settings.SUMMARY.to_model_config()
+        expected_config = settings.SUMMARY.MODEL_CONFIG
+        if expected_config is None:
+            raise AssertionError("Expected SUMMARY MODEL_CONFIG to be resolved")
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert "llm_settings" not in kwargs

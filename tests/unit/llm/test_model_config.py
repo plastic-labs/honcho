@@ -4,6 +4,7 @@ from src.config import (
     ConfiguredModelSettings,
     DeriverSettings,
     DialecticLevelSettings,
+    DreamSettings,
     ModelConfig,
     ModelOverrideSettings,
     SummarySettings,
@@ -165,3 +166,38 @@ def test_dialectic_level_settings_accepts_nested_model_config() -> None:
     assert settings.BACKUP_PROVIDER == "google"
     assert settings.BACKUP_MODEL == "gemini-2.5-pro"
     assert settings.THINKING_BUDGET_TOKENS == 1024
+
+
+def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
+    settings = DreamSettings(
+        MODEL_CONFIG=ConfiguredModelSettings(
+            model="anthropic/claude-sonnet-4-5",
+            fallback_model="gemini/gemini-2.5-pro",
+            thinking_budget_tokens=4096,
+            max_output_tokens=12_000,
+            overrides=ModelOverrideSettings(
+                provider_params={"verbosity": "low"},
+            ),
+        ),
+        DEDUCTION_MODEL_CONFIG=ConfiguredModelSettings(
+            model="anthropic/claude-haiku-4-5",
+        ),
+        INDUCTION_MODEL_CONFIG=ConfiguredModelSettings(
+            model="anthropic/claude-opus-4-1",
+        ),
+    )
+
+    if settings.DEDUCTION_MODEL_CONFIG is None:
+        raise AssertionError("Expected DREAM DEDUCTION MODEL_CONFIG to be resolved")
+    if settings.INDUCTION_MODEL_CONFIG is None:
+        raise AssertionError("Expected DREAM INDUCTION MODEL_CONFIG to be resolved")
+
+    assert settings.DEDUCTION_MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
+    assert settings.DEDUCTION_MODEL_CONFIG.fallback_model == "gemini/gemini-2.5-pro"
+    assert settings.DEDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096
+    assert settings.DEDUCTION_MODEL_CONFIG.max_output_tokens == 12_000
+    assert settings.DEDUCTION_MODEL_CONFIG.overrides.provider_params == {
+        "verbosity": "low"
+    }
+    assert settings.INDUCTION_MODEL_CONFIG.model == "anthropic/claude-opus-4-1"
+    assert settings.INDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096

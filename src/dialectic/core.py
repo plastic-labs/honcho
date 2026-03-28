@@ -14,7 +14,7 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
-from src.config import ReasoningLevel, settings
+from src.config import ConfiguredModelSettings, ReasoningLevel, settings
 from src.dialectic import prompts
 from src.embedding_client import embedding_client
 from src.telemetry import prometheus_metrics
@@ -39,6 +39,17 @@ from src.utils.clients import (
 from src.utils.formatting import format_new_turn_with_timestamp
 
 logger = logging.getLogger(__name__)
+
+
+def _get_dialectic_level_model_config(
+    reasoning_level: ReasoningLevel,
+) -> ConfiguredModelSettings:
+    model_config = settings.DIALECTIC.LEVELS[reasoning_level].MODEL_CONFIG
+    if model_config is None:
+        raise ValueError(
+            f"DIALECTIC level '{reasoning_level}' MODEL_CONFIG must be resolved before use"
+        )
+    return model_config
 
 
 class DialecticAgent:
@@ -411,7 +422,7 @@ class DialecticAgent:
         )
 
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            llm_settings=level_settings,
+            model_config=_get_dialectic_level_model_config(self.reasoning_level),
             prompt="",  # Ignored since we pass messages
             max_tokens=max_tokens,
             tools=tools,
@@ -420,7 +431,6 @@ class DialecticAgent:
             max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
             messages=self.messages,
             track_name="Dialectic Agent",
-            thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name="dialectic_chat",
         )
@@ -477,7 +487,7 @@ class DialecticAgent:
         response = cast(
             StreamingResponseWithMetadata,
             await honcho_llm_call(
-                llm_settings=level_settings,
+                model_config=_get_dialectic_level_model_config(self.reasoning_level),
                 prompt="",  # Ignored since we pass messages
                 max_tokens=max_tokens,
                 stream=True,
@@ -488,7 +498,6 @@ class DialecticAgent:
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
                 track_name="Dialectic Agent Stream",
-                thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
             ),

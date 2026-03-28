@@ -2,7 +2,7 @@ import logging
 import time
 
 from src import crud
-from src.config import settings
+from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
@@ -25,6 +25,13 @@ from src.utils.tokens import track_deriver_input_tokens
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _get_deriver_model_config() -> ConfiguredModelSettings:
+    model_config = settings.DERIVER.MODEL_CONFIG
+    if model_config is None:
+        raise ValueError("DERIVER MODEL_CONFIG must be resolved before use")
+    return model_config
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -120,7 +127,7 @@ async def process_representation_tasks_batch(
 
     # validation on settings means max_tokens will always be > 0
     max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
-    model_config = settings.DERIVER.to_model_config().model_copy(
+    model_config = _get_deriver_model_config().model_copy(
         update={
             "thinking_effort": "minimal",
             "stop_sequences": ["   \n", "\n\n\n\n"],

@@ -407,6 +407,72 @@ def _merge_legacy_model_defaults(
     return configured.model_copy(update=update) if update else configured
 
 
+def _merge_override_defaults(
+    configured: ModelOverrideSettings,
+    defaults: ModelOverrideSettings,
+) -> ModelOverrideSettings:
+    update: dict[str, Any] = {}
+    configured_fields = configured.model_fields_set
+
+    for field in (
+        "api_key",
+        "api_key_env",
+        "base_url",
+        "fallback_api_key",
+        "fallback_api_key_env",
+        "fallback_base_url",
+    ):
+        if field not in configured_fields:
+            default_value = getattr(defaults, field)
+            if default_value is not None:
+                update[field] = default_value
+
+    merged_provider_params = {
+        **defaults.provider_params,
+        **configured.provider_params,
+    }
+    if merged_provider_params != configured.provider_params:
+        update["provider_params"] = merged_provider_params
+
+    return configured.model_copy(update=update) if update else configured
+
+
+def _merge_configured_model_defaults(
+    configured: ConfiguredModelSettings,
+    defaults: ConfiguredModelSettings,
+) -> ConfiguredModelSettings:
+    update: dict[str, Any] = {}
+    configured_fields = configured.model_fields_set
+
+    for field in (
+        "transport",
+        "fallback_model",
+        "fallback_transport",
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "seed",
+        "thinking_effort",
+        "thinking_budget_tokens",
+        "max_output_tokens",
+        "stop_sequences",
+    ):
+        if field not in configured_fields:
+            default_value = getattr(defaults, field)
+            if default_value != getattr(configured, field):
+                update[field] = default_value
+
+    merged_overrides = _merge_override_defaults(
+        configured.overrides, defaults.overrides
+    )
+    if merged_overrides != configured.overrides:
+        update["overrides"] = merged_overrides
+
+    return configured.model_copy(update=update) if update else configured
+
+
 def _legacy_model_fields_from_configured(
     configured: ConfiguredModelSettings,
 ) -> tuple[SupportedProviders, str, SupportedProviders | None, str | None]:
@@ -1201,24 +1267,31 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         if model_config.max_output_tokens is not None:
             _set_model_field(self, "MAX_OUTPUT_TOKENS", model_config.max_output_tokens)
 
-        if self.DEDUCTION_MODEL_CONFIG is None:
-            _set_model_field(
-                self,
-                "DEDUCTION_MODEL_CONFIG",
-                _configured_model_from_legacy(
-                    provider=self.PROVIDER,
-                    model=self.DEDUCTION_MODEL,
-                ),
+        deduction_model_config = (
+            self.DEDUCTION_MODEL_CONFIG
+            or _configured_model_from_legacy(
+                provider=self.PROVIDER,
+                model=self.DEDUCTION_MODEL,
             )
-        if self.INDUCTION_MODEL_CONFIG is None:
-            _set_model_field(
-                self,
-                "INDUCTION_MODEL_CONFIG",
-                _configured_model_from_legacy(
-                    provider=self.PROVIDER,
-                    model=self.INDUCTION_MODEL,
-                ),
+        )
+        deduction_model_config = _merge_configured_model_defaults(
+            deduction_model_config,
+            model_config,
+        )
+        _set_model_field(self, "DEDUCTION_MODEL_CONFIG", deduction_model_config)
+
+        induction_model_config = (
+            self.INDUCTION_MODEL_CONFIG
+            or _configured_model_from_legacy(
+                provider=self.PROVIDER,
+                model=self.INDUCTION_MODEL,
             )
+        )
+        induction_model_config = _merge_configured_model_defaults(
+            induction_model_config,
+            model_config,
+        )
+        _set_model_field(self, "INDUCTION_MODEL_CONFIG", induction_model_config)
 
         _set_model_field(
             self,
