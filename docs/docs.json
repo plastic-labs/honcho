@@ -131,7 +131,8 @@
                 "group": "Self-Hosting",
                 "pages": [
                   "v3/contributing/self-hosting",
-                  "v3/contributing/configuration"
+                  "v3/contributing/configuration",
+                  "v3/contributing/troubleshooting"
                 ]
               },
               {

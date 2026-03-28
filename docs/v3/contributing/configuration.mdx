@@ -184,8 +184,7 @@ DB_TRACING=false  # Enable query tracing
 
 **Docker Compose for PostgreSQL:**
 ```yaml
-# docker-compose.yml
-version: '3.8'
+# From docker-compose.yml.example
 services:
   database:
     image: pgvector/pgvector:pg15
@@ -193,14 +192,20 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: honcho
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d honcho"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  postgres_data:
+  pgdata:
 ```
 
 ### Authentication Configuration

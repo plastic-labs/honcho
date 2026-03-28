@@ -196,6 +196,12 @@ app.include_router(webhooks.router, prefix="/v3")
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring and container orchestration."""
+    return {"status": "ok"}
+
+
 # Global exception handlers
 @app.exception_handler(HonchoException)
 async def honcho_exception_handler(_request: Request, exc: HonchoException):
