@@ -75,9 +75,9 @@ Examples:
 - `DB_CONNECTION_URI` → `[db].CONNECTION_URI`
 - `DB_POOL_SIZE`      → `[db].POOL_SIZE`
 - `AUTH_JWT_SECRET`   → `[auth].JWT_SECRET`
-- `DERIVER_MODEL` → `[deriver].MODEL`
+- `DERIVER_MODEL_CONFIG__MODEL` → `[deriver.model_config].model`
 - `LOG_LEVEL` (no section) → `[app].LOG_LEVEL`
-- `DIALECTIC_LEVELS__minimal__PROVIDER` → `[dialectic.levels.minimal].PROVIDER`
+- `DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL` → `[dialectic.levels.minimal.model_config].model`
 - `DREAM_SURPRISAL__ENABLED` → `[dream.surprisal].ENABLED`
 
 ### Configuration Priority
@@ -313,47 +313,49 @@ Each reasoning level (minimal, low, medium, high, max) has its own provider, mod
 ```toml
 # config.toml example
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 MAX_OUTPUT_TOKENS = 250  # Optional: overrides global MAX_OUTPUT_TOKENS
 TOOL_CHOICE = "any"  # Options: null/auto, "any", "required"
 
+[dialectic.levels.minimal.model_config]
+model = "gemini/gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 TOOL_CHOICE = "any"
 
+[dialectic.levels.low.model_config]
+model = "gemini/gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
-# Backup provider (optional, must set both or neither)
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-pro"
+
+[dialectic.levels.max.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 2048
+# fallback_model = "gemini/gemini-2.5-pro"
 ```
 
 **Environment variables for nested dialectic levels:**
 ```bash
-DIALECTIC_LEVELS__minimal__PROVIDER=google
-DIALECTIC_LEVELS__minimal__MODEL=gemini-2.5-flash-lite
-DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL=gemini/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS=1
 ```
 
@@ -366,16 +368,14 @@ The Deriver is a background processing system that extracts facts from messages 
 DERIVER_ENABLED=true
 
 # LLM settings for deriver
-DERIVER_PROVIDER=google
-DERIVER_MODEL=gemini-2.5-flash-lite
-DERIVER_MAX_OUTPUT_TOKENS=4096
-DERIVER_THINKING_BUDGET_TOKENS=1024
+DERIVER_MODEL_CONFIG__MODEL=gemini/gemini-2.5-flash-lite
+DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS=4096
+DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 DERIVER_MAX_INPUT_TOKENS=23000  # Maximum input tokens for deriver
-DERIVER_TEMPERATURE=  # Optional temperature override (unset by default)
+DERIVER_MODEL_CONFIG__TEMPERATURE=  # Optional temperature override (unset by default)
 
-# Backup provider (optional, must set both or neither)
-# DERIVER_BACKUP_PROVIDER=anthropic
-# DERIVER_BACKUP_MODEL=claude-haiku-4-5
+# Backup model (optional)
+# DERIVER_MODEL_CONFIG__FALLBACK_MODEL=anthropic/claude-haiku-4-5
 
 # Worker settings
 DERIVER_WORKERS=1  # Number of background worker processes
@@ -412,15 +412,13 @@ Session summaries provide compressed context for long conversations. Honcho crea
 SUMMARY_ENABLED=true
 
 # LLM settings for summary generation
-SUMMARY_PROVIDER=google
-SUMMARY_MODEL=gemini-2.5-flash
+SUMMARY_MODEL_CONFIG__MODEL=gemini/gemini-2.5-flash
 SUMMARY_MAX_TOKENS_SHORT=1000  # Max tokens for short summaries
 SUMMARY_MAX_TOKENS_LONG=4000  # Max tokens for long summaries
-SUMMARY_THINKING_BUDGET_TOKENS=512
+SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=512
 
-# Backup provider (optional, must set both or neither)
-# SUMMARY_BACKUP_PROVIDER=anthropic
-# SUMMARY_BACKUP_MODEL=claude-haiku-4-5
+# Backup model (optional)
+# SUMMARY_MODEL_CONFIG__FALLBACK_MODEL=anthropic/claude-haiku-4-5
 
 # Summary frequency thresholds
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20  # Create short summary every N messages
@@ -456,20 +454,18 @@ DREAM_MIN_HOURS_BETWEEN_DREAMS=8  # Minimum hours between dreams for a peer
 DREAM_ENABLED_TYPES=["omni"]  # Currently supported: omni
 
 # LLM settings for dream processing
-DREAM_PROVIDER=anthropic
-DREAM_MODEL=claude-sonnet-4-20250514
-DREAM_MAX_OUTPUT_TOKENS=16384
-DREAM_THINKING_BUDGET_TOKENS=8192
+DREAM_MODEL_CONFIG__MODEL=anthropic/claude-sonnet-4-20250514
+DREAM_MODEL_CONFIG__MAX_OUTPUT_TOKENS=16384
+DREAM_MODEL_CONFIG__THINKING_BUDGET_TOKENS=8192
 DREAM_MAX_TOOL_ITERATIONS=20
 DREAM_HISTORY_TOKEN_LIMIT=16384
 
-# Backup provider (optional, must set both or neither)
-# DREAM_BACKUP_PROVIDER=google
-# DREAM_BACKUP_MODEL=gemini-2.5-flash
+# Backup model (optional)
+# DREAM_MODEL_CONFIG__FALLBACK_MODEL=gemini/gemini-2.5-flash
 
-# Specialist models (use same provider as main model)
-DREAM_DEDUCTION_MODEL=claude-haiku-4-5
-DREAM_INDUCTION_MODEL=claude-haiku-4-5
+# Specialist model configs inherit omitted values from DREAM_MODEL_CONFIG
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
+DREAM_INDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 ```
 
 **Surprisal-Based Sampling (Advanced):**
@@ -627,8 +623,9 @@ ENABLED = false
 [deriver]
 ENABLED = true
 WORKERS = 1
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
+
+[deriver.model_config]
+model = "gemini/gemini-2.5-flash-lite"
 
 [peer_card]
 ENABLED = true
@@ -637,46 +634,59 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 
+[dialectic.levels.minimal.model_config]
+model = "gemini/gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 
+[dialectic.levels.low.model_config]
+model = "gemini/gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+
+[dialectic.levels.max.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 2048
 
 [summary]
 ENABLED = true
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
+[summary.model_config]
+model = "gemini/gemini-2.5-flash"
+
 [dream]
 ENABLED = true
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
+
+[dream.model_config]
+model = "anthropic/claude-sonnet-4-20250514"
+
+[dream.deduction_model_config]
+model = "anthropic/claude-haiku-4-5"
+
+[dream.induction_model_config]
+model = "anthropic/claude-haiku-4-5"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
@@ -734,8 +744,9 @@ DEFAULT_TTL_SECONDS = 300
 [deriver]
 ENABLED = true
 WORKERS = 4
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
+
+[deriver.model_config]
+model = "gemini/gemini-2.5-flash-lite"
 
 [peer_card]
 ENABLED = true
@@ -744,46 +755,59 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 
+[dialectic.levels.minimal.model_config]
+model = "gemini/gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 
+[dialectic.levels.low.model_config]
+model = "gemini/gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+
+[dialectic.levels.max.model_config]
+model = "anthropic/claude-haiku-4-5"
+thinking_budget_tokens = 2048
 
 [summary]
 ENABLED = true
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
+[summary.model_config]
+model = "gemini/gemini-2.5-flash"
+
 [dream]
 ENABLED = true
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
+
+[dream.model_config]
+model = "anthropic/claude-sonnet-4-20250514"
+
+[dream.deduction_model_config]
+model = "anthropic/claude-haiku-4-5"
+
+[dream.induction_model_config]
+model = "anthropic/claude-haiku-4-5"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10

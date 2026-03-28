@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from src.config import (
@@ -8,6 +10,7 @@ from src.config import (
     ModelConfig,
     ModelOverrideSettings,
     SummarySettings,
+    load_toml_config,
     resolve_model_config,
 )
 
@@ -201,3 +204,58 @@ def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
     }
     assert settings.INDUCTION_MODEL_CONFIG.model == "anthropic/claude-opus-4-1"
     assert settings.INDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096
+
+
+def test_config_toml_example_uses_nested_model_config_sections() -> None:
+    config_path = Path(__file__).resolve().parents[3] / "config.toml.example"
+    config_data = load_toml_config(str(config_path))
+
+    deriver_config = ConfiguredModelSettings.model_validate(
+        config_data["deriver"]["model_config"]
+    )
+    minimal_level = DialecticLevelSettings.model_validate(
+        config_data["dialectic"]["levels"]["minimal"]
+    )
+    max_level = DialecticLevelSettings.model_validate(
+        config_data["dialectic"]["levels"]["max"]
+    )
+    summary_config = ConfiguredModelSettings.model_validate(
+        config_data["summary"]["model_config"]
+    )
+    dream_model_config = ConfiguredModelSettings.model_validate(
+        config_data["dream"]["model_config"]
+    )
+    deduction_model_config = ConfiguredModelSettings.model_validate(
+        config_data["dream"]["deduction_model_config"]
+    )
+    induction_model_config = ConfiguredModelSettings.model_validate(
+        config_data["dream"]["induction_model_config"]
+    )
+    dream = DreamSettings.model_validate(
+        {
+            "MODEL_CONFIG": dream_model_config,
+            "DEDUCTION_MODEL_CONFIG": deduction_model_config,
+            "INDUCTION_MODEL_CONFIG": induction_model_config,
+        }
+    )
+
+    if dream.MODEL_CONFIG is None:
+        raise AssertionError(
+            "Expected DREAM MODEL_CONFIG to be resolved from config.toml.example"
+        )
+    if dream.DEDUCTION_MODEL_CONFIG is None:
+        raise AssertionError(
+            "Expected DREAM DEDUCTION MODEL_CONFIG to be resolved from config.toml.example"
+        )
+
+    assert deriver_config.model == "gemini/gemini-2.5-flash-lite"
+    assert deriver_config.thinking_budget_tokens == 1024
+    assert minimal_level.MODEL_CONFIG is not None
+    assert minimal_level.MODEL_CONFIG.model == ("gemini/gemini-2.5-flash-lite")
+    assert max_level.MODEL_CONFIG is not None
+    assert max_level.MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
+    assert max_level.MODEL_CONFIG.thinking_budget_tokens == 2048
+    assert summary_config.model == "gemini/gemini-2.5-flash"
+    assert dream.MODEL_CONFIG.model == "anthropic/claude-sonnet-4-20250514"
+    assert dream.DEDUCTION_MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
+    assert dream.DEDUCTION_MODEL_CONFIG.thinking_budget_tokens == 8192
