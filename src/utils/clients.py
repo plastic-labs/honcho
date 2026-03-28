@@ -17,7 +17,13 @@ from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config import LLMComponentSettings, settings
+from src.config import (
+    ConfiguredModelSettings,
+    LLMComponentSettings,
+    ModelConfig,
+    resolve_model_config,
+    settings,
+)
 from src.llm.backend import CompletionResult as BackendCompletionResult
 from src.llm.backend import ToolCallResult
 from src.llm.backends.anthropic import AnthropicBackend
@@ -74,8 +80,104 @@ IterationCallback = Callable[[IterationData], None]
 T = TypeVar("T")
 
 # Type aliases for OpenAI GPT-5 specific parameters
-ReasoningEffortType = Literal["low", "medium", "high", "minimal"] | None
+ReasoningEffortType = (
+    Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None
+)
 VerbosityType = Literal["low", "medium", "high"] | None
+
+
+@dataclass(frozen=True)
+class _ModelConfigSettingsAdapter:
+    """Temporary legacy-shaped adapter for ModelConfig-backed call sites."""
+
+    PROVIDER: SupportedProviders
+    MODEL: str
+    BACKUP_PROVIDER: SupportedProviders | None = None
+    BACKUP_MODEL: str | None = None
+
+
+def _strip_model_prefix(model: str) -> str:
+    return model.split("/", 1)[1] if "/" in model else model
+
+
+def _provider_for_model_config(
+    model: str,
+    transport: Literal["provider_native", "openai_compatible"],
+) -> SupportedProviders:
+    if transport == "openai_compatible":
+        if model.startswith("hosted_vllm/"):
+            return "vllm"
+        return "custom"
+
+    prefix = model.split("/", 1)[0]
+    provider_map: dict[str, SupportedProviders] = {
+        "anthropic": "anthropic",
+        "openai": "openai",
+        "gemini": "google",
+        "groq": "groq",
+        "hosted_vllm": "vllm",
+    }
+    if prefix not in provider_map:
+        raise ValueError(f"Unsupported model prefix for honcho_llm_call: {prefix}")
+    return provider_map[prefix]
+
+
+def _settings_from_model_config(
+    model_config: ModelConfig,
+) -> _ModelConfigSettingsAdapter:
+    """Adapt ModelConfig into the legacy settings shape used by honcho_llm_call.
+
+    This path currently supports the global-client flows used by migrated callers.
+    Explicit per-call credential overrides are still handled in the lower-level
+    request-builder/backend path, not here.
+    """
+
+    if any(
+        value is not None
+        for value in (
+            model_config.api_key,
+            model_config.base_url,
+            model_config.fallback_api_key,
+            model_config.fallback_base_url,
+        )
+    ):
+        raise ValueError(
+            "honcho_llm_call(model_config=...) does not yet support explicit credential/base_url overrides"
+        )
+
+    provider = _provider_for_model_config(model_config.model, model_config.transport)
+    fallback_provider: SupportedProviders | None = None
+    fallback_model: str | None = None
+    if model_config.fallback_model is not None:
+        fallback_transport = model_config.fallback_transport or model_config.transport
+        fallback_provider = _provider_for_model_config(
+            model_config.fallback_model,
+            fallback_transport,
+        )
+        fallback_model = _strip_model_prefix(model_config.fallback_model)
+
+    return _ModelConfigSettingsAdapter(
+        PROVIDER=provider,
+        MODEL=_strip_model_prefix(model_config.model),
+        BACKUP_PROVIDER=fallback_provider,
+        BACKUP_MODEL=fallback_model,
+    )
+
+
+def _resolve_runtime_model_config(
+    model_config: ModelConfig | ConfiguredModelSettings,
+) -> ModelConfig:
+    if isinstance(model_config, ModelConfig):
+        return model_config
+    return resolve_model_config(model_config)
+
+
+def _require_llm_settings(
+    llm_settings: LLMComponentSettings | None,
+) -> LLMComponentSettings:
+    if llm_settings is None:
+        raise ValueError("LLM settings must be resolved before use")
+    return llm_settings
 
 
 def count_message_tokens(messages: list[dict[str, Any]]) -> int:
@@ -698,10 +800,10 @@ async def _stream_final_response(
         reasoning_effort,
         verbosity,
         thinking_budget_tokens,
-        True,  # stream=True
-        None,  # No tools
-        None,  # No tool_choice
-        conversation_messages,
+        stream=True,
+        tools=None,
+        tool_choice=None,
+        messages=conversation_messages,
     )
 
     # Yield chunks from the streaming response
@@ -829,10 +931,10 @@ async def _execute_tool_loop(
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
                 thinking_budget,
-                False,
-                converted_tools,
-                effective_tool_choice,
-                conversation_messages,
+                stream=False,
+                tools=converted_tools,
+                tool_choice=effective_tool_choice,
+                messages=conversation_messages,
             )
 
         # Apply retry if enabled
@@ -1063,10 +1165,10 @@ async def _execute_tool_loop(
             gpt5_reasoning_effort,
             gpt5_verbosity,
             thinking_budget,
-            False,
-            None,  # No tools
-            None,  # No tool_choice
-            conversation_messages,
+            stream=False,
+            tools=None,
+            tool_choice=None,
+            messages=conversation_messages,
         )
 
     if enable_retry:
@@ -1150,17 +1252,16 @@ def _append_tool_results(
 
 @overload
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings,
+    llm_settings: LLMComponentSettings | None = None,
+    *,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
-    *,
     response_model: type[M],
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
@@ -1175,12 +1276,14 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
 @overload
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings,
+    llm_settings: LLMComponentSettings | None = None,
+    *,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1188,8 +1291,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
@@ -1204,12 +1306,14 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
 @overload
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings,
+    llm_settings: LLMComponentSettings | None = None,
+    *,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1217,8 +1321,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
@@ -1233,12 +1336,14 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
 @conditional_observe(name="LLM Call")
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings,
+    llm_settings: LLMComponentSettings | None = None,
+    *,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1246,8 +1351,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
@@ -1262,6 +1366,7 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -1301,6 +1406,23 @@ async def honcho_llm_call(
     Raises:
         ValueError: If provider is not configured
     """
+    if (llm_settings is None) == (model_config is None):
+        raise ValueError("Provide exactly one of llm_settings or model_config")
+
+    if model_config is not None:
+        model_config = _resolve_runtime_model_config(model_config)
+        llm_settings = _settings_from_model_config(model_config)
+        if temperature is None:
+            temperature = model_config.temperature
+        if stop_seqs is None:
+            stop_seqs = model_config.stop_sequences
+        if thinking_budget_tokens is None:
+            thinking_budget_tokens = model_config.thinking_budget_tokens
+        if reasoning_effort is None and model_config.thinking_effort is not None:
+            reasoning_effort = cast(ReasoningEffortType, model_config.thinking_effort)
+
+    llm_settings = _require_llm_settings(llm_settings)
+
     # Validate that streaming and tools are not used together
     # (unless stream_final_only is set, which streams only the final response after tool calls)
     if stream and tools and not stream_final_only:
@@ -1402,9 +1524,9 @@ async def honcho_llm_call(
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
                 thinking_budget,
-                True,  # type: ignore[arg-type]
-                converted_tools,
-                tool_choice,
+                stream=True,
+                tools=converted_tools,
+                tool_choice=tool_choice,
             )
         else:
             return await honcho_llm_call_inner(
@@ -1419,9 +1541,9 @@ async def honcho_llm_call(
                 gpt5_reasoning_effort,
                 gpt5_verbosity,
                 thinking_budget,
-                False,  # type: ignore[arg-type]
-                converted_tools,
-                tool_choice,
+                stream=False,
+                tools=converted_tools,
+                tool_choice=tool_choice,
             )
 
     decorated = _call_with_provider_selection
@@ -1526,7 +1648,7 @@ async def honcho_llm_call(
     return result
 
 
-def _repair_response_model_json(
+def _repair_response_model_json(  # pyright: ignore[reportUnusedFunction]
     raw_content: str,
     response_model: type[BaseModel],
     model: str,
@@ -1598,8 +1720,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
@@ -1619,8 +1740,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
@@ -1640,8 +1760,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[True] = ...,
@@ -1660,8 +1779,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
-    | None = None,  # OpenAI only
+    reasoning_effort: ReasoningEffortType = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: bool = False,
@@ -1721,7 +1839,7 @@ async def handle_streaming_response(
     json_mode: bool,
     thinking_budget_tokens: int | None,
     response_model: type[BaseModel] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    reasoning_effort: ReasoningEffortType = None,
     verbosity: Literal["low", "medium", "high"] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """

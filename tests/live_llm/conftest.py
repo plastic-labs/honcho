@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -27,7 +28,7 @@ def pytest_report_header(config: pytest.Config) -> list[str] | None:
 
 
 @pytest.fixture(autouse=True)
-def clear_live_gemini_cache_store() -> None:
+def clear_live_gemini_cache_store() -> Iterator[None]:
     # The live Gemini cache store is process-local and should not leak state between tests.
     gemini_cache_store._handles.clear()  # pyright: ignore[reportPrivateUsage]
     yield

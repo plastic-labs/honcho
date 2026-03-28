@@ -15,7 +15,7 @@ class AnthropicBackend:
     """Provider backend wrapping the native Anthropic SDK."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        self._client: Any = client
 
     async def complete(
         self,
@@ -38,8 +38,7 @@ class AnthropicBackend:
         del max_output_tokens, api_key, api_base
         if thinking_effort is not None:
             raise ValueError(
-                "Anthropic backend does not support thinking_effort; "
-                "use thinking_budget_tokens instead"
+                "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
             )
 
         request_messages, system_messages = self._extract_system(messages)
@@ -122,8 +121,7 @@ class AnthropicBackend:
         del max_output_tokens, api_key, api_base, extra_params
         if thinking_effort is not None:
             raise ValueError(
-                "Anthropic backend does not support thinking_effort; "
-                "use thinking_budget_tokens instead"
+                "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
             )
 
         request_messages, system_messages = self._extract_system(messages)

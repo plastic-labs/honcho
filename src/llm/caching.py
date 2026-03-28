@@ -47,7 +47,7 @@ class InMemoryGeminiCacheStore:
 
     def __init__(self) -> None:
         self._handles: dict[str, GeminiCacheHandle] = {}
-        self._lock = Lock()
+        self._lock: Lock = Lock()
 
     def get(self, key: str) -> GeminiCacheHandle | None:
         with self._lock:

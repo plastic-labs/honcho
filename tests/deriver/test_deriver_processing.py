@@ -1,16 +1,71 @@
 import signal
+from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src import models
-from src.utils.representation import Representation
+from src.config import settings
+from src.deriver.deriver import process_representation_tasks_batch
+from src.utils.clients import HonchoLLMCallResponse
+from src.utils.representation import PromptRepresentation, Representation
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
 @pytest.mark.asyncio
 class TestDeriverProcessing:
     """Test suite for deriver processing using the conftest fixtures"""
+
+    async def test_process_representation_tasks_batch_uses_model_config(self):
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_llm_call:
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected deriver LLM call")
+        kwargs = await_args.kwargs
+        expected_config = settings.DERIVER.to_model_config().model_copy(
+            update={
+                "thinking_effort": "minimal",
+                "stop_sequences": ["   \n", "\n\n\n\n"],
+            }
+        )
+        assert "model_config" in kwargs
+        assert kwargs["model_config"].model == expected_config.model
+        assert kwargs["model_config"].thinking_effort == expected_config.thinking_effort
+        assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
+        assert "llm_settings" not in kwargs
 
     async def test_work_unit_key_generation(
         self,

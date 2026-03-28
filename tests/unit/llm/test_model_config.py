@@ -1,6 +1,14 @@
 import pytest
 
-from src.config import DeriverSettings, DialecticLevelSettings, ModelConfig
+from src.config import (
+    ConfiguredModelSettings,
+    DeriverSettings,
+    DialecticLevelSettings,
+    ModelConfig,
+    ModelOverrideSettings,
+    SummarySettings,
+    resolve_model_config,
+)
 
 
 def test_openai_compatible_requires_base_url() -> None:
@@ -39,9 +47,11 @@ def test_anthropic_thinking_budget_has_minimum() -> None:
 
 
 def test_reasoning_effort_alias_populates_generic_thinking_effort() -> None:
-    config = ModelConfig(
-        model="openai/gpt-5",
-        reasoning_effort="minimal",
+    config = ModelConfig.model_validate(
+        {
+            "model": "openai/gpt-5",
+            "reasoning_effort": "minimal",
+        }
     )
 
     assert config.thinking_effort == "minimal"
@@ -75,6 +85,46 @@ def test_deriver_settings_to_model_config_qualifies_legacy_model() -> None:
     assert config.transport == "provider_native"
     assert config.thinking_budget_tokens == 1024
     assert config.max_output_tokens == 4096
+    assert settings.MODEL_CONFIG is not None
+    assert settings.MODEL_CONFIG.model == "gemini/gemini-2.5-flash-lite"
+
+
+def test_summary_settings_syncs_legacy_fields_from_nested_model_config() -> None:
+    settings = SummarySettings(
+        MODEL_CONFIG=ConfiguredModelSettings(
+            model="anthropic/claude-haiku-4-5",
+            fallback_model="gemini/gemini-2.5-pro",
+            thinking_budget_tokens=1024,
+        ),
+    )
+
+    assert settings.PROVIDER == "anthropic"
+    assert settings.MODEL == "claude-haiku-4-5"
+    assert settings.BACKUP_PROVIDER == "google"
+    assert settings.BACKUP_MODEL == "gemini-2.5-pro"
+    assert settings.THINKING_BUDGET_TOKENS == 1024
+
+
+def test_resolve_model_config_reads_override_env_and_provider_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SUMMARY_LOCAL_API_KEY", "test-key")
+
+    configured = ConfiguredModelSettings(
+        model="openai/my-local-model",
+        transport="openai_compatible",
+        overrides=ModelOverrideSettings(
+            api_key_env="SUMMARY_LOCAL_API_KEY",
+            base_url="http://localhost:8000/v1",
+            provider_params={"verbosity": "low"},
+        ),
+    )
+
+    resolved = resolve_model_config(configured)
+
+    assert resolved.api_key == "test-key"
+    assert resolved.base_url == "http://localhost:8000/v1"
+    assert resolved.provider_params == {"verbosity": "low"}
 
 
 def test_provider_params_default_to_empty_dict() -> None:
@@ -98,3 +148,20 @@ def test_dialectic_level_settings_to_model_config_handles_fallback() -> None:
     assert config.model == "anthropic/claude-haiku-4-5"
     assert config.fallback_model == "gemini/gemini-2.5-pro"
     assert config.fallback_transport == "provider_native"
+
+
+def test_dialectic_level_settings_accepts_nested_model_config() -> None:
+    settings = DialecticLevelSettings(
+        MODEL_CONFIG=ConfiguredModelSettings(
+            model="anthropic/claude-haiku-4-5",
+            fallback_model="gemini/gemini-2.5-pro",
+            thinking_budget_tokens=1024,
+        ),
+        MAX_TOOL_ITERATIONS=2,
+    )
+
+    assert settings.PROVIDER == "anthropic"
+    assert settings.MODEL == "claude-haiku-4-5"
+    assert settings.BACKUP_PROVIDER == "google"
+    assert settings.BACKUP_MODEL == "gemini-2.5-pro"
+    assert settings.THINKING_BUDGET_TOKENS == 1024

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.llm.backend import CompletionResult
 from src.llm.history_adapters import AnthropicHistoryAdapter
 from src.llm.request_builder import execute_completion
 
@@ -14,7 +15,7 @@ from .conftest import (
     require_provider_key,
     wrap_async_method,
 )
-from .model_matrix import get_live_model_specs
+from .model_matrix import LiveModelSpec, get_live_model_specs
 
 pytestmark = [pytest.mark.live_llm, pytest.mark.requires_anthropic]
 
@@ -26,7 +27,7 @@ pytestmark = [pytest.mark.live_llm, pytest.mark.requires_anthropic]
     ids=lambda spec: spec.id,
 )
 async def test_live_anthropic_structured_output_and_prefix_caching(
-    model_spec,
+    model_spec: LiveModelSpec,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)
@@ -47,7 +48,7 @@ async def test_live_anthropic_structured_output_and_prefix_caching(
         },
     ]
 
-    results = []
+    results: list[CompletionResult] = []
     for _ in range(3):
         results.append(
             await execute_completion(
@@ -86,7 +87,7 @@ async def test_live_anthropic_structured_output_and_prefix_caching(
     ids=lambda spec: spec.id,
 )
 async def test_live_anthropic_thinking_and_tool_replay(
-    model_spec,
+    model_spec: LiveModelSpec,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)

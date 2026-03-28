@@ -11,7 +11,7 @@ from .conftest import (
     require_provider_key,
     wrap_async_method,
 )
-from .model_matrix import get_live_model_specs
+from .model_matrix import LiveModelSpec, get_live_model_specs
 
 pytestmark = [pytest.mark.live_llm, pytest.mark.requires_openai]
 
@@ -30,7 +30,7 @@ _GPT5_SPECS = tuple(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_spec", _GPT4_SPECS, ids=lambda spec: spec.id)
 async def test_live_openai_gpt4_structured_output_and_prefix_caching(
-    model_spec,
+    model_spec: LiveModelSpec,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)
@@ -84,7 +84,7 @@ async def test_live_openai_gpt4_structured_output_and_prefix_caching(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_spec", _GPT5_SPECS, ids=lambda spec: spec.id)
 async def test_live_openai_gpt5_reasoning_structured_output_and_prefix_caching(
-    model_spec,
+    model_spec: LiveModelSpec,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)

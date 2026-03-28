@@ -55,7 +55,10 @@ async def test_gemini_backend_preserves_thought_signature() -> None:
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].thought_signature == "sig_gemini"
 
-    call = client.aio.models.generate_content.await_args.kwargs
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
     assert call["model"] == "gemini-2.5-flash"
     assert call["config"]["system_instruction"] == "System prompt"
     assert call["config"]["thinking_config"] == {"thinking_budget": 256}
@@ -88,7 +91,10 @@ async def test_gemini_backend_maps_thinking_effort_to_thinking_level() -> None:
         thinking_effort="low",
     )
 
-    call = client.aio.models.generate_content.await_args.kwargs
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
     assert call["config"]["thinking_config"] == {"thinking_level": "low"}
 
 
@@ -299,7 +305,10 @@ async def test_gemini_backend_strips_system_and_tools_when_using_cached_content(
     )
 
     assert result.content == "cached result"
-    call = client.aio.models.generate_content.await_args.kwargs
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
     assert call["config"]["cached_content"] == "cachedContents/abc123"
     assert "system_instruction" not in call["config"]
     assert "tools" not in call["config"]

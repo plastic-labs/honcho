@@ -15,7 +15,7 @@ class GroqBackend:
     """Thin wrapper around Groq's OpenAI-compatible chat completions."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        self._client: Any = client
 
     async def complete(
         self,
@@ -63,7 +63,7 @@ class GroqBackend:
         cache_creation, cache_read = extract_openai_cache_tokens(usage)
 
         content: Any = response.choices[0].message.content
-        if response_format is not None:
+        if isinstance(response_format, type):
             try:
                 content = response_format.model_validate(
                     json.loads(response.choices[0].message.content)

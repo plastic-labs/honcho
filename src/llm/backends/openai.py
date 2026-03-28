@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 from openai import LengthFinishReasonError
 from pydantic import BaseModel
@@ -17,10 +17,14 @@ def extract_openai_reasoning_content(response: Any) -> str | None:
         if hasattr(message, "reasoning_details") and message.reasoning_details:
             reasoning_parts: list[str] = []
             for detail in message.reasoning_details:
-                if hasattr(detail, "content") and detail.content:
-                    reasoning_parts.append(detail.content)
-                elif isinstance(detail, dict) and detail.get("content"):
-                    reasoning_parts.append(detail["content"])
+                detail_content = getattr(detail, "content", None)
+                if isinstance(detail_content, str) and detail_content:
+                    reasoning_parts.append(detail_content)
+                elif isinstance(detail, dict):
+                    detail_dict = cast(dict[str, Any], detail)
+                    dict_content = detail_dict.get("content")
+                    if isinstance(dict_content, str) and dict_content:
+                        reasoning_parts.append(dict_content)
             if reasoning_parts:
                 return "\n".join(reasoning_parts)
         if hasattr(message, "reasoning_content") and message.reasoning_content:
@@ -37,11 +41,15 @@ def extract_openai_reasoning_details(response: Any) -> list[dict[str, Any]]:
             details: list[dict[str, Any]] = []
             for detail in message.reasoning_details:
                 if hasattr(detail, "model_dump"):
-                    details.append(detail.model_dump())
+                    dumped = detail.model_dump()
+                    if isinstance(dumped, dict):
+                        details.append(cast(dict[str, Any], dumped))
                 elif isinstance(detail, dict):
-                    details.append(detail)
-                elif hasattr(detail, "content") and detail.content:
-                    details.append({"content": detail.content})
+                    details.append(cast(dict[str, Any], detail))
+                else:
+                    detail_content = getattr(detail, "content", None)
+                    if isinstance(detail_content, str) and detail_content:
+                        details.append({"content": detail_content})
             return details
     except (AttributeError, IndexError, TypeError):
         return []
@@ -78,7 +86,7 @@ class OpenAIBackend:
     """Provider backend wrapping AsyncOpenAI."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        self._client: Any = client
 
     async def complete(
         self,
@@ -101,8 +109,7 @@ class OpenAIBackend:
         del api_key, api_base
         if thinking_budget_tokens is not None:
             raise ValueError(
-                "OpenAI backend does not support thinking_budget_tokens; "
-                "use thinking_effort instead"
+                "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
             )
 
         params = self._build_params(
@@ -119,7 +126,7 @@ class OpenAIBackend:
 
         bare_model = self._strip_prefix(model)
 
-        if response_format is not None:
+        if isinstance(response_format, type):
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
@@ -139,6 +146,8 @@ class OpenAIBackend:
             if parsed is None:
                 raise ValueError("No parsed content in structured response")
             return self._normalize_response(response, content_override=parsed)
+        if response_format is not None:
+            params["response_format"] = response_format
 
         if extra_params and extra_params.get("json_mode"):
             params["response_format"] = {"type": "json_object"}
@@ -167,8 +176,7 @@ class OpenAIBackend:
         del api_key, api_base
         if thinking_budget_tokens is not None:
             raise ValueError(
-                "OpenAI backend does not support thinking_budget_tokens; "
-                "use thinking_effort instead"
+                "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
             )
 
         params = self._build_params(

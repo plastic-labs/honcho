@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -28,7 +28,7 @@ class GeminiBackend:
     """Provider backend wrapping the Google GenAI SDK."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        self._client: Any = client
 
     async def complete(
         self,
@@ -198,8 +198,7 @@ class GeminiBackend:
             thinking_config["thinking_level"] = thinking_effort
         if len(thinking_config) > 1:
             raise ValueError(
-                "Gemini backend does not support sending both thinking_budget_tokens "
-                "and thinking_effort in the same request"
+                "Gemini backend does not support sending both thinking_budget_tokens and thinking_effort in the same request"
             )
         if thinking_config:
             config["thinking_config"] = thinking_config
@@ -225,21 +224,27 @@ class GeminiBackend:
         text_parts: list[str] = []
         tool_calls: list[ToolCallResult] = []
         candidate_parts = (
-            getattr(candidate.content, "parts", None)
+            cast(list[Any] | None, getattr(candidate.content, "parts", None))
             if candidate is not None and getattr(candidate, "content", None)
             else None
         )
         if isinstance(candidate_parts, list):
             for part in candidate_parts:
-                if hasattr(part, "text") and part.text:
-                    text_parts.append(part.text)
-                if hasattr(part, "function_call") and part.function_call:
+                part_text = getattr(part, "text", None)
+                if isinstance(part_text, str) and part_text:
+                    text_parts.append(part_text)
+                function_call = getattr(part, "function_call", None)
+                if function_call is not None:
+                    function_name = getattr(function_call, "name", None)
+                    function_args = getattr(function_call, "args", None)
+                    if not isinstance(function_name, str):
+                        continue
                     tool_calls.append(
                         ToolCallResult(
-                            id=f"call_{part.function_call.name}_{len(tool_calls)}",
-                            name=part.function_call.name,
-                            input=dict(part.function_call.args)
-                            if part.function_call.args
+                            id=f"call_{function_name}_{len(tool_calls)}",
+                            name=function_name,
+                            input=dict(cast(dict[str, Any], function_args))
+                            if function_args
                             else {},
                             thought_signature=getattr(part, "thought_signature", None),
                         )
@@ -247,14 +252,23 @@ class GeminiBackend:
         response_text = getattr(response, "text", None)
         if not text_parts and isinstance(response_text, str) and response_text:
             text_parts.append(response_text)
-        response_function_calls = getattr(response, "function_calls", None)
+        response_function_calls = cast(
+            list[Any] | None,
+            getattr(response, "function_calls", None),
+        )
         if not tool_calls and isinstance(response_function_calls, list):
             for function_call in response_function_calls:
+                function_name = getattr(function_call, "name", None)
+                function_args = getattr(function_call, "args", None)
+                if not isinstance(function_name, str):
+                    continue
                 tool_calls.append(
                     ToolCallResult(
-                        id=f"call_{function_call.name}_{len(tool_calls)}",
-                        name=function_call.name,
-                        input=dict(function_call.args) if function_call.args else {},
+                        id=f"call_{function_name}_{len(tool_calls)}",
+                        name=function_name,
+                        input=dict(cast(dict[str, Any], function_args))
+                        if function_args
+                        else {},
                     )
                 )
 

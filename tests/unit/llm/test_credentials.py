@@ -1,9 +1,11 @@
+import pytest
+
 from src.config import ModelConfig, settings
 from src.llm.credentials import resolve_credentials
 
 
 def test_provider_native_credentials_use_global_settings(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings.LLM, "ANTHROPIC_API_KEY", "anthropic-test-key")
 

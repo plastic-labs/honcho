@@ -73,7 +73,10 @@ async def test_anthropic_backend_extracts_text_thinking_and_tool_calls() -> None
     assert result.output_tokens == 5
     assert result.finish_reason == "tool_use"
 
-    call = client.messages.create.await_args.kwargs
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
     assert call["model"] == "claude-haiku-4-5"
     assert call["system"][0]["text"] == "System prompt"
     assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
@@ -110,7 +113,10 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
 
     assert isinstance(result.content, StructuredResponse)
     assert result.content.answer == "ok"
-    call = client.messages.create.await_args.kwargs
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
     assert len(call["messages"]) == 1
     assert call["messages"][0]["role"] == "user"
     assert call["messages"][0]["content"].startswith("Hello\n\nRespond with valid JSON")

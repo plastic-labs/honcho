@@ -25,7 +25,7 @@ class StructuredOutputError(ValueError):
 def repair_response_model_json(
     raw_content: str,
     response_model: type[BaseModel],
-    model: str,
+    _model: str,
 ) -> BaseModel:
     """Repair truncated or malformed JSON and validate against the response model."""
 

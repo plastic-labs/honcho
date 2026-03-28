@@ -25,7 +25,7 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
-from src.config import settings
+from src.config import ConfiguredModelSettings, ModelConfig, settings
 from src.exceptions import LLMError
 from src.utils.clients import (
     CLIENTS,
@@ -1189,6 +1189,76 @@ class TestEdgeCases:
 
         new_chunk = HonchoLLMCallStreamChunk(content="test2")
         assert new_chunk.finish_reasons == []  # Should still be empty
+
+
+@pytest.mark.asyncio
+class TestModelConfigCalls:
+    async def test_honcho_llm_call_accepts_model_config(self):
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="ModelConfig response", type="text")]
+        mock_response.usage = Usage(input_tokens=8, output_tokens=4)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            response = await honcho_llm_call(
+                model_config=ModelConfig(model="anthropic/claude-haiku-4-5"),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            assert response.content == "ModelConfig response"
+            await_args = mock_client.messages.create.await_args
+            if await_args is None:
+                raise AssertionError("Expected Anthropic create call")
+            call_args = await_args.kwargs
+            assert call_args["model"] == "claude-haiku-4-5"
+
+    async def test_honcho_llm_call_accepts_configured_model_settings(self):
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [
+            TextBlock(text="ConfiguredModelSettings response", type="text")
+        ]
+        mock_response.usage = Usage(input_tokens=8, output_tokens=4)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            response = await honcho_llm_call(
+                model_config=ConfiguredModelSettings(
+                    model="anthropic/claude-haiku-4-5",
+                    thinking_budget_tokens=1024,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            assert response.content == "ConfiguredModelSettings response"
+            await_args = mock_client.messages.create.await_args
+            if await_args is None:
+                raise AssertionError("Expected Anthropic create call")
+            call_args = await_args.kwargs
+            assert call_args["model"] == "claude-haiku-4-5"
+            assert call_args["thinking"] == {
+                "type": "enabled",
+                "budget_tokens": 1024,
+            }
+
+    async def test_honcho_llm_call_rejects_both_llm_settings_and_model_config(self):
+        with pytest.raises(
+            ValueError, match="exactly one of llm_settings or model_config"
+        ):
+            await honcho_llm_call(
+                llm_settings=settings.SUMMARY,
+                model_config=ModelConfig(model="anthropic/claude-haiku-4-5"),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
 
 
 # Test fixtures and utilities

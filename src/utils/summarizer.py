@@ -212,7 +212,7 @@ async def create_short_summary(
     )
 
     return await honcho_llm_call(
-        llm_settings=settings.SUMMARY,
+        model_config=settings.SUMMARY.to_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
     )
@@ -237,7 +237,7 @@ async def create_long_summary(
     )
 
     return await honcho_llm_call(
-        llm_settings=settings.SUMMARY,
+        model_config=settings.SUMMARY.to_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
     )

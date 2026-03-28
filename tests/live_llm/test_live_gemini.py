@@ -15,7 +15,7 @@ from .conftest import (
     require_provider_key,
     wrap_async_method,
 )
-from .model_matrix import get_live_model_specs
+from .model_matrix import LiveModelSpec, get_live_model_specs
 
 pytestmark = [pytest.mark.live_llm, pytest.mark.requires_gemini]
 
@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.live_llm, pytest.mark.requires_gemini]
     ids=lambda spec: spec.id,
 )
 async def test_live_gemini_structured_output_and_explicit_cache_reuse(
-    model_spec,
+    model_spec: LiveModelSpec,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)
@@ -95,7 +95,7 @@ async def test_live_gemini_structured_output_and_explicit_cache_reuse(
     ids=lambda spec: spec.id,
 )
 async def test_live_gemini_thinking_and_tool_replay(
-    model_spec,
+    model_spec: LiveModelSpec,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)

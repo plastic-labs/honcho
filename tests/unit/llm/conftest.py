@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
@@ -11,7 +11,9 @@ class FakeBackend(ProviderBackend):
 
     def __init__(self, responses: list[CompletionResult] | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
-        self._responses = iter(responses or [CompletionResult(content="ok")])
+        self._responses: Iterator[CompletionResult] = iter(
+            responses or [CompletionResult(content="ok")]
+        )
 
     async def complete(self, **kwargs: Any) -> CompletionResult:
         self.calls.append(kwargs)

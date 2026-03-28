@@ -52,7 +52,10 @@ async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning() -> None:
     ]
     assert result.cache_read_input_tokens == 4
 
-    call = client.chat.completions.create.await_args.kwargs
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
     assert call["model"] == "gpt-5-mini"
     assert call["max_completion_tokens"] == 100
     assert call["reasoning_effort"] == "high"
@@ -92,7 +95,10 @@ async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models
         thinking_effort="low",
     )
 
-    call = client.chat.completions.create.await_args.kwargs
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
     assert call["model"] == "gpt-4.1"
     assert call["max_tokens"] == 100
     assert call["reasoning_effort"] == "low"

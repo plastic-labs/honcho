@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from pydantic import BaseModel
@@ -110,7 +111,7 @@ async def execute_stream(
     stop: list[str] | None = None,
     cache_policy: PromptCachePolicy | None = None,
     extra_params: dict[str, Any] | None = None,
-) -> StreamChunk:
+) -> AsyncIterator[StreamChunk]:
     capabilities = get_model_capabilities(config)
     credentials = resolve_credentials(config)
     thinking_budget_tokens = (
@@ -133,7 +134,7 @@ async def execute_stream(
     if cache_policy is not None:
         merged_extra_params["cache_policy"] = cache_policy
 
-    return await backend.stream(
+    return backend.stream(
         model=config.model,
         messages=messages,
         max_tokens=effective_max_tokens,

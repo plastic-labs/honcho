@@ -16,7 +16,7 @@ class OpenAICompatibleBackend(OpenAIBackend):
 
     def __init__(self, client: Any, provider_name: str = "openai_compatible") -> None:
         super().__init__(client)
-        self._provider_name = provider_name
+        self._provider_name: str = provider_name
 
     async def complete(
         self,
@@ -86,7 +86,7 @@ class OpenAICompatibleBackend(OpenAIBackend):
                 raw_response=response,
             )
 
-        processed_messages = messages
+        processed_messages: list[dict[str, Any]] = messages
         if self._provider_name in {"custom", "openrouter"}:
             processed_messages = []
             for message in messages:

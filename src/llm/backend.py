@@ -67,7 +67,7 @@ class ProviderBackend(Protocol):
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult: ...
 
-    async def stream(
+    def stream(
         self,
         *,
         model: str,
