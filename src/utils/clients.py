@@ -7,12 +7,8 @@ from typing import Any, Generic, Literal, TypeVar, assert_never, cast, overload
 
 from anthropic import AsyncAnthropic
 from google import genai
-from google.genai.types import (
-    GenerateContentConfigDict,
-)
 from groq import AsyncGroq
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -24,6 +20,7 @@ from src.config import (
     settings,
 )
 from src.llm.backend import CompletionResult as BackendCompletionResult
+from src.llm.backend import StreamChunk as BackendStreamChunk
 from src.llm.backend import ToolCallResult
 from src.llm.backends.anthropic import AnthropicBackend
 from src.llm.backends.gemini import GeminiBackend
@@ -453,59 +450,6 @@ def _select_model_config_for_attempt(
     )
 
 
-def convert_tools_for_provider(
-    tools: list[dict[str, Any]],
-    provider: SupportedProviders,
-) -> list[dict[str, Any]]:
-    """
-    Convert tool definitions to provider-specific format.
-
-    Args:
-        tools: List of tool definitions in Anthropic format (with input_schema)
-        provider: The target provider to convert tools for
-
-    Returns:
-        List of tool definitions in the provider's native format
-    """
-    if provider == "anthropic":
-        # Anthropic format: input_schema
-        return tools
-    elif provider in ("openai", "custom", "vllm"):
-        # OpenAI format: parameters instead of input_schema
-        # custom and vllm use AsyncOpenAI client so need OpenAI format
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["input_schema"],
-                },
-            }
-            for tool in tools
-        ]
-    elif provider == "google":
-        # Google format: function_declarations wrapped in a tool object
-        return [
-            {
-                "function_declarations": [
-                    {
-                        "name": tool["name"],
-                        "description": tool["description"],
-                        "parameters": tool["input_schema"],
-                    }
-                    for tool in tools
-                ]
-            }
-        ]
-    else:
-        # For unsupported providers, return as-is (will likely error if tools are used)
-        logger.warning(
-            f"Tool calling not implemented for provider {provider}, returning tools as-is"
-        )
-        return tools
-
-
 def extract_openai_reasoning_content(response: Any) -> str | None:
     """
     Extract reasoning/thinking content from an OpenAI ChatCompletion response.
@@ -770,6 +714,17 @@ def _completion_result_to_response(
     )
 
 
+def _stream_chunk_to_response_chunk(
+    chunk: BackendStreamChunk,
+) -> HonchoLLMCallStreamChunk:
+    return HonchoLLMCallStreamChunk(
+        content=chunk.content,
+        is_done=chunk.is_done,
+        finish_reasons=[chunk.finish_reason] if chunk.finish_reason else [],
+        output_tokens=chunk.output_tokens,
+    )
+
+
 # Bounds for max_tool_iterations to prevent runaway loops
 MIN_TOOL_ITERATIONS = 1
 MAX_TOOL_ITERATIONS = 100
@@ -936,10 +891,6 @@ async def _execute_tool_loop(
             # Use shared provider selection helper
             provider, model, client = get_provider_and_model()
 
-            converted_tools = (
-                convert_tools_for_provider(tools, provider) if tools else None
-            )
-
             return await honcho_llm_call_inner(
                 provider,
                 model,
@@ -954,7 +905,7 @@ async def _execute_tool_loop(
                 thinking_budget_tokens,
                 stream=False,
                 client_override=client,
-                tools=converted_tools,
+                tools=tools,
                 tool_choice=effective_tool_choice,
                 messages=conversation_messages,
             )
@@ -1486,9 +1437,6 @@ async def honcho_llm_call(
         """
         provider, model, client = _get_provider_and_model()
 
-        # Convert tools to provider-specific format if provided
-        converted_tools = convert_tools_for_provider(tools, provider) if tools else None
-
         if stream:
             return await honcho_llm_call_inner(
                 provider,
@@ -1504,7 +1452,7 @@ async def honcho_llm_call(
                 thinking_budget_tokens,
                 stream=True,
                 client_override=client,
-                tools=converted_tools,
+                tools=tools,
                 tool_choice=tool_choice,
             )
         else:
@@ -1522,7 +1470,7 @@ async def honcho_llm_call(
                 thinking_budget_tokens,
                 stream=False,
                 client_override=client,
-                tools=converted_tools,
+                tools=tools,
                 tool_choice=tool_choice,
             )
 
@@ -1783,27 +1731,31 @@ async def honcho_llm_call_inner(
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
 
-    params: dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "messages": messages,
-        "stream": stream,
-    }
-    if temperature is not None:
-        params["temperature"] = temperature
-
-    if stream:
-        return handle_streaming_response(
-            client,
-            params,
-            json_mode,
-            thinking_budget_tokens,
-            response_model,
-            reasoning_effort,
-            verbosity,
-        )
-
     backend = _get_backend_for_provider(provider, client)
+    if stream:
+
+        async def _stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
+            async for chunk in backend.stream(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop_seqs,
+                tools=tools,
+                tool_choice=tool_choice,
+                response_format=response_model,
+                thinking_budget_tokens=thinking_budget_tokens,
+                thinking_effort=reasoning_effort,
+                max_output_tokens=max_tokens,
+                extra_params={
+                    "json_mode": json_mode,
+                    "verbosity": verbosity,
+                },
+            ):
+                yield _stream_chunk_to_response_chunk(chunk)
+
+        return _stream()
+
     result = await backend.complete(
         model=model,
         messages=messages,
@@ -1822,6 +1774,18 @@ async def honcho_llm_call_inner(
         },
     )
     return _completion_result_to_response(result)
+
+
+def _provider_for_streaming_client(
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+) -> SupportedProviders:
+    if isinstance(client, AsyncAnthropic):
+        return "anthropic"
+    if isinstance(client, genai.Client):
+        return "google"
+    if isinstance(client, AsyncGroq):
+        return "groq"
+    return "openai"
 
 
 async def handle_streaming_response(
@@ -1848,213 +1812,21 @@ async def handle_streaming_response(
     Yields:
         HonchoLLMCallStreamChunk: Individual chunks of the streaming response
     """
-    match client:
-        case AsyncAnthropic():
-            # Anthropic requires system messages as a top-level parameter
-            messages = params["messages"]
-            system_content = "\n\n".join(
-                m["content"] for m in messages if m.get("role") == "system"
-            )
-            anthropic_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": [m for m in messages if m.get("role") != "system"],
-            }
-            if system_content:
-                anthropic_params["system"] = [
-                    {
-                        "type": "text",
-                        "text": system_content,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-
-            # For response models, we need to request JSON and parse manually
-            # Note: Streaming with response_model is not ideal but we'll accumulate and parse at the end
-            if response_model or json_mode:
-                # Add JSON schema instructions to the prompt if using response_model
-                if response_model:
-                    schema_json = json.dumps(
-                        response_model.model_json_schema(), indent=2
-                    )
-                    anthropic_params["messages"][-1]["content"] += (
-                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
-                    )
-                anthropic_params["messages"].append(
-                    {"role": "assistant", "content": "{"}
-                )
-
-            if thinking_budget_tokens:
-                anthropic_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget_tokens,
-                }
-
-            async with client.messages.stream(**anthropic_params) as anthropic_stream:
-                async for chunk in anthropic_stream:
-                    if (
-                        chunk.type == "content_block_delta"
-                        and hasattr(chunk, "delta")
-                        and hasattr(chunk.delta, "text")
-                    ):
-                        text_content = getattr(chunk.delta, "text", "")
-                        yield HonchoLLMCallStreamChunk(content=text_content)
-                final_message = await anthropic_stream.get_final_message()
-                usage = final_message.usage
-                output_tokens = usage.output_tokens if usage else None
-                yield HonchoLLMCallStreamChunk(
-                    content="",
-                    is_done=True,
-                    finish_reasons=[final_message.stop_reason]
-                    if final_message.stop_reason
-                    else [],
-                    output_tokens=output_tokens,
-                )
-
-        case AsyncOpenAI():
-            openai_params: dict[str, Any] = {
-                "model": params["model"],
-                "messages": params["messages"],
-                "stream": True,
-                "stream_options": {"include_usage": True},
-            }
-
-            model_name = params["model"]
-            if "gpt-5" in model_name:
-                openai_params["max_completion_tokens"] = params["max_tokens"]
-                if reasoning_effort:
-                    openai_params["reasoning_effort"] = reasoning_effort
-                if verbosity:
-                    openai_params["verbosity"] = verbosity
-            else:
-                openai_params["max_tokens"] = params["max_tokens"]
-
-            if response_model:
-                openai_params["response_format"] = response_model
-            elif json_mode:
-                openai_params["response_format"] = {"type": "json_object"}
-
-            openai_stream = await client.chat.completions.create(**openai_params)  # pyright: ignore
-            finish_reason: str | None = None
-            usage_chunk_received = False
-            async for chunk in openai_stream:  # pyright: ignore
-                chunk = cast(ChatCompletionChunk, chunk)
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    yield HonchoLLMCallStreamChunk(content=content)
-                # Track finish_reason when it appears (before usage chunk)
-                if chunk.choices and chunk.choices[0].finish_reason:
-                    finish_reason = chunk.choices[0].finish_reason
-                # Check for usage info in chunk (with include_usage, this is a separate chunk with empty choices)
-                if hasattr(chunk, "usage") and chunk.usage:
-                    yield HonchoLLMCallStreamChunk(
-                        content="",
-                        is_done=True,
-                        finish_reasons=[finish_reason] if finish_reason else [],
-                        output_tokens=chunk.usage.completion_tokens,
-                    )
-                    usage_chunk_received = True
-
-            # If stream ended without usage chunk (interrupted), still yield final chunk
-            if not usage_chunk_received and finish_reason:
-                logger.warning("OpenAI stream ended without usage chunk (interrupted)")
-                yield HonchoLLMCallStreamChunk(
-                    content="",
-                    is_done=True,
-                    finish_reasons=[finish_reason],
-                    output_tokens=None,
-                )
-
-        case genai.Client():
-            prompt_text = params["messages"][0]["content"] if params["messages"] else ""
-            stream_config: GenerateContentConfigDict = {
-                "max_output_tokens": cast(int, params["max_tokens"]),
-            }
-
-            # Add thinking config for Gemini 2.5 models (streaming)
-            if thinking_budget_tokens:
-                stream_config["thinking_config"] = {
-                    "thinking_budget": thinking_budget_tokens,
-                }
-
-            if response_model is not None:
-                stream_config["response_mime_type"] = "application/json"
-                stream_config["response_schema"] = response_model
-                response_stream = await client.aio.models.generate_content_stream(
-                    model=params["model"],
-                    contents=prompt_text,
-                    config=stream_config,
-                )
-            else:
-                if json_mode:
-                    stream_config["response_mime_type"] = "application/json"
-                response_stream = await client.aio.models.generate_content_stream(
-                    model=params["model"],
-                    contents=prompt_text,
-                    config=stream_config,
-                )
-
-            final_chunk = None
-            async for chunk in response_stream:
-                if chunk.text:
-                    yield HonchoLLMCallStreamChunk(content=chunk.text)
-                final_chunk = chunk
-
-            # NOTE: Blocked-response check is intentionally omitted for streaming.
-            # Exceptions mid-iteration in an async generator won't be caught by
-            # the tenacity retry wrapper in honcho_llm_call.
-            finish_reason = "stop"  # Default fallback
-            gemini_output_tokens: int | None = None
-            if (
-                final_chunk
-                and hasattr(final_chunk, "candidates")
-                and final_chunk.candidates
-                and hasattr(final_chunk.candidates[0], "finish_reason")
-                and final_chunk.candidates[0].finish_reason
-            ):
-                finish_reason = final_chunk.candidates[0].finish_reason.name
-
-            # Extract output tokens from usage_metadata if available
-            if (
-                final_chunk
-                and hasattr(final_chunk, "usage_metadata")
-                and final_chunk.usage_metadata
-                and hasattr(final_chunk.usage_metadata, "candidates_token_count")
-            ):
-                gemini_output_tokens = (
-                    final_chunk.usage_metadata.candidates_token_count or None
-                )
-
-            yield HonchoLLMCallStreamChunk(
-                content="",
-                is_done=True,
-                finish_reasons=[finish_reason],
-                output_tokens=gemini_output_tokens,
-            )
-
-        case AsyncGroq():
-            groq_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": params["messages"],
-                "stream": True,
-            }
-
-            if response_model:
-                groq_params["response_format"] = response_model
-            elif json_mode:
-                groq_params["response_format"] = {"type": "json_object"}
-
-            groq_stream = await client.chat.completions.create(**groq_params)  # pyright: ignore
-            async for chunk in groq_stream:  # pyright: ignore
-                chunk = cast(ChatCompletionChunk, chunk)
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield HonchoLLMCallStreamChunk(
-                        content=chunk.choices[0].delta.content
-                    )
-                if chunk.choices and chunk.choices[0].finish_reason:
-                    yield HonchoLLMCallStreamChunk(
-                        content="",
-                        is_done=True,
-                        finish_reasons=[chunk.choices[0].finish_reason],
-                    )
+    provider = _provider_for_streaming_client(client)
+    backend = _get_backend_for_provider(provider, client)
+    extra_params: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
+    async for chunk in backend.stream(
+        model=cast(str, params["model"]),
+        messages=cast(list[dict[str, Any]], params["messages"]),
+        max_tokens=cast(int, params["max_tokens"]),
+        temperature=cast(float | None, params.get("temperature")),
+        stop=cast(list[str] | None, params.get("stop")),
+        tools=cast(list[dict[str, Any]] | None, params.get("tools")),
+        tool_choice=cast(str | dict[str, Any] | None, params.get("tool_choice")),
+        response_format=response_model,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_effort=reasoning_effort,
+        max_output_tokens=cast(int, params["max_tokens"]),
+        extra_params=extra_params,
+    ):
+        yield _stream_chunk_to_response_chunk(chunk)

@@ -250,7 +250,7 @@ class OpenAIBackend:
         if stop:
             params["stop"] = stop
         if tools:
-            params["tools"] = tools
+            params["tools"] = self._convert_tools(tools)
             if tool_choice is not None:
                 params["tool_choice"] = tool_choice
         if extra_params:
@@ -305,3 +305,19 @@ class OpenAIBackend:
     @staticmethod
     def _strip_prefix(model: str) -> str:
         return model.split("/", 1)[1] if "/" in model else model
+
+    @staticmethod
+    def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if tools and tools[0].get("type") == "function":
+            return tools
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"],
+                },
+            }
+            for tool in tools
+        ]
