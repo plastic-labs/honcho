@@ -1,0 +1,38 @@
+---
+title: "Pi"
+icon: 'pi'
+description: "Persistent memory extension for the pi coding agent"
+sidebarTitle: 'Pi'
+---
+
+[pi-honcho-memory](https://github.com/agneym/pi-honcho-memory) is a persistent memory extension for [pi](https://pi.dev), a coding agent CLI. It gives pi long-term memory across sessions — user preferences, project context, and past decisions are remembered and automatically injected into the system prompt.
+
+## Getting Started
+
+Install the extension inside pi:
+
+```bash
+pi install npm:@agney/pi-honcho-memory
+```
+
+The integration requires:
+1. A Honcho API key from [app.honcho.dev](https://app.honcho.dev)
+2. Running `/honcho-setup` inside pi for interactive configuration, or setting `HONCHO_API_KEY` in your environment
+
+The Honcho plugin is a community integration. See the [plugin README](https://github.com/agneym/pi-honcho-memory/blob/main/README.md) for full installation and configuration instructions.
+
+## How It Works
+
+The extension hooks into pi's extension system. It automatically syncs user and assistant messages to Honcho after each agent response, injects cached user profile and project context into the system prompt with zero network latency, and exposes LLM tools (`honcho_search`, `honcho_chat`, `honcho_remember`) for active memory operations. Session scoping is configurable — memory can be shared per repo, per git branch, or per directory. If Honcho is unavailable, pi continues working normally.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Extension Repository" icon="github" href="https://github.com/agneym/pi-honcho-memory">
+    Source code, installation, and full documentation.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>
