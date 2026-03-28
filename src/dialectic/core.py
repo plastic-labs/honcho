@@ -44,12 +44,7 @@ logger = logging.getLogger(__name__)
 def _get_dialectic_level_model_config(
     reasoning_level: ReasoningLevel,
 ) -> ConfiguredModelSettings:
-    model_config = settings.DIALECTIC.LEVELS[reasoning_level].MODEL_CONFIG
-    if model_config is None:
-        raise ValueError(
-            f"DIALECTIC level '{reasoning_level}' MODEL_CONFIG must be resolved before use"
-        )
-    return model_config
+    return settings.DIALECTIC.LEVELS[reasoning_level].MODEL_CONFIG
 
 
 class DialecticAgent:

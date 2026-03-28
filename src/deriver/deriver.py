@@ -28,10 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_deriver_model_config() -> ConfiguredModelSettings:
-    model_config = settings.DERIVER.MODEL_CONFIG
-    if model_config is None:
-        raise ValueError("DERIVER MODEL_CONFIG must be resolved before use")
-    return model_config
+    return settings.DERIVER.MODEL_CONFIG
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -126,8 +123,9 @@ async def process_representation_tasks_batch(
     )
 
     # validation on settings means max_tokens will always be > 0
-    max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
-    model_config = _get_deriver_model_config().model_copy(
+    base_model_config = _get_deriver_model_config()
+    max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
+    model_config = base_model_config.model_copy(
         update={
             "thinking_effort": "minimal",
             "stop_sequences": ["   \n", "\n\n\n\n"],

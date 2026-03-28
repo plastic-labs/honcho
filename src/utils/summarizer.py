@@ -79,10 +79,7 @@ __all__ = [
 
 
 def _get_summary_model_config() -> ConfiguredModelSettings:
-    model_config = settings.SUMMARY.MODEL_CONFIG
-    if model_config is None:
-        raise ValueError("SUMMARY MODEL_CONFIG must be resolved before use")
-    return model_config
+    return settings.SUMMARY.MODEL_CONFIG
 
 
 # Configuration constants for summaries

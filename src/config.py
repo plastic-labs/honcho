@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 import tomllib
 from dotenv import load_dotenv
@@ -14,8 +14,6 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
-
-from src.utils.types import SupportedProviders
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
@@ -99,6 +97,19 @@ class ConfiguredModelSettings(BaseModel):
     ) -> Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None:
         """Backward-compatible alias for the generic thinking effort field."""
         return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
+        if (
+            self.transport == "provider_native"
+            and self.model.startswith("anthropic/")
+            and self.thinking_budget_tokens is not None
+            and 0 < self.thinking_budget_tokens < 1024
+        ):
+            raise ValueError(
+                "thinking_budget_tokens must be >= 1024 for Anthropic models"
+            )
+        return self
 
 
 class ModelConfig(BaseModel):
@@ -242,23 +253,29 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
     )
 
 
-def _qualify_model_name(provider: SupportedProviders, model: str) -> str:
-    if "/" in model:
-        return model
-
-    prefix_map: dict[SupportedProviders, str] = {
-        "anthropic": "anthropic",
-        "openai": "openai",
-        "google": "gemini",
-        "groq": "groq",
-        "custom": "openai",
-        "vllm": "hosted_vllm",
-    }
-    return f"{prefix_map[provider]}/{model}"
+_LEGACY_PROVIDER_PREFIXES: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "google": "gemini",
+    "groq": "groq",
+    "custom": "openai",
+    "vllm": "hosted_vllm",
+}
 
 
-def _transport_for_provider(
-    provider: SupportedProviders | None,
+def _legacy_value(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in data:
+            return data[key]
+    return None
+
+
+def _has_legacy_value(data: dict[str, Any], *keys: str) -> bool:
+    return any(key in data for key in keys)
+
+
+def _legacy_transport(
+    provider: str | None,
 ) -> Literal["provider_native", "openai_compatible"] | None:
     if provider is None:
         return None
@@ -267,60 +284,47 @@ def _transport_for_provider(
     return "provider_native"
 
 
-def _strip_model_prefix(model: str) -> str:
-    return model.split("/", 1)[1] if "/" in model else model
+def _qualify_legacy_model_name(provider: str | None, model: Any) -> str | None:
+    if not isinstance(model, str) or not model:
+        return None
+    if "/" in model:
+        return model
+    if provider is None:
+        raise ValueError(
+            "Legacy flat model configuration requires PROVIDER when MODEL is not provider-qualified"
+        )
+    prefix = _LEGACY_PROVIDER_PREFIXES.get(provider)
+    if prefix is None:
+        raise ValueError(f"Unsupported legacy provider in configuration: {provider}")
+    return f"{prefix}/{model}"
 
 
-def _provider_for_configured_model(
-    model: str,
-    transport: Literal["provider_native", "openai_compatible"],
-) -> SupportedProviders:
-    if transport == "openai_compatible":
-        if model.startswith("hosted_vllm/"):
-            return "vllm"
-        return "custom"
-
-    prefix = model.split("/", 1)[0]
-    provider_map: dict[str, SupportedProviders] = {
-        "anthropic": "anthropic",
-        "openai": "openai",
-        "gemini": "google",
-        "groq": "groq",
-        "hosted_vllm": "vllm",
-    }
-    if prefix not in provider_map:
-        raise ValueError(f"Unsupported model prefix in config: {prefix}")
-    return provider_map[prefix]
-
-
-def _configured_model_from_legacy(
+def _configured_model_from_legacy_values(
     *,
-    provider: SupportedProviders,
-    model: str,
-    fallback_provider: SupportedProviders | None = None,
-    fallback_model: str | None = None,
-    temperature: float | None = None,
-    thinking_effort: Literal[
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
-    | None = None,
-    thinking_budget_tokens: int | None = None,
-    max_output_tokens: int | None = None,
-    stop_sequences: list[str] | None = None,
-) -> ConfiguredModelSettings:
+    provider: str | None,
+    model: Any,
+    fallback_provider: str | None = None,
+    fallback_model: Any = None,
+    temperature: Any = None,
+    thinking_effort: Any = None,
+    thinking_budget_tokens: Any = None,
+    max_output_tokens: Any = None,
+    stop_sequences: Any = None,
+) -> ConfiguredModelSettings | None:
+    qualified_model = _qualify_legacy_model_name(provider, model)
+    if qualified_model is None:
+        return None
+
+    qualified_fallback_model = _qualify_legacy_model_name(
+        fallback_provider,
+        fallback_model,
+    )
+
     return ConfiguredModelSettings(
-        model=_qualify_model_name(provider, model),
-        transport=_transport_for_provider(provider) or "provider_native",
-        fallback_model=_qualify_model_name(fallback_provider, fallback_model)
-        if fallback_provider and fallback_model
-        else None,
-        fallback_transport=_transport_for_provider(fallback_provider),
+        model=qualified_model,
+        transport=_legacy_transport(provider) or "provider_native",
+        fallback_model=qualified_fallback_model,
+        fallback_transport=_legacy_transport(fallback_provider),
         temperature=temperature,
         thinking_effort=thinking_effort,
         thinking_budget_tokens=thinking_budget_tokens,
@@ -329,50 +333,85 @@ def _configured_model_from_legacy(
     )
 
 
-def _merge_legacy_model_defaults(
-    configured: ConfiguredModelSettings,
+def _model_config_from_legacy_input(
+    data: Any,
     *,
-    fallback_provider: SupportedProviders | None = None,
-    fallback_model: str | None = None,
-    temperature: float | None = None,
-    thinking_effort: Literal[
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
-    | None = None,
-    thinking_budget_tokens: int | None = None,
-    max_output_tokens: int | None = None,
-    stop_sequences: list[str] | None = None,
-) -> ConfiguredModelSettings:
-    update: dict[str, Any] = {}
+    model_config_keys: tuple[str, ...] = ("MODEL_CONFIG", "model_config"),
+    provider_keys: tuple[str, ...] = ("PROVIDER", "provider"),
+    model_keys: tuple[str, ...] = ("MODEL", "model"),
+    fallback_provider_keys: tuple[str, ...] = ("BACKUP_PROVIDER", "backup_provider"),
+    fallback_model_keys: tuple[str, ...] = ("BACKUP_MODEL", "backup_model"),
+    temperature_keys: tuple[str, ...] = ("TEMPERATURE", "temperature"),
+    thinking_effort_keys: tuple[str, ...] = ("THINKING_EFFORT", "thinking_effort"),
+    thinking_budget_keys: tuple[str, ...] = (
+        "THINKING_BUDGET_TOKENS",
+        "thinking_budget_tokens",
+    ),
+    max_output_token_keys: tuple[str, ...] = (
+        "MAX_OUTPUT_TOKENS",
+        "max_output_tokens",
+    ),
+    stop_sequence_keys: tuple[str, ...] = ("STOP_SEQUENCES", "stop_sequences"),
+) -> Any:
+    if not isinstance(data, dict):
+        return data
+    input_dict = cast(dict[str, Any], data)
+    if any(key in input_dict for key in model_config_keys):
+        return input_dict
 
-    if (
-        configured.fallback_model is None
-        and fallback_provider is not None
-        and fallback_model is not None
-    ):
-        update["fallback_model"] = _qualify_model_name(
-            fallback_provider, fallback_model
+    has_legacy_model_shape = any(
+        _has_legacy_value(input_dict, *keys)
+        for keys in (
+            provider_keys,
+            model_keys,
+            fallback_provider_keys,
+            fallback_model_keys,
+            temperature_keys,
+            thinking_effort_keys,
+            thinking_budget_keys,
+            max_output_token_keys,
+            stop_sequence_keys,
         )
-        update["fallback_transport"] = _transport_for_provider(fallback_provider)
+    )
+    if not has_legacy_model_shape:
+        return input_dict
 
-    if configured.temperature is None and temperature is not None:
-        update["temperature"] = temperature
-    if configured.thinking_effort is None and thinking_effort is not None:
-        update["thinking_effort"] = thinking_effort
-    if configured.thinking_budget_tokens is None and thinking_budget_tokens is not None:
-        update["thinking_budget_tokens"] = thinking_budget_tokens
-    if configured.max_output_tokens is None and max_output_tokens is not None:
-        update["max_output_tokens"] = max_output_tokens
-    if configured.stop_sequences is None and stop_sequences is not None:
-        update["stop_sequences"] = stop_sequences
+    configured = _configured_model_from_legacy_values(
+        provider=_legacy_value(input_dict, *provider_keys),
+        model=_legacy_value(input_dict, *model_keys),
+        fallback_provider=_legacy_value(input_dict, *fallback_provider_keys),
+        fallback_model=_legacy_value(input_dict, *fallback_model_keys),
+        temperature=_legacy_value(input_dict, *temperature_keys),
+        thinking_effort=_legacy_value(input_dict, *thinking_effort_keys),
+        thinking_budget_tokens=_legacy_value(input_dict, *thinking_budget_keys),
+        max_output_tokens=_legacy_value(input_dict, *max_output_token_keys),
+        stop_sequences=_legacy_value(input_dict, *stop_sequence_keys),
+    )
+    if configured is None:
+        return input_dict
 
-    return configured.model_copy(update=update) if update else configured
+    migrated = dict(input_dict)
+    migrated["MODEL_CONFIG"] = configured
+    return migrated
+
+
+def _qualify_relative_model(base_model: str, relative_model: Any) -> str | None:
+    if not isinstance(relative_model, str) or not relative_model:
+        return None
+    if "/" in relative_model:
+        return relative_model
+    prefix = base_model.split("/", 1)[0]
+    return f"{prefix}/{relative_model}"
+
+
+def _model_name_from_config_like(value: Any) -> str | None:
+    if isinstance(value, ConfiguredModelSettings):
+        return value.model
+    if isinstance(value, dict):
+        config_dict = cast(dict[str, Any], value)
+        model = config_dict.get("model") or config_dict.get("MODEL")
+        return model if isinstance(model, str) else None
+    return None
 
 
 def _merge_override_defaults(
@@ -439,28 +478,6 @@ def _merge_configured_model_defaults(
         update["overrides"] = merged_overrides
 
     return configured.model_copy(update=update) if update else configured
-
-
-def _legacy_model_fields_from_configured(
-    configured: ConfiguredModelSettings,
-) -> tuple[SupportedProviders, str, SupportedProviders | None, str | None]:
-    provider = _provider_for_configured_model(configured.model, configured.transport)
-    fallback_provider: SupportedProviders | None = None
-    fallback_model: str | None = None
-
-    if configured.fallback_model is not None:
-        fallback_provider = _provider_for_configured_model(
-            configured.fallback_model,
-            configured.fallback_transport or configured.transport,
-        )
-        fallback_model = _strip_model_prefix(configured.fallback_model)
-
-    return (
-        provider,
-        _strip_model_prefix(configured.model),
-        fallback_provider,
-        fallback_model,
-    )
 
 
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -546,42 +563,6 @@ class HonchoSettings(BaseSettings):
         )
 
 
-def _set_model_field(instance: BaseModel, field_name: str, value: Any) -> None:
-    """Set a Pydantic field during after-validation syncing."""
-
-    object.__setattr__(instance, field_name, value)
-
-
-def _require_model_config(
-    configured: ConfiguredModelSettings | None,
-    *,
-    owner: str,
-) -> ConfiguredModelSettings:
-    if configured is None:
-        raise ValueError(f"{owner} MODEL_CONFIG must be resolved before use")
-    return configured
-
-
-class BackupLLMSettingsMixin:
-    """Mixin class for settings that support backup LLM provider configuration.
-
-    Provides backup provider and model fields along with validation to ensure
-    both fields are set together or both are None.
-    """
-
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
-
-    @model_validator(mode="after")
-    def _validate_backup_configuration(self):
-        """Ensure both backup fields are set together or both are None."""
-        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
-            raise ValueError(
-                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
-            )
-        return self
-
-
 class DBSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
@@ -662,7 +643,7 @@ class LLMSettings(HonchoSettings):
     )
 
 
-class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
+class DeriverSettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DERIVER_", env_nested_delimiter="__", extra="ignore"
     )
@@ -680,16 +661,16 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         int, Field(default=30 * 24 * 3600, gt=0)
     ] = 30 * 24 * 3600  # 30 days default
 
-    MODEL_CONFIG: ConfiguredModelSettings | None = None
-    PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash-lite"
-    TEMPERATURE: float | None = None
+    MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=lambda: ConfiguredModelSettings(
+            model="gemini/gemini-2.5-flash-lite",
+            thinking_budget_tokens=1024,
+            max_output_tokens=4096,
+        )
+    )
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
-
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
     LOG_OBSERVATIONS: bool = False
 
@@ -709,45 +690,12 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
-    @model_validator(mode="after")
-    def _sync_model_config(self) -> "DeriverSettings":
-        model_config = self.MODEL_CONFIG or _configured_model_from_legacy(
-            provider=self.PROVIDER,
-            model=self.MODEL,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            temperature=self.TEMPERATURE,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-            max_output_tokens=self.MAX_OUTPUT_TOKENS,
-        )
-        model_config = _merge_legacy_model_defaults(
-            model_config,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            temperature=self.TEMPERATURE,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-            max_output_tokens=self.MAX_OUTPUT_TOKENS,
-        )
-        _set_model_field(self, "MODEL_CONFIG", model_config)
-
-        provider, model, fallback_provider, fallback_model = (
-            _legacy_model_fields_from_configured(model_config)
-        )
-        _set_model_field(self, "PROVIDER", provider)
-        _set_model_field(self, "MODEL", model)
-        _set_model_field(self, "BACKUP_PROVIDER", fallback_provider)
-        _set_model_field(self, "BACKUP_MODEL", fallback_model)
-        if model_config.temperature is not None:
-            _set_model_field(self, "TEMPERATURE", model_config.temperature)
-        if model_config.thinking_budget_tokens is not None:
-            _set_model_field(
-                self,
-                "THINKING_BUDGET_TOKENS",
-                model_config.thinking_budget_tokens,
-            )
-        if model_config.max_output_tokens is not None:
-            _set_model_field(self, "MAX_OUTPUT_TOKENS", model_config.max_output_tokens)
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_model_config(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _model_config_from_legacy_input(data)
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -781,20 +729,9 @@ class DialecticLevelSettings(BaseModel):
     model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
 
     MODEL_CONFIG: Annotated[
-        ConfiguredModelSettings | None,
+        ConfiguredModelSettings,
         Field(validation_alias="model_config"),
-    ] = None
-    PROVIDER: Annotated[SupportedProviders, Field(validation_alias="provider")] = (
-        "google"
-    )
-    MODEL: Annotated[str, Field(validation_alias="model")] = "gemini-2.5-pro"
-    BACKUP_PROVIDER: Annotated[
-        SupportedProviders | None, Field(validation_alias="backup_provider")
-    ] = None
-    BACKUP_MODEL: Annotated[str | None, Field(validation_alias="backup_model")] = None
-    THINKING_BUDGET_TOKENS: Annotated[
-        int | None, Field(ge=0, le=100_000, validation_alias="thinking_budget_tokens")
-    ] = None
+    ]
     MAX_TOOL_ITERATIONS: Annotated[
         int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
     ]
@@ -805,66 +742,29 @@ class DialecticLevelSettings(BaseModel):
         None  # None/auto lets model decide, "any"/"required" forces tool use
     )
 
-    @model_validator(mode="after")
-    def _sync_model_config(self) -> "DialecticLevelSettings":
-        if self.MODEL_CONFIG is None:
-            model_config = _configured_model_from_legacy(
-                provider=self.PROVIDER,
-                model=self.MODEL,
-                fallback_provider=self.BACKUP_PROVIDER,
-                fallback_model=self.BACKUP_MODEL,
-                thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-                max_output_tokens=self.MAX_OUTPUT_TOKENS,
-            )
-        else:
-            model_config = self.MODEL_CONFIG
-
-        model_config = _merge_legacy_model_defaults(
-            model_config,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-            max_output_tokens=self.MAX_OUTPUT_TOKENS,
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_model_config(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _model_config_from_legacy_input(
+            data,
+            max_output_token_keys=(),
         )
-        _set_model_field(self, "MODEL_CONFIG", model_config)
-
-        provider, model, fallback_provider, fallback_model = (
-            _legacy_model_fields_from_configured(model_config)
-        )
-        _set_model_field(self, "PROVIDER", provider)
-        _set_model_field(self, "MODEL", model)
-        _set_model_field(self, "BACKUP_PROVIDER", fallback_provider)
-        _set_model_field(self, "BACKUP_MODEL", fallback_model)
-        if model_config.thinking_budget_tokens is not None:
-            _set_model_field(
-                self,
-                "THINKING_BUDGET_TOKENS",
-                model_config.thinking_budget_tokens,
-            )
-        if model_config.max_output_tokens is not None:
-            _set_model_field(self, "MAX_OUTPUT_TOKENS", model_config.max_output_tokens)
-        return self
-
-    @model_validator(mode="after")
-    def _validate_backup_configuration(self) -> "DialecticLevelSettings":
-        """Ensure both backup fields are set together or both are None."""
-        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
-            raise ValueError(
-                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
-            )
-        return self
 
     @model_validator(mode="after")
     def _validate_anthropic_thinking_budget(self) -> "DialecticLevelSettings":
         """Ensure Anthropic thinking budget is >= 1024 when enabled."""
         if (
-            self.PROVIDER == "anthropic"
-            and self.THINKING_BUDGET_TOKENS is not None
-            and self.THINKING_BUDGET_TOKENS > 0
-            and self.THINKING_BUDGET_TOKENS < 1024
+            self.MODEL_CONFIG.model.startswith("anthropic/")
+            and self.MODEL_CONFIG.thinking_budget_tokens is not None
+            and self.MODEL_CONFIG.thinking_budget_tokens > 0
+            and self.MODEL_CONFIG.thinking_budget_tokens < 1024
         ):
             raise ValueError(
-                f"THINKING_BUDGET_TOKENS must be >= 1024 for Anthropic provider when enabled (got {self.THINKING_BUDGET_TOKENS})"
+                "MODEL_CONFIG.thinking_budget_tokens must be >= 1024 for "
+                + "Anthropic models when enabled "
+                + f"(got {self.MODEL_CONFIG.thinking_budget_tokens})"
             )
         return self
 
@@ -879,36 +779,41 @@ class DialecticSettings(HonchoSettings):
     LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
         default_factory=lambda: {
             "minimal": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
-                THINKING_BUDGET_TOKENS=0,
+                MODEL_CONFIG=ConfiguredModelSettings(
+                    model="gemini/gemini-2.5-flash-lite",
+                    thinking_budget_tokens=0,
+                ),
                 MAX_TOOL_ITERATIONS=1,
                 MAX_OUTPUT_TOKENS=250,
                 TOOL_CHOICE="any",
             ),
             "low": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
-                THINKING_BUDGET_TOKENS=0,
+                MODEL_CONFIG=ConfiguredModelSettings(
+                    model="gemini/gemini-2.5-flash-lite",
+                    thinking_budget_tokens=0,
+                ),
                 MAX_TOOL_ITERATIONS=5,
                 TOOL_CHOICE="any",
             ),
             "medium": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
+                MODEL_CONFIG=ConfiguredModelSettings(
+                    model="anthropic/claude-haiku-4-5",
+                    thinking_budget_tokens=1024,
+                ),
                 MAX_TOOL_ITERATIONS=2,
             ),
             "high": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
+                MODEL_CONFIG=ConfiguredModelSettings(
+                    model="anthropic/claude-haiku-4-5",
+                    thinking_budget_tokens=1024,
+                ),
                 MAX_TOOL_ITERATIONS=4,
             ),
             "max": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=2048,
+                MODEL_CONFIG=ConfiguredModelSettings(
+                    model="anthropic/claude-haiku-4-5",
+                    thinking_budget_tokens=2048,
+                ),
                 MAX_TOOL_ITERATIONS=10,
             ),
         }
@@ -930,10 +835,11 @@ class DialecticSettings(HonchoSettings):
     def _validate_token_budgets(self) -> "DialecticSettings":
         """Ensure the output token limit exceeds all thinking budgets."""
         for level, level_settings in self.LEVELS.items():
-            thinking_budget = level_settings.THINKING_BUDGET_TOKENS or 0
+            thinking_budget = level_settings.MODEL_CONFIG.thinking_budget_tokens or 0
             if thinking_budget > 0 and thinking_budget >= self.MAX_OUTPUT_TOKENS:
                 raise ValueError(
-                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                    "MAX_OUTPUT_TOKENS must be greater than MODEL_CONFIG."
+                    + f"thinking_budget_tokens for level '{level}'"
                 )
         return self
 
@@ -946,7 +852,7 @@ class DialecticSettings(HonchoSettings):
         return self
 
 
-class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
+class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="SUMMARY_", env_nested_delimiter="__", extra="ignore"
     )
@@ -956,45 +862,21 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    MODEL_CONFIG: ConfiguredModelSettings | None = None
-    PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash"
+    MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=lambda: ConfiguredModelSettings(
+            model="gemini/gemini-2.5-flash",
+            thinking_budget_tokens=512,
+        )
+    )
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
-
-    @model_validator(mode="after")
-    def _sync_model_config(self) -> "SummarySettings":
-        model_config = self.MODEL_CONFIG or _configured_model_from_legacy(
-            provider=self.PROVIDER,
-            model=self.MODEL,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-        )
-        model_config = _merge_legacy_model_defaults(
-            model_config,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-        )
-        _set_model_field(self, "MODEL_CONFIG", model_config)
-
-        provider, model, fallback_provider, fallback_model = (
-            _legacy_model_fields_from_configured(model_config)
-        )
-        _set_model_field(self, "PROVIDER", provider)
-        _set_model_field(self, "MODEL", model)
-        _set_model_field(self, "BACKUP_PROVIDER", fallback_provider)
-        _set_model_field(self, "BACKUP_MODEL", fallback_model)
-        if model_config.thinking_budget_tokens is not None:
-            _set_model_field(
-                self,
-                "THINKING_BUDGET_TOKENS",
-                model_config.thinking_budget_tokens,
-            )
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_model_config(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _model_config_from_legacy_input(data)
 
 
 class WebhookSettings(HonchoSettings):
@@ -1084,7 +966,7 @@ class SurprisalSettings(BaseModel):
     INCLUDE_LEVELS: list[str] = ["explicit", "deductive"]
 
 
-class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
+class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
     )
@@ -1095,11 +977,13 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 
-    MODEL_CONFIG: ConfiguredModelSettings | None = None
-    PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-sonnet-4-20250514"
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
+    MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=lambda: ConfiguredModelSettings(
+            model="anthropic/claude-sonnet-4-20250514",
+            thinking_budget_tokens=8192,
+            max_output_tokens=16_384,
+        )
+    )
 
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
@@ -1109,96 +993,78 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         16_384
     )
 
-    DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings | None = None
-
-    # Deduction Specialist: handles logical inference
-    DEDUCTION_MODEL: str = "claude-haiku-4-5"
-    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings | None = None
-    # Induction Specialist: identifies patterns across observations
-    INDUCTION_MODEL: str = "claude-haiku-4-5"
+    DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=lambda: ConfiguredModelSettings(
+            model="anthropic/claude-haiku-4-5",
+        )
+    )
+    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=lambda: ConfiguredModelSettings(
+            model="anthropic/claude-haiku-4-5",
+        )
+    )
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_model_configs(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        migrated = _model_config_from_legacy_input(data)
+        dream_model_config = migrated.get("MODEL_CONFIG") or migrated.get(
+            "model_config"
+        )
+        base_model = _model_name_from_config_like(dream_model_config)
+
+        if (
+            "DEDUCTION_MODEL_CONFIG" not in migrated
+            and "deduction_model_config" not in migrated
+        ):
+            deduction_model = _legacy_value(
+                migrated, "DEDUCTION_MODEL", "deduction_model"
+            )
+            if deduction_model is not None and base_model is not None:
+                qualified_model = _qualify_relative_model(base_model, deduction_model)
+                if qualified_model is not None:
+                    migrated["DEDUCTION_MODEL_CONFIG"] = ConfiguredModelSettings(
+                        model=qualified_model,
+                    )
+
+        if (
+            "INDUCTION_MODEL_CONFIG" not in migrated
+            and "induction_model_config" not in migrated
+        ):
+            induction_model = _legacy_value(
+                migrated, "INDUCTION_MODEL", "induction_model"
+            )
+            if induction_model is not None and base_model is not None:
+                qualified_model = _qualify_relative_model(base_model, induction_model)
+                if qualified_model is not None:
+                    migrated["INDUCTION_MODEL_CONFIG"] = ConfiguredModelSettings(
+                        model=qualified_model,
+                    )
+
+        return migrated
+
     @model_validator(mode="after")
-    def _sync_model_config(self) -> "DreamSettings":
-        model_config = self.MODEL_CONFIG or _configured_model_from_legacy(
-            provider=self.PROVIDER,
-            model=self.MODEL,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-            max_output_tokens=self.MAX_OUTPUT_TOKENS,
-        )
-        model_config = _merge_legacy_model_defaults(
-            model_config,
-            fallback_provider=self.BACKUP_PROVIDER,
-            fallback_model=self.BACKUP_MODEL,
-            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
-            max_output_tokens=self.MAX_OUTPUT_TOKENS,
-        )
-        _set_model_field(self, "MODEL_CONFIG", model_config)
-
-        provider, model, fallback_provider, fallback_model = (
-            _legacy_model_fields_from_configured(model_config)
-        )
-        _set_model_field(self, "PROVIDER", provider)
-        _set_model_field(self, "MODEL", model)
-        _set_model_field(self, "BACKUP_PROVIDER", fallback_provider)
-        _set_model_field(self, "BACKUP_MODEL", fallback_model)
-        if model_config.thinking_budget_tokens is not None:
-            _set_model_field(
-                self,
-                "THINKING_BUDGET_TOKENS",
-                model_config.thinking_budget_tokens,
-            )
-        if model_config.max_output_tokens is not None:
-            _set_model_field(self, "MAX_OUTPUT_TOKENS", model_config.max_output_tokens)
-
-        deduction_model_config = (
-            self.DEDUCTION_MODEL_CONFIG
-            or _configured_model_from_legacy(
-                provider=self.PROVIDER,
-                model=self.DEDUCTION_MODEL,
-            )
-        )
-        deduction_model_config = _merge_configured_model_defaults(
-            deduction_model_config,
-            model_config,
-        )
-        _set_model_field(self, "DEDUCTION_MODEL_CONFIG", deduction_model_config)
-
-        induction_model_config = (
-            self.INDUCTION_MODEL_CONFIG
-            or _configured_model_from_legacy(
-                provider=self.PROVIDER,
-                model=self.INDUCTION_MODEL,
-            )
-        )
-        induction_model_config = _merge_configured_model_defaults(
-            induction_model_config,
-            model_config,
-        )
-        _set_model_field(self, "INDUCTION_MODEL_CONFIG", induction_model_config)
-
-        _set_model_field(
+    def _merge_specialist_model_defaults(self) -> "DreamSettings":
+        object.__setattr__(
             self,
-            "DEDUCTION_MODEL",
-            _strip_model_prefix(
-                _require_model_config(
-                    self.DEDUCTION_MODEL_CONFIG,
-                    owner="DREAM DEDUCTION",
-                ).model
+            "DEDUCTION_MODEL_CONFIG",
+            _merge_configured_model_defaults(
+                self.DEDUCTION_MODEL_CONFIG,
+                self.MODEL_CONFIG,
             ),
         )
-        _set_model_field(
+        object.__setattr__(
             self,
-            "INDUCTION_MODEL",
-            _strip_model_prefix(
-                _require_model_config(
-                    self.INDUCTION_MODEL_CONFIG,
-                    owner="DREAM INDUCTION",
-                ).model
+            "INDUCTION_MODEL_CONFIG",
+            _merge_configured_model_defaults(
+                self.INDUCTION_MODEL_CONFIG,
+                self.MODEL_CONFIG,
             ),
         )
         return self
@@ -1206,9 +1072,16 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DreamSettings":
         """Ensure the output token limit exceeds the thinking budget."""
-        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
+        max_output_tokens = self.MODEL_CONFIG.max_output_tokens
+        thinking_budget_tokens = self.MODEL_CONFIG.thinking_budget_tokens
+        if (
+            max_output_tokens is not None
+            and thinking_budget_tokens is not None
+            and max_output_tokens <= thinking_budget_tokens
+        ):
             raise ValueError(
-                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
+                "dream.MODEL_CONFIG.max_output_tokens must be greater than "
+                + "dream.MODEL_CONFIG.thinking_budget_tokens"
             )
         return self
 

@@ -53,8 +53,6 @@ async def test_deduction_specialist_uses_nested_model_config(
         raise AssertionError("Expected dreamer LLM call")
     kwargs = await_args.kwargs
     expected_config = settings.DREAM.DEDUCTION_MODEL_CONFIG
-    if expected_config is None:
-        raise AssertionError("Expected DREAM DEDUCTION MODEL_CONFIG to be resolved")
 
     assert result.content == "done"
     assert kwargs["model_config"] == expected_config

@@ -75,15 +75,17 @@ def test_for_model_overrides_model_and_transport() -> None:
     assert config.transport == "provider_native"
 
 
-def test_deriver_settings_syncs_legacy_model_into_model_config() -> None:
-    settings = DeriverSettings(
-        PROVIDER="google",
-        MODEL="gemini-2.5-flash-lite",
-        THINKING_BUDGET_TOKENS=1024,
-        MAX_OUTPUT_TOKENS=4096,
-    )
+def test_configured_model_settings_validate_like_runtime_model_config() -> None:
+    with pytest.raises(ValueError, match="thinking_budget_tokens must be >= 1024"):
+        ConfiguredModelSettings(
+            model="anthropic/claude-haiku-4-5",
+            thinking_budget_tokens=512,
+        )
 
-    assert settings.MODEL_CONFIG is not None
+
+def test_deriver_settings_default_model_config() -> None:
+    settings = DeriverSettings()
+
     assert settings.MODEL_CONFIG.model == "gemini/gemini-2.5-flash-lite"
     resolved = resolve_model_config(settings.MODEL_CONFIG)
     assert resolved.transport == "provider_native"
@@ -91,7 +93,7 @@ def test_deriver_settings_syncs_legacy_model_into_model_config() -> None:
     assert resolved.max_output_tokens == 4096
 
 
-def test_summary_settings_syncs_legacy_fields_from_nested_model_config() -> None:
+def test_summary_settings_accept_nested_model_config() -> None:
     settings = SummarySettings(
         MODEL_CONFIG=ConfiguredModelSettings(
             model="anthropic/claude-haiku-4-5",
@@ -100,11 +102,9 @@ def test_summary_settings_syncs_legacy_fields_from_nested_model_config() -> None
         ),
     )
 
-    assert settings.PROVIDER == "anthropic"
-    assert settings.MODEL == "claude-haiku-4-5"
-    assert settings.BACKUP_PROVIDER == "google"
-    assert settings.BACKUP_MODEL == "gemini-2.5-pro"
-    assert settings.THINKING_BUDGET_TOKENS == 1024
+    assert settings.MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
+    assert settings.MODEL_CONFIG.fallback_model == "gemini/gemini-2.5-pro"
+    assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
 
 
 def test_resolve_model_config_reads_override_env_and_provider_params(
@@ -135,24 +135,6 @@ def test_provider_params_default_to_empty_dict() -> None:
     assert config.provider_params == {}
 
 
-def test_dialectic_level_settings_syncs_fallback_into_model_config() -> None:
-    settings = DialecticLevelSettings(
-        PROVIDER="anthropic",
-        MODEL="claude-haiku-4-5",
-        BACKUP_PROVIDER="google",
-        BACKUP_MODEL="gemini-2.5-pro",
-        THINKING_BUDGET_TOKENS=1024,
-        MAX_TOOL_ITERATIONS=2,
-    )
-
-    if settings.MODEL_CONFIG is None:
-        raise AssertionError("Expected DIALECTIC MODEL_CONFIG to be resolved")
-    resolved = resolve_model_config(settings.MODEL_CONFIG)
-    assert resolved.model == "anthropic/claude-haiku-4-5"
-    assert resolved.fallback_model == "gemini/gemini-2.5-pro"
-    assert resolved.fallback_transport == "provider_native"
-
-
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:
     settings = DialecticLevelSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
@@ -163,11 +145,15 @@ def test_dialectic_level_settings_accepts_nested_model_config() -> None:
         MAX_TOOL_ITERATIONS=2,
     )
 
-    assert settings.PROVIDER == "anthropic"
-    assert settings.MODEL == "claude-haiku-4-5"
-    assert settings.BACKUP_PROVIDER == "google"
-    assert settings.BACKUP_MODEL == "gemini-2.5-pro"
-    assert settings.THINKING_BUDGET_TOKENS == 1024
+    resolved = resolve_model_config(settings.MODEL_CONFIG)
+    assert resolved.model == "anthropic/claude-haiku-4-5"
+    assert resolved.fallback_model == "gemini/gemini-2.5-pro"
+    assert resolved.fallback_transport is None
+
+
+def test_dialectic_level_settings_require_nested_model_config() -> None:
+    with pytest.raises(ValueError, match="Field required"):
+        DialecticLevelSettings.model_validate({"MAX_TOOL_ITERATIONS": 2})
 
 
 def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
@@ -188,11 +174,6 @@ def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
             model="anthropic/claude-opus-4-1",
         ),
     )
-
-    if settings.DEDUCTION_MODEL_CONFIG is None:
-        raise AssertionError("Expected DREAM DEDUCTION MODEL_CONFIG to be resolved")
-    if settings.INDUCTION_MODEL_CONFIG is None:
-        raise AssertionError("Expected DREAM INDUCTION MODEL_CONFIG to be resolved")
 
     assert settings.DEDUCTION_MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
     assert settings.DEDUCTION_MODEL_CONFIG.fallback_model == "gemini/gemini-2.5-pro"
@@ -238,20 +219,9 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
         }
     )
 
-    if dream.MODEL_CONFIG is None:
-        raise AssertionError(
-            "Expected DREAM MODEL_CONFIG to be resolved from config.toml.example"
-        )
-    if dream.DEDUCTION_MODEL_CONFIG is None:
-        raise AssertionError(
-            "Expected DREAM DEDUCTION MODEL_CONFIG to be resolved from config.toml.example"
-        )
-
     assert deriver_config.model == "gemini/gemini-2.5-flash-lite"
     assert deriver_config.thinking_budget_tokens == 1024
-    assert minimal_level.MODEL_CONFIG is not None
     assert minimal_level.MODEL_CONFIG.model == ("gemini/gemini-2.5-flash-lite")
-    assert max_level.MODEL_CONFIG is not None
     assert max_level.MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
     assert max_level.MODEL_CONFIG.thinking_budget_tokens == 2048
     assert summary_config.model == "gemini/gemini-2.5-flash"

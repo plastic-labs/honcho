@@ -69,8 +69,6 @@ async def test_dialectic_answer_uses_level_model_config() -> None:
         raise AssertionError("Expected dialectic LLM call")
     kwargs = await_args.kwargs
     expected_config = settings.DIALECTIC.LEVELS["medium"].MODEL_CONFIG
-    if expected_config is None:
-        raise AssertionError("Expected DIALECTIC medium MODEL_CONFIG to be resolved")
 
     assert result == "answer"
     assert kwargs["model_config"] == expected_config
@@ -110,8 +108,6 @@ async def test_dialectic_answer_stream_uses_level_model_config() -> None:
         raise AssertionError("Expected dialectic streaming LLM call")
     kwargs = await_args.kwargs
     expected_config = settings.DIALECTIC.LEVELS["medium"].MODEL_CONFIG
-    if expected_config is None:
-        raise AssertionError("Expected DIALECTIC medium MODEL_CONFIG to be resolved")
 
     assert chunks == ["streamed"]
     assert kwargs["model_config"] == expected_config
