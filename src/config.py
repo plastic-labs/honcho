@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal
 
 import tomllib
 from dotenv import load_dotenv
@@ -251,167 +251,6 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
     )
-
-
-_LEGACY_PROVIDER_PREFIXES: dict[str, str] = {
-    "anthropic": "anthropic",
-    "openai": "openai",
-    "google": "gemini",
-    "groq": "groq",
-    "custom": "openai",
-    "vllm": "hosted_vllm",
-}
-
-
-def _legacy_value(data: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in data:
-            return data[key]
-    return None
-
-
-def _has_legacy_value(data: dict[str, Any], *keys: str) -> bool:
-    return any(key in data for key in keys)
-
-
-def _legacy_transport(
-    provider: str | None,
-) -> Literal["provider_native", "openai_compatible"] | None:
-    if provider is None:
-        return None
-    if provider in {"custom", "vllm"}:
-        return "openai_compatible"
-    return "provider_native"
-
-
-def _qualify_legacy_model_name(provider: str | None, model: Any) -> str | None:
-    if not isinstance(model, str) or not model:
-        return None
-    if "/" in model:
-        return model
-    if provider is None:
-        raise ValueError(
-            "Legacy flat model configuration requires PROVIDER when MODEL is not provider-qualified"
-        )
-    prefix = _LEGACY_PROVIDER_PREFIXES.get(provider)
-    if prefix is None:
-        raise ValueError(f"Unsupported legacy provider in configuration: {provider}")
-    return f"{prefix}/{model}"
-
-
-def _configured_model_from_legacy_values(
-    *,
-    provider: str | None,
-    model: Any,
-    fallback_provider: str | None = None,
-    fallback_model: Any = None,
-    temperature: Any = None,
-    thinking_effort: Any = None,
-    thinking_budget_tokens: Any = None,
-    max_output_tokens: Any = None,
-    stop_sequences: Any = None,
-) -> ConfiguredModelSettings | None:
-    qualified_model = _qualify_legacy_model_name(provider, model)
-    if qualified_model is None:
-        return None
-
-    qualified_fallback_model = _qualify_legacy_model_name(
-        fallback_provider,
-        fallback_model,
-    )
-
-    return ConfiguredModelSettings(
-        model=qualified_model,
-        transport=_legacy_transport(provider) or "provider_native",
-        fallback_model=qualified_fallback_model,
-        fallback_transport=_legacy_transport(fallback_provider),
-        temperature=temperature,
-        thinking_effort=thinking_effort,
-        thinking_budget_tokens=thinking_budget_tokens,
-        max_output_tokens=max_output_tokens,
-        stop_sequences=stop_sequences,
-    )
-
-
-def _model_config_from_legacy_input(
-    data: Any,
-    *,
-    model_config_keys: tuple[str, ...] = ("MODEL_CONFIG", "model_config"),
-    provider_keys: tuple[str, ...] = ("PROVIDER", "provider"),
-    model_keys: tuple[str, ...] = ("MODEL", "model"),
-    fallback_provider_keys: tuple[str, ...] = ("BACKUP_PROVIDER", "backup_provider"),
-    fallback_model_keys: tuple[str, ...] = ("BACKUP_MODEL", "backup_model"),
-    temperature_keys: tuple[str, ...] = ("TEMPERATURE", "temperature"),
-    thinking_effort_keys: tuple[str, ...] = ("THINKING_EFFORT", "thinking_effort"),
-    thinking_budget_keys: tuple[str, ...] = (
-        "THINKING_BUDGET_TOKENS",
-        "thinking_budget_tokens",
-    ),
-    max_output_token_keys: tuple[str, ...] = (
-        "MAX_OUTPUT_TOKENS",
-        "max_output_tokens",
-    ),
-    stop_sequence_keys: tuple[str, ...] = ("STOP_SEQUENCES", "stop_sequences"),
-) -> Any:
-    if not isinstance(data, dict):
-        return data
-    input_dict = cast(dict[str, Any], data)
-    if any(key in input_dict for key in model_config_keys):
-        return input_dict
-
-    has_legacy_model_shape = any(
-        _has_legacy_value(input_dict, *keys)
-        for keys in (
-            provider_keys,
-            model_keys,
-            fallback_provider_keys,
-            fallback_model_keys,
-            temperature_keys,
-            thinking_effort_keys,
-            thinking_budget_keys,
-            max_output_token_keys,
-            stop_sequence_keys,
-        )
-    )
-    if not has_legacy_model_shape:
-        return input_dict
-
-    configured = _configured_model_from_legacy_values(
-        provider=_legacy_value(input_dict, *provider_keys),
-        model=_legacy_value(input_dict, *model_keys),
-        fallback_provider=_legacy_value(input_dict, *fallback_provider_keys),
-        fallback_model=_legacy_value(input_dict, *fallback_model_keys),
-        temperature=_legacy_value(input_dict, *temperature_keys),
-        thinking_effort=_legacy_value(input_dict, *thinking_effort_keys),
-        thinking_budget_tokens=_legacy_value(input_dict, *thinking_budget_keys),
-        max_output_tokens=_legacy_value(input_dict, *max_output_token_keys),
-        stop_sequences=_legacy_value(input_dict, *stop_sequence_keys),
-    )
-    if configured is None:
-        return input_dict
-
-    migrated = dict(input_dict)
-    migrated["MODEL_CONFIG"] = configured
-    return migrated
-
-
-def _qualify_relative_model(base_model: str, relative_model: Any) -> str | None:
-    if not isinstance(relative_model, str) or not relative_model:
-        return None
-    if "/" in relative_model:
-        return relative_model
-    prefix = base_model.split("/", 1)[0]
-    return f"{prefix}/{relative_model}"
-
-
-def _model_name_from_config_like(value: Any) -> str | None:
-    if isinstance(value, ConfiguredModelSettings):
-        return value.model
-    if isinstance(value, dict):
-        config_dict = cast(dict[str, Any], value)
-        model = config_dict.get("model") or config_dict.get("MODEL")
-        return model if isinstance(model, str) else None
-    return None
 
 
 def _merge_override_defaults(
@@ -690,13 +529,6 @@ class DeriverSettings(HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_model_config(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        return _model_config_from_legacy_input(data)
-
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
@@ -741,16 +573,6 @@ class DialecticLevelSettings(BaseModel):
     TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
         None  # None/auto lets model decide, "any"/"required" forces tool use
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_model_config(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        return _model_config_from_legacy_input(
-            data,
-            max_output_token_keys=(),
-        )
 
     @model_validator(mode="after")
     def _validate_anthropic_thinking_budget(self) -> "DialecticLevelSettings":
@@ -870,13 +692,6 @@ class SummarySettings(HonchoSettings):
     )
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_model_config(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        return _model_config_from_legacy_input(data)
 
 
 class WebhookSettings(HonchoSettings):
@@ -1006,48 +821,6 @@ class DreamSettings(HonchoSettings):
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_model_configs(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-
-        migrated = _model_config_from_legacy_input(data)
-        dream_model_config = migrated.get("MODEL_CONFIG") or migrated.get(
-            "model_config"
-        )
-        base_model = _model_name_from_config_like(dream_model_config)
-
-        if (
-            "DEDUCTION_MODEL_CONFIG" not in migrated
-            and "deduction_model_config" not in migrated
-        ):
-            deduction_model = _legacy_value(
-                migrated, "DEDUCTION_MODEL", "deduction_model"
-            )
-            if deduction_model is not None and base_model is not None:
-                qualified_model = _qualify_relative_model(base_model, deduction_model)
-                if qualified_model is not None:
-                    migrated["DEDUCTION_MODEL_CONFIG"] = ConfiguredModelSettings(
-                        model=qualified_model,
-                    )
-
-        if (
-            "INDUCTION_MODEL_CONFIG" not in migrated
-            and "induction_model_config" not in migrated
-        ):
-            induction_model = _legacy_value(
-                migrated, "INDUCTION_MODEL", "induction_model"
-            )
-            if induction_model is not None and base_model is not None:
-                qualified_model = _qualify_relative_model(base_model, induction_model)
-                if qualified_model is not None:
-                    migrated["INDUCTION_MODEL_CONFIG"] = ConfiguredModelSettings(
-                        model=qualified_model,
-                    )
-
-        return migrated
 
     @model_validator(mode="after")
     def _merge_specialist_model_defaults(self) -> "DreamSettings":

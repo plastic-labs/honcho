@@ -4,7 +4,6 @@ import pytest
 
 from src.config import (
     ConfiguredModelSettings,
-    DeriverSettings,
     DialecticLevelSettings,
     DreamSettings,
     ModelConfig,
@@ -63,7 +62,10 @@ def test_reasoning_effort_alias_populates_generic_thinking_effort() -> None:
 
 
 def test_for_model_overrides_model_and_transport() -> None:
-    config = ModelConfig(model="anthropic/claude-haiku-4-5")
+    config = ModelConfig(
+        model="anthropic/claude-haiku-4-5",
+        transport="provider_native",
+    )
 
     updated = config.for_model(
         "openai/my-local-model",
@@ -81,16 +83,6 @@ def test_configured_model_settings_validate_like_runtime_model_config() -> None:
             model="anthropic/claude-haiku-4-5",
             thinking_budget_tokens=512,
         )
-
-
-def test_deriver_settings_default_model_config() -> None:
-    settings = DeriverSettings()
-
-    assert settings.MODEL_CONFIG.model == "gemini/gemini-2.5-flash-lite"
-    resolved = resolve_model_config(settings.MODEL_CONFIG)
-    assert resolved.transport == "provider_native"
-    assert resolved.thinking_budget_tokens == 1024
-    assert resolved.max_output_tokens == 4096
 
 
 def test_summary_settings_accept_nested_model_config() -> None:
@@ -129,12 +121,6 @@ def test_resolve_model_config_reads_override_env_and_provider_params(
     assert resolved.provider_params == {"verbosity": "low"}
 
 
-def test_provider_params_default_to_empty_dict() -> None:
-    config = ModelConfig(model="openai/gpt-4.1-mini")
-
-    assert config.provider_params == {}
-
-
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:
     settings = DialecticLevelSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
@@ -154,6 +140,17 @@ def test_dialectic_level_settings_accepts_nested_model_config() -> None:
 def test_dialectic_level_settings_require_nested_model_config() -> None:
     with pytest.raises(ValueError, match="Field required"):
         DialecticLevelSettings.model_validate({"MAX_TOOL_ITERATIONS": 2})
+
+
+def test_dialectic_level_settings_reject_legacy_flat_model_shape() -> None:
+    with pytest.raises(ValueError, match="Field required"):
+        DialecticLevelSettings.model_validate(
+            {
+                "MODEL": "anthropic/claude-haiku-4-5",
+                "THINKING_BUDGET_TOKENS": 1024,
+                "MAX_TOOL_ITERATIONS": 2,
+            }
+        )
 
 
 def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
@@ -228,3 +225,20 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
     assert dream.MODEL_CONFIG.model == "anthropic/claude-sonnet-4-20250514"
     assert dream.DEDUCTION_MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
     assert dream.DEDUCTION_MODEL_CONFIG.thinking_budget_tokens == 8192
+
+
+def test_env_template_uses_nested_model_config_keys() -> None:
+    env_template_path = Path(__file__).resolve().parents[3] / ".env.template"
+    env_template = env_template_path.read_text()
+
+    assert "DERIVER_MODEL_CONFIG__MODEL" in env_template
+    assert "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL" in env_template
+    assert "SUMMARY_MODEL_CONFIG__MODEL" in env_template
+    assert "DREAM_MODEL_CONFIG__MODEL" in env_template
+    assert "DREAM_DEDUCTION_MODEL_CONFIG__MODEL" in env_template
+
+    assert "DERIVER_PROVIDER=" not in env_template
+    assert "SUMMARY_PROVIDER=" not in env_template
+    assert "DIALECTIC_LEVELS__minimal__PROVIDER=" not in env_template
+    assert "DREAM_PROVIDER=" not in env_template
+    assert "DREAM_DEDUCTION_MODEL=" not in env_template
