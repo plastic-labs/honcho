@@ -19,6 +19,7 @@ from .api_types import (
     PeerContextResponse,
     PeerResponse,
     RepresentationResponse,
+    SessionConfiguration,
     SessionResponse,
 )
 from .base import PeerBase, SessionBase
@@ -96,6 +97,21 @@ class Peer(PeerBase, MetadataConfigMixin):
         # Return configuration as dict for mixin compatibility
         return peer.metadata or {}, peer.configuration.model_dump(exclude_none=True)
 
+    def _apply_peer_response(self, peer: PeerResponse) -> None:
+        self._metadata = peer.metadata or {}
+        self._configuration = peer.configuration
+        self._created_at = peer.created_at
+
+    def get_metadata(self) -> dict[str, object]:
+        """Get metadata from the server and update the cache."""
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._apply_peer_response(peer)
+        return self._metadata or {}
+
     def get_configuration(self) -> PeerConfig:  # pyright: ignore[reportIncompatibleMethodOverride]
         """
         Get configuration from the server and update the cache.
@@ -108,9 +124,17 @@ class Peer(PeerBase, MetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         peer = PeerResponse.model_validate(data)
-        self._metadata = peer.metadata or {}
-        self._configuration = peer.configuration
-        return self._configuration
+        self._apply_peer_response(peer)
+        return self._configuration or PeerConfig()
+
+    def refresh(self) -> None:
+        """Refresh cached metadata, configuration, and created_at from the server."""
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._apply_peer_response(peer)
 
     @validate_call
     def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -339,7 +363,16 @@ class Peer(PeerBase, MetadataConfigMixin):
         )
 
         def transform(session: SessionResponse) -> Session:
-            return Session(session.id, self._honcho)
+            return Session(
+                session.id,
+                self._honcho,
+                metadata=session.metadata,
+                configuration=SessionConfiguration.model_validate(
+                    session.configuration.model_dump()
+                ),
+                created_at=session.created_at,
+                is_active=session.is_active,
+            )
 
         def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
             next_query: dict[str, Any] = {"page": next_page, "size": size}

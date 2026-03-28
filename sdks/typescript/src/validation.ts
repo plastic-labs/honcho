@@ -262,6 +262,10 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
 /**
  * Normalize list-method input so legacy raw filters and the new options object
  * shape are both accepted.
+ *
+ * Discriminates on the `filters` key: if the input has a `filters` property or
+ * any of the pagination-only keys (`page`, `size`, `reverse`) it is treated as
+ * the new options object. Otherwise it is treated as a legacy raw filter.
  */
 export function normalizeListOptions<T extends { filters?: Filters }>(
   input: Filters | T | undefined,
@@ -271,12 +275,16 @@ export function normalizeListOptions<T extends { filters?: Filters }>(
     return {} as T
   }
 
-  if (
-    typeof input === 'object' &&
-    input !== null &&
-    !Array.isArray(input) &&
-    optionKeys.some((key) => key in input)
-  ) {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { filters: input as Filters } as T
+  }
+
+  // Pagination-only keys can never appear in a raw filter object
+  const paginationKeys = optionKeys.filter((k) => k !== 'filters')
+  const hasFiltersKey = 'filters' in input
+  const hasPaginationKey = paginationKeys.some((key) => key in input)
+
+  if (hasFiltersKey || hasPaginationKey) {
     return input as T
   }
 

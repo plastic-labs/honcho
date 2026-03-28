@@ -75,11 +75,14 @@ def _detect_version() -> str:
     try:
         return version("honcho-ai")
     except PackageNotFoundError:
-        pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-        pyproject_text = pyproject_path.read_text(encoding="utf-8")
-        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
-        if match:
-            return match.group(1)
+        try:
+            pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+            pyproject_text = pyproject_path.read_text(encoding="utf-8")
+            match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+            if match:
+                return match.group(1)
+        except OSError:
+            pass
         return "0.0.0"
 
 

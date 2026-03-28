@@ -489,6 +489,21 @@ class PeerAio(AsyncMetadataConfigMixin):
             return {}
         return self._peer._configuration.model_dump(exclude_none=True)
 
+    def _apply_peer_response(self, peer: PeerResponse) -> None:
+        self._peer._metadata = peer.metadata or {}
+        self._peer._configuration = peer.configuration
+        self._peer._created_at = peer.created_at
+
+    async def get_metadata(self) -> dict[str, object]:
+        """Get metadata from the server asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._apply_peer_response(peer)
+        return self._peer._metadata or {}
+
     async def get_configuration(self) -> PeerConfig:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Get configuration from the server asynchronously."""
         await self._peer._honcho._ensure_workspace_async()
@@ -496,9 +511,17 @@ class PeerAio(AsyncMetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         peer = PeerResponse.model_validate(data)
-        self._peer._metadata = peer.metadata or {}
-        self._peer._configuration = peer.configuration
-        return self._peer._configuration
+        self._apply_peer_response(peer)
+        return self._peer._configuration or PeerConfig()
+
+    async def refresh(self) -> None:
+        """Refresh cached metadata, configuration, and created_at asynchronously."""
+        await self._peer._honcho._ensure_workspace_async()
+        data = await self._get_async_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        peer = PeerResponse.model_validate(data)
+        self._apply_peer_response(peer)
 
     async def set_configuration(self, configuration: PeerConfig) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Set configuration on the server asynchronously."""
@@ -595,7 +618,16 @@ class PeerAio(AsyncMetadataConfigMixin):
         )
 
         def transform(session: SessionResponse) -> Session:
-            return Session(session.id, self._peer._honcho)
+            return Session(
+                session.id,
+                self._peer._honcho,
+                metadata=session.metadata,
+                configuration=SessionConfiguration.model_validate(
+                    session.configuration.model_dump()
+                ),
+                created_at=session.created_at,
+                is_active=session.is_active,
+            )
 
         async def fetch_next(next_page: int) -> AsyncPage[SessionResponse, Session]:
             next_query: dict[str, Any] = {"page": next_page, "size": size}
