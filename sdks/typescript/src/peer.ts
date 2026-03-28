@@ -611,6 +611,7 @@ export class Peer {
   async getMetadata(): Promise<Record<string, unknown>> {
     const peer = await this._getOrCreate({ id: this.id })
     this._metadata = peer.metadata || {}
+    this._createdAt = peer.created_at
     return this._metadata
   }
 
@@ -642,6 +643,7 @@ export class Peer {
   async getConfiguration(): Promise<PeerConfig> {
     const peer = await this._getOrCreate({ id: this.id })
     this._configuration = peerConfigFromApi(peer.configuration) || {}
+    this._createdAt = peer.created_at
     return this._configuration
   }
 
