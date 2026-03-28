@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, Protocol
+from typing import Annotated, Any, ClassVar, Literal
 
 import tomllib
 from dotenv import load_dotenv
@@ -39,22 +39,6 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
 
 # Load TOML config once
 TOML_CONFIG = load_toml_config()
-
-
-class LLMComponentSettings(Protocol):
-    """Protocol for settings classes that use LLM providers with backup support."""
-
-    @property
-    def PROVIDER(self) -> SupportedProviders: ...
-
-    @property
-    def MODEL(self) -> str: ...
-
-    @property
-    def BACKUP_PROVIDER(self) -> SupportedProviders | None: ...
-
-    @property
-    def BACKUP_MODEL(self) -> str | None: ...
 
 
 class ModelOverrideSettings(BaseModel):
@@ -283,22 +267,6 @@ def _transport_for_provider(
     return "provider_native"
 
 
-def _credentials_for_provider(
-    provider: SupportedProviders | None,
-) -> tuple[str | None, str | None]:
-    if provider == "custom":
-        return (
-            settings.LLM.OPENAI_COMPATIBLE_API_KEY,
-            settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
-        )
-    if provider == "vllm":
-        return (
-            settings.LLM.VLLM_API_KEY,
-            settings.LLM.VLLM_BASE_URL,
-        )
-    return None, None
-
-
 def _strip_model_prefix(model: str) -> str:
     return model.split("/", 1)[1] if "/" in model else model
 
@@ -492,50 +460,6 @@ def _legacy_model_fields_from_configured(
         _strip_model_prefix(configured.model),
         fallback_provider,
         fallback_model,
-    )
-
-
-def _merge_legacy_openai_compatible_overrides(
-    configured: ConfiguredModelSettings,
-    *,
-    provider: SupportedProviders,
-    fallback_provider: SupportedProviders | None,
-) -> ConfiguredModelSettings:
-    overrides_update: dict[str, Any] = {}
-
-    if configured.transport == "openai_compatible":
-        api_key, base_url = _credentials_for_provider(provider)
-        if configured.overrides.api_key is None and api_key is not None:
-            overrides_update["api_key"] = api_key
-        if configured.overrides.base_url is None and base_url is not None:
-            overrides_update["base_url"] = base_url
-
-    fallback_transport = configured.fallback_transport or configured.transport
-    if (
-        configured.fallback_model is not None
-        and fallback_transport == "openai_compatible"
-    ):
-        fallback_api_key, fallback_base_url = _credentials_for_provider(
-            fallback_provider
-        )
-        if (
-            configured.overrides.fallback_api_key is None
-            and fallback_api_key is not None
-        ):
-            overrides_update["fallback_api_key"] = fallback_api_key
-        if (
-            configured.overrides.fallback_base_url is None
-            and fallback_base_url is not None
-        ):
-            overrides_update["fallback_base_url"] = fallback_base_url
-
-    if not overrides_update:
-        return configured
-
-    return configured.model_copy(
-        update={
-            "overrides": configured.overrides.model_copy(update=overrides_update),
-        }
     )
 
 
@@ -833,18 +757,6 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
             )
         return self
 
-    def to_model_config(self) -> ModelConfig:
-        model_config = _require_model_config(
-            self.MODEL_CONFIG,
-            owner="DERIVER",
-        )
-        configured = _merge_legacy_openai_compatible_overrides(
-            model_config,
-            provider=self.PROVIDER,
-            fallback_provider=self.BACKUP_PROVIDER,
-        )
-        return resolve_model_config(configured)
-
 
 class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
@@ -955,18 +867,6 @@ class DialecticLevelSettings(BaseModel):
                 f"THINKING_BUDGET_TOKENS must be >= 1024 for Anthropic provider when enabled (got {self.THINKING_BUDGET_TOKENS})"
             )
         return self
-
-    def to_model_config(self) -> ModelConfig:
-        model_config = _require_model_config(
-            self.MODEL_CONFIG,
-            owner="DIALECTIC",
-        )
-        configured = _merge_legacy_openai_compatible_overrides(
-            model_config,
-            provider=self.PROVIDER or "google",
-            fallback_provider=self.BACKUP_PROVIDER,
-        )
-        return resolve_model_config(configured)
 
 
 class DialecticSettings(HonchoSettings):
@@ -1095,18 +995,6 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
                 model_config.thinking_budget_tokens,
             )
         return self
-
-    def to_model_config(self) -> ModelConfig:
-        model_config = _require_model_config(
-            self.MODEL_CONFIG,
-            owner="SUMMARY",
-        )
-        configured = _merge_legacy_openai_compatible_overrides(
-            model_config,
-            provider=self.PROVIDER,
-            fallback_provider=self.BACKUP_PROVIDER,
-        )
-        return resolve_model_config(configured)
 
 
 class WebhookSettings(HonchoSettings):
@@ -1323,18 +1211,6 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
                 "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
             )
         return self
-
-    def to_model_config(self) -> ModelConfig:
-        model_config = _require_model_config(
-            self.MODEL_CONFIG,
-            owner="DREAM",
-        )
-        configured = _merge_legacy_openai_compatible_overrides(
-            model_config,
-            provider=self.PROVIDER,
-            fallback_provider=self.BACKUP_PROVIDER,
-        )
-        return resolve_model_config(configured)
 
 
 class VectorStoreSettings(HonchoSettings):

@@ -3,7 +3,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Generic, Literal, TypeVar, cast, overload
+from typing import Any, Generic, Literal, TypeVar, assert_never, cast, overload
 
 from anthropic import AsyncAnthropic
 from google import genai
@@ -19,7 +19,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import (
     ConfiguredModelSettings,
-    LLMComponentSettings,
     ModelConfig,
     resolve_model_config,
     settings,
@@ -85,15 +84,7 @@ ReasoningEffortType = (
 )
 VerbosityType = Literal["low", "medium", "high"] | None
 
-
-@dataclass(frozen=True)
-class _ModelConfigSettingsAdapter:
-    """Temporary legacy-shaped adapter for ModelConfig-backed call sites."""
-
-    PROVIDER: SupportedProviders
-    MODEL: str
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
+ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq
 
 
 def _strip_model_prefix(model: str) -> str:
@@ -122,62 +113,12 @@ def _provider_for_model_config(
     return provider_map[prefix]
 
 
-def _settings_from_model_config(
-    model_config: ModelConfig,
-) -> _ModelConfigSettingsAdapter:
-    """Adapt ModelConfig into the legacy settings shape used by honcho_llm_call.
-
-    This path currently supports the global-client flows used by migrated callers.
-    Explicit per-call credential overrides are still handled in the lower-level
-    request-builder/backend path, not here.
-    """
-
-    if any(
-        value is not None
-        for value in (
-            model_config.api_key,
-            model_config.base_url,
-            model_config.fallback_api_key,
-            model_config.fallback_base_url,
-        )
-    ):
-        raise ValueError(
-            "honcho_llm_call(model_config=...) does not yet support explicit credential/base_url overrides"
-        )
-
-    provider = _provider_for_model_config(model_config.model, model_config.transport)
-    fallback_provider: SupportedProviders | None = None
-    fallback_model: str | None = None
-    if model_config.fallback_model is not None:
-        fallback_transport = model_config.fallback_transport or model_config.transport
-        fallback_provider = _provider_for_model_config(
-            model_config.fallback_model,
-            fallback_transport,
-        )
-        fallback_model = _strip_model_prefix(model_config.fallback_model)
-
-    return _ModelConfigSettingsAdapter(
-        PROVIDER=provider,
-        MODEL=_strip_model_prefix(model_config.model),
-        BACKUP_PROVIDER=fallback_provider,
-        BACKUP_MODEL=fallback_model,
-    )
-
-
 def _resolve_runtime_model_config(
     model_config: ModelConfig | ConfiguredModelSettings,
 ) -> ModelConfig:
     if isinstance(model_config, ModelConfig):
         return model_config
     return resolve_model_config(model_config)
-
-
-def _require_llm_settings(
-    llm_settings: LLMComponentSettings | None,
-) -> LLMComponentSettings:
-    if llm_settings is None:
-        raise ValueError("LLM settings must be resolved before use")
-    return llm_settings
 
 
 def count_message_tokens(messages: list[dict[str, Any]]) -> int:
@@ -353,10 +294,7 @@ def _get_effective_temperature(temperature: float | None) -> float | None:
     return temperature
 
 
-CLIENTS: dict[
-    SupportedProviders,
-    AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
-] = {}
+CLIENTS: dict[SupportedProviders, ProviderClient] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
     anthropic = AsyncAnthropic(
@@ -392,37 +330,127 @@ if settings.LLM.GROQ_API_KEY:
     groq = AsyncGroq(api_key=settings.LLM.GROQ_API_KEY)
     CLIENTS["groq"] = groq
 
-SELECTED_PROVIDERS = [
-    ("Summary", settings.SUMMARY.PROVIDER),
-    ("Deriver", settings.DERIVER.PROVIDER),
-]
 
-# Add all dialectic level providers
-for level, level_settings in settings.DIALECTIC.LEVELS.items():
-    SELECTED_PROVIDERS.append((f"Dialectic ({level})", level_settings.PROVIDER))
-
-for provider_name, provider_value in SELECTED_PROVIDERS:
-    if provider_value not in CLIENTS:
-        raise ValueError(f"Missing client for {provider_name}: {provider_value}")
-
-# Validate backup providers are initialized if configured
-BACKUP_PROVIDERS: list[tuple[str, SupportedProviders | None]] = [
-    ("Deriver", settings.DERIVER.BACKUP_PROVIDER),
-    ("Summary", settings.SUMMARY.BACKUP_PROVIDER),
-    ("Dream", settings.DREAM.BACKUP_PROVIDER),
-]
-
-# Add all dialectic level backup providers
-for level, level_settings in settings.DIALECTIC.LEVELS.items():
-    BACKUP_PROVIDERS.append((f"Dialectic ({level})", level_settings.BACKUP_PROVIDER))
-
-for component_name, backup_provider in BACKUP_PROVIDERS:
-    if backup_provider is not None and backup_provider not in CLIENTS:
-        raise ValueError(
-            f"Backup provider for {component_name} is set to {backup_provider}, "
-            + "but this provider is not initialized. Please set the required API key/URL environment "
-            + "variables or remove the backup configuration."
+def _default_credentials_for_provider(
+    provider: SupportedProviders,
+) -> tuple[str | None, str | None]:
+    if provider == "anthropic":
+        return settings.LLM.ANTHROPIC_API_KEY, None
+    if provider == "openai":
+        return settings.LLM.OPENAI_API_KEY, None
+    if provider == "google":
+        return settings.LLM.GEMINI_API_KEY, None
+    if provider == "groq":
+        return settings.LLM.GROQ_API_KEY, None
+    if provider == "custom":
+        return (
+            settings.LLM.OPENAI_COMPATIBLE_API_KEY,
+            settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
         )
+    if provider == "vllm":
+        return settings.LLM.VLLM_API_KEY, settings.LLM.VLLM_BASE_URL
+    assert_never(provider)
+
+
+def _build_client(
+    provider: SupportedProviders,
+    *,
+    api_key: str | None,
+    base_url: str | None,
+) -> ProviderClient:
+    if provider == "anthropic":
+        if not api_key:
+            raise ValueError("Missing API key for Anthropic model config")
+        return AsyncAnthropic(
+            api_key=api_key,
+            timeout=600.0,
+        )
+    if provider == "openai":
+        if not api_key:
+            raise ValueError("Missing API key for OpenAI model config")
+        return AsyncOpenAI(api_key=api_key)
+    if provider == "google":
+        if not api_key:
+            raise ValueError("Missing API key for Gemini model config")
+        return genai.client.Client(api_key=api_key)
+    if provider == "groq":
+        if not api_key:
+            raise ValueError("Missing API key for Groq model config")
+        return AsyncGroq(api_key=api_key)
+    if provider == "custom":
+        if not api_key:
+            raise ValueError("Missing API key for custom model config")
+        if not base_url:
+            raise ValueError("Missing base_url for custom model config")
+        return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    if provider == "vllm":
+        if not api_key:
+            raise ValueError("Missing API key for vllm model config")
+        if not base_url:
+            raise ValueError("Missing base_url for vllm model config")
+        return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    assert_never(provider)
+
+
+def _client_for_model_config(
+    provider: SupportedProviders,
+    model_config: ModelConfig,
+) -> ProviderClient:
+    if model_config.api_key is None and model_config.base_url is None:
+        existing_client = CLIENTS.get(provider)
+        if existing_client is not None:
+            return existing_client
+
+    default_api_key, default_base_url = _default_credentials_for_provider(provider)
+    api_key = model_config.api_key or default_api_key
+    base_url = model_config.base_url or default_base_url
+    return _build_client(provider, api_key=api_key, base_url=base_url)
+
+
+def _select_model_config_for_attempt(
+    model_config: ModelConfig,
+    *,
+    attempt: int,
+    retry_attempts: int,
+) -> ModelConfig:
+    if attempt != retry_attempts or model_config.fallback_model is None:
+        return model_config
+
+    fallback_transport = model_config.fallback_transport or model_config.transport
+    fallback_provider = _provider_for_model_config(
+        model_config.fallback_model,
+        fallback_transport,
+    )
+    primary_provider = _provider_for_model_config(
+        model_config.model,
+        model_config.transport,
+    )
+
+    fallback_api_key = model_config.fallback_api_key
+    fallback_base_url = (
+        model_config.fallback_base_url
+        if fallback_transport == "openai_compatible"
+        else None
+    )
+    if fallback_provider == primary_provider:
+        if fallback_api_key is None:
+            fallback_api_key = model_config.api_key
+        if fallback_base_url is None and fallback_transport == model_config.transport:
+            fallback_base_url = model_config.base_url
+
+    return ModelConfig.model_validate(
+        {
+            **model_config.model_dump(),
+            "model": model_config.fallback_model,
+            "transport": fallback_transport,
+            "api_key": fallback_api_key,
+            "base_url": fallback_base_url,
+            "fallback_model": None,
+            "fallback_transport": None,
+            "fallback_api_key": None,
+            "fallback_base_url": None,
+        }
+    )
 
 
 def convert_tools_for_provider(
@@ -697,9 +725,11 @@ def _get_backend_for_provider(
         return GeminiBackend(client)
     if provider == "groq":
         return GroqBackend(client)
-    if provider in {"custom", "vllm"}:
+    if provider == "custom":
         return OpenAICompatibleBackend(client, provider_name=provider)
-    raise ValueError(f"Unsupported provider: {provider}")
+    if provider == "vllm":
+        return OpenAICompatibleBackend(client, provider_name=provider)
+    assert_never(provider)
 
 
 def _history_adapter_for_provider(
@@ -746,7 +776,7 @@ MAX_TOOL_ITERATIONS = 100
 
 
 async def _stream_final_response(
-    llm_settings: "LLMComponentSettings",
+    model_config: ModelConfig,
     prompt: str,
     max_tokens: int,
     conversation_messages: list[dict[str, Any]],
@@ -765,7 +795,7 @@ async def _stream_final_response(
     (which include all tool call results) to generate the final answer.
 
     Args:
-        llm_settings: Settings for the LLM provider
+        model_config: Model configuration for the LLM provider
         prompt: Original prompt (used as fallback)
         max_tokens: Maximum tokens to generate
         conversation_messages: Full conversation history including tool results
@@ -780,12 +810,9 @@ async def _stream_final_response(
     Yields:
         HonchoLLMCallStreamChunk objects containing the streaming response
     """
-    provider = llm_settings.PROVIDER
-    model = llm_settings.MODEL
-
-    client = CLIENTS.get(provider)
-    if not client:
-        raise ValueError(f"Missing client for {provider}")
+    provider = _provider_for_model_config(model_config.model, model_config.transport)
+    model = _strip_model_prefix(model_config.model)
+    client = _client_for_model_config(provider, model_config)
 
     # Make a streaming call without tools
     stream_response = await honcho_llm_call_inner(
@@ -801,6 +828,7 @@ async def _stream_final_response(
         verbosity,
         thinking_budget_tokens,
         stream=True,
+        client_override=client,
         tools=None,
         tool_choice=None,
         messages=conversation_messages,
@@ -812,7 +840,7 @@ async def _stream_final_response(
 
 
 async def _execute_tool_loop(
-    llm_settings: "LLMComponentSettings",
+    model_config: ModelConfig,
     prompt: str,
     max_tokens: int,
     messages: list[dict[str, Any]] | None,
@@ -831,8 +859,7 @@ async def _execute_tool_loop(
     retry_attempts: int,
     max_input_tokens: int | None,
     get_provider_and_model: Callable[
-        [],
-        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType],
+        [], tuple[SupportedProviders, str, ProviderClient]
     ],
     before_retry_callback: Callable[[Any], None],
     stream_final: bool = False,
@@ -848,7 +875,7 @@ async def _execute_tool_loop(
     4. Repeating until the LLM stops calling tools or max iterations reached
 
     Args:
-        llm_settings: Settings for the LLM provider
+        model_config: Runtime model configuration
         prompt: Initial prompt (used if messages is None)
         max_tokens: Maximum tokens to generate per call
         messages: Conversation history
@@ -907,13 +934,7 @@ async def _execute_tool_loop(
             conversation_messages: list[dict[str, Any]] = conversation_messages,
         ) -> HonchoLLMCallResponse[Any]:
             # Use shared provider selection helper
-            provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
-                get_provider_and_model()
-            )
-
-            client = CLIENTS.get(provider)
-            if not client:
-                raise ValueError(f"Missing client for {provider}")
+            provider, model, client = get_provider_and_model()
 
             converted_tools = (
                 convert_tools_for_provider(tools, provider) if tools else None
@@ -928,10 +949,11 @@ async def _execute_tool_loop(
                 json_mode,
                 _get_effective_temperature(temperature),
                 stop_seqs,
-                gpt5_reasoning_effort,
-                gpt5_verbosity,
-                thinking_budget,
+                reasoning_effort,
+                verbosity,
+                thinking_budget_tokens,
                 stream=False,
+                client_override=client,
                 tools=converted_tools,
                 tool_choice=effective_tool_choice,
                 messages=conversation_messages,
@@ -983,7 +1005,7 @@ async def _execute_tool_loop(
             if stream_final:
                 # Stream the final response with metadata from tool execution
                 stream = _stream_final_response(
-                    llm_settings=llm_settings,
+                    model_config=model_config,
                     prompt=prompt,
                     max_tokens=max_tokens,
                     conversation_messages=conversation_messages,
@@ -1015,7 +1037,7 @@ async def _execute_tool_loop(
             return response
 
         # Determine which provider we're using (reuse the helper)
-        current_provider, _, _, _, _ = get_provider_and_model()
+        current_provider, _, _ = get_provider_and_model()
 
         # Add assistant message with tool calls to conversation
         assistant_message = _format_assistant_tool_message(
@@ -1116,7 +1138,7 @@ async def _execute_tool_loop(
     # If streaming the final response, use the streaming helper with metadata
     if stream_final:
         stream = _stream_final_response(
-            llm_settings=llm_settings,
+            model_config=model_config,
             prompt=prompt,
             max_tokens=max_tokens,
             conversation_messages=conversation_messages,
@@ -1144,13 +1166,7 @@ async def _execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         # Use shared provider selection helper for backup failover support
-        provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
-            get_provider_and_model()
-        )
-
-        client = CLIENTS.get(provider)
-        if not client:
-            raise ValueError(f"Missing client for {provider}")
+        provider, model, client = get_provider_and_model()
 
         # No tools for final call
         return await honcho_llm_call_inner(
@@ -1162,10 +1178,11 @@ async def _execute_tool_loop(
             json_mode,
             _get_effective_temperature(temperature),
             stop_seqs,
-            gpt5_reasoning_effort,
-            gpt5_verbosity,
-            thinking_budget,
+            reasoning_effort,
+            verbosity,
+            thinking_budget_tokens,
             stream=False,
+            client_override=client,
             tools=None,
             tool_choice=None,
             messages=conversation_messages,
@@ -1252,8 +1269,8 @@ def _append_tool_results(
 
 @overload
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings | None = None,
     *,
+    model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1276,14 +1293,13 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
-    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
 @overload
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings | None = None,
     *,
+    model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1306,14 +1322,13 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
-    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
 @overload
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings | None = None,
     *,
+    model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1336,14 +1351,13 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
-    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
 @conditional_observe(name="LLM Call")
 async def honcho_llm_call(
-    llm_settings: LLMComponentSettings | None = None,
     *,
+    model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
@@ -1366,7 +1380,6 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
-    model_config: ModelConfig | ConfiguredModelSettings | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -1377,8 +1390,7 @@ async def honcho_llm_call(
     is used on the final retry attempt, which is 3 by default.
 
     Args:
-        llm_settings: Settings object containing PROVIDER, MODEL,
-                     BACKUP_PROVIDER, and BACKUP_MODEL
+        model_config: Runtime or configured model settings
         prompt: The prompt to send to the LLM (used if messages is None)
         max_tokens: Maximum tokens to generate
         track_name: Optional name for AI tracking
@@ -1406,22 +1418,18 @@ async def honcho_llm_call(
     Raises:
         ValueError: If provider is not configured
     """
-    if (llm_settings is None) == (model_config is None):
-        raise ValueError("Provide exactly one of llm_settings or model_config")
-
-    if model_config is not None:
-        model_config = _resolve_runtime_model_config(model_config)
-        llm_settings = _settings_from_model_config(model_config)
-        if temperature is None:
-            temperature = model_config.temperature
-        if stop_seqs is None:
-            stop_seqs = model_config.stop_sequences
-        if thinking_budget_tokens is None:
-            thinking_budget_tokens = model_config.thinking_budget_tokens
-        if reasoning_effort is None and model_config.thinking_effort is not None:
-            reasoning_effort = cast(ReasoningEffortType, model_config.thinking_effort)
-
-    llm_settings = _require_llm_settings(llm_settings)
+    runtime_model_config = _resolve_runtime_model_config(model_config)
+    if temperature is None:
+        temperature = runtime_model_config.temperature
+    if stop_seqs is None:
+        stop_seqs = runtime_model_config.stop_sequences
+    if thinking_budget_tokens is None:
+        thinking_budget_tokens = runtime_model_config.thinking_budget_tokens
+    if reasoning_effort is None and runtime_model_config.thinking_effort is not None:
+        reasoning_effort = cast(
+            ReasoningEffortType,
+            runtime_model_config.thinking_effort,
+        )
 
     # Validate that streaming and tools are not used together
     # (unless stream_final_only is set, which streams only the final response after tool calls)
@@ -1434,63 +1442,40 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> (
-        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
-    ):
+    def _get_provider_and_model() -> tuple[SupportedProviders, str, ProviderClient]:
         """
-        Get the provider and model to use based on current attempt.
+        Get the provider, model, and client to use based on current attempt.
 
         Returns:
-            Tuple of (provider, model, thinking_budget, reasoning_effort, verbosity)
+            Tuple of (provider, model, client)
         """
         attempt = _current_attempt.get()
-
-        provider: SupportedProviders
-        model: str
-        thinking_budget: int | None
-        gpt5_reasoning_effort: ReasoningEffortType
-        gpt5_verbosity: VerbosityType
-
-        # Use backup on final retry attempt (when attempt == retry_attempts)
+        selected_model_config = _select_model_config_for_attempt(
+            runtime_model_config,
+            attempt=attempt,
+            retry_attempts=retry_attempts,
+        )
+        provider = _provider_for_model_config(
+            selected_model_config.model,
+            selected_model_config.transport,
+        )
+        model = _strip_model_prefix(selected_model_config.model)
+        client = _client_for_model_config(provider, selected_model_config)
         if (
             attempt == retry_attempts
-            and llm_settings.BACKUP_PROVIDER is not None
-            and llm_settings.BACKUP_MODEL is not None
-            and llm_settings.BACKUP_PROVIDER in CLIENTS
+            and runtime_model_config.fallback_model is not None
         ):
-            provider = llm_settings.BACKUP_PROVIDER
-            model = llm_settings.BACKUP_MODEL
-            thinking_budget = thinking_budget_tokens
-            gpt5_reasoning_effort = reasoning_effort
-            gpt5_verbosity = verbosity
-
-            # Filter out incompatible parameters when using backup
-            if provider not in ("anthropic", "google") and thinking_budget:
-                logger.warning(
-                    f"thinking_budget_tokens not supported by {provider}, ignoring"
-                )
-                thinking_budget = None
-
-            if "gpt-5" not in model and (gpt5_reasoning_effort or gpt5_verbosity):
-                logger.warning(
-                    "reasoning_effort/verbosity only supported by GPT-5 models, ignoring"
-                )
-                gpt5_reasoning_effort = None
-                gpt5_verbosity = None
-
+            primary_provider = _provider_for_model_config(
+                runtime_model_config.model,
+                runtime_model_config.transport,
+            )
+            primary_model = _strip_model_prefix(runtime_model_config.model)
             logger.warning(
                 f"Final retry attempt {attempt}/{retry_attempts}: switching from "
-                + f"{llm_settings.PROVIDER}/{llm_settings.MODEL} to "
+                + f"{primary_provider}/{primary_model} to "
                 + f"backup {provider}/{model}"
             )
-        else:
-            provider = llm_settings.PROVIDER
-            model = llm_settings.MODEL
-            thinking_budget = thinking_budget_tokens
-            gpt5_reasoning_effort = reasoning_effort
-            gpt5_verbosity = verbosity
-
-        return provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity
+        return provider, model, client
 
     async def _call_with_provider_selection() -> (
         HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -1499,14 +1484,7 @@ async def honcho_llm_call(
         Inner function that selects provider/model based on current attempt.
         This function is retried, so provider selection happens on each attempt.
         """
-        provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
-            _get_provider_and_model()
-        )
-
-        # Validate client exists
-        client = CLIENTS.get(provider)
-        if not client:
-            raise ValueError(f"Missing client for {provider}")
+        provider, model, client = _get_provider_and_model()
 
         # Convert tools to provider-specific format if provided
         converted_tools = convert_tools_for_provider(tools, provider) if tools else None
@@ -1521,10 +1499,11 @@ async def honcho_llm_call(
                 json_mode,
                 _get_effective_temperature(temperature),
                 stop_seqs,
-                gpt5_reasoning_effort,
-                gpt5_verbosity,
-                thinking_budget,
+                reasoning_effort,
+                verbosity,
+                thinking_budget_tokens,
                 stream=True,
+                client_override=client,
                 tools=converted_tools,
                 tool_choice=tool_choice,
             )
@@ -1538,10 +1517,11 @@ async def honcho_llm_call(
                 json_mode,
                 _get_effective_temperature(temperature),
                 stop_seqs,
-                gpt5_reasoning_effort,
-                gpt5_verbosity,
-                thinking_budget,
+                reasoning_effort,
+                verbosity,
+                thinking_budget_tokens,
                 stream=False,
+                client_override=client,
                 tools=converted_tools,
                 tool_choice=tool_choice,
             )
@@ -1563,9 +1543,14 @@ async def honcho_llm_call(
         _current_attempt.set(next_attempt)
         exc = retry_state.outcome.exception() if retry_state.outcome else None
         if exc:
+            primary_provider = _provider_for_model_config(
+                runtime_model_config.model,
+                runtime_model_config.transport,
+            )
+            primary_model = _strip_model_prefix(runtime_model_config.model)
             logger.warning(
                 f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
-                + f"{llm_settings.PROVIDER}/{llm_settings.MODEL}: {exc}"
+                + f"{primary_provider}/{primary_model}: {exc}"
             )
             logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
@@ -1585,7 +1570,7 @@ async def honcho_llm_call(
         if trace_name and isinstance(result, HonchoLLMCallResponse):
             log_reasoning_trace(
                 task_type=trace_name,
-                llm_settings=llm_settings,
+                model_config=runtime_model_config,
                 prompt=prompt,
                 response=result,
                 max_tokens=max_tokens,
@@ -1609,7 +1594,7 @@ async def honcho_llm_call(
 
     # Delegate to the tool execution loop
     result = await _execute_tool_loop(
-        llm_settings=llm_settings,
+        model_config=runtime_model_config,
         prompt=prompt,
         max_tokens=max_tokens,
         messages=messages,
@@ -1635,7 +1620,7 @@ async def honcho_llm_call(
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
             task_type=trace_name,
-            llm_settings=llm_settings,
+            model_config=runtime_model_config,
             prompt=prompt,
             response=result,
             max_tokens=max_tokens,
@@ -1724,6 +1709,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
+    client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1744,6 +1730,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
+    client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1764,6 +1751,7 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[True] = ...,
+    client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1783,11 +1771,14 @@ async def honcho_llm_call_inner(
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: bool = False,
+    client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
-    client = CLIENTS[provider]
+    client = client_override or CLIENTS.get(provider)
+    if client is None:
+        raise ValueError(f"Missing client for {provider}")
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]

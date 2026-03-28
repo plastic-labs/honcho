@@ -75,7 +75,7 @@ def test_for_model_overrides_model_and_transport() -> None:
     assert config.transport == "provider_native"
 
 
-def test_deriver_settings_to_model_config_qualifies_legacy_model() -> None:
+def test_deriver_settings_syncs_legacy_model_into_model_config() -> None:
     settings = DeriverSettings(
         PROVIDER="google",
         MODEL="gemini-2.5-flash-lite",
@@ -83,14 +83,12 @@ def test_deriver_settings_to_model_config_qualifies_legacy_model() -> None:
         MAX_OUTPUT_TOKENS=4096,
     )
 
-    config = settings.to_model_config()
-
-    assert config.model == "gemini/gemini-2.5-flash-lite"
-    assert config.transport == "provider_native"
-    assert config.thinking_budget_tokens == 1024
-    assert config.max_output_tokens == 4096
     assert settings.MODEL_CONFIG is not None
     assert settings.MODEL_CONFIG.model == "gemini/gemini-2.5-flash-lite"
+    resolved = resolve_model_config(settings.MODEL_CONFIG)
+    assert resolved.transport == "provider_native"
+    assert resolved.thinking_budget_tokens == 1024
+    assert resolved.max_output_tokens == 4096
 
 
 def test_summary_settings_syncs_legacy_fields_from_nested_model_config() -> None:
@@ -137,7 +135,7 @@ def test_provider_params_default_to_empty_dict() -> None:
     assert config.provider_params == {}
 
 
-def test_dialectic_level_settings_to_model_config_handles_fallback() -> None:
+def test_dialectic_level_settings_syncs_fallback_into_model_config() -> None:
     settings = DialecticLevelSettings(
         PROVIDER="anthropic",
         MODEL="claude-haiku-4-5",
@@ -147,11 +145,12 @@ def test_dialectic_level_settings_to_model_config_handles_fallback() -> None:
         MAX_TOOL_ITERATIONS=2,
     )
 
-    config = settings.to_model_config()
-
-    assert config.model == "anthropic/claude-haiku-4-5"
-    assert config.fallback_model == "gemini/gemini-2.5-pro"
-    assert config.fallback_transport == "provider_native"
+    if settings.MODEL_CONFIG is None:
+        raise AssertionError("Expected DIALECTIC MODEL_CONFIG to be resolved")
+    resolved = resolve_model_config(settings.MODEL_CONFIG)
+    assert resolved.model == "anthropic/claude-haiku-4-5"
+    assert resolved.fallback_model == "gemini/gemini-2.5-pro"
+    assert resolved.fallback_transport == "provider_native"
 
 
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:

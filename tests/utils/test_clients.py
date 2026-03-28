@@ -25,7 +25,7 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
-from src.config import ConfiguredModelSettings, ModelConfig, settings
+from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import LLMError
 from src.utils.clients import (
     CLIENTS,
@@ -1136,11 +1136,11 @@ class TestMainLLMCallFunction:
         mock_client.messages.stream.return_value = mock_stream
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
-            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
-            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
             chunks: list[HonchoLLMCallStreamChunk] = []
             async for chunk in await honcho_llm_call(
-                llm_settings=settings.DIALECTIC.LEVELS["medium"],
+                model_config=ConfiguredModelSettings(
+                    model="anthropic/claude-4-sonnet",
+                ),
                 prompt="Hello",
                 max_tokens=100,
                 stream=True,
@@ -1164,10 +1164,10 @@ class TestMainLLMCallFunction:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
-            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
-            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
             response = await honcho_llm_call(
-                llm_settings=settings.DIALECTIC.LEVELS["medium"],
+                model_config=ConfiguredModelSettings(
+                    model="anthropic/claude-4-sonnet",
+                ),
                 prompt="Hello",
                 max_tokens=100,
                 enable_retry=False,
@@ -1247,18 +1247,6 @@ class TestModelConfigCalls:
                 "type": "enabled",
                 "budget_tokens": 1024,
             }
-
-    async def test_honcho_llm_call_rejects_both_llm_settings_and_model_config(self):
-        with pytest.raises(
-            ValueError, match="exactly one of llm_settings or model_config"
-        ):
-            await honcho_llm_call(
-                llm_settings=settings.SUMMARY,
-                model_config=ModelConfig(model="anthropic/claude-haiku-4-5"),
-                prompt="Hello",
-                max_tokens=100,
-                enable_retry=False,
-            )
 
 
 # Test fixtures and utilities
