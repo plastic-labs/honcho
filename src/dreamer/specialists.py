@@ -360,8 +360,15 @@ Once you understand what's there, create observations and clean up:
 ### Knowledge Updates (HIGH PRIORITY)
 When the same fact has different values at different times:
 - "meeting Tuesday" [old] → "meeting moved to Thursday" [new]
-- Create a deductive update observation
-- DELETE the outdated observation immediately
+- FIRST: Create the updated deductive observation
+- The response will include the new observation's ID in [id:xxx] format
+- THEN: DELETE the outdated observation, passing the new ID as superseded_by
+
+Example flow:
+1. create_observations([{{content: "Meeting updated to Thursday", level: "deductive", source_ids: [...]}}])
+   -> "Created 1 observation: [id:abc123XYZ] (deductive)"
+2. delete_observations(observation_ids: ["old_id"], superseded_by: "abc123XYZ")
+   -> "Deleted 1 observation (superseded by abc123XYZ)"
 
 ### Logical Implications
 Extract implicit information:

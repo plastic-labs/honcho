@@ -102,6 +102,7 @@ class ObservationsCreatedResult:
     """Result of a batch create_observations call."""
 
     created_count: int
+    created_ids: list[str]
     created_levels: list[str]
     failed: list[ObservationFailure]
 
@@ -497,6 +498,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "items": {"type": "string"},
                     "description": "List of observation IDs to delete (use the exact ID from [id:xxx] in search results)",
                 },
+                "superseded_by": {
+                    "type": "string",
+                    "description": "(Optional) ID of the replacement observation, from the [id:xxx] in a create_observations response. Creates a supersession link so the reasoning chain can follow the replacement.",
+                },
             },
             "required": ["observation_ids"],
         },
@@ -642,7 +647,7 @@ async def create_observations(
     """
     if not observations:
         logger.warning("create_observations called with empty list")
-        return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
+        return ObservationsCreatedResult(created_count=0, created_ids=[], created_levels=[], failed=[])
 
     # Get or create collection
     await crud.get_or_create_collection(
@@ -722,8 +727,9 @@ async def create_observations(
         documents.append(doc)
 
     # Bulk create all documents
+    created_ids: list[str] = []
     if documents:
-        await crud.create_documents(
+        created_ids = await crud.create_documents(
             db,
             documents=documents,
             workspace_name=workspace_name,
@@ -733,14 +739,15 @@ async def create_observations(
         )
         logger.info(
             "Created %d observations in %s/%s/%s",
-            len(documents),
+            len(created_ids),
             workspace_name,
             observer,
             observed,
         )
 
     return ObservationsCreatedResult(
-        created_count=len(documents),
+        created_count=len(created_ids),
+        created_ids=created_ids,
         created_levels=[doc.level for doc in documents],
         failed=failed,
     )
@@ -1104,11 +1111,21 @@ async def _handle_create_observations(
             )
         )
 
-    response = (
-        f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer} "
-        f"({explicit_count} explicit, {deductive_count} deductive, "
-        f"{inductive_count} inductive, {contradiction_count} contradiction)"
-    )
+    if result.created_ids:
+        id_details = ", ".join(
+            f"[id:{doc_id}] ({level})"
+            for doc_id, level in zip(result.created_ids, result.created_levels)
+        )
+        response = (
+            f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer}: "
+            f"{id_details}"
+        )
+    else:
+        response = (
+            f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer} "
+            f"({explicit_count} explicit, {deductive_count} deductive, "
+            f"{inductive_count} inductive, {contradiction_count} contradiction)"
+        )
 
     if all_failures:
         failure_details = "; ".join(
@@ -1577,6 +1594,8 @@ async def _handle_delete_observations(
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 
+    superseded_by = tool_input.get("superseded_by")
+
     deleted_count = 0
     async with ctx.db_lock:
         for obs_id in observation_ids:
@@ -1587,6 +1606,7 @@ async def _handle_delete_observations(
                     document_id=obs_id,
                     observer=ctx.observer,
                     observed=ctx.observed,
+                    superseded_by=superseded_by,
                 )
                 deleted_count += 1
             except Exception as e:
@@ -1607,6 +1627,8 @@ async def _handle_delete_observations(
             )
         )
 
+    if superseded_by:
+        return f"Deleted {deleted_count} observations (superseded by {superseded_by})"
     return f"Deleted {deleted_count} observations"
 
 
@@ -1684,8 +1706,10 @@ async def _handle_get_reasoning_chain(
     if direction not in ("premises", "conclusions", "both"):
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
-    # Get the observation itself
-    docs = await crud.get_documents_by_ids(ctx.db, ctx.workspace_name, [observation_id])
+    # Get the observation itself (including superseded tombstones)
+    docs = await crud.get_documents_by_ids_include_superseded(
+        ctx.db, ctx.workspace_name, [observation_id]
+    )
     if not docs or not docs[0]:
         return f"ERROR: Observation '{observation_id}' not found"
 
@@ -1695,41 +1719,67 @@ async def _handle_get_reasoning_chain(
 
     # Format the main observation
     level = doc.level or "explicit"
-    output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
+    if doc.deleted_at is not None and doc.superseded_by:
+        output_parts.append(
+            f"**Observation [id:{doc.id}] ({level}) [SUPERSEDED by {doc.superseded_by}]:**\n{doc.content}"
+        )
+    else:
+        output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
 
     # Get premises/sources if requested
     if direction in ("premises", "both"):
-        if level == "deductive" and doc.source_ids:
-            premises = await crud.get_documents_by_ids(
+        if level in ("deductive", "inductive") and doc.source_ids:
+            label = "Premises" if level == "deductive" else "Sources"
+            # First try live docs
+            live_docs = await crud.get_documents_by_ids(
                 ctx.db, ctx.workspace_name, doc.source_ids
             )
-            if premises:
-                premise_lines: list[Any] = []
-                for p in premises:
-                    p_level = p.level or "explicit"
-                    premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
+            found_ids = {d.id for d in live_docs}
+            missing_ids = [sid for sid in doc.source_ids if sid not in found_ids]
+
+            source_lines: list[str] = []
+            for d in live_docs:
+                d_level = d.level or "explicit"
+                source_lines.append(f"  - [id:{d.id}] ({d_level}): {d.content}")
+
+            # Follow supersession links for missing sources
+            if missing_ids:
+                tombstones = await crud.get_documents_by_ids_include_superseded(
+                    ctx.db, ctx.workspace_name, missing_ids
+                )
+                for t in tombstones:
+                    if t.id in found_ids:
+                        continue  # Already shown as live
+                    if t.superseded_by:
+                        # Follow one hop to the replacement
+                        replacements = await crud.get_documents_by_ids(
+                            ctx.db, ctx.workspace_name, [t.superseded_by]
+                        )
+                        if replacements:
+                            r = replacements[0]
+                            r_level = r.level or "explicit"
+                            source_lines.append(
+                                f"  - [id:{t.id}] (superseded) -> [id:{r.id}] ({r_level}): {r.content}"
+                            )
+                        else:
+                            t_level = t.level or "explicit"
+                            source_lines.append(
+                                f"  - [id:{t.id}] ({t_level}) [SUPERSEDED, replacement {t.superseded_by} not found]: {t.content}"
+                            )
+                        found_ids.add(t.id)
+
+                # Any IDs still not found
+                still_missing = [sid for sid in missing_ids if sid not in found_ids]
+                for sid in still_missing:
+                    source_lines.append(f"  - [id:{sid}] not found in database")
+
+            if source_lines:
                 output_parts.append(
-                    f"\n**Premises ({len(premises)}):**\n" + "\n".join(premise_lines)
+                    f"\n**{label} ({len(source_lines)}):**\n" + "\n".join(source_lines)
                 )
             else:
                 output_parts.append(
-                    f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
-                )
-        elif level == "inductive" and doc.source_ids:
-            sources = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
-            )
-            if sources:
-                source_lines: list[Any] = []
-                for s in sources:
-                    s_level = s.level or "explicit"
-                    source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
-                output_parts.append(
-                    f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
-                )
-            else:
-                output_parts.append(
-                    f"\n**Sources:** Referenced {len(doc.source_ids)} source IDs but none found in database"
+                    f"\n**{label}:** Referenced {len(doc.source_ids)} IDs but none found in database"
                 )
         elif level == "explicit":
             output_parts.append(

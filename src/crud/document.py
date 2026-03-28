@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -321,7 +321,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
-) -> int:
+) -> list[str]:
     """
     Create multiple documents with optional duplicate detection.
 
@@ -333,19 +333,22 @@ async def create_documents(
         observed: Name of the observed peer
 
     Returns:
-        Count of new documents
+        List of created document IDs
     """
     honcho_documents: list[models.Document] = []
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
+    # Store (replaced_doc_id, new_doc) pairs for supersession linkage after flush
+    supersession_links: list[tuple[str, models.Document]] = []
 
     for doc in documents:
         try:
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
+            replaced_doc_id: str | None = None
             if deduplicate:
-                is_duplicate = await is_rejected_duplicate(
+                is_duplicate, replaced_doc_id = await is_rejected_duplicate(
                     db, doc, workspace_name, observer=observer, observed=observed
                 )
                 if is_duplicate:
@@ -392,6 +395,10 @@ async def create_documents(
                 new_doc.sync_state = "pending"
             honcho_documents.append(new_doc)
 
+            # Track supersession link (applied after flush when IDs are available)
+            if replaced_doc_id:
+                supersession_links.append((replaced_doc_id, new_doc))
+
             # Track embedding for vector store (ID will be available after commit)
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
@@ -404,6 +411,17 @@ async def create_documents(
 
     try:
         db.add_all(honcho_documents)
+
+        # Set superseded_by links now that new doc IDs are available after flush
+        if supersession_links:
+            await db.flush()
+            for old_id, new_doc in supersession_links:
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id == old_id)
+                    .values(superseded_by=new_doc.id)
+                )
+
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
         # documents will be left in sync_state='pending' with NULL embeddings.
@@ -489,7 +507,7 @@ async def create_documents(
             "Failed to create documents due to integrity constraint violation"
         ) from e
 
-    return len(honcho_documents)
+    return [doc.id for doc in honcho_documents]
 
 
 async def delete_document(
@@ -500,6 +518,7 @@ async def delete_document(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    superseded_by: str | None = None,
 ) -> None:
     """
     Soft-delete a document by ID.
@@ -514,6 +533,7 @@ async def delete_document(
         observer: Name of the observing peer (for authorization)
         observed: Name of the observed peer (for authorization)
         session_name: Optional session name to verify document belongs to session
+        superseded_by: Optional ID of the replacement document for supersession tracking
 
     Raises:
         ResourceNotFoundException: If document not found or doesn't match criteria
@@ -528,9 +548,11 @@ async def delete_document(
     if session_name is not None:
         conditions.append(models.Document.session_name == session_name)
 
-    update_stmt = (
-        update(models.Document).where(*conditions).values(deleted_at=func.now())
-    )
+    values: dict[str, Any] = {"deleted_at": func.now()}
+    if superseded_by is not None:
+        values["superseded_by"] = superseded_by
+
+    update_stmt = update(models.Document).where(*conditions).values(**values)
     result = cast(CursorResult[Any], await db.execute(update_stmt))
 
     if result.rowcount == 0:
@@ -792,20 +814,18 @@ async def is_rejected_duplicate(
     *,
     observer: str,
     observed: str,
-) -> bool:
+) -> tuple[bool, str | None]:
     """
     Check if a document is a duplicate of an existing document.
 
     Uses: 1) Cosine similarity (>=0.95), 2) Token diff for retention.
 
-    Returns True if both:
-    - the document is deemed a duplicate of an existing document
-    - the existing document is deemed a superior duplicate
-
-    If the document is not a duplicate, returns False.
-
-    If the document is a duplicate AND the new document is superior,
-    deletes the existing document and returns False.
+    Returns:
+        (True, None) if the new document is rejected (existing is superior).
+        (False, replaced_doc_id) if the existing document was soft-deleted
+            in favor of the new one. The caller should set superseded_by
+            on the old document.
+        (False, None) if no duplicate was found.
     """
     # Step 1: Find potential duplicates using cosine similarity
     similar_docs = await query_documents(
@@ -820,7 +840,7 @@ async def is_rejected_duplicate(
     )
 
     if not similar_docs:
-        return False
+        return False, None
 
     existing_doc = similar_docs[0]
 
@@ -842,13 +862,13 @@ async def is_rejected_duplicate(
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
-        return False  # Don't reject the new document
+        return False, existing_doc.id  # Caller sets superseded_by on old doc
 
     # Existing document has more information, reject the new one
     logger.warning(
         f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
     )
-    return True
+    return True, None
 
 
 async def cleanup_soft_deleted_documents(
@@ -893,9 +913,69 @@ async def cleanup_soft_deleted_documents(
     if not documents:
         return 0
 
+    # Phase 1: Triage superseded documents
+    # Superseded docs with live dependents are preserved as tombstones (embedding NULLed).
+    # Superseded docs without dependents and non-superseded docs are hard-deleted.
+    preserve_ids: list[str] = []
+    delete_candidates: list[models.Document] = []
+
+    for doc in documents:
+        if doc.superseded_by is not None:
+            # Check if this tombstone has live dependents
+            children = await get_child_observations(
+                db,
+                doc.workspace_name,
+                doc.id,
+                observer=doc.observer,
+                observed=doc.observed,
+            )
+            if children:
+                preserve_ids.append(doc.id)
+            else:
+                delete_candidates.append(doc)
+        else:
+            delete_candidates.append(doc)
+
+    # NULL embeddings on preserved tombstones and delete from vector store
+    if preserve_ids:
+        # Delete vectors for preserved tombstones (they won't need them)
+        preserve_by_namespace: dict[str, list[str]] = {}
+        for doc in documents:
+            if doc.id in preserve_ids:
+                namespace = external_vector_store.get_vector_namespace(
+                    "document",
+                    doc.workspace_name,
+                    doc.observer,
+                    doc.observed,
+                )
+                preserve_by_namespace.setdefault(namespace, []).append(doc.id)
+
+        for namespace, ids in preserve_by_namespace.items():
+            try:
+                await external_vector_store.delete_many(namespace, ids)
+            except Exception as e:
+                logger.warning(f"Failed to delete vectors for preserved tombstones from {namespace}: {e}")
+
+        await db.execute(
+            update(models.Document)
+            .where(models.Document.id.in_(preserve_ids))
+            .values(embedding=None)
+        )
+        logger.debug(
+            f"Preserved {len(preserve_ids)} superseded tombstones (NULLed embeddings)"
+        )
+
+    # Phase 2: Hard-delete documents that should be removed
+    if not delete_candidates:
+        if preserve_ids:
+            await db.commit()
+            return len(preserve_ids)
+        await db.rollback()
+        return 0
+
     # Group by namespace for batch vector deletion
     by_namespace: dict[str, list[str]] = {}
-    for doc in documents:
+    for doc in delete_candidates:
         namespace = external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
@@ -922,13 +1002,16 @@ async def cleanup_soft_deleted_documents(
                 models.Document.id.in_(successfully_deleted_ids)
             )
         )
+
+    total_processed = len(preserve_ids) + len(successfully_deleted_ids)
+    if total_processed > 0:
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents, preserved {len(preserve_ids)} superseded tombstones"
         )
-        return len(successfully_deleted_ids)
+        return total_processed
 
-    # No documents were successfully deleted from vector store
+    # No documents were successfully processed
     # Release FOR UPDATE locks by rolling back the transaction
     await db.rollback()
     return 0
@@ -961,6 +1044,31 @@ async def get_documents_by_ids(
         models.Document.workspace_name == workspace_name,
         models.Document.id.in_(document_ids),
         models.Document.deleted_at.is_(None),
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_documents_by_ids_include_superseded(
+    db: AsyncSession,
+    workspace_name: str,
+    document_ids: list[str],
+) -> Sequence[models.Document]:
+    """Get documents by ID, including superseded tombstones.
+
+    Used by chain traversal to follow supersession links.
+    Returns docs that are either not deleted or deleted with
+    superseded_by set (preserved tombstones).
+    """
+    if not document_ids:
+        return []
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.id.in_(document_ids),
+        or_(
+            models.Document.deleted_at.is_(None),
+            models.Document.superseded_by.is_not(None),
+        ),
     )
     result = await db.execute(stmt)
     return result.scalars().all()

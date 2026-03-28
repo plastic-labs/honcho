@@ -24,6 +24,7 @@ from src.utils.agent_tools import (
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_history,  # pyright: ignore[reportPrivateUsage]
+    _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_get_session_summary,  # pyright: ignore[reportPrivateUsage]
     _handle_grep_messages,  # pyright: ignore[reportPrivateUsage]
@@ -187,7 +188,7 @@ class TestCreateObservations:
         )
 
         assert "Created 2 observations" in result
-        assert "2 explicit" in result
+        assert "[id:" in result  # Response now includes document IDs
 
         # Verify DB state
         stmt = select(models.Document).where(
@@ -224,7 +225,8 @@ class TestCreateObservations:
         )
 
         assert "Created 1 observations" in result
-        assert "1 deductive" in result
+        assert "[id:" in result
+        assert "(deductive)" in result
 
         # Verify the document was created as deductive with source_ids
         stmt = select(models.Document).where(
@@ -271,10 +273,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> int:
+        ) -> list[str]:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return len(documents)
+            return [f"fake_id_{i}" for i in range(len(documents))]
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -334,10 +336,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> int:
+        ) -> list[str]:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return len(documents)
+            return [f"fake_id_{i}" for i in range(len(documents))]
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -372,6 +374,60 @@ class TestCreateObservations:
         assert "Embedding failed" in result.failed[0].error
         assert len(created_documents) == 1
         assert created_documents[0].content == "Embeds fine"
+
+    async def test_create_observations_returns_ids_in_response(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Response string includes [id:xxx] for each created observation."""
+        _workspace, _peer1, _peer2, _session, _messages, _ = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Deductive observation with ID",
+                        "level": "deductive",
+                        "source_ids": ["src1"],
+                        "premises": ["premise1"],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "[id:" in result
+        assert "(deductive)" in result
+
+        # Verify the ID in the response matches the actual document
+        stmt = select(models.Document).where(
+            models.Document.content == "Deductive observation with ID"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert f"[id:{doc.id}]" in result
+
+    async def test_create_observations_no_ids_when_all_fail_validation(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Response has no [id:] tokens when all observations fail validation."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {"content": "", "level": "deductive"},  # Empty content fails validation
+                ]
+            },
+        )
+
+        assert "[id:" not in result
 
 
 @pytest.mark.asyncio
@@ -411,6 +467,55 @@ class TestDeleteObservations:
 
         # Should report 0 deleted (graceful handling)
         assert "Deleted 0 observations" in result
+
+    async def test_delete_with_superseded_by_sets_link(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """delete_observations with superseded_by sets the link on the deleted doc."""
+        _, _, _, _, _, documents = tool_test_data
+        ctx = make_tool_context(include_observation_ids=True)
+
+        doc_id = documents[0].id
+        result = await _handle_delete_observations(
+            ctx,
+            {
+                "observation_ids": [doc_id],
+                "superseded_by": "replacement_abc",
+            },
+        )
+
+        assert "Deleted 1 observations" in result
+        assert "superseded by replacement_abc" in result
+
+        stmt = select(models.Document).where(models.Document.id == doc_id)
+        doc = (await db_session.execute(stmt)).scalar_one()
+        assert doc.deleted_at is not None
+        assert doc.superseded_by == "replacement_abc"
+
+    async def test_delete_without_superseded_by_unchanged(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """delete_observations without superseded_by leaves field NULL."""
+        _, _, _, _, _, documents = tool_test_data
+        ctx = make_tool_context(include_observation_ids=True)
+
+        doc_id = documents[1].id
+        result = await _handle_delete_observations(
+            ctx, {"observation_ids": [doc_id]}
+        )
+
+        assert "Deleted 1 observations" in result
+        assert "superseded" not in result
+
+        stmt = select(models.Document).where(models.Document.id == doc_id)
+        doc = (await db_session.execute(stmt)).scalar_one()
+        assert doc.superseded_by is None
 
 
 @pytest.mark.asyncio
@@ -1304,3 +1409,144 @@ class TestObservationLockRegistry:
         # All 100 entries should be cleaned up
         remaining = sum(1 for k in _observation_locks if k[0].startswith("ws_growth_"))
         assert remaining == 0
+
+
+@pytest.mark.asyncio
+class TestChainTraversalSupersession:
+    """Tests for supersession following in get_reasoning_chain."""
+
+    async def test_chain_follows_supersession(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Chain traversal follows superseded_by links to show replacement."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        # Create parent doc A (will be superseded)
+        doc_a = models.Document(
+            content="Meeting is on Tuesday",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            level="explicit",
+        )
+        db_session.add(doc_a)
+        await db_session.flush()
+
+        # Create replacement doc C
+        doc_c = models.Document(
+            content="Meeting moved to Thursday",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.2] * 1536,
+            level="explicit",
+        )
+        db_session.add(doc_c)
+        await db_session.flush()
+
+        # Create child doc B that depends on A
+        doc_b = models.Document(
+            content="User is busy on Tuesday",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.3] * 1536,
+            level="deductive",
+            source_ids=[doc_a.id],
+        )
+        db_session.add(doc_b)
+        await db_session.flush()
+
+        # Supersede A with C
+        doc_a.deleted_at = datetime.now(timezone.utc)
+        doc_a.superseded_by = doc_c.id
+        await db_session.commit()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": doc_b.id, "direction": "premises"}
+        )
+
+        assert "(superseded)" in result
+        assert f"[id:{doc_c.id}]" in result
+        assert "Meeting moved to Thursday" in result
+
+    async def test_chain_superseded_doc_as_target(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Looking up a superseded doc shows the SUPERSEDED notice."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        doc = models.Document(
+            content="Old observation",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            level="explicit",
+            deleted_at=datetime.now(timezone.utc),
+            superseded_by="new_doc_id",
+        )
+        db_session.add(doc)
+        await db_session.commit()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": doc.id}
+        )
+
+        assert "SUPERSEDED by new_doc_id" in result
+
+    async def test_chain_no_supersession_existing_behavior(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Without supersession links, chain traversal works as before."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        parent = models.Document(
+            content="A known fact",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.5] * 1536,
+            level="explicit",
+        )
+        db_session.add(parent)
+        await db_session.flush()
+
+        child = models.Document(
+            content="Derived from known fact",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.6] * 1536,
+            level="deductive",
+            source_ids=[parent.id],
+        )
+        db_session.add(child)
+        await db_session.commit()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": child.id, "direction": "premises"}
+        )
+
+        assert f"[id:{parent.id}]" in result
+        assert "A known fact" in result
+        assert "superseded" not in result.lower()
